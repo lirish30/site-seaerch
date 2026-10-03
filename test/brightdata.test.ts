@@ -33,6 +33,22 @@ describe("BrightDataListingSource", () => {
     for (const l of listings) expect(l.name.length).toBeGreaterThan(0);
   });
 
+  it("maps the live-captured response shape (category is an array of {id,title})", async () => {
+    const src = new BrightDataListingSource({ apiKey: "K", zone: "Z", fetch: async () => Response.json(fixture) });
+    const { listings } = await src.search({ location: "Boise, ID", businessType: "plumber", radiusKm: 15, maxResults: 20 });
+    expect(listings[0]).toMatchObject({
+      name: "Perfect Plumbing Heating & Air",
+      category: "Plumber",
+      address: "109 W 44th St, Garden City, ID 83714",
+      phone: "+12082311936",
+      rating: 4.8,
+      reviewCount: 5649,
+      placeId: "0x54aeff4cb0b24461:0x23720b81e2bed658",
+    });
+    expect(listings[0].websiteUrl).toMatch(/^https:\/\/perfectplumbingheatingair\.com\//);
+    for (const l of listings) expect(l.category).not.toMatch(/\[object/);
+  });
+
   it("pages until maxResults, dedupes, stops on empty page, counts requests", async () => {
     const calls: string[] = [];
     const page = (ids: string[]) => ({ organic: ids.map((id) => ({ title: `B${id}`, fid: id })) });

@@ -11,6 +11,12 @@ const pick = (o: Record<string, unknown>, keys: string[]) => {
   return null;
 };
 const str = (v: unknown) => (v === null ? null : String(v).trim() || null);
+// Bright Data returns category as [{id, title}, ...]; take the primary (first) one.
+const categoryOf = (v: unknown) => {
+  const first = Array.isArray(v) ? v[0] : v;
+  if (first && typeof first === "object") return str((first as Record<string, unknown>).title ?? null);
+  return first === undefined ? null : str(first);
+};
 const num = (v: unknown) => {
   if (v === null) return null;
   const n = Number(String(v).replace(/[^0-9.]/g, ""));
@@ -25,7 +31,7 @@ export function mapBrightDataItem(o: Record<string, unknown>): Listing | null {
   return {
     placeId: str(pick(o, ["place_id", "fid", "cid", "data_id", "feature_id"])),
     name,
-    category: str(pick(o, ["category", "type", "main_category"])),
+    category: categoryOf(pick(o, ["category", "type", "main_category"])),
     address: str(pick(o, ["address", "full_address"])),
     phone: str(pick(o, ["phone", "phone_number"])),
     websiteUrl: website,

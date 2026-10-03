@@ -16,7 +16,7 @@ Personal tool: find local businesses, audit their websites, draft outreach email
    - Login attempts are throttled by the `LOGIN_LIMITER` Workers Rate Limiting binding in `wrangler.jsonc` (10 attempts per minute per client IP; over the limit `/api/login` returns 429). Its `namespace_id` (`1001`) just needs to be unique among rate limiters on your account.
 3. `npm run deploy`
 4. Sign in, fill in Settings (address + opt-out are required for CAN-SPAM; searches, re-audits and draft regeneration are refused until both are set), paste tone notes from `scripts/tone-notes.txt`.
-5. The Bright Data test fixture was written by hand, not captured from a live response. Check the first real search for correct field names (name, address, website, category) and fix the parser if results come back empty or misread.
+5. The Bright Data test fixture (`test/fixtures/brightdata-maps.json`) is a trimmed live capture from 2026-10-03. If Bright Data changes its response shape and results come back empty or misread, re-capture it and update `mapBrightDataItem`.
 
 Optional voice check before relying on drafts: `ANTHROPIC_API_KEY=... TONE="$(cat scripts/tone-notes.txt)" npm run prompt-check` (writes `scripts/out/prompt-check.md`).
 
