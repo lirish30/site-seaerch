@@ -42,12 +42,29 @@ describe("runLead", () => {
     expect(a.findings.map((f) => f.code)).toContain("slow_mobile");
     expect(a.offer).toBe("performance");
     expect(a.platform).toBe("wordpress");
+    expect([a.seo_score, a.accessibility_score]).toEqual([null, null]); // psiSlow has no seo/a11y categories
     expect(a.raw_r2_key).toMatch(/^audits\//);
     expect(await env.RAW.get(a.raw_r2_key!)).not.toBeNull();
     expect((await listContacts(env.DB, b.id))[0].value).toBe("info@ace.com");
     expect(r.draftId).not.toBeNull();
     expect((await latestDraft(env.DB, b.id))!.to_contact_id).toBe((await listContacts(env.DB, b.id))[0].id);
     expect((await getSearch(env.DB, s.id))!.processed_count).toBe(1);
+  });
+
+  it("persists lighthouse seo and accessibility scores and scores them", async () => {
+    const s = await createSearch(env.DB, { location: "Boise", businessType: "plumber", radiusKm: 10, maxResults: 5 });
+    const b = await upsertBusiness(env.DB, listing({ placeId: "L-lh" }), s.id);
+    const psi = { lighthouseResult: { categories: {
+      performance: { score: 0.95 },
+      seo: { score: 0.5, auditRefs: [{ id: "meta-description", weight: 1 }] },
+      accessibility: { score: 0.62, auditRefs: [{ id: "image-alt", weight: 10 }] } },
+      audits: { "meta-description": { score: 0 }, "image-alt": { score: 0 }, viewport: { score: 1 } } } };
+    const base = deps();
+    await runLead(deps({ fetch: async (u, i) => u.includes("pagespeedonline") ? Response.json(psi) : base.fetch(u, i) }), step, { businessId: b.id, searchId: null });
+    const a = (await latestAudit(env.DB, b.id))!;
+    expect([a.seo_score, a.accessibility_score]).toEqual([50, 62]);
+    expect(a.findings.map((f) => f.code)).toEqual(expect.arrayContaining(["low_seo_score", "low_accessibility"]));
+    expect(a.findings.find((f) => f.code === "low_seo_score")!.evidence).toContain("no search-results summary");
   });
 
   it("pagespeed failure → partial audit, still drafts", async () => {

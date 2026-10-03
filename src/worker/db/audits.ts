@@ -21,11 +21,11 @@ export async function insertAudit(db: D1Database, a: AuditInsert): Promise<Audit
   await db.prepare(
     `INSERT INTO audits (id, business_id, created_at, site_status, partial, pagespeed_mobile, lcp_ms, cls,
      mobile_friendly, https, has_title, has_meta_description, has_contact_form, copyright_year,
-     latest_content_date, broken_link_count, platform, score, offer, findings, raw_r2_key)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+     latest_content_date, broken_link_count, platform, seo_score, accessibility_score, score, offer, findings, raw_r2_key)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
   ).bind(id, a.business_id, new Date().toISOString(), a.site_status, a.partial ? 1 : 0, a.pagespeed_mobile,
     a.lcp_ms, a.cls, n(a.mobile_friendly), n(a.https), n(a.has_title), n(a.has_meta_description),
-    n(a.has_contact_form), a.copyright_year, a.latest_content_date, a.broken_link_count, a.platform, a.score, a.offer,
+    n(a.has_contact_form), a.copyright_year, a.latest_content_date, a.broken_link_count, a.platform, a.seo_score, a.accessibility_score, a.score, a.offer,
     JSON.stringify(a.findings), a.raw_r2_key).run();
   return (await db.prepare(`SELECT * FROM audits WHERE id = ?`).bind(id).first<Row>().then((r) => fromRow(r!)));
 }

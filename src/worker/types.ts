@@ -3,11 +3,12 @@ export type SiteStatus = "ok" | "no_website" | "unreachable" | "parked" | "block
 // Detected site builder. Audit.platform is null when the site was not crawled; "other" means crawled but unrecognised.
 export type Platform = "wix" | "squarespace" | "godaddy" | "wordpress" | "weebly" | "shopify" | "webflow" | "other";
 export type Offer = "new_site" | "performance" | "care_plan" | "seo_basics";
-export type FindingGroup = "speed" | "stale" | "basics";
+export type FindingGroup = "speed" | "stale" | "basics" | "seo" | "local";
 export type FindingCode =
   | "slow_mobile" | "meh_mobile" | "slow_lcp" | "layout_shift" | "not_mobile_friendly"
   | "old_copyright" | "stale_content" | "past_events" | "broken_links"
   | "no_https" | "no_title_or_meta" | "no_contact_form"
+  | "low_seo_score" | "low_accessibility"
   | "no_website" | "site_unreachable" | "site_parked";
 
 export interface Finding {
@@ -49,7 +50,7 @@ export interface Audit {
   pagespeed_mobile: number | null; lcp_ms: number | null; cls: number | null; mobile_friendly: boolean | null;
   https: boolean | null; has_title: boolean | null; has_meta_description: boolean | null;
   has_contact_form: boolean | null; copyright_year: number | null; latest_content_date: string | null;
-  broken_link_count: number | null; platform: Platform | null; score: number; offer: Offer; findings: Finding[]; raw_r2_key: string | null;
+  broken_link_count: number | null; platform: Platform | null; seo_score: number | null; accessibility_score: number | null; score: number; offer: Offer; findings: Finding[]; raw_r2_key: string | null;
 }
 export type AuditInsert = Omit<Audit, "id" | "created_at">;
 

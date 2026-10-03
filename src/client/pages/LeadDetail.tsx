@@ -5,7 +5,7 @@ import { safeHttpUrl } from "../links";
 import { STATUSES, type Business, type LeadStatus } from "../types";
 
 interface Finding { code: string; severity: string; points: number; evidence: string; }
-interface Audit { score: number; offer: string; partial: boolean; site_status: string; findings: Finding[]; created_at: string; }
+interface Audit { score: number; offer: string; partial: boolean; site_status: string; findings: Finding[]; created_at: string; seo_score: number | null; accessibility_score: number | null; }
 interface Contact { id: string; type: string; value: string; source_url: string | null; person_name: string | null; role: string | null; }
 interface Draft { id: string; subject: string; body: string; recipient_reason: string; edited: boolean; }
 interface Data { business: Business; audit: Audit | null; contacts: Contact[]; draft: Draft | null; toContact: Contact | null; }
@@ -91,6 +91,9 @@ export default function LeadDetail() {
         {b.last_error && <p className="error">⚠ {b.last_error}</p>}
         {d.audit ? <>
           <h3>Score {d.audit.score} <span className="badge">{d.audit.offer}</span> {d.audit.partial && <span className="badge">partial audit</span>} {d.audit.site_status === "blocked" && <span className="badge" title="The site's bot protection blocked our crawler; only PageSpeed data was used">site blocks crawlers</span>}</h3>
+          {(d.audit.seo_score !== null || d.audit.accessibility_score !== null) && <p className="muted">
+            {d.audit.seo_score !== null && <>SEO {d.audit.seo_score}</>}{d.audit.seo_score !== null && d.audit.accessibility_score !== null && " · "}
+            {d.audit.accessibility_score !== null && <>Accessibility {d.audit.accessibility_score}</>}</p>}
           <ul>{d.audit.findings.map((f) => <li key={f.code}><strong>+{f.points}</strong> {f.evidence}</li>)}</ul>
           <p className="muted">Audited {new Date(d.audit.created_at).toLocaleString()}</p>
         </> : <p className="muted">Audit in progress…</p>}

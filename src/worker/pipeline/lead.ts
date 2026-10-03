@@ -92,6 +92,7 @@ export async function runLead(
       has_contact_form: f?.hasContactForm ?? null, copyright_year: f?.copyrightYear ?? null,
       latest_content_date: f?.latestContentDate ?? null, broken_link_count: f?.brokenLinkCount ?? null,
       platform: f?.platform ?? null, // null = not crawled; "other" = crawled but unrecognised
+      seo_score: ps?.seoScore ?? null, accessibility_score: ps?.accessibilityScore ?? null,
       score: s.score, offer: s.offer, findings: s.findings, raw_r2_key: crawl.rawKey,
     });
     return { id: a.id, lowPriority: s.lowPriority };
