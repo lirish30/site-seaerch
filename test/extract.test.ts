@@ -190,3 +190,209 @@ describe("platform detection", () => {
     expect(Date.now() - t).toBeLessThan(1000);
   });
 });
+
+describe("extra page facts", () => {
+  const page = (body: string, head = "") => `<html><head>${head}</head><body>${body}</body></html>`;
+  const facts = (body: string, url = "https://a.com/", head = "") => extractPage(page(body, head), url);
+  const ld = (json: string, attrs = `type="application/ld+json"`) => `<script ${attrs}>${json}</script>`;
+  const lorem = "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua ".repeat(3);
+
+  it("counts h1 elements, not h1 text, comments or scripts", () => {
+    expect(facts(`<h1>a</h1><H1>b</H1><p>h1</p><!-- <h1>c</h1> --><script>document.write("<h1>d</h1>")</script>`).h1Count).toBe(2);
+    expect(facts("<h2>a</h2>").h1Count).toBe(0);
+  });
+
+  it("wordCount counts visible words only: no title, scripts, styles or noscript", () => {
+    const hugeScript = `<script>var x = "${"word ".repeat(50_000)}"; document.write("<p>a b c</p>")</script>`;
+    const f = facts(`<p>one two  three</p>${hugeScript}<style>${"a { color: red } ".repeat(5000)}</style><noscript><p>enable javascript please</p></noscript>`, "https://a.com/", "<title>Big Title Words</title>");
+    expect(f.wordCount).toBe(3);
+    expect(facts("").wordCount).toBe(0);
+  });
+
+  it("counts images and missing alt: alt='' is decorative, presentational and hidden images are skipped", () => {
+    const f = facts([
+      `<img src="a.png">`, `<img src="b.png" alt="Logo">`, `<img src="c.png" alt="">`, `<IMG SRC="d.png">`, `<IMG SRC="e.png" ALT="">`,
+      `<img src="f.png" role="presentation">`, `<img src="g.png" role="NONE">`, `<img src="h.png" aria-hidden="true">`,
+      `<img src="i.png" aria-hidden="false">`,
+    ].join(""));
+    expect(f.imageCount).toBe(6);
+    expect(f.imagesMissingAlt).toBe(3);
+  });
+
+  it("ignores images in comments, scripts and noscript", () => {
+    const f = facts(`<!-- <img src="a.png"> --><script>document.write('<img src="b.png">')</script><noscript><img src="c.png"></noscript>`);
+    expect([f.imageCount, f.imagesMissingAlt]).toEqual([0, 0]);
+  });
+
+  it("detects tel: links only on anchors", () => {
+    expect(facts(`<a href="tel:+12085550134">Call</a>`).hasTelLink).toBe(true);
+    expect(facts(`<A HREF="  TEL:2085550134">Call</A>`).hasTelLink).toBe(true);
+    for (const b of [`<a href="mailto:a@b.com">m</a>`, `<p>tel:2085550134</p>`, `<a href="https://a.com/tel:1">x</a>`, `<a>tel:1</a>`, `<link href="tel:1">`])
+      expect(facts(b).hasTelLink).toBe(false);
+  });
+
+  describe("LocalBusiness schema", () => {
+    const yes: [string, string][] = [
+      ["plain LocalBusiness", ld(`{"@context":"https://schema.org","@type":"LocalBusiness","name":"Ace"}`)],
+      ["specific subtype", ld(`{"@type":"Plumber"}`)],
+      ["@graph", ld(`{"@context":"https://schema.org","@graph":[{"@type":"WebSite"},{"@type":"Organization"},{"@type":"Dentist","name":"B"}]}`)],
+      ["top-level array", ld(`[{"@type":"WebSite"},{"@type":"Electrician"}]`)],
+      ["@type array", ld(`{"@type":["Organization","HVACBusiness"]}`)],
+      ["nested object", ld(`{"@type":"WebSite","about":{"@type":"Restaurant"}}`)],
+      ["full IRI", ld(`{"@type":"https://schema.org/LocalBusiness"}`)],
+      ["prefixed type", ld(`{"@type":"schema:AutoRepair"}`)],
+      ["ends with LocalBusiness", ld(`{"@type":"MyLocalBusiness"}`)],
+      ["uppercase script and type value", `<SCRIPT TYPE="Application/LD+JSON">{"@type":"Locksmith"}</SCRIPT>`],
+      ["valid block after an invalid one", ld(`{"@type":`) + ld(`{"@type":"Bakery"}`)],
+      ["entities, markup and escapes in strings", ld(`{"@type":"Plumber","name":"Bob &amp; Sons &quot;Best&quot; <b>x</b> \\u00e9 \\"q\\"","description":"a </scr b < c"}`)],
+    ];
+    it.each(yes)("%s -> true", (_l, body) => expect(facts(body).hasLocalBusinessSchema).toBe(true));
+
+    const no: [string, string][] = [
+      ["Organization", ld(`{"@type":"Organization"}`)],
+      ["WebSite and Person", ld(`[{"@type":"WebSite"},{"@type":"Person"}]`)],
+      ["business name only in a string value", ld(`{"@type":"Organization","name":"LocalBusiness Plumber"}`)],
+      ["invalid JSON", ld(`{"@type":"Plumber",`)],
+      ["trailing comma", ld(`{"@type":"Plumber",}`)],
+      ["empty script", ld("")],
+      ["JSON null and scalar", ld("null") + ld(`"Plumber"`)],
+      ["wrong script type", ld(`{"@type":"Plumber"}`, `type="application/json"`)],
+      ["plain script", `<script>var s = {"@type":"Plumber"}</script>`],
+      ["commented out", `<!-- ${ld(`{"@type":"Plumber"}`)} -->`],
+      ["escaped in text", `<p>&lt;script type="application/ld+json"&gt;{"@type":"Plumber"}&lt;/script&gt;</p>`],
+    ];
+    it.each(no)("%s -> false", (_l, body) => expect(facts(body).hasLocalBusinessSchema).toBe(false));
+
+    it("reads JSON-LD placed in the head", () => {
+      expect(facts("<p>x</p>", "https://a.com/", ld(`{"@type":"Store"}`)).hasLocalBusinessSchema).toBe(true);
+    });
+  });
+
+  describe("mixed content", () => {
+    const body = [
+      `<img src="http://a.com/a.png">`, `<IMG SRC="HTTP://a.com/b.png">`, `<script src="http://cdn.com/x.js"></script>`, `<iframe src="http://a.com/f"></iframe>`,
+      `<video src="http://a.com/v.mp4"><source src="http://a.com/v.webm"></video>`, `<audio src="http://a.com/a.mp3"></audio>`,
+      `<link rel="stylesheet" href="http://a.com/s.css">`, `<LINK REL="Stylesheet preload" HREF="http://a.com/t.css">`,
+    ].join("");
+    it("counts insecure subresources on an https page", () => expect(facts(body, "https://a.com/").mixedContentCount).toBe(9));
+    it("is 0 on an http page", () => expect(facts(body, "http://a.com/").mixedContentCount).toBe(0));
+    it("does not count plain links, secure or relative urls, or non-stylesheet links", () => {
+      const f = facts(`<a href="http://other.com/">x</a><img src="https://a.com/a.png"><img src="//a.com/b.png"><img src="/c.png"><link rel="canonical" href="http://a.com/"><link rel="icon" href="http://a.com/f.ico"><form action="http://a.com/post"></form>`);
+      expect(f.mixedContentCount).toBe(0);
+    });
+    it("ignores insecure urls inside comments, scripts and text", () => {
+      expect(facts(`<!-- <img src="http://a.com/a.png"> --><script>document.write('<img src="http://a.com/b.png">')</script><p>&lt;img src="http://a.com/c.png"&gt;</p>`).mixedContentCount).toBe(0);
+    });
+  });
+
+  describe("datedBuildMarkers", () => {
+    const m = (body: string, head = "") => facts(body, "https://a.com/", head).datedBuildMarkers;
+    const jq = (src: string) => `<script src="${src}"></script>`;
+
+    it("is empty for a modern page", () => {
+      const modern = extractPage(modernHtml, "https://brightdental.com/");
+      expect(modern.datedBuildMarkers).toEqual([]);
+      expect(m(`<div><h1>Hi</h1><p>text</p></div>`, jq("https://code.jquery.com/jquery-3.7.1.min.js"))).toEqual([]);
+    });
+
+    it("flags each legacy tag once, in lowercase or uppercase", () => {
+      expect(m(`<font size=2>a</font><FONT>b</FONT>`)).toEqual(["old-style font tags"]);
+      expect(m(`<marquee>a</marquee>`)).toEqual(["scrolling or blinking text"]);
+      expect(m(`<BLINK>a</BLINK><marquee>b</marquee>`)).toEqual(["scrolling or blinking text"]);
+      expect(m(`<center>a</center><CENTER>b</CENTER>`)).toEqual(["old-style centering tags"]);
+      expect(extractPage(`<html><head><title>x</title></head><frameset cols="20%,80%"><frame src="a.html"><frame src="b.html"></frameset></html>`, "http://a.com/").datedBuildMarkers).toEqual(["frames"]);
+      expect(extractPage(`<FRAMESET><FRAME SRC="a.html"></FRAMESET>`, "http://a.com/").datedBuildMarkers).toEqual(["frames"]);
+    });
+
+    it("does not flag iframes, 'font' in text or css, or tags in comments and scripts", () => {
+      expect(m(`<iframe src="/x"></iframe><p>font center marquee</p><span style="font-family: serif; text-align: center">x</span><!-- <font>x</font> --><script>document.write("<center><font>")</script>`)).toEqual([]);
+    });
+
+    it("detects Flash by src, data, type, classid and movie param", () => {
+      for (const b of [`<embed src="a.SWF">`, `<embed src="a.swf?x=1">`, `<object data="a.swf"></object>`, `<EMBED TYPE="application/x-shockwave-flash">`,
+        `<object classid="clsid:D27CDB6E-AE6D-11cf-96B8-444553540000"></object>`, `<object><param name="movie" value="a.swf"></object>`])
+        expect(m(b)).toEqual(["Flash"]);
+      expect(m(`<embed src="video.mp4"><object data="a.pdf" type="application/pdf"></object><a href="a.swf">x</a>`)).toEqual([]);
+    });
+
+    it("flags jQuery older than 1.12 only", () => {
+      for (const s of ["/js/jquery-1.7.2.min.js", "https://ajax.googleapis.com/ajax/libs/jquery/1.8.3/jquery.min.js", "/js/jquery.1.9.1.js", "/jquery-1.11.3.js?v=2", "/js/jquery-1.4.min.js", "/JS/JQuery-1.7.2.MIN.js", "/jquery-0.9.js"])
+        expect(m("", jq(s))).toEqual(["an outdated jQuery version"]);
+      for (const s of ["/js/jquery-1.12.4.min.js", "/js/jquery-2.2.4.js", "/js/jquery-3.6.0.min.js", "https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js",
+        "/js/jquery.min.js", "/js/jquery-migrate-1.2.1.min.js", "/js/jquery-ui-1.8.24.min.js", "/js/jquery.cookie-1.4.1.js", "/assets/1.2/jquery.min.js", "/js/app-1.7.2.js", "/x.js?jquery-1.7.2.js"])
+        expect(m("", jq(s))).toEqual([]);
+    });
+
+    const cell = (inner: string) => `<td>${inner}</td>`;
+    it("flags a layout table: legacy attributes, 3+ cells with block content", () => {
+      expect(m(`<table cellspacing="0" cellpadding="0"><tr>${cell("<div>a</div>")}${cell("<p>b</p>")}${cell("<img src=c.png alt=c>")}</tr></table>`)).toEqual(["table-based page layout"]);
+      expect(m(`<TABLE BGCOLOR="#fff"><TR>${cell("<H2>a</H2>")}${cell("b")}${cell("c")}</TR></TABLE>`)).toEqual(["table-based page layout"]);
+    });
+
+    it("does not flag data tables or tables lacking the layout signals", () => {
+      const row = (c: string) => `<tr>${cell(c)}${cell(c)}${cell(c)}</tr>`;
+      expect(m(`<table cellspacing="0"><tr><th>A</th><th>B</th><th>C</th></tr>${row("<p>x</p>")}</table>`)).toEqual([]);
+      expect(m(`<table cellpadding="2"><caption>Prices</caption>${row("<div>x</div>")}</table>`)).toEqual([]);
+      expect(m(`<table cellpadding="2"><thead><tr><td>A</td></tr></thead>${row("<div>x</div>")}</table>`)).toEqual([]);
+      expect(m(`<div role="table"><table cellspacing="0">${row("<div>x</div>")}</table></div>`)).toEqual([]);
+      expect(m(`<table role="grid" cellspacing="0">${row("<div>x</div>")}</table>`)).toEqual([]);
+      expect(m(`<table>${row("<div>x</div>")}</table>`)).toEqual([]);
+      expect(m(`<table cellspacing="0">${row("plain text")}</table>`)).toEqual([]);
+      expect(m(`<table cellspacing="0"><tr>${cell("<div>a</div>")}${cell("<div>b</div>")}</tr></table>`)).toEqual([]);
+      expect(m(`<table cellspacing="0"><tr><td>a</td></tr></table><div><p>x</p></div><div><p>y</p></div><div><p>z</p></div>`)).toEqual([]);
+    });
+
+    it("de-duplicates and reports several markers", () => {
+      expect(m(`<center><font>a</font></center><center>b</center><marquee>c</marquee>`, jq("/jquery-1.7.2.js"))).toEqual([
+        "old-style font tags", "scrolling or blinking text", "old-style centering tags", "an outdated jQuery version",
+      ]);
+    });
+  });
+
+  describe("isLikelyJsRendered", () => {
+    const spa = (body: string, head = "") => facts(body, "https://a.com/", head).isLikelyJsRendered;
+    const gen = (c: string) => `<meta name="generator" content="${c}">`;
+
+    it("true for an SPA shell: short text with a mount node", () => {
+      expect(spa(`<div id="root"></div><script src="/bundle.js"></script>`)).toBe(true);
+      for (const mount of [`<div id="app"></div>`, `<div id="__next"></div>`, `<div id="___gatsby"></div>`, `<app-root></app-root>`, `<APP-ROOT>Loading</APP-ROOT>`, `<body ng-app="x"></body>`, `<div ng-app></div>`])
+        expect(spa(mount + `<script src="/b.js"></script>`)).toBe(true);
+    });
+    it("a mount node with plenty of server-rendered text is not JS-rendered", () => {
+      expect(spa(`<div id="root"><p>${lorem}</p></div>`)).toBe(false);
+      expect(spa(`<div id="app"><p>${lorem}</p></div><script src="/b.js"></script>`)).toBe(false);
+    });
+    it("short text without a mount node is not flagged", () => {
+      expect(spa(`<p>Hello</p><script src="/b.js"></script>`)).toBe(false);
+      expect(spa(`<div id="main"></div><div class="root app"></div>`)).toBe(false);
+    });
+    it("script contents do not count as visible text", () => {
+      expect(spa(`<div id="root"></div><script>var s = "${lorem}";</script><style>.a{content:"${lorem}"}</style>`)).toBe(true);
+    });
+    it("true for wix, squarespace and webflow regardless of text", () => {
+      for (const g of ["Wix.com Website Builder", "Squarespace", "Webflow"]) expect(spa(`<p>${lorem}</p>`, gen(g))).toBe(true);
+      expect(spa(`<p>${lorem}</p>`, `<script src="https://static.parastorage.com/x.js"></script>`)).toBe(true);
+    });
+    it("false for a normal static page and for shopify / wordpress", () => {
+      expect(extractPage(modernHtml, "https://brightdental.com/").isLikelyJsRendered).toBe(false);
+      expect(spa(`<p>${lorem}</p>`)).toBe(false);
+      expect(spa(`<p>Hi</p>`, gen("Shopify"))).toBe(false);
+      expect(spa(`<p>Hi</p>`, gen("WordPress 6.4"))).toBe(false);
+    });
+  });
+
+  it("does not take long on hostile pages of unclosed tags", () => {
+    for (const frag of ["<img", `<script type="application/ld+json"`, "<table cellspacing=1><td>", "<font ", `<a href="tel:`, `<link rel="stylesheet" href="http://`, "<section><h1><b>", "<table cellpadding=1><td><center>"]) {
+      const t = Date.now();
+      extractPage("<html><body>" + frag.repeat(10_000), "https://a.com/");
+      expect(Date.now() - t).toBeLessThan(1000);
+    }
+  });
+
+  it("stays fast on a large JSON-LD page", () => {
+    const html = page(`<p>${"word ".repeat(100_000)}</p>${ld(`{"@graph":[${'{"@type":"WebSite","name":"x"},'.repeat(5000)}{"@type":"Plumber"}]}`)}`);
+    const t = Date.now();
+    expect(extractPage(html, "https://a.com/").hasLocalBusinessSchema).toBe(true);
+    expect(Date.now() - t).toBeLessThan(1000);
+  });
+});

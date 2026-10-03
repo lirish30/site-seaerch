@@ -6,6 +6,8 @@ export interface PageFacts {
   emails: { value: string; personName: string | null; role: string | null }[];
   phones: string[]; socials: string[]; copyrightYear: number | null;
   dates: string[]; eventDates: string[]; internalLinks: string[]; isParked: boolean; platform: Platform;
+  h1Count: number; wordCount: number; imageCount: number; imagesMissingAlt: number; hasTelLink: boolean; hasLocalBusinessSchema: boolean;
+  mixedContentCount: number; datedBuildMarkers: string[]; isLikelyJsRendered: boolean;
 }
 
 const EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
@@ -122,6 +124,112 @@ function personFor(el: HTMLElement | null): { personName: string | null; role: s
   return { personName: null, role: null };
 }
 
+const BUSINESS_TYPES = new Set([
+  "Plumber", "Electrician", "HVACBusiness", "RoofingContractor", "GeneralContractor", "HomeAndConstructionBusiness", "Locksmith", "MovingCompany",
+  "Restaurant", "FoodEstablishment", "CafeOrCoffeeShop", "Bakery", "BarOrPub", "Dentist", "Physician", "MedicalBusiness", "MedicalClinic",
+  "HealthAndBeautyBusiness", "BeautySalon", "HairSalon", "DaySpa", "NailSalon", "AutoRepair", "AutomotiveBusiness", "AutoDealer", "RealEstateAgent",
+  "LegalService", "Attorney", "AccountingService", "FinancialService", "InsuranceAgency", "ProfessionalService", "Store", "LodgingBusiness", "Hotel",
+  "SportsActivityLocation", "ChildCare", "VeterinaryCare", "PetStore",
+]);
+
+function isBusinessType(t: unknown): boolean {
+  if (typeof t !== "string" || t.length > 200) return false;
+  const name = t.trim().split(/[/:#]/).pop()!;
+  return name.endsWith("LocalBusiness") || BUSINESS_TYPES.has(name);
+}
+
+// The main parse (script:false) discards script text, so JSON-LD needs its own default-options parse. It only runs when the page mentions
+// ld+json at all, and reads rawText: script data is not entity-decoded by browsers, while .text would turn &quot; into a JSON-breaking quote.
+function hasLocalBusinessSchema(html: string): boolean {
+  if (!html.toLowerCase().includes("ld+json")) return false;
+  for (const s of parse(html).querySelectorAll("script")) {
+    if ((s.getAttribute("type") ?? "").trim().toLowerCase() !== "application/ld+json") continue;
+    let data: unknown; try { data = JSON.parse(s.rawText.replace(/^﻿/, "")); } catch { continue; }
+    const stack: unknown[] = [data]; // iterative: hostile JSON can nest deeper than the call stack allows
+    for (let n = 0; stack.length && n < 100_000; n++) {
+      const v = stack.pop();
+      if (!v || typeof v !== "object") continue;
+      if (Array.isArray(v)) { stack.push(...v); continue; }
+      const type = (v as Record<string, unknown>)["@type"];
+      if (Array.isArray(type) ? type.some(isBusinessType) : isBusinessType(type)) return true;
+      stack.push(...Object.values(v));
+    }
+  }
+  return false;
+}
+
+const SWF_URL = /\.swf(?:[?#]|$)/i;
+const FLASH_CLASSID = /d27cdb6e-ae6d-11cf-96b8-444553540000/i;
+const MOUNT_IDS = new Set(["root", "app", "__next", "___gatsby"]);
+const TABLE_ROLES = new Set(["table", "grid", "treegrid"]);
+const BLOCK_IN_CELL = new Set(["DIV", "P", "H1", "H2", "H3", "H4", "H5", "H6", "IMG"]);
+const MIXED_SRC_TAGS = new Set(["IMG", "SCRIPT", "IFRAME", "VIDEO", "AUDIO", "SOURCE"]);
+const MARKER_ORDER = ["old-style font tags", "scrolling or blinking text", "frames", "Flash", "old-style centering tags", "an outdated jQuery version", "table-based page layout"];
+
+const isInsecure = (v: string | undefined) => !!v && /^http:\/\//i.test(v.trim());
+const roleOf = (el: HTMLElement) => (el.getAttribute("role") ?? "").trim().toLowerCase().split(/\s+/)[0];
+
+// Only a jQuery that is demonstrably old: a versioned filename, or a jquery/<version>/ CDN directory. Plugins (migrate, ui, cookie) never match.
+function isOldJquery(src: string): boolean {
+  const parts = src.trim().split(/[?#]/)[0].toLowerCase().split("/");
+  const file = parts[parts.length - 1];
+  let v = file.match(/^jquery[-.]v?(\d+)\.(\d+)(?:\.\d+)?(?:\.min)?\.js$/);
+  if (!v && /^jquery(?:\.min)?\.js$/.test(file) && parts[parts.length - 3] === "jquery") v = parts[parts.length - 2].match(/^(\d+)\.(\d+)(?:\.\d+)?$/);
+  return !!v && (+v[1] < 1 || (+v[1] === 1 && +v[2] < 12));
+}
+
+interface TableFrame { legacy: boolean; cells: number; openCells: number; block: boolean; dataLike: boolean }
+
+// One iterative walk over real element nodes (comments/scripts/text never are), linear even for pathologically nested markup.
+function scanDom(root: HTMLElement, isHttps: boolean) {
+  const r = { h1Count: 0, imageCount: 0, imagesMissingAlt: 0, hasTelLink: false, mixedContentCount: 0, hasMount: false };
+  const markers = new Set<string>(); const tables: TableFrame[] = []; let roleTables = 0;
+  const stack: [HTMLElement, boolean][] = [];
+  const push = (el: HTMLElement) => { for (let i = el.childNodes.length - 1; i >= 0; i--) if (el.childNodes[i].nodeType === 1) stack.push([el.childNodes[i] as HTMLElement, false]); };
+  push(root);
+  while (stack.length) {
+    const [el, exiting] = stack.pop()!; const tag = el.tagName;
+    const inRoleTable = TABLE_ROLES.has(roleOf(el));
+    if (exiting) {
+      if (tag === "TD" && tables.length) tables[tables.length - 1].openCells--;
+      // roleTables still includes this table's own role here, so a role=table/grid table or one nested in such an element is treated as data.
+      if (tag === "TABLE") { const t = tables.pop()!; if (t.legacy && t.cells >= 3 && t.block && !t.dataLike && roleTables === 0) markers.add("table-based page layout"); }
+      if (inRoleTable) roleTables--;
+      continue;
+    }
+    stack.push([el, true]); push(el);
+    if (inRoleTable) roleTables++;
+    const top = tables[tables.length - 1];
+    if (top && BLOCK_IN_CELL.has(tag) && top.openCells > 0) top.block = true;
+    switch (tag) {
+      case "H1": r.h1Count++; break;
+      case "A": if (/^tel:/i.test((el.getAttribute("href") ?? "").trim())) r.hasTelLink = true; break;
+      case "FONT": markers.add("old-style font tags"); break;
+      case "MARQUEE": case "BLINK": markers.add("scrolling or blinking text"); break;
+      case "FRAME": case "FRAMESET": markers.add("frames"); break;
+      case "CENTER": markers.add("old-style centering tags"); break;
+      case "EMBED": case "OBJECT":
+        if (SWF_URL.test(el.getAttribute("src") ?? "") || SWF_URL.test(el.getAttribute("data") ?? "") || /x-shockwave-flash/i.test(el.getAttribute("type") ?? "")
+          || FLASH_CLASSID.test(el.getAttribute("classid") ?? "")) markers.add("Flash");
+        break;
+      case "PARAM": if (/^movie$/i.test((el.getAttribute("name") ?? "").trim()) && SWF_URL.test(el.getAttribute("value") ?? "")) markers.add("Flash"); break;
+      case "TABLE": tables.push({ legacy: ["cellspacing", "cellpadding", "bgcolor"].some((a) => el.getAttribute(a) !== undefined), cells: 0, openCells: 0, block: false, dataLike: false }); break;
+      case "TD": if (top) { top.cells++; top.openCells++; } break;
+      case "TH": case "CAPTION": case "THEAD": if (top) top.dataLike = true; break;
+    }
+    if (tag === "IMG") {
+      const role = roleOf(el);
+      if (role !== "presentation" && role !== "none" && (el.getAttribute("aria-hidden") ?? "").trim().toLowerCase() !== "true") {
+        r.imageCount++; if (el.getAttribute("alt") === undefined) r.imagesMissingAlt++;
+      }
+    }
+    if (tag === "SCRIPT" && isOldJquery(el.getAttribute("src") ?? "")) markers.add("an outdated jQuery version");
+    if (isHttps && (MIXED_SRC_TAGS.has(tag) ? isInsecure(el.getAttribute("src")) : tag === "LINK" && /(^|\s)stylesheet(\s|$)/i.test(el.getAttribute("rel") ?? "") && isInsecure(el.getAttribute("href")))) r.mixedContentCount++;
+    if (MOUNT_IDS.has(el.getAttribute("id") ?? "") || tag === "APP-ROOT" || el.getAttribute("ng-app") !== undefined || el.getAttribute("data-ng-app") !== undefined) r.hasMount = true;
+  }
+  return { ...r, datedBuildMarkers: MARKER_ORDER.filter((m) => markers.has(m)) };
+}
+
 function isContactForm(f: HTMLElement): boolean {
   const fields = f.querySelectorAll("input, textarea");
   if (fields.length >= 2) return true;
@@ -184,6 +292,11 @@ export function extractPage(html: string, pageUrl: string): PageFacts {
     internal.add(u.toString());
   }
 
+  // The main parse drops script/style/noscript text, so structuredText is visible text; the head (title) is not, hence body when there is one.
+  const visible = (root.querySelector("body") ?? root).structuredText.replace(/\s+/g, " ").trim();
+  const dom = scanDom(root, base.protocol === "https:");
+  const platform = detectPlatform(root, base.hostname);
+
   const title = root.querySelector("title")?.text.trim() || null;
   return {
     title,
@@ -198,7 +311,17 @@ export function extractPage(html: string, pageUrl: string): PageFacts {
     eventDates: [...eventDates],
     internalLinks: [...internal],
     isParked: PARKED.test(`${title ?? ""} ${text.slice(0, 3000)}`),
-    platform: detectPlatform(root, base.hostname),
+    platform,
+    h1Count: dom.h1Count,
+    wordCount: visible.match(/\S+/g)?.length ?? 0,
+    imageCount: dom.imageCount,
+    imagesMissingAlt: dom.imagesMissingAlt,
+    hasTelLink: dom.hasTelLink,
+    hasLocalBusinessSchema: hasLocalBusinessSchema(html),
+    mixedContentCount: dom.mixedContentCount,
+    datedBuildMarkers: dom.datedBuildMarkers,
+    // Absence checks are unreliable on builders that render client-side; Shopify/WordPress serve real HTML so they are deliberately excluded.
+    isLikelyJsRendered: ["wix", "squarespace", "webflow"].includes(platform) || (visible.length < 200 && dom.hasMount),
   };
 }
 
