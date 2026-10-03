@@ -1,0 +1,35 @@
+[
+  { "business": { "name": "Ace Plumbing", "category": "Plumber", "address": "Boise, ID", "website_url": "https://aceplumbing.com" },
+    "offer": "performance",
+    "findings": [
+      { "code": "slow_mobile", "group": "speed", "severity": "high", "points": 25, "evidence": "Scores 31/100 on Google's mobile speed test" },
+      { "code": "slow_lcp", "group": "speed", "severity": "medium", "points": 10, "evidence": "Main content takes about 8.4 seconds to appear on a phone" }
+    ],
+    "contacts": [{ "id": "c1", "type": "email", "value": "info@aceplumbing.com", "source_url": "https://aceplumbing.com/contact", "person_name": null, "role": null, "confidence": 0.7 }] },
+  { "business": { "name": "Grace Community Church", "category": "Church", "address": "Meridian, ID", "website_url": "https://gracemeridian.org" },
+    "offer": "care_plan",
+    "findings": [
+      { "code": "past_events", "group": "stale", "severity": "low", "points": 5, "evidence": "Lists events that already happened (e.g. 2025-04-20)" },
+      { "code": "old_copyright", "group": "stale", "severity": "medium", "points": 10, "evidence": "The footer still says © 2021" },
+      { "code": "stale_content", "group": "stale", "severity": "medium", "points": 10, "evidence": "The newest post or update is from 2023-11" }
+    ],
+    "contacts": [{ "id": "c2", "type": "email", "value": "pastor.mike@gracemeridian.org", "source_url": "https://gracemeridian.org/staff", "person_name": "Mike Hale", "role": "Pastor", "confidence": 0.9 }] },
+  { "business": { "name": "Rivera Landscaping", "category": "Landscaper", "address": "Nampa, ID", "website_url": null },
+    "offer": "new_site",
+    "findings": [{ "code": "no_website", "group": "site", "severity": "high", "points": 100, "evidence": "No website listed on their Google Business profile" }],
+    "contacts": [] },
+  { "business": { "name": "Smith Law", "category": "Law firm", "address": "Boise, ID", "website_url": "http://smithlawboise.com" },
+    "offer": "seo_basics",
+    "findings": [
+      { "code": "no_https", "group": "basics", "severity": "high", "points": 15, "evidence": "The site isn't secure (no HTTPS), so browsers show a warning" },
+      { "code": "no_title_or_meta", "group": "basics", "severity": "low", "points": 6, "evidence": "The homepage is missing the title or summary Google shows in search results" }
+    ],
+    "contacts": [{ "id": "c4", "type": "form", "value": "http://smithlawboise.com/contact", "source_url": null, "person_name": null, "role": null, "confidence": 0.6 }] },
+  { "business": { "name": "Bluebird Bakery", "category": "Bakery", "address": "Eagle, ID", "website_url": "https://bluebirdbakes.com" },
+    "offer": "new_site",
+    "findings": [
+      { "code": "not_mobile_friendly", "group": "speed", "severity": "high", "points": 20, "evidence": "The site isn't set up for phones, so text and buttons are hard to use" },
+      { "code": "old_copyright", "group": "stale", "severity": "medium", "points": 10, "evidence": "The footer still says © 2016" }
+    ],
+    "contacts": [{ "id": "c5", "type": "email", "value": "bluebirdbakes@gmail.com", "source_url": "https://bluebirdbakes.com", "person_name": null, "role": null, "confidence": 0.7 }] }
+]
