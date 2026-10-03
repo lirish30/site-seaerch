@@ -4,6 +4,7 @@ import { api, ApiError } from "../api";
 import { pollDelay, searchFinished } from "../poll";
 import type { LeadRow, Search } from "../types";
 import LeadTable from "./LeadTable";
+import SearchProgress from "./SearchProgress";
 
 export default function SearchDetail() {
   const { id } = useParams();
@@ -44,11 +45,7 @@ export default function SearchDetail() {
       {refreshErr && <p className="error">{refreshErr}</p>}
       {search.status === "failed"
         ? <p className="error">Search failed: {search.error}</p>
-        : <div className="card">
-            <div className="row"><span>{search.processed_count} of {search.found_count || "?"} businesses audited</span>
-              {search.status === "running" && search.found_count === 0 && <span className="muted">Fetching listings…</span>}</div>
-            <progress max={search.found_count || 1} value={search.processed_count} />
-          </div>}
+        : <SearchProgress search={search} />}
       <LeadTable rows={leads} />
     </div>
   );

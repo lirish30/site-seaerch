@@ -1,105 +1,137 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api";
+import { estimateNewSearchSeconds, formatEta } from "../eta";
+import { searchFinished } from "../poll";
 import type { Search } from "../types";
+import BusinessTypePicker from "./BusinessTypePicker";
+import SearchProgress from "./SearchProgress";
 
-// Suggestions only: the field accepts any text and it goes straight into the Maps query.
-const TYPES = [
-  // Home & trade services
-  "plumber", "electrician", "roofer", "HVAC", "landscaper", "general contractor", "remodeling contractor", "painter",
-  "flooring contractor", "window installer", "garage door", "fence contractor", "concrete contractor", "pest control",
-  "pool service", "tree service", "cleaning service", "moving company", "solar installer", "home inspector",
-  // Auto
-  "auto repair", "auto body shop", "car dealership", "tire shop", "towing service", "RV dealer",
-  // Health & wellness
-  "dentist", "orthodontist", "chiropractor", "physical therapist", "optometrist", "veterinarian", "dermatologist",
-  "med spa", "mental health counselor", "pediatrician", "urgent care", "pharmacy", "senior care", "home health care",
-  // Education
-  "private school", "charter school", "preschool", "daycare", "montessori school", "community college", "university",
-  "trade school", "tutoring center", "test prep", "music school", "dance studio", "driving school", "language school",
-  "coding bootcamp", "online school", "homeschool co-op", "school district", "college admissions consultant",
-  // Corporate & professional services
-  "law firm", "accounting firm", "CPA", "tax preparer", "financial advisor", "wealth management", "insurance agency",
-  "mortgage broker", "bank", "credit union", "staffing agency", "recruiting firm", "executive search", "HR consulting",
-  "management consulting", "IT services", "managed service provider", "cybersecurity firm", "software company",
-  "marketing agency", "advertising agency", "PR firm", "architecture firm", "engineering firm", "commercial real estate",
-  "property management", "commercial construction", "corporate training", "coworking space", "business coaching",
-  "translation service", "market research firm", "payroll service", "corporate headquarters",
-  // Industrial & B2B
-  "manufacturer", "machine shop", "wholesale distributor", "logistics company", "freight broker", "trucking company",
-  "warehouse", "commercial printer", "sign company", "packaging supplier", "industrial supply", "equipment rental",
-  "janitorial service", "security company",
-  // Real estate & finance
-  "real estate agent", "real estate broker", "title company", "appraiser",
-  // Food & hospitality
-  "restaurant", "cafe", "bakery", "caterer", "brewery", "bar", "hotel", "bed and breakfast", "event venue", "wedding planner",
-  // Beauty & personal
-  "salon", "barber shop", "spa", "nail salon", "tattoo shop", "gym", "yoga studio", "martial arts studio", "personal trainer",
-  // Retail
-  "boutique", "furniture store", "jewelry store", "florist", "pet store", "bike shop", "hardware store", "bookstore",
-  // Community & other
-  "church", "nonprofit", "funeral home", "photographer", "videographer", "print shop", "art gallery", "theater",
-  "daycare center", "storage facility", "self storage", "pet groomer", "dog trainer",
-];
+const RESULT_PRESETS = [25, 50, 100, 200];
+const RECENT_POLL_MS = 5000;
+type Estimate = { estUsd: number; spent: number; limit: number; ok: boolean };
 
 export default function NewSearch() {
   const nav = useNavigate();
-  const [location, setLocation] = useState(""); const [type, setType] = useState("");
+  const [location, setLocation] = useState("");
+  const [types, setTypes] = useState<string[]>([]);
   const [maxResults, setMax] = useState(50);
-  const [est, setEst] = useState<{ estUsd: number; spent: number; limit: number; ok: boolean } | null>(null);
+  const [est, setEst] = useState<Estimate | null>(null);
   const [err, setErr] = useState(""); const [busy, setBusy] = useState(false);
+  const [started, setStarted] = useState("");
   const [recent, setRecent] = useState<Search[]>([]);
   const [recentErr, setRecentErr] = useState(""); const [estErr, setEstErr] = useState("");
 
-  useEffect(() => {
-    let cancelled = false;
-    api.get<Search[]>("/searches")
-      .then((r) => { if (!cancelled) setRecent(r); })
-      .catch(() => { if (!cancelled) setRecentErr("Couldn't load recent searches."); });
-    return () => { cancelled = true; };
+  const loadRecent = useCallback(async () => {
+    try { setRecent(await api.get<Search[]>("/searches")); setRecentErr(""); }
+    catch { setRecentErr("Couldn't load recent searches."); }
   }, []);
+  useEffect(() => { loadRecent(); }, [loadRecent]);
+  const anyRunning = recent.some((s) => !searchFinished(s));
+  useEffect(() => {
+    if (!anyRunning) return;
+    const t = setInterval(loadRecent, RECENT_POLL_MS);
+    return () => clearInterval(t);
+  }, [anyRunning, loadRecent]);
+
   useEffect(() => {
     let cancelled = false;
-    api.get<typeof est>(`/searches/estimate?maxResults=${maxResults}`)
+    api.get<Estimate>(`/searches/estimate?maxResults=${maxResults}`)
       .then((r) => { if (!cancelled) { setEst(r); setEstErr(""); } })
       .catch(() => { if (!cancelled) { setEst(null); setEstErr("Couldn't load the cost estimate."); } });
     return () => { cancelled = true; };
   }, [maxResults]);
 
+  const count = types.length;
+  const totalUsd = est ? est.estUsd * count : 0;
+  const overLimit = est !== null && est.spent + totalUsd > est.limit;
+  const canSubmit = !busy && count > 0 && location.trim().length >= 2 && !overLimit;
+
   async function submit(e: React.FormEvent) {
-    e.preventDefault(); setErr(""); setBusy(true);
-    try { const s = await api.post<Search>("/searches", { location, businessType: type, maxResults }); nav(`/searches/${s.id}`); }
-    catch (x) { setErr(x instanceof ApiError ? (x.status === 402 ? "This search would go over your monthly spend limit." : x.message) : "Failed"); setBusy(false); }
+    e.preventDefault(); setErr(""); setStarted(""); setBusy(true);
+    const ok: Search[] = []; const failed: string[] = [];
+    let limitHit = false;
+    for (const t of types) {
+      if (limitHit) { failed.push(`${t} (spend limit)`); continue; }
+      try { ok.push(await api.post<Search>("/searches", { location, businessType: t, maxResults })); }
+      catch (x) {
+        if (x instanceof ApiError && x.status === 402) limitHit = true;
+        failed.push(x instanceof ApiError && x.status !== 402 ? `${t} (${x.message})` : t);
+      }
+    }
+    setBusy(false);
+    if (ok.length === 1 && failed.length === 0) { nav(`/searches/${ok[0].id}`); return; }
+    if (failed.length) setErr(`Couldn't start: ${failed.join(", ")}.${limitHit ? " This would go over your monthly spend limit." : ""}`);
+    if (ok.length) {
+      setStarted(`Started ${ok.length} search${ok.length === 1 ? "" : "es"}. Progress updates below.`);
+      setTypes(failed.length ? types.filter((t) => failed.some((f) => f.startsWith(t))) : []);
+      loadRecent();
+    }
   }
 
+  const eta = count > 0 ? formatEta(estimateNewSearchSeconds(maxResults)) : "";
   return (
-    <div className="grid2">
-      <form className="card" onSubmit={submit}>
+    <div className="new-layout">
+      <form className="card new-form" onSubmit={submit}>
         <h2>New search</h2>
-        <label htmlFor="loc">Location</label>
-        <input id="loc" placeholder="Boise, ID" value={location} onChange={(e) => setLocation(e.target.value)} required />
-        <label htmlFor="type">Business type</label>
-        <input id="type" list="types" placeholder="plumber" value={type} onChange={(e) => setType(e.target.value)} required />
-        <datalist id="types">{TYPES.map((t) => <option key={t} value={t} />)}</datalist>
-        <label htmlFor="m">Max results</label>
-        <input id="m" type="number" min={1} max={200} value={maxResults} onChange={(e) => setMax(Number(e.target.value))} />
-        {est && <p className="muted">Estimated cost: up to ${est.estUsd.toFixed(2)} · spent this month ${est.spent.toFixed(2)} of ${est.limit.toFixed(2)}</p>}
-        {estErr && <p className="error">{estErr}</p>}
+        <div className="field-row">
+          <div className="field">
+            <label htmlFor="loc">Location</label>
+            <input id="loc" placeholder="Boise, ID" value={location} onChange={(e) => setLocation(e.target.value)} required />
+          </div>
+          <div className="field">
+            <label id="max-label">Max results per type</label>
+            <div className="segmented" role="group" aria-labelledby="max-label">
+              {RESULT_PRESETS.map((n) => (
+                <button type="button" key={n} className={maxResults === n ? "on" : ""} aria-pressed={maxResults === n} onClick={() => setMax(n)}>{n}</button>
+              ))}
+              <input type="number" aria-label="Custom max results" placeholder="Custom" min={1} max={200}
+                value={RESULT_PRESETS.includes(maxResults) ? "" : maxResults}
+                onChange={(e) => { const n = Number(e.target.value); if (n >= 1) setMax(Math.min(200, n)); }} />
+            </div>
+          </div>
+        </div>
+
+        <label>Business types <span className="muted">· pick as many as you like</span></label>
+        <BusinessTypePicker selected={types} onChange={setTypes} />
+
+        {started && <p className="ok">{started}</p>}
         {err && <p className="error">{err}</p>}
-        <button className="primary" disabled={busy || (est !== null && !est.ok)}>{busy ? "Starting…" : "Find businesses"}</button>
+        {estErr && <p className="error">{estErr}</p>}
+        <div className="submit-bar">
+          <div className="submit-info">
+            <strong>{count === 0 ? "Select at least one type" : `${count} type${count === 1 ? "" : "s"} · up to ${count * maxResults} leads`}</strong>
+            <span className="muted">
+              {est && count > 0 && <>Est. cost up to ${totalUsd.toFixed(2)} · takes {eta} · </>}
+              {est && <>spent ${est.spent.toFixed(2)} of ${est.limit.toFixed(2)} this month</>}
+            </span>
+            {overLimit && <span className="error">This would go over your monthly spend limit.</span>}
+          </div>
+          <button className="primary big" disabled={!canSubmit}>
+            {busy ? <><span className="spinner light" aria-hidden /> Starting…</> : count > 1 ? `Find businesses (${count})` : "Find businesses"}
+          </button>
+        </div>
       </form>
-      <div className="card">
+
+      <div className="card recent">
         <h2>Recent searches</h2>
         {recentErr && <p className="error">{recentErr}</p>}
-        <table><tbody>
+        {recent.length === 0 && !recentErr && <p className="muted">No searches yet.</p>}
+        <ul className="recent-list">
           {recent.map((s) => (
-            <tr key={s.id}>
-              <td><Link to={`/searches/${s.id}`}>{s.business_type} in {s.location}</Link></td>
-              <td className="muted">{s.processed_count}/{s.found_count}</td>
-              <td><span className="badge">{s.status}</span></td>
-            </tr>
+            <li key={s.id}>
+              <div className="row between">
+                <Link to={`/searches/${s.id}`}>{s.business_type} in {s.location}</Link>
+                <span className={`badge ${s.status}`}>{s.status}</span>
+              </div>
+              {s.status === "failed"
+                ? <span className="muted">Failed{s.error ? `: ${s.error}` : ""}</span>
+                : !searchFinished(s)
+                  ? <SearchProgress search={s} compact />
+                  : <span className="muted">{s.processed_count}/{s.found_count} audited</span>}
+            </li>
           ))}
-        </tbody></table>
+        </ul>
       </div>
     </div>
   );
