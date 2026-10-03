@@ -21,6 +21,6 @@ settingsRoutes.get("/", async (c) => c.json({
 
 settingsRoutes.put("/", async (c) => {
   const p = S.safeParse(await c.req.json().catch(() => ({})));
-  if (!p.success) return c.json({ error: "invalid", fields: [...new Set(p.error.issues.map((i) => String(i.path[0])))] }, 400);
+  if (!p.success) return c.json({ error: "invalid", fields: [...new Set(p.error.issues.filter((i) => i.path.length).map((i) => String(i.path[0])))] }, 400);
   return c.json(await saveSettings(c.env.DB, p.data));
 });

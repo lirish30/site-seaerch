@@ -187,6 +187,10 @@ describe("routes", () => {
     const other = await api("/api/settings", { method: "PUT", body: JSON.stringify({ your_name: 5 }) });
     expect(other.status).toBe(400);
     expect((await other.json<any>()).fields).toEqual(["your_name"]);
+    // A non-object body has no field path: report an empty list, never the string "undefined".
+    const nonObject = await api("/api/settings", { method: "PUT", body: JSON.stringify([1]) });
+    expect(nonObject.status).toBe(400);
+    expect((await nonObject.json<any>()).fields).toEqual([]);
     expect((await put("")).status).toBe(200);
     expect((await (await api("/api/settings")).json<any>()).settings.logo_url).toBe("");
   });

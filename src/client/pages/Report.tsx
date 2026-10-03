@@ -36,7 +36,7 @@ export default function Report() {
   }, [token, attempt]);
 
   if (state === "loading") return <div className="report"><p className="muted">Loading…</p></div>;
-  if (state === "error") return <div className="report"><p>Couldn't load this report. Please try again.</p><button onClick={() => setAttempt((n) => n + 1)}>Retry</button></div>;
+  if (state === "error") return <div className="report"><p role="alert">Couldn't load this report. Please try again.</p><button onClick={() => setAttempt((n) => n + 1)}>Retry</button></div>;
   if (state === "gone" || !r) return <div className="report"><p>This report link has expired or is no longer available.</p></div>;
 
   const groups = groupFindings(r.findings);
