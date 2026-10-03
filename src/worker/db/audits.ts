@@ -1,4 +1,5 @@
 import type { Audit, AuditInsert } from "../types";
+import { chunks } from "./chunks";
 
 type Row = Omit<Audit, "findings" | "partial" | "mobile_friendly" | "https" | "has_title" | "has_meta_description" | "has_contact_form"> & {
   findings: string; partial: number; mobile_friendly: number | null; https: number | null;
@@ -33,4 +34,17 @@ export async function latestAudit(db: D1Database, businessId: string): Promise<A
   const r = await db.prepare(`SELECT * FROM audits WHERE business_id = ? ORDER BY created_at DESC LIMIT 1`)
     .bind(businessId).first<Row>();
   return r ? fromRow(r) : null;
+}
+
+/** Latest audit per business, fetched in one query per chunk of ids. */
+export async function latestAuditsFor(db: D1Database, businessIds: string[]): Promise<Map<string, Audit>> {
+  const out = new Map<string, Audit>();
+  for (const ids of chunks([...new Set(businessIds)])) {
+    const rows = (await db.prepare(
+      `SELECT a.* FROM audits a WHERE a.business_id IN (${ids.map(() => "?").join(",")})
+       AND a.created_at = (SELECT MAX(created_at) FROM audits WHERE business_id = a.business_id)`,
+    ).bind(...ids).all<Row>()).results;
+    for (const r of rows) if (!out.has(r.business_id)) out.set(r.business_id, fromRow(r));
+  }
+  return out;
 }

@@ -6,6 +6,7 @@ import { insertAudit } from "../src/worker/db/audits";
 import { replaceContacts } from "../src/worker/db/contacts";
 import { insertDraft } from "../src/worker/db/drafts";
 import { saveSettings } from "../src/worker/db/settings";
+import { leadRows } from "../src/worker/routes/leads";
 
 let cookie = "";
 const api = (path: string, init: RequestInit = {}) =>
@@ -84,6 +85,43 @@ describe("routes", () => {
     expect((await api(`/api/leads/${b.id}/draft`, { method: "PATCH", body: JSON.stringify({ subject: "S2", body: "B2" }) })).status).toBe(200);
     const d = await (await api(`/api/leads/${b.id}`)).json<any>();
     expect(d.draft.edited).toBe(true);
+  });
+
+  it("leadRows batches audits/contacts correctly for ~150 businesses (latest audit wins)", async () => {
+    const s = await createSearch(env.DB, { location: "Bulk", businessType: "bulk", radiusKm: 1, maxResults: 200 });
+    const ids: string[] = [];
+    const stmts: D1PreparedStatement[] = [];
+    for (let i = 0; i < 150; i++) {
+      const id = `bulk-${i}`; ids.push(id);
+      stmts.push(env.DB.prepare(`INSERT INTO businesses (id, place_id, domain, name, website_url, created_at) VALUES (?,?,?,?,?,?)`)
+        .bind(id, `bulk-place-${i}`, `bulk${i}.com`, `Bulk ${i}`, `https://bulk${i}.com`, new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString()));
+      const audit = (aid: string, score: number, at: string) => env.DB.prepare(
+        `INSERT INTO audits (id, business_id, created_at, site_status, partial, score, offer, findings) VALUES (?,?,?,?,?,?,?,?)`)
+        .bind(aid, id, at, "ok", i % 2, score, "care_plan", JSON.stringify([{ code: "no_https", group: "basics", severity: "high", points: 15, evidence: `old ${i}` }]));
+      stmts.push(audit(`bulk-a-old-${i}`, 1, "2026-01-01T00:00:00.000Z"));
+      if (i % 3 !== 0) stmts.push(audit(`bulk-a-new-${i}`, i, "2026-02-01T00:00:00.000Z"));
+      if (i % 5 !== 0) stmts.push(env.DB.prepare(`INSERT INTO contacts (id, business_id, type, value, confidence) VALUES (?,?,?,?,?)`)
+        .bind(`bulk-c-${i}`, id, "email", `info@bulk${i}.com`, 0.7));
+    }
+    await env.DB.batch(stmts);
+    const businesses = (await env.DB.prepare(`SELECT * FROM businesses WHERE id LIKE 'bulk-%'`).all<any>()).results;
+    const rows = await leadRows(env.DB, businesses);
+    expect(rows).toHaveLength(150);
+    for (const r of rows) {
+      const i = Number(r.business.id.slice(5));
+      expect(r.score).toBe(i % 3 !== 0 ? i : 1);
+      expect(r.partial).toBe(i % 2 === 1);
+      expect(r.topFinding).toBe(`old ${i}`);
+      expect(r.bestContact).toBe(i % 5 !== 0 ? `info@bulk${i}.com` : null);
+      expect(r.hasEmail).toBe(i % 5 !== 0);
+    }
+    const page1 = await (await api(`/api/leads?limit=100`)).json<any[]>();
+    expect(page1).toHaveLength(100);
+    const page2 = await (await api(`/api/leads?limit=100&offset=100`)).json<any[]>();
+    expect(page2.length).toBeGreaterThan(50);
+    expect(new Set([...page1, ...page2].map((r) => r.business.id)).size).toBe(page1.length + page2.length);
+    expect((await (await api(`/api/leads?limit=99999`)).json<any[]>()).length).toBeLessThanOrEqual(500);
+    expect((await api(`/api/leads?limit=abc`)).status).toBe(200);
   });
 
   it("rejects invalid lead status", async () => {

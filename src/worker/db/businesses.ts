@@ -55,10 +55,12 @@ export async function listBusinessesForSearch(db: D1Database, searchId: string, 
   return (await db.prepare(sql).bind(searchId).all<Business>()).results;
 }
 
-export async function listAllBusinesses(db: D1Database, o: { status?: LeadStatus }) {
+export async function listAllBusinesses(db: D1Database, o: { status?: LeadStatus; limit?: number; offset?: number }) {
+  const page = `ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`;
+  const lim = o.limit ?? -1, off = o.offset ?? 0;
   const stmt = o.status
-    ? db.prepare(`SELECT * FROM businesses WHERE lead_status = ? ORDER BY created_at DESC`).bind(o.status)
-    : db.prepare(`SELECT * FROM businesses ORDER BY created_at DESC`);
+    ? db.prepare(`SELECT * FROM businesses WHERE lead_status = ? ${page}`).bind(o.status, lim, off)
+    : db.prepare(`SELECT * FROM businesses ${page}`).bind(lim, off);
   return (await stmt.all<Business>()).results;
 }
 

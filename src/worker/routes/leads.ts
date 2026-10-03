@@ -3,8 +3,8 @@ import { z } from "zod";
 import type { Env } from "../env";
 import type { Business, LeadStatus } from "../types";
 import { getBusiness, listAllBusinesses, updateLead, domainOf } from "../db/businesses";
-import { latestAudit } from "../db/audits";
-import { listContacts } from "../db/contacts";
+import { latestAudit, latestAuditsFor } from "../db/audits";
+import { listContacts, contactsFor } from "../db/contacts";
 import { latestDraft, updateDraftBody } from "../db/drafts";
 import { pickRecipient } from "../recipient";
 import { regenerateDraft } from "../pipeline/lead";
@@ -13,15 +13,23 @@ import { depsFromEnv } from "../workflows";
 const STATUSES = ["new", "reviewed", "contacted", "replied", "won", "lost", "skip"] as const;
 
 export async function leadRows(db: D1Database, businesses: Business[]) {
-  return Promise.all(businesses.map(async (b) => {
-    const [audit, contacts] = await Promise.all([latestAudit(db, b.id), listContacts(db, b.id)]);
-    const best = pickRecipient(contacts, domainOf(b.website_url));
+  const ids = businesses.map((b) => b.id);
+  const [audits, contactMap] = await Promise.all([latestAuditsFor(db, ids), contactsFor(db, ids)]);
+  return businesses.map((b) => {
+    const audit = audits.get(b.id) ?? null;
+    const best = pickRecipient(contactMap.get(b.id) ?? [], domainOf(b.website_url));
     return {
       business: b, score: audit?.score ?? null, topFinding: audit?.findings[0]?.evidence ?? null,
       offer: audit?.offer ?? null, bestContact: best.contact?.value ?? null, hasEmail: !!best.emailContact,
       partial: audit?.partial ?? false,
     };
-  }));
+  });
+}
+
+const DEFAULT_LIMIT = 200, MAX_LIMIT = 500;
+function intParam(v: string | undefined, def: number, min: number, max: number) {
+  const n = Number.parseInt(v ?? "", 10);
+  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : def;
 }
 
 export const leadRoutes = new Hono<{ Bindings: Env }>();
@@ -29,7 +37,9 @@ export const leadRoutes = new Hono<{ Bindings: Env }>();
 leadRoutes.get("/", async (c) => {
   const status = c.req.query("status") as LeadStatus | undefined;
   if (status && !STATUSES.includes(status)) return c.json({ error: "bad status" }, 400);
-  return c.json(await leadRows(c.env.DB, await listAllBusinesses(c.env.DB, { status })));
+  const limit = intParam(c.req.query("limit"), DEFAULT_LIMIT, 1, MAX_LIMIT);
+  const offset = intParam(c.req.query("offset"), 0, 0, Number.MAX_SAFE_INTEGER);
+  return c.json(await leadRows(c.env.DB, await listAllBusinesses(c.env.DB, { status, limit, offset })));
 });
 
 leadRoutes.get("/:id", async (c) => {
