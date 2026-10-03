@@ -9,6 +9,8 @@ export type FindingCode =
   | "old_copyright" | "stale_content" | "past_events" | "broken_links"
   | "no_https" | "no_title_or_meta" | "no_contact_form"
   | "low_seo_score" | "low_accessibility"
+  | "no_click_to_call" | "no_local_schema" | "thin_content" | "no_h1" | "missing_alt" | "no_sitemap"
+  | "mixed_content" | "no_https_redirect" | "dated_build"
   | "no_website" | "site_unreachable" | "site_parked";
 
 export interface Finding {

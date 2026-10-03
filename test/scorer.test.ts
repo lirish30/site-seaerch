@@ -4,9 +4,15 @@ import { AUDIT_LABELS } from "../src/worker/scoring/labels";
 import { capGroups, score, type CrawlFacts, type PageSpeedFacts } from "../src/worker/scoring/scorer";
 
 const now = new Date("2026-10-02T00:00:00Z");
+// Neutral values for the page and site-level facts: none of them fires a finding.
+const neutralFacts = {
+  h1Count: 1, wordCount: 500, imageCount: 0, imagesMissingAlt: 0, hasPhone: false, hasTelLink: false, hasLocalBusinessSchema: true,
+  mixedContentCount: 0, datedBuildMarkers: [] as string[], isLikelyJsRendered: false,
+  hasRobotsTxt: true, hasSitemap: true, httpRedirectsToHttps: true,
+};
 const goodCrawl: CrawlFacts = {
   https: true, hasTitle: true, hasMetaDescription: true, hasViewport: true, hasContactForm: true, emailCount: 1,
-  copyrightYear: 2026, latestContentDate: "2026-08-01", pastEventDates: [], brokenLinkCount: 0, platform: "other",
+  copyrightYear: 2026, latestContentDate: "2026-08-01", pastEventDates: [], brokenLinkCount: 0, platform: "other", ...neutralFacts,
 };
 const noLh = { seoScore: null, accessibilityScore: null, seoIssueIds: [], accessibilityIssueIds: [] };
 const goodPs: PageSpeedFacts = { performanceScore: 92, lcpMs: 1800, cls: 0.02, mobileFriendly: true, ...noLh };
@@ -106,7 +112,7 @@ describe("score", () => {
     const r = score({
       siteStatus: "ok",
       crawl: { https: false, hasTitle: false, hasMetaDescription: false, hasViewport: false, hasContactForm: false, emailCount: 0,
-        copyrightYear: 2010, latestContentDate: "2015-01-01", pastEventDates: ["2020-01-01"], brokenLinkCount: 10, platform: "other" },
+        copyrightYear: 2010, latestContentDate: "2015-01-01", pastEventDates: ["2020-01-01"], brokenLinkCount: 10, platform: "other", ...neutralFacts },
       pagespeed: { performanceScore: 10, lcpMs: 9000, cls: 0.9, mobileFriendly: false, ...noLh }, now,
     });
     expect(r.score).toBe(100);
@@ -213,6 +219,135 @@ describe("score", () => {
     it("new_site rule is unchanged by seo findings", () => {
       expect(run({ seoScore: 30 }, { ...goodCrawl, hasViewport: false }).offer).toBe("performance"); // speed 20 > seo 12, no stale
       expect(run({ seoScore: 30 }, { ...goodCrawl, hasViewport: false, copyrightYear: 2018 }).offer).toBe("new_site");
+    });
+  });
+
+  describe("crawl-based findings", () => {
+    const run = (c: Partial<CrawlFacts>, ps: Partial<PageSpeedFacts> = {}) =>
+      score({ siteStatus: "ok", crawl: { ...goodCrawl, ...c }, pagespeed: { ...goodPs, ...ps }, now });
+    const find = (r: ReturnType<typeof score>, code: string) => r.findings.find((f) => f.code === code);
+    const BANNED = /lighthouse|schema|json|sitemap\.xml|robots|\bH1\b|alt text|viewport|meta description/i;
+
+    it("no_click_to_call: phone shown but no tel link", () => {
+      const r = run({ hasPhone: true });
+      expect(find(r, "no_click_to_call")).toMatchObject({ group: "local", points: 8, severity: "medium",
+        evidence: "Their phone number isn't tappable on a phone, so visitors have to copy and paste it" });
+      expect(codes(run({ hasPhone: true, hasTelLink: true }))).toEqual([]);
+      expect(codes(run({ hasPhone: false }))).toEqual([]);
+    });
+
+    it("no_local_schema: business details not machine-readable", () => {
+      const r = run({ hasLocalBusinessSchema: false });
+      expect(find(r, "no_local_schema")).toMatchObject({ group: "local", points: 5, severity: "low",
+        evidence: "The site doesn't include business details (name, address, hours) in a form Google can read" });
+    });
+
+    it("thin_content: boundary at 150 words", () => {
+      expect(codes(run({ wordCount: 149 }))).toEqual(["thin_content"]);
+      expect(codes(run({ wordCount: 150 }))).toEqual([]);
+      expect(find(run({ wordCount: 42 }), "thin_content")).toMatchObject({ group: "seo", points: 5,
+        evidence: "The homepage has very little text (about 42 words), which gives Google little to show" });
+    });
+
+    it("no_h1", () => {
+      expect(find(run({ h1Count: 0 }), "no_h1")).toMatchObject({ group: "seo", points: 3, evidence: "The homepage has no main heading" });
+      expect(codes(run({ h1Count: 2 }))).toEqual([]);
+    });
+
+    it("missing_alt: needs 4+ images and at least half missing", () => {
+      expect(codes(run({ imageCount: 3, imagesMissingAlt: 3 }))).toEqual([]);
+      expect(codes(run({ imageCount: 4, imagesMissingAlt: 2 }))).toEqual(["missing_alt"]);
+      expect(codes(run({ imageCount: 4, imagesMissingAlt: 1 }))).toEqual([]);
+      expect(codes(run({ imageCount: 100, imagesMissingAlt: 49 }))).toEqual([]);
+      expect(codes(run({ imageCount: 100, imagesMissingAlt: 50 }))).toEqual(["missing_alt"]);
+      expect(find(run({ imageCount: 10, imagesMissingAlt: 7 }), "missing_alt")).toMatchObject({ group: "seo", points: 4,
+        evidence: "7 of 10 images have no description, so Google and screen readers can't tell what they show" });
+    });
+
+    it("no_sitemap only when definitely absent (null = unknown)", () => {
+      expect(find(run({ hasSitemap: false }), "no_sitemap")).toMatchObject({ group: "seo", points: 3,
+        evidence: "The site has no sitemap file, which helps Google find all of a site's pages" });
+      expect(codes(run({ hasSitemap: null }))).toEqual([]);
+      expect(codes(run({ hasRobotsTxt: false }))).toEqual([]); // no finding for robots.txt
+    });
+
+    it("mixed_content", () => {
+      expect(find(run({ mixedContentCount: 1 }), "mixed_content")).toMatchObject({ group: "basics", points: 6, severity: "low",
+        evidence: "The page loads some content over an insecure connection, which browsers may block or flag" });
+      expect(codes(run({ mixedContentCount: 0 }))).toEqual([]);
+    });
+
+    it("no_https_redirect only when definitely false", () => {
+      expect(find(run({ httpRedirectsToHttps: false }), "no_https_redirect")).toMatchObject({ group: "basics", points: 6,
+        evidence: "Visiting the site without the secure 'https' version doesn't send people to the secure page" });
+      expect(codes(run({ httpRedirectsToHttps: null }))).toEqual([]);
+      expect(codes(run({ httpRedirectsToHttps: true }))).toEqual([]);
+    });
+
+    it("dated_build lists the first two markers", () => {
+      expect(find(run({ datedBuildMarkers: ["frames"] }), "dated_build")).toMatchObject({ group: "stale", points: 10, severity: "medium",
+        evidence: "The site is built with outdated techniques (frames)" });
+      expect(find(run({ datedBuildMarkers: ["Flash", "frames", "x"] }), "dated_build")!.evidence)
+        .toBe("The site is built with outdated techniques (Flash, frames)");
+      expect(codes(run({ datedBuildMarkers: [] }))).toEqual([]);
+    });
+
+    it("isLikelyJsRendered suppresses absence-based findings only", () => {
+      const absent = { hasPhone: true, hasLocalBusinessSchema: false, wordCount: 10, h1Count: 0 };
+      expect(codes(run(absent)).sort()).toEqual(["no_click_to_call", "no_h1", "no_local_schema", "thin_content"]);
+      expect(codes(run({ ...absent, isLikelyJsRendered: true }))).toEqual([]);
+      const present = { imageCount: 5, imagesMissingAlt: 5, hasSitemap: false, mixedContentCount: 2, httpRedirectsToHttps: false, datedBuildMarkers: ["frames"] };
+      expect(codes(run({ ...present, isLikelyJsRendered: true }))).toEqual(["dated_build", "missing_alt", "mixed_content", "no_https_redirect", "no_sitemap"]);
+    });
+
+    it("seo group cap now binds: five seo findings (27 raw) add 20", () => {
+      const r = run({ wordCount: 10, h1Count: 0, imageCount: 4, imagesMissingAlt: 4, hasSitemap: false }, { seoScore: 30 });
+      expect(codes(r)).toEqual(["low_seo_score", "missing_alt", "no_h1", "no_sitemap", "thin_content"]);
+      expect(r.findings.reduce((n, x) => n + x.points, 0)).toBe(27);
+      expect(r.score).toBe(20);
+      // below the cap nothing is trimmed
+      expect(run({ wordCount: 10, h1Count: 0 }).score).toBe(8);
+    });
+
+    it("local group cap: both local findings (13) fit under 15", () => {
+      expect(run({ hasPhone: true, hasLocalBusinessSchema: false }).score).toBe(13);
+    });
+
+    it("offer: seo and local points feed seo_basics; dated_build + not mobile friendly → new_site", () => {
+      expect(run({ hasPhone: true }).offer).toBe("seo_basics");
+      expect(run({ h1Count: 0 }).offer).toBe("seo_basics");
+      // stale 10 (dated_build) beats basics 8 (local) -> care_plan
+      expect(run({ datedBuildMarkers: ["frames"], hasPhone: true }).offer).toBe("care_plan");
+      // ...and not_mobile_friendly + any stale -> new_site
+      expect(run({ datedBuildMarkers: ["frames"], hasViewport: false }).offer).toBe("new_site");
+      expect(run({ hasViewport: false }).offer).toBe("performance");
+    });
+
+    it("missing_alt removes image-alt from the accessibility evidence (no double claim)", () => {
+      const a11y = { accessibilityScore: 40, accessibilityIssueIds: ["image-alt", "color-contrast", "label"] };
+      expect(find(run({}, a11y), "low_accessibility")!.evidence)
+        .toBe("Parts of the site are hard to read or use for some visitors (images without text descriptions, text that's hard to read against its background)");
+      const both = run({ imageCount: 4, imagesMissingAlt: 4 }, a11y);
+      expect(find(both, "low_accessibility")!.evidence)
+        .toBe("Parts of the site are hard to read or use for some visitors (text that's hard to read against its background, form fields without labels)");
+      const only = run({ imageCount: 4, imagesMissingAlt: 4 }, { accessibilityScore: 40, accessibilityIssueIds: ["image-alt"] });
+      expect(find(only, "low_accessibility")!.evidence).toBe("Parts of the site are hard to read or use for some visitors");
+    });
+
+    it("no new crawl findings when the crawl is null (blocked)", () => {
+      const r = score({ siteStatus: "blocked", crawl: null, pagespeed: goodPs, now });
+      expect(r.findings).toEqual([]);
+    });
+
+    it("evidence of every new finding is free of jargon", () => {
+      const r = run({ hasPhone: true, hasLocalBusinessSchema: false, wordCount: 10, h1Count: 0, imageCount: 8, imagesMissingAlt: 8, hasSitemap: false,
+        mixedContentCount: 3, httpRedirectsToHttps: false,
+        datedBuildMarkers: ["old-style font tags", "scrolling or blinking text", "frames", "Flash", "old-style centering tags", "an outdated jQuery version", "table-based page layout"] });
+      const newCodes = ["no_click_to_call", "no_local_schema", "thin_content", "no_h1", "missing_alt", "no_sitemap", "mixed_content", "no_https_redirect", "dated_build"];
+      expect(codes(r)).toEqual([...newCodes].sort());
+      for (const c of newCodes) expect(find(r, c)!.evidence, c).not.toMatch(BANNED);
+      for (const m of ["old-style font tags", "scrolling or blinking text", "frames", "Flash", "old-style centering tags", "an outdated jQuery version", "table-based page layout"])
+        expect(run({ datedBuildMarkers: [m] }).findings[0].evidence).not.toMatch(BANNED);
     });
   });
 

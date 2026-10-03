@@ -13,7 +13,8 @@ const MAX_BROKEN_CHECKS = 15;
 
 // One deadline covers headers AND (optionally) the body read; racing it also covers
 // fetchers that ignore the abort signal.
-async function get(url: string, o: Opts, method = "GET", readBody = false): Promise<{ res: Response; body: string }> {
+// `x.redirect` defaults to "follow"; `x.anyBody` also reads non-HTML bodies (robots.txt).
+async function get(url: string, o: Opts, method = "GET", readBody = false, x: { redirect?: RequestRedirect; anyBody?: boolean } = {}): Promise<{ res: Response; body: string }> {
   const ctrl = new AbortController();
   const ms = o.timeoutMs ?? 10_000;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -24,8 +25,8 @@ async function get(url: string, o: Opts, method = "GET", readBody = false): Prom
   try {
     return await Promise.race([
       (async () => {
-        const res = await o.fetch(url, { method, redirect: "follow", signal: ctrl.signal, headers: { "user-agent": o.userAgent, accept: "text/html" } });
-        const body = readBody && res.status < 400 && isHtml(res) ? await res.text() : "";
+        const res = await o.fetch(url, { method, redirect: x.redirect ?? "follow", signal: ctrl.signal, headers: { "user-agent": o.userAgent, accept: "text/html" } });
+        const body = readBody && res.status < 400 && (x.anyBody || isHtml(res)) ? await res.text() : "";
         return { res, body };
       })(),
       deadline,
@@ -45,6 +46,44 @@ function isChallengePage(title: string | null, html: string): boolean {
 const isHtml = (r: Response) => (r.headers.get("content-type") ?? "").includes("text/html");
 const empty = (status: SiteStatus, error: string | null = null): CrawlResult =>
   ({ siteStatus: status, finalUrl: null, facts: null, contacts: [], pages: [], error });
+
+const GONE = (s: number) => s === 404 || s === 410;
+const SITEMAP_LINE = /^\s*sitemap\s*:\s*\S/im;
+
+// null = could not tell. A 200 that serves HTML is a soft-404 (the homepage again), never a robots/sitemap file.
+async function checkRobots(origin: string, o: Opts): Promise<{ present: boolean | null; sitemapDeclared: boolean }> {
+  try {
+    const { res, body } = await get(`${origin}/robots.txt`, o, "GET", true, { anyBody: true });
+    if (GONE(res.status)) return { present: false, sitemapDeclared: false };
+    if (res.status !== 200) return { present: null, sitemapDeclared: false };
+    if (isHtml(res)) return { present: false, sitemapDeclared: false };
+    return { present: true, sitemapDeclared: SITEMAP_LINE.test(body) };
+  } catch { return { present: null, sitemapDeclared: false }; }
+}
+async function checkSitemap(origin: string, o: Opts): Promise<boolean | null> {
+  try {
+    const { res } = await get(`${origin}/sitemap.xml`, o);
+    if (GONE(res.status)) return false;
+    if (res.status !== 200) return null;
+    const type = res.headers.get("content-type") ?? "";
+    return isHtml(res) ? false : /xml|text\/plain/i.test(type) ? true : null;
+  } catch { return null; }
+}
+// true = sends visitors to https, false = serves the page over plain http, null = could not tell.
+async function checkHttpRedirect(host: string, o: Opts): Promise<boolean | null> {
+  try {
+    const base = `http://${host}/`;
+    const { res, body } = await get(base, o, "GET", true, { redirect: "manual" });
+    if ([301, 302, 307, 308].includes(res.status)) {
+      const loc = res.headers.get("location");
+      // Only a redirect that lands on https counts; one that goes to another http address could still end on https.
+      return loc && new URL(loc, base).protocol === "https:" ? true : null;
+    }
+    // A meta-refresh page is a redirect we can't see, so it proves nothing.
+    if (res.status === 200 && isHtml(res)) return /http-equiv\s*=\s*["']?refresh/i.test(body) ? null : false;
+    return null;
+  } catch { return null; }
+}
 
 function normalize(url: string): string {
   const u = new URL(/^https?:\/\//i.test(url) ? url : `https://${url}`);
@@ -100,9 +139,15 @@ export async function crawlSite(websiteUrl: string | null, o: Opts): Promise<Cra
   const crawled = new Set(pages.map((p) => p.url));
   const toCheck = homeFacts.internalLinks.filter((l) => !crawled.has(l)).slice(0, MAX_BROKEN_CHECKS);
   let broken = 0;
-  await Promise.all(toCheck.map(async (l) => {
-    try { const { res: r } = await get(l, o, "HEAD"); if (r.status === 404 || r.status === 410) broken++; } catch { /* ignore */ }
-  }));
+  const hu = new URL(homeUrl);
+  // A site on a non-default port has no meaningful plain-http twin, so that probe is skipped (null).
+  const [robots, sitemapFile, httpRedirect] = await Promise.all([
+    checkRobots(hu.origin, o), checkSitemap(hu.origin, o),
+    hu.protocol === "https:" && !hu.port ? checkHttpRedirect(hu.host, o) : Promise.resolve(null),
+    ...toCheck.map(async (l) => {
+      try { const { res: r } = await get(l, o, "HEAD"); if (r.status === 404 || r.status === 410) broken++; } catch { /* ignore */ }
+    }),
+  ]);
 
   const today = o.now.toISOString().slice(0, 10);
   const allDates = [...new Set(facts.flatMap((x) => x.f.dates))].filter((d) => d <= today).sort();
@@ -138,6 +183,19 @@ export async function crawlSite(websiteUrl: string | null, o: Opts): Promise<Cra
       pastEventDates: pastEvents,
       brokenLinkCount: broken,
       platform: homeFacts.platform,
+      h1Count: homeFacts.h1Count,
+      wordCount: homeFacts.wordCount,
+      imageCount: homeFacts.imageCount,
+      imagesMissingAlt: homeFacts.imagesMissingAlt,
+      hasPhone: facts.some((x) => x.f.phones.length > 0),
+      hasTelLink: facts.some((x) => x.f.hasTelLink),
+      hasLocalBusinessSchema: facts.some((x) => x.f.hasLocalBusinessSchema),
+      mixedContentCount: homeFacts.mixedContentCount,
+      datedBuildMarkers: [...new Set(homeFacts.datedBuildMarkers)],
+      isLikelyJsRendered: homeFacts.isLikelyJsRendered,
+      hasRobotsTxt: robots.present,
+      hasSitemap: robots.sitemapDeclared ? true : sitemapFile,
+      httpRedirectsToHttps: httpRedirect,
     },
   };
 }

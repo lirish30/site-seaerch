@@ -13,6 +13,15 @@ export const WEIGHTS = {
   no_contact_form: 6,
   low_seo_score: 12,
   low_accessibility: 6,
+  no_click_to_call: 8,
+  no_local_schema: 5,
+  thin_content: 5,
+  no_h1: 3,
+  missing_alt: 4,
+  no_sitemap: 3,
+  mixed_content: 6,
+  no_https_redirect: 6,
+  dated_build: 10,
 } as const;
 
 export const THRESHOLDS = {
@@ -26,6 +35,9 @@ export const THRESHOLDS = {
   lowPriorityBelow: 20,
   seoLowBelow: 70,
   a11yLowBelow: 70,
+  thinContentWords: 150,
+  missingAltMinImages: 4,
+  missingAltShare: 0.5,
 } as const;
 
 export const SITE_STATUS_SCORE = { no_website: 100, parked: 90, unreachable: 90 } as const;

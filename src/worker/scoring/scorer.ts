@@ -7,6 +7,13 @@ export interface CrawlFacts {
   hasContactForm: boolean; emailCount: number; copyrightYear: number | null;
   latestContentDate: string | null; pastEventDates: string[]; brokenLinkCount: number;
   platform: Platform;
+  h1Count: number; wordCount: number; imageCount: number; imagesMissingAlt: number;
+  hasPhone: boolean; hasTelLink: boolean; hasLocalBusinessSchema: boolean; mixedContentCount: number;
+  datedBuildMarkers: string[];
+  // Static HTML only: when true, "X is absent" findings are suppressed because the page may fill X in with JavaScript.
+  isLikelyJsRendered: boolean;
+  // null = could not determine, which never produces a finding.
+  hasRobotsTxt: boolean | null; hasSitemap: boolean | null; httpRedirectsToHttps: boolean | null;
 }
 export interface PageSpeedFacts {
   performanceScore: number; lcpMs: number; cls: number; mobileFriendly: boolean;
@@ -19,6 +26,9 @@ const GROUP: Record<keyof typeof W, FindingGroup> = {
   old_copyright: "stale", stale_content: "stale", past_events: "stale", broken_links: "stale",
   no_https: "basics", no_title_or_meta: "basics", no_contact_form: "basics",
   low_seo_score: "seo", low_accessibility: "basics",
+  no_click_to_call: "local", no_local_schema: "local",
+  thin_content: "seo", no_h1: "seo", missing_alt: "seo", no_sitemap: "seo",
+  mixed_content: "basics", no_https_redirect: "basics", dated_build: "stale",
 };
 
 function sev(points: number): Finding["severity"] {
@@ -60,6 +70,8 @@ export function score(input: { siteStatus: SiteStatus; crawl: CrawlFacts | null;
   }
 
   const out: Finding[] = [];
+  // Presence-based: the images really are in the HTML, so JS rendering doesn't undo it.
+  const missingAlt = !!crawl && crawl.imageCount >= T.missingAltMinImages && crawl.imagesMissingAlt / crawl.imageCount >= T.missingAltShare;
   if (ps) {
     if (ps.performanceScore < T.slowMobileBelow)
       out.push(f("slow_mobile", `Scores ${ps.performanceScore}/100 on Google's mobile speed test`));
@@ -81,7 +93,8 @@ export function score(input: { siteStatus: SiteStatus; crawl: CrawlFacts | null;
         : `Google's own check scored the homepage's search-friendliness at ${ps.seoScore}/100`));
     }
     if (ps.accessibilityScore !== null && ps.accessibilityScore < T.a11yLowBelow) {
-      const issues = labelsFor(ps.accessibilityIssueIds, 2);
+      // The crawler's missing_alt already says it, so image-alt is not repeated.
+      const issues = labelsFor(ps.accessibilityIssueIds.filter((id) => !(missingAlt && id === "image-alt")), 2);
       out.push(f("low_accessibility", issues.length
         ? `Parts of the site are hard to read or use for some visitors (${issues.join(", ")})`
         : "Parts of the site are hard to read or use for some visitors"));
@@ -105,6 +118,25 @@ export function score(input: { siteStatus: SiteStatus; crawl: CrawlFacts | null;
       out.push(f("no_title_or_meta", "The homepage is missing the title or summary Google shows in search results"));
     if (!crawl.hasContactForm && crawl.emailCount === 0)
       out.push(f("no_contact_form", "There's no contact form or email address on the site"));
+    // We only read static HTML, so a JS-built page can hide anything: absence claims are suppressed for it.
+    const js = crawl.isLikelyJsRendered;
+    if (crawl.hasPhone && !crawl.hasTelLink && !js)
+      out.push(f("no_click_to_call", "Their phone number isn't tappable on a phone, so visitors have to copy and paste it"));
+    if (!crawl.hasLocalBusinessSchema && !js)
+      out.push(f("no_local_schema", "The site doesn't include business details (name, address, hours) in a form Google can read"));
+    if (crawl.wordCount < T.thinContentWords && !js)
+      out.push(f("thin_content", `The homepage has very little text (about ${crawl.wordCount} words), which gives Google little to show`));
+    if (crawl.h1Count === 0 && !js) out.push(f("no_h1", "The homepage has no main heading"));
+    if (missingAlt)
+      out.push(f("missing_alt", `${crawl.imagesMissingAlt} of ${crawl.imageCount} images have no description, so Google and screen readers can't tell what they show`));
+    if (crawl.hasSitemap === false)
+      out.push(f("no_sitemap", "The site has no sitemap file, which helps Google find all of a site's pages"));
+    if (crawl.mixedContentCount >= 1)
+      out.push(f("mixed_content", "The page loads some content over an insecure connection, which browsers may block or flag"));
+    if (crawl.httpRedirectsToHttps === false)
+      out.push(f("no_https_redirect", "Visiting the site without the secure 'https' version doesn't send people to the secure page"));
+    if (crawl.datedBuildMarkers.length >= 1)
+      out.push(f("dated_build", `The site is built with outdated techniques (${crawl.datedBuildMarkers.slice(0, 2).join(", ")})`));
   }
 
   const total = Math.min(100, capGroups(out));
