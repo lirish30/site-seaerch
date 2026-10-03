@@ -2,7 +2,7 @@ import type { Fetcher } from "../crawler/crawl";
 import { crawlSite } from "../crawler/crawl";
 import { runPageSpeed, RateLimitedError } from "../pagespeed";
 import { score } from "../scoring/scorer";
-import { lookupMailDns, type MailDns } from "../dns";
+import { lookupMailDns, siteMailDomain, UNKNOWN_MAIL_DNS, type MailDns } from "../dns";
 import { generateDraft, type ClaudeCaller } from "../drafter/draft";
 import { getBusiness } from "../db/businesses";
 import { replaceContacts, listContacts } from "../db/contacts";
@@ -83,11 +83,13 @@ export async function runLead(
   }
 
   // Never throws (adaptStep retries a throwing step): DNS trouble must not fail or degrade the lead.
+  // Only a domain the site itself lists an email address at is looked up: without one we know nothing about the business's mail.
   const mailDns = await step.do("dns", async (): Promise<MailDns> => {
     try {
-      if (!business.domain || !measurable(crawl.siteStatus)) return { hasMx: null, hasSpf: null };
-      return await lookupMailDns(business.domain, deps.fetch);
-    } catch { return { hasMx: null, hasSpf: null }; }
+      if (!measurable(crawl.siteStatus)) return UNKNOWN_MAIL_DNS;
+      const domain = siteMailDomain(crawl.finalUrl ?? business.domain, await listContacts(deps.db, p.businessId));
+      return domain ? await lookupMailDns(domain, deps.fetch) : UNKNOWN_MAIL_DNS;
+    } catch { return UNKNOWN_MAIL_DNS; }
   });
 
   const audit = await step.do("score", async () => {
@@ -104,7 +106,7 @@ export async function runLead(
       seo_score: ps?.seoScore ?? null, accessibility_score: ps?.accessibilityScore ?? null,
       score: s.score, offer: s.offer, findings: s.findings, raw_r2_key: crawl.rawKey,
       // A note for the owner only: not a finding, never scored, and not passed to the drafter or the report.
-      mail_warning: mailDns.hasMx === false ? "This domain has no mail records, so emails to addresses at this domain will likely bounce" : null,
+      mail_warning: mailDns.hasMx === false ? "A site email address is at a domain with no mail records, so emails to it will likely bounce" : null,
     });
     return { id: a.id, lowPriority: s.lowPriority };
   });

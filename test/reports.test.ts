@@ -2,7 +2,7 @@ import { env, SELF } from "cloudflare:test";
 import { describe, it, expect, beforeAll } from "vitest";
 import { createSearch } from "../src/worker/db/searches";
 import { upsertBusiness } from "../src/worker/db/businesses";
-import { insertAudit } from "../src/worker/db/audits";
+import { insertAudit, latestAudit } from "../src/worker/db/audits";
 import { replaceContacts } from "../src/worker/db/contacts";
 import { insertDraft } from "../src/worker/db/drafts";
 import { saveSettings } from "../src/worker/db/settings";
@@ -32,7 +32,7 @@ async function seedAudit(businessId: string, o: { findings?: Finding[]; partial?
   await wait();
   return insertAudit(env.DB, { business_id: businessId, site_status: "ok", partial: o.partial ?? false, pagespeed_mobile: 31, lcp_ms: 4100, cls: 0.2, mobile_friendly: null,
     https: false, has_title: true, has_meta_description: true, has_contact_form: false, copyright_year: null, latest_content_date: null, broken_link_count: 0, platform: "wix",
-    seo_score: 62, accessibility_score: 71, score: o.score ?? 8675, offer: "new_site", findings: o.findings ?? FINDINGS, raw_r2_key: "raw/SECRET-R2-KEY", mail_warning: null });
+    seo_score: 62, accessibility_score: 71, score: o.score ?? 8675, offer: "new_site", findings: o.findings ?? FINDINGS, raw_r2_key: "raw/SECRET-R2-KEY", mail_warning: "SECRET-MAIL-WARNING no mail records bounce" });
 }
 
 async function seedLead(name = "Ace Plumbing") {
@@ -169,6 +169,9 @@ describe("public report endpoint", () => {
     for (const s of ["SECRET", "8675", "points", "no_https", "slow_mobile", "basics", "score", b.id, a.id, "raw/", "wix", "new_site", "reviewed", "4242"]) {
       expect(text, s).not.toContain(s);
     }
+    // the owner-only mail note is stored on the audit and must stay out of the public report
+    expect((await latestAudit(env.DB, b.id))!.mail_warning).toContain("SECRET-MAIL-WARNING");
+    expect(text).not.toMatch(/mail_warning|mail records|bounce/i);
   });
 
   it("shows partial and handles zero findings; hides a non-https logo", async () => {

@@ -124,7 +124,7 @@ export default function LeadDetail() {
             {d.audit.seo_score != null && <>SEO {d.audit.seo_score}/100</>}{d.audit.seo_score != null && d.audit.accessibility_score != null && " · "}
             {d.audit.accessibility_score != null && <>Accessibility {d.audit.accessibility_score}/100</>}</p>}
           <ul>{d.audit.findings.map((f) => <li key={f.code}><strong>+{f.points}</strong> {f.evidence}</li>)}</ul>
-          {d.audit.mail_warning && <p className="error">⚠ {d.audit.mail_warning}</p>}
+          {d.audit.mail_warning && <div className="notice" role="status"><span>⚠ {d.audit.mail_warning}</span></div>}
           <p className="muted">Audited {new Date(d.audit.created_at).toLocaleString()}</p>
           <h3>Share report</h3>
           {report && <>
