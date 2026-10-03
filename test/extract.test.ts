@@ -133,6 +133,14 @@ describe("platform detection", () => {
     ["webflow generator", "webflow", h(gen("Webflow"))],
     ["webflow website-files image", "webflow", h("", `<img src="https://assets.website-files.com/abc/a.png">`)],
     ["webflow data-wf html attribute", "webflow", `<html data-wf-page="123" data-wf-site="456"><head></head><body></body></html>`],
+    ["same-host absolute wp-content", "wordpress", h("", `<img src="https://a.com/wp-content/uploads/a.jpg">`)],
+    ["www same-host absolute wp-content", "wordpress", h("", `<img src="https://www.a.com/wp-content/uploads/a.jpg">`)],
+    ["subdomain cdn wp-content", "wordpress", h("", `<img src="https://cdn.a.com/wp-content/uploads/a.jpg">`)],
+    ["protocol-relative same-host wp-content", "wordpress", h("", `<script src="//a.com/wp-includes/js/a.js"></script>`)],
+    ["relative wp-content without leading slash", "wordpress", h("", `<img src="wp-content/uploads/a.jpg">`)],
+    ["jetpack photon image", "wordpress", h("", `<img src="https://i0.wp.com/a.com/uploads/a.jpg">`)],
+    ["uppercase tags and attributes", "wix", h("", `<IMG SRC="https://static.wixstatic.com/a.jpg">`)],
+    ["uppercase wp-content attribute", "wordpress", h(`<LINK REL="stylesheet" HREF="/wp-content/themes/x/style.css">`)],
     ["unquoted generator attribute", "wordpress", h(`<meta name=generator content=WordPress>`)],
     ["uppercase generator tag", "wix", h(`<META NAME="GENERATOR" CONTENT="Wix.com Website Builder">`)],
     ["generator content before name", "squarespace", h(`<meta content="Squarespace" name="generator">`)],
@@ -142,7 +150,7 @@ describe("platform detection", () => {
   it.each(positives)("%s -> %s", (_label, want, html) => expect(detect(html)).toBe(want));
 
   // Platform later gates "X is missing" findings, so mislabelling a real WordPress/static site is costly.
-  const negatives: [string, Platform, string][] = [
+  const falsePositiveGuards: [string, Platform, string][] = [
     ["wordpress with footer link to wix.com", "wordpress", h(wp, `<a href="https://www.wix.com">Wix</a>`)],
     ["wordpress hotlinking one wixstatic image", "wordpress", h(wp, `<img src="https://static.wixstatic.com/media/a.jpg">`)],
     ["wordpress with a Shopify Buy Button script", "wordpress", h(wp, `<script src="https://cdn.shopify.com/s/buy-button.js"></script>`)],
@@ -157,11 +165,15 @@ describe("platform detection", () => {
     ["www.squarespace.com link", "other", h("", `<a href="https://www.squarespace.com/pricing">p</a>`)],
     ["www.weebly.com link", "other", h("", `<a href="https://www.weebly.com">w</a>`)],
     ["data-wf attribute on a non-html element", "other", h("", `<div data-wf-page="1"></div>`)],
+    ["squarespace page hotlinking a foreign wp-content image", "squarespace", h(`<link rel="stylesheet" href="https://static1.squarespace.com/a.css">`, `<img src="https://someblog.com/wp-content/uploads/a.jpg">`)],
+    ["wix page linking a foreign wp-content pdf", "wix", h("", `<script src="https://static.parastorage.com/x.js"></script><a href="https://someblog.com/wp-content/uploads/menu.pdf">m</a>`)],
+    ["foreign wp-content link alone on a plain page", "other", h("", `<img src="https://someblog.com/wp-content/uploads/a.jpg">`)],
+    ["foreign wp-includes script alone on a plain page", "other", h("", `<script src="//other.org/wp-includes/js/a.js"></script>`)],
     ["commented-out generator", "other", h(`<!-- <meta name="generator" content="Wix.com Website Builder"> -->`)],
     ["generator tag inside an inline script", "other", h(`<script>document.write('<meta name="generator" content="Wix.com">')</script>`)],
     ["meta description mentioning wixstatic.com", "other", h(`<meta name="description" content="images from wixstatic.com">`)],
   ];
-  it.each(negatives)("%s -> %s", (_label, want, html) => expect(detect(html)).toBe(want));
+  it.each(falsePositiveGuards)("%s -> %s", (_label, want, html) => expect(detect(html)).toBe(want));
 
   it("reads every generator tag, not just the first", () => {
     expect(detect(h(gen("Elementor 3.18.0") + gen("WordPress 6.4")))).toBe("wordpress");

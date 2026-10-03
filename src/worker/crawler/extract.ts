@@ -35,16 +35,18 @@ const PLATFORM_HOSTS: [Exclude<Platform, "wordpress" | "other">, RegExp][] = [
 const WP_PATH = /(^|\/)wp-(content|includes)\//i;
 
 function urlsIn(el: HTMLElement): string[] {
-  const a = el.attributes; const out: string[] = [];
-  for (const k of ["src", "href", "data-src"]) if (a[k]) out.push(a[k]);
-  if (a.content && /^(https?:)?\/\//i.test(a.content.trim())) out.push(a.content);
-  if (a.srcset) for (const c of a.srcset.split(",")) out.push(c.trim().split(/\s+/)[0]);
-  if (a.style) for (const m of a.style.matchAll(/url\(\s*["']?([^"')]+)/gi)) out.push(m[1]);
+  // getAttribute is case-insensitive; `attributes` keeps the source case (<IMG SRC=...>).
+  const out: string[] = []; const g = (k: string) => el.getAttribute(k);
+  for (const k of ["src", "href", "data-src"]) { const v = g(k); if (v) out.push(v); }
+  const content = g("content"); if (content && /^(https?:)?\/\//i.test(content.trim())) out.push(content);
+  const srcset = g("srcset"); if (srcset) for (const c of srcset.split(",")) out.push(c.trim().split(/\s+/)[0]);
+  const style = g("style"); if (style) for (const m of style.matchAll(/url\(\s*["']?([^"')]+)/gi)) out.push(m[1]);
   return out;
 }
 
 // Reads the DOM, never raw HTML: no regex runs over the whole page, and markup inside scripts/comments/text is never a node.
-export function detectPlatform(root: HTMLElement): Platform {
+export function detectPlatform(root: HTMLElement, pageHost: string): Platform {
+  const site = pageHost.toLowerCase().replace(/^www\./, "");
   for (const m of root.querySelectorAll("meta")) {
     if (!/^generator$/i.test(m.getAttribute("name") ?? "")) continue;
     const g = m.getAttribute("content") ?? "";
@@ -54,9 +56,12 @@ export function detectPlatform(root: HTMLElement): Platform {
   for (const el of root.querySelectorAll("[src],[href],[srcset],[data-src],[content],[style]")) {
     for (const raw of urlsIn(el)) {
       const u = raw.trim();
-      // WordPress paths are checked first: a builder never serves its own /wp-content/, while WordPress pages commonly embed foreign builder assets.
-      if (WP_PATH.test(u.replace(/^(https?:)?\/\/[^/?#]*/i, "").split(/[?#]/)[0])) return "wordpress";
       const host = u.match(/^(?:https?:)?\/\/([^/?#:@]+)/i)?.[1].toLowerCase();
+      // WordPress is checked first: a builder never serves its own /wp-content/, while WordPress pages commonly embed foreign builder assets.
+      // But only the site's own (or relative) wp paths count: builder pages often hotlink images/PDFs from someone's WordPress blog, and
+      // "wordpress" is the label that later means "not JS-rendered", so misreading a builder as WordPress is the unsafe direction.
+      const own = !host || host.replace(/^www\./, "") === site || host.endsWith(`.${site}`);
+      if ((own && WP_PATH.test(u.replace(/^(https?:)?\/\/[^/?#]*/i, "").split(/[?#]/)[0])) || (host && /^i\d\.wp\.com$/.test(host))) return "wordpress";
       const hit = host && PLATFORM_HOSTS.find(([, re]) => re.test(host));
       if (hit) hosts.add(hit[0]);
     }
@@ -193,7 +198,7 @@ export function extractPage(html: string, pageUrl: string): PageFacts {
     eventDates: [...eventDates],
     internalLinks: [...internal],
     isParked: PARKED.test(`${title ?? ""} ${text.slice(0, 3000)}`),
-    platform: detectPlatform(root),
+    platform: detectPlatform(root, base.hostname),
   };
 }
 
