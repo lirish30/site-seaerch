@@ -357,6 +357,40 @@ describe("score", () => {
     });
   });
 
+  describe("no_email_auth (mail DNS)", () => {
+    const EV = "Their business email isn't set up with the sender-verification records that help messages reach inboxes, so some may end up in spam";
+    const run = (mailDns: { hasMx: boolean | null; hasSpf: boolean | null } | null | undefined, siteStatus: "ok" | "blocked" | "unreachable" | "parked" | "no_website" = "ok") =>
+      score({ siteStatus, crawl: siteStatus === "ok" ? goodCrawl : null, pagespeed: goodPs, now, ...(mailDns === undefined ? {} : { mailDns }) });
+    const hit = (r: ReturnType<typeof score>) => r.findings.find((x) => x.code === "no_email_auth");
+
+    it("fires only for MX present and SPF absent, with exact evidence, weight 4, basics group", () => {
+      const x = hit(run({ hasMx: true, hasSpf: false }))!;
+      expect(x).toMatchObject({ code: "no_email_auth", group: "basics", points: 4, severity: "low", evidence: EV });
+    });
+    it("counts toward the seo_basics offer through the basics group", () => {
+      const r = run({ hasMx: true, hasSpf: false });
+      expect(r.offer).toBe("seo_basics");
+      expect(r.score).toBe(4);
+    });
+    it("does not fire when MX is false/null, SPF is true/null, or mailDns is missing", () => {
+      for (const m of [{ hasMx: false, hasSpf: false }, { hasMx: null, hasSpf: false }, { hasMx: true, hasSpf: true }, { hasMx: true, hasSpf: null },
+        { hasMx: null, hasSpf: null }, { hasMx: false, hasSpf: null }, null, undefined])
+        expect(hit(run(m)), JSON.stringify(m)).toBeUndefined();
+    });
+    it("fires for a blocked site but not for unreachable, parked or no_website", () => {
+      expect(hit(run({ hasMx: true, hasSpf: false }, "blocked"))).toBeDefined();
+      for (const st of ["unreachable", "parked", "no_website"] as const) {
+        const r = run({ hasMx: true, hasSpf: false }, st);
+        expect(codes(r)).not.toContain("no_email_auth");
+        expect(r.findings).toHaveLength(1);
+      }
+    });
+    it("evidence is plain English: no SPF/DMARC/MX/DNS/record jargon beyond the exact phrase", () => {
+      expect(EV.replace("sender-verification records", "")).not.toMatch(/spf|dmarc|\bmx\b|dns|record/i);
+      expect(hit(run({ hasMx: true, hasSpf: false }))!.evidence).not.toMatch(/spf|dmarc|\bmx\b|dns|record(?!s that)/i);
+    });
+  });
+
   describe("capGroups", () => {
     const fi = (group: Finding["group"], points: number): Finding => ({ code: "low_seo_score", group, severity: "low", points, evidence: "" });
     it("caps seo and local group sums, leaves other groups uncapped", () => {

@@ -2,6 +2,7 @@ import type { Fetcher } from "../crawler/crawl";
 import { crawlSite } from "../crawler/crawl";
 import { runPageSpeed, RateLimitedError } from "../pagespeed";
 import { score } from "../scoring/scorer";
+import { lookupMailDns, type MailDns } from "../dns";
 import { generateDraft, type ClaudeCaller } from "../drafter/draft";
 import { getBusiness } from "../db/businesses";
 import { replaceContacts, listContacts } from "../db/contacts";
@@ -81,8 +82,16 @@ export async function runLead(
     ps = null;
   }
 
+  // Never throws (adaptStep retries a throwing step): DNS trouble must not fail or degrade the lead.
+  const mailDns = await step.do("dns", async (): Promise<MailDns> => {
+    try {
+      if (!business.domain || !measurable(crawl.siteStatus)) return { hasMx: null, hasSpf: null };
+      return await lookupMailDns(business.domain, deps.fetch);
+    } catch { return { hasMx: null, hasSpf: null }; }
+  });
+
   const audit = await step.do("score", async () => {
-    const s = score({ siteStatus: crawl.siteStatus, crawl: crawl.facts, pagespeed: ps, now: deps.now() });
+    const s = score({ siteStatus: crawl.siteStatus, crawl: crawl.facts, pagespeed: ps, mailDns, now: deps.now() });
     const f = crawl.facts;
     const a = await insertAudit(deps.db, {
       business_id: p.businessId, site_status: crawl.siteStatus, partial: measurable(crawl.siteStatus) && ps === null,
@@ -94,6 +103,8 @@ export async function runLead(
       platform: f?.platform ?? null, // null = not crawled; "other" = crawled but unrecognised
       seo_score: ps?.seoScore ?? null, accessibility_score: ps?.accessibilityScore ?? null,
       score: s.score, offer: s.offer, findings: s.findings, raw_r2_key: crawl.rawKey,
+      // A note for the owner only: not a finding, never scored, and not passed to the drafter or the report.
+      mail_warning: mailDns.hasMx === false ? "This domain has no mail records, so emails to addresses at this domain will likely bounce" : null,
     });
     return { id: a.id, lowPriority: s.lowPriority };
   });

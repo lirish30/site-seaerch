@@ -32,7 +32,7 @@ async function seedAudit(businessId: string, o: { findings?: Finding[]; partial?
   await wait();
   return insertAudit(env.DB, { business_id: businessId, site_status: "ok", partial: o.partial ?? false, pagespeed_mobile: 31, lcp_ms: 4100, cls: 0.2, mobile_friendly: null,
     https: false, has_title: true, has_meta_description: true, has_contact_form: false, copyright_year: null, latest_content_date: null, broken_link_count: 0, platform: "wix",
-    seo_score: 62, accessibility_score: 71, score: o.score ?? 8675, offer: "new_site", findings: o.findings ?? FINDINGS, raw_r2_key: "raw/SECRET-R2-KEY" });
+    seo_score: 62, accessibility_score: 71, score: o.score ?? 8675, offer: "new_site", findings: o.findings ?? FINDINGS, raw_r2_key: "raw/SECRET-R2-KEY", mail_warning: null });
 }
 
 async function seedLead(name = "Ace Plumbing") {

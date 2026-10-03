@@ -22,6 +22,7 @@ export const WEIGHTS = {
   mixed_content: 6,
   no_https_redirect: 4,
   dated_build: 10,
+  no_email_auth: 4,
 } as const;
 
 export const THRESHOLDS = {

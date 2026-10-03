@@ -6,7 +6,7 @@ import { shareState } from "../reportView";
 import { STATUSES, type Business, type LeadStatus } from "../types";
 
 interface Finding { code: string; severity: string; points: number; evidence: string; }
-interface Audit { score: number; offer: string; partial: boolean; site_status: string; findings: Finding[]; created_at: string; seo_score: number | null; accessibility_score: number | null; }
+interface Audit { score: number; offer: string; partial: boolean; site_status: string; findings: Finding[]; created_at: string; seo_score: number | null; accessibility_score: number | null; mail_warning: string | null; }
 interface Contact { id: string; type: string; value: string; source_url: string | null; person_name: string | null; role: string | null; }
 interface Draft { id: string; subject: string; body: string; recipient_reason: string; edited: boolean; }
 interface ShareReport { token: string; url: string; expiresAt: string; }
@@ -124,6 +124,7 @@ export default function LeadDetail() {
             {d.audit.seo_score != null && <>SEO {d.audit.seo_score}/100</>}{d.audit.seo_score != null && d.audit.accessibility_score != null && " · "}
             {d.audit.accessibility_score != null && <>Accessibility {d.audit.accessibility_score}/100</>}</p>}
           <ul>{d.audit.findings.map((f) => <li key={f.code}><strong>+{f.points}</strong> {f.evidence}</li>)}</ul>
+          {d.audit.mail_warning && <p className="error">⚠ {d.audit.mail_warning}</p>}
           <p className="muted">Audited {new Date(d.audit.created_at).toLocaleString()}</p>
           <h3>Share report</h3>
           {report && <>

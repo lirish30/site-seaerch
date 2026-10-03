@@ -171,6 +171,124 @@ describe("runLead", () => {
   });
 });
 
+describe("runLead mail DNS", () => {
+  const NO_AUTH = "no_email_auth";
+  // Wraps the fake site fetch with a fake Cloudflare DoH resolver and records every DoH request.
+  function withDoh(answers: { mx?: boolean | "throw" | "servfail"; txt?: string[] | "throw" }, over: Partial<LeadDeps> = {}) {
+    const base = deps(over); const doh: string[] = [];
+    const fetch: LeadDeps["fetch"] = async (u, i) => {
+      if (!u.startsWith("https://cloudflare-dns.com/")) return base.fetch(u, i);
+      doh.push(u);
+      const type = new URL(u).searchParams.get("type");
+      const a = type === "MX" ? answers.mx : answers.txt;
+      if (a === "throw") throw new Error("doh down");
+      if (a === "servfail") return Response.json({ Status: 2 });
+      const Answer = type === "MX" ? (a ? [{ type: 15, data: "10 mx.ace.com." }] : []) : ((a as string[] | undefined) ?? []).map((data) => ({ type: 16, data }));
+      return Response.json({ Status: 0, ...(Answer.length ? { Answer } : {}) });
+    };
+    return { d: { ...base, fetch } as LeadDeps, doh };
+  }
+  const seed = async (id: string, o: Partial<Listing> = {}) => {
+    const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 5 });
+    return upsertBusiness(env.DB, listing({ placeId: id, ...o }), s.id);
+  };
+  const run = async (d: LeadDeps, id: string) => { await runLead(d, step, { businessId: id, searchId: null }); return (await latestAudit(env.DB, id))!; };
+
+  it("runs for an ok site with a domain and feeds scoring (MX but no SPF → finding)", async () => {
+    const b = await seed("M1");
+    const { d, doh } = withDoh({ mx: true, txt: ["\"google-site-verification=x\""] });
+    const a = await run(d, b.id);
+    expect(doh.length).toBeGreaterThan(0);
+    expect(doh.every((u) => u.includes("name=ace.com"))).toBe(true);
+    const f = a.findings.find((x) => x.code === NO_AUTH)!;
+    expect(f.evidence).toBe("Their business email isn't set up with the sender-verification records that help messages reach inboxes, so some may end up in spam");
+    expect(a.mail_warning).toBeNull();
+  });
+
+  it("no finding when SPF exists", async () => {
+    const b = await seed("M2");
+    const a = await run(withDoh({ mx: true, txt: ["\"v=spf1 include:_spf.google.com ~all\""] }).d, b.id);
+    expect(a.findings.map((x) => x.code)).not.toContain(NO_AUTH);
+    expect(a.mail_warning).toBeNull();
+  });
+
+  it("no MX → mail_warning stored, no finding", async () => {
+    const b = await seed("M3");
+    const a = await run(withDoh({ mx: false, txt: [] }).d, b.id);
+    expect(a.findings.map((x) => x.code)).not.toContain(NO_AUTH);
+    expect(a.mail_warning).toBe("This domain has no mail records, so emails to addresses at this domain will likely bounce");
+  });
+
+  it("a mail_warning never reaches the draft prompt", async () => {
+    const b = await seed("M3b");
+    let user = "";
+    const { d } = withDoh({ mx: false, txt: [] }, { claude: async (p) => { user = p.user; return { subject: "S", body: "B", to_contact_id: null, recipient_reason: "r" }; } });
+    await runLead(d, step, { businessId: b.id, searchId: null, forceDraft: true });
+    expect(user.length).toBeGreaterThan(0);
+    expect(user).not.toMatch(/mail records|bounce|spf|dmarc/i);
+  });
+
+  it("DoH throwing or SERVFAIL → normal audit, no finding, no warning, lead does not fail", async () => {
+    for (const [i, answers] of [{ mx: "throw", txt: "throw" }, { mx: "servfail", txt: "servfail" }].entries()) {
+      const b = await seed(`M4-${i}`);
+      const { d, doh } = withDoh(answers as never);
+      const a = await run(d, b.id);
+      expect(doh.length).toBeGreaterThan(0);
+      expect(a.findings.map((x) => x.code)).toContain("slow_mobile");
+      expect(a.findings.map((x) => x.code)).not.toContain(NO_AUTH);
+      expect(a.mail_warning).toBeNull();
+      expect((await getBusiness(env.DB, b.id))!.last_error).toBeNull();
+    }
+  });
+
+  it("an unexpected throw inside the dns step is swallowed (step never throws)", async () => {
+    const b = await seed("M5");
+    const base = deps();
+    const d = { ...base, fetch: async (u: string, i?: RequestInit) => { if (u.includes("cloudflare-dns")) throw new TypeError("boom"); return base.fetch(u, i); } } as LeadDeps;
+    const a = await run(d, b.id);
+    expect(a.mail_warning).toBeNull();
+    expect(a.findings.map((x) => x.code)).not.toContain(NO_AUTH);
+  });
+
+  it("blocked sites are still checked", async () => {
+    const b = await seed("M6", { websiteUrl: "https://walled.com" });
+    const doh: string[] = [];
+    const d = deps({ fetch: async (u) => {
+      if (u.startsWith("https://cloudflare-dns.com/")) { doh.push(u); return Response.json(new URL(u).searchParams.get("type") === "MX" ? { Status: 0, Answer: [{ type: 15, data: "10 m." }] } : { Status: 0 }); }
+      if (u.includes("pagespeedonline")) return Response.json(psiSlow);
+      return new Response("Just a moment...", { status: 403, headers: { "content-type": "text/html" } });
+    } });
+    const a = await run(d, b.id);
+    expect(a.site_status).toBe("blocked");
+    expect(doh.length).toBeGreaterThan(0);
+    expect(a.findings.map((x) => x.code)).toContain(NO_AUTH);
+  });
+
+  it("skipped (no DoH fetch) for no_website, unreachable, parked and for a missing domain", async () => {
+    const cases: [string, Partial<Listing>, LeadDeps["fetch"] | null][] = [
+      ["no_website", { websiteUrl: null }, null],
+      ["unreachable", { websiteUrl: "https://down.com" }, async () => { throw new Error("ECONNREFUSED"); }],
+      ["parked", { websiteUrl: "https://parked.com" }, async () => page("<h1>Buy this domain</h1>")],
+    ];
+    for (const [name, o, f] of cases) {
+      const b = await seed(`M7-${name}`, o);
+      const { d, doh } = withDoh({ mx: true, txt: [] }, f ? { fetch: f } : {});
+      // withDoh wraps base.fetch, so the override fetch is the site; DoH calls would still be recorded by the wrapper.
+      const a = await run(d, b.id);
+      expect(a.site_status, name).toBe(name);
+      expect(doh, name).toEqual([]);
+      expect(a.mail_warning, name).toBeNull();
+      expect(a.findings.map((x) => x.code), name).not.toContain(NO_AUTH);
+    }
+    // Social-only sites are stored without a domain, and the site itself is still crawled.
+    const social = await seed("M7-social", { websiteUrl: "https://facebook.com/ace" });
+    expect(social.domain).toBeNull();
+    const { d, doh } = withDoh({ mx: true, txt: [] });
+    await run(d, social.id);
+    expect(doh).toEqual([]);
+  });
+});
+
 describe("runLeadWithErrorHandling", () => {
   it("records a non-Error throw and increments progress exactly once", async () => {
     const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 5 });

@@ -10,7 +10,7 @@ export type FindingCode =
   | "no_https" | "no_title_or_meta" | "no_contact_form"
   | "low_seo_score" | "low_accessibility"
   | "no_click_to_call" | "no_local_schema" | "thin_content" | "no_h1" | "missing_alt" | "no_sitemap"
-  | "mixed_content" | "no_https_redirect" | "dated_build"
+  | "mixed_content" | "no_https_redirect" | "dated_build" | "no_email_auth"
   | "no_website" | "site_unreachable" | "site_parked";
 
 export interface Finding {
@@ -59,6 +59,7 @@ export interface Audit {
   https: boolean | null; has_title: boolean | null; has_meta_description: boolean | null;
   has_contact_form: boolean | null; copyright_year: number | null; latest_content_date: string | null;
   broken_link_count: number | null; platform: Platform | null; seo_score: number | null; accessibility_score: number | null; score: number; offer: Offer; findings: Finding[]; raw_r2_key: string | null;
+  mail_warning: string | null;
 }
 export type AuditInsert = Omit<Audit, "id" | "created_at">;
 

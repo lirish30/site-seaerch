@@ -28,7 +28,7 @@ const GROUP: Record<keyof typeof W, FindingGroup> = {
   low_seo_score: "seo", low_accessibility: "basics",
   no_click_to_call: "local", no_local_schema: "local",
   thin_content: "seo", no_h1: "seo", missing_alt: "seo", no_sitemap: "seo",
-  mixed_content: "basics", no_https_redirect: "basics", dated_build: "stale",
+  mixed_content: "basics", no_https_redirect: "basics", dated_build: "stale", no_email_auth: "basics",
 };
 
 function sev(points: number): Finding["severity"] {
@@ -52,8 +52,11 @@ export function capGroups(findings: Finding[]): number {
   return total;
 }
 
-export function score(input: { siteStatus: SiteStatus; crawl: CrawlFacts | null; pagespeed: PageSpeedFacts | null; now: Date }) {
-  const { siteStatus, crawl, pagespeed: ps, now } = input;
+export function score(input: {
+  siteStatus: SiteStatus; crawl: CrawlFacts | null; pagespeed: PageSpeedFacts | null; now: Date;
+  mailDns?: { hasMx: boolean | null; hasSpf: boolean | null } | null;
+}) {
+  const { siteStatus, crawl, pagespeed: ps, now, mailDns } = input;
 
   // "blocked" (bot protection) is scored like a site we could not crawl: PageSpeed findings only, and
   // never a site-level claim that it didn't load.
@@ -138,6 +141,10 @@ export function score(input: { siteStatus: SiteStatus; crawl: CrawlFacts | null;
     if (crawl.datedBuildMarkers.length >= 1)
       out.push(f("dated_build", `The site is built with outdated techniques (${crawl.datedBuildMarkers.slice(0, 2).join(", ")})`));
   }
+
+  // Only when they demonstrably have mail (MX) and demonstrably lack SPF; DMARC is deliberately never claimed (too common to be absent).
+  if (mailDns?.hasMx === true && mailDns.hasSpf === false)
+    out.push(f("no_email_auth", "Their business email isn't set up with the sender-verification records that help messages reach inboxes, so some may end up in spam"));
 
   const total = Math.min(100, capGroups(out));
   // Offer selection deliberately uses raw (uncapped) sums, with seo/local points counted as "basics".

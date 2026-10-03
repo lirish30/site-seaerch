@@ -23,7 +23,7 @@ async function seedLead(o: { platform?: "wix" | null; rating?: number | null; re
   const b = await upsertBusiness(env.DB, { placeId: crypto.randomUUID(), name: "Ace", category: null, address: null, phone: null, websiteUrl: "https://ace.com", mapsUrl: null, rating: o.rating ?? null, reviewCount: o.reviewCount ?? null }, s.id);
   const a = await insertAudit(env.DB, { business_id: b.id, site_status: "ok", partial: true, pagespeed_mobile: null, lcp_ms: null, cls: null, mobile_friendly: null,
     https: false, has_title: true, has_meta_description: true, has_contact_form: false, copyright_year: null, latest_content_date: null, broken_link_count: 0, platform: o.platform ?? null, seo_score: null, accessibility_score: null,
-    score: 15, offer: "seo_basics", findings: [{ code: "no_https", group: "basics", severity: "high", points: 15, evidence: "Not secure" }], raw_r2_key: null });
+    score: 15, offer: "seo_basics", findings: [{ code: "no_https", group: "basics", severity: "high", points: 15, evidence: "Not secure" }], raw_r2_key: null, mail_warning: null });
   const [c] = await replaceContacts(env.DB, b.id, [{ type: "email", value: "info@ace.com", source_url: null, person_name: null, role: null, confidence: 0.7 }]);
   await insertDraft(env.DB, { business_id: b.id, audit_id: a.id, to_contact_id: c.id, recipient_reason: "r", subject: "S", body: "B", offer: "seo_basics", steering_note: null });
   return { s, b };

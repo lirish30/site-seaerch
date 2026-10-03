@@ -93,7 +93,7 @@ describe("db", () => {
       business_id: b.id, site_status: "ok", partial: false, pagespeed_mobile: 40, lcp_ms: 5000, cls: 0.1,
       mobile_friendly: true, https: true, has_title: true, has_meta_description: false, has_contact_form: true,
       copyright_year: 2019, latest_content_date: null, broken_link_count: 0, platform: "wix", seo_score: 55, accessibility_score: 0, score: 41, offer: "performance",
-      findings: [{ code: "slow_mobile", group: "speed", severity: "high", points: 25, evidence: "x" }], raw_r2_key: null,
+      findings: [{ code: "slow_mobile", group: "speed", severity: "high", points: 25, evidence: "x" }], raw_r2_key: null, mail_warning: "No mail records",
     });
     const a = await latestAudit(env.DB, b.id);
     expect(a!.findings[0].code).toBe("slow_mobile");
@@ -101,6 +101,7 @@ describe("db", () => {
     expect(a!.platform).toBe("wix");
     expect(a!.seo_score).toBe(55);
     expect(a!.accessibility_score).toBe(0);
+    expect(a!.mail_warning).toBe("No mail records");
   });
 
   it("stores a null platform", async () => {
@@ -110,10 +111,11 @@ describe("db", () => {
       business_id: b.id, site_status: "no_website", partial: false, pagespeed_mobile: null, lcp_ms: null, cls: null,
       mobile_friendly: null, https: null, has_title: null, has_meta_description: null, has_contact_form: null,
       copyright_year: null, latest_content_date: null, broken_link_count: null, platform: null, seo_score: null, accessibility_score: null, score: 100, offer: "new_site",
-      findings: [], raw_r2_key: null,
+      findings: [], raw_r2_key: null, mail_warning: null,
     });
     const a = (await latestAudit(env.DB, b.id))!;
     expect(a.platform).toBeNull();
+    expect(a.mail_warning).toBeNull();
     expect([a.seo_score, a.accessibility_score]).toEqual([null, null]);
   });
 
