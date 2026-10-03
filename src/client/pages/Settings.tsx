@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { api } from "../api";
+import { api, ApiError } from "../api";
+import { parseSpendLimit } from "../spend";
 
 type S = Record<string, string | number>;
 const FIELDS: [string, string, "input" | "textarea"][] = [
@@ -12,11 +13,24 @@ const FIELDS: [string, string, "input" | "textarea"][] = [
 export default function Settings() {
   const [s, setS] = useState<S | null>(null);
   const [usage, setUsage] = useState<{ service: string; units: number; est_cost_usd: number }[]>([]);
-  const [saved, setSaved] = useState(false);
-  useEffect(() => { api.get<{ settings: S; usage: typeof usage }>("/settings").then((r) => { setS(r.settings); setUsage(r.usage); }); }, []);
-  if (!s) return <p>Loading…</p>;
-  const set = (k: string, v: string | number) => { setS({ ...s, [k]: v }); setSaved(false); };
-  async function save() { setS(await api.put<S>("/settings", { ...s, monthly_spend_limit_usd: Number(s!.monthly_spend_limit_usd) })); setSaved(true); }
+  const [saved, setSaved] = useState(false); const [err, setErr] = useState(""); const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    api.get<{ settings: S; usage: typeof usage }>("/settings")
+      .then((r) => { if (!cancelled) { setS(r.settings); setUsage(r.usage); } })
+      .catch((e) => { if (!cancelled) setErr(e instanceof ApiError ? e.message : "Couldn't load settings."); });
+    return () => { cancelled = true; };
+  }, []);
+  if (!s) return err ? <p className="error">{err}</p> : <p>Loading…</p>;
+  const set = (k: string, v: string | number) => { setS({ ...s, [k]: v }); setSaved(false); setErr(""); };
+  async function save() {
+    const limit = parseSpendLimit(s!.monthly_spend_limit_usd);
+    if (limit === null) { setErr("Enter a monthly spend limit between 0 and 10000."); return; }
+    setSaving(true); setErr("");
+    try { setS(await api.put<S>("/settings", { ...s, monthly_spend_limit_usd: limit })); setSaved(true); }
+    catch (e) { setErr(e instanceof ApiError ? `Couldn't save: ${e.message}` : "Couldn't save settings."); }
+    finally { setSaving(false); }
+  }
   const total = usage.reduce((t, u) => t + u.est_cost_usd, 0);
   return (
     <div className="grid2">
@@ -31,14 +45,14 @@ export default function Settings() {
           </div>
         ))}
         <label htmlFor="limit">Monthly spend limit (USD)</label>
-        <input id="limit" type="number" min={0} value={Number(s.monthly_spend_limit_usd)} onChange={(e) => set("monthly_spend_limit_usd", e.target.value)} />
-        <p className="row"><button className="primary" onClick={save}>Save</button>{saved && <span className="muted">Saved</span>}</p>
+        <input id="limit" type="number" min={0} value={String(s.monthly_spend_limit_usd ?? "")} onChange={(e) => set("monthly_spend_limit_usd", e.target.value)} />
+        <p className="row"><button className="primary" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</button>{saved && <span className="muted">Saved</span>}{err && <span className="error">{err}</span>}</p>
       </div>
       <div className="card">
         <h2>This month</h2>
         <table><tbody>
           {usage.map((u) => <tr key={u.service}><td>{u.service}</td><td>{u.units} calls</td><td>${u.est_cost_usd.toFixed(2)}</td></tr>)}
-          <tr><td><strong>Total</strong></td><td /><td><strong>${total.toFixed(2)}</strong> of ${Number(s.monthly_spend_limit_usd).toFixed(2)}</td></tr>
+          <tr><td><strong>Total</strong></td><td /><td><strong>${total.toFixed(2)}</strong> of ${(parseSpendLimit(s.monthly_spend_limit_usd) ?? 0).toFixed(2)}</td></tr>
         </tbody></table>
       </div>
     </div>
