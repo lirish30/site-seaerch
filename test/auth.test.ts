@@ -28,6 +28,30 @@ describe("auth routes", () => {
     expect(me.status).toBe(200);
   });
 
+  it.each([
+    ["null JSON", "null"],
+    ["array JSON", "[]"],
+    ["number password", JSON.stringify({ password: 12345 })],
+    ["object password", JSON.stringify({ password: { toString: "test-pass" } })],
+    ["array password", JSON.stringify({ password: ["test-pass"] })],
+    ["malformed JSON", "{"],
+  ])("%s body → 401, not 500", async (_n, body) => {
+    const r = await SELF.fetch("https://x/api/login", { method: "POST", body, headers: { "content-type": "application/json", "cf-connecting-ip": "10.0.0.1" } });
+    expect(r.status).toBe(401);
+  });
+
+  it("throttles repeated login attempts per client IP with 429", async () => {
+    const attempt = (ip: string) => SELF.fetch("https://x/api/login", { method: "POST", body: JSON.stringify({ password: "nope" }),
+      headers: { "content-type": "application/json", "cf-connecting-ip": ip } });
+    const statuses: number[] = [];
+    for (let i = 0; i < 12; i++) statuses.push((await attempt("203.0.113.9")).status);
+    expect(statuses.slice(0, 10).every((s) => s === 401)).toBe(true);
+    const limited = await attempt("203.0.113.9");
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toEqual({ error: "too many attempts" });
+    expect((await attempt("203.0.113.10")).status).toBe(401);
+  });
+
   it("health stays public", async () => {
     expect((await SELF.fetch("https://x/api/health")).status).toBe(200);
   });

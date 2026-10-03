@@ -16,5 +16,6 @@
     { "name": "lead-workflow", "binding": "LEAD_WORKFLOW", "class_name": "LeadWorkflow" },
     { "name": "search-workflow", "binding": "SEARCH_WORKFLOW", "class_name": "SearchWorkflow" }
   ],
+  "ratelimits": [{ "name": "LOGIN_LIMITER", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } }],
   "observability": { "enabled": true }
 }
