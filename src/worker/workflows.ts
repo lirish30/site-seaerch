@@ -4,6 +4,8 @@ import { runLead, type LeadDeps, type StepLike } from "./pipeline/lead";
 import { anthropicCaller } from "./drafter/draft";
 import { setBusinessError } from "./db/businesses";
 import { incrementProcessed } from "./db/searches";
+import { runSearch } from "./pipeline/search";
+import { BrightDataListingSource } from "./listings/brightdata";
 
 const RETRY = { retries: { limit: 3, delay: "10 seconds" as const, backoff: "exponential" as const }, timeout: "5 minutes" as const };
 
@@ -47,7 +49,14 @@ export class LeadWorkflow extends WorkflowEntrypoint<Env, LeadParams> {
 export type SearchParams = { searchId: string };
 
 export class SearchWorkflow extends WorkflowEntrypoint<Env, SearchParams> {
-  async run(_event: WorkflowEvent<SearchParams>, _step: WorkflowStep) {
-    // Implemented in Task 13
+  async run(event: WorkflowEvent<SearchParams>, step: WorkflowStep) {
+    const env = this.env;
+    const source = new BrightDataListingSource({ apiKey: env.BRIGHTDATA_API_KEY, zone: env.BRIGHTDATA_SERP_ZONE, fetch: (u, i) => fetch(u, i) });
+    await runSearch({
+      db: env.DB, source,
+      startLead: async ({ businessId, searchId }) => {
+        await env.LEAD_WORKFLOW.create({ id: `lead-${searchId}-${businessId}`, params: { businessId, searchId } });
+      },
+    }, adaptStep(step), event.payload.searchId);
   }
 }
