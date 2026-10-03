@@ -40,6 +40,25 @@ describe("routes", () => {
     await saveSettings(env.DB, { monthly_spend_limit_usd: 25 });
   });
 
+  it("marks search failed and returns 502 when workflow create throws", async () => {
+    const orig = env.SEARCH_WORKFLOW.create;
+    (env.SEARCH_WORKFLOW as any).create = async () => { throw new Error("boom"); };
+    try {
+      const r = await api("/api/searches", { method: "POST", body: JSON.stringify({ location: "Boise", businessType: "failcase", maxResults: 5 }) });
+      expect(r.status).toBe(502);
+    } finally {
+      (env.SEARCH_WORKFLOW as any).create = orig;
+    }
+    const row = await env.DB.prepare(`SELECT status, error FROM searches WHERE business_type = 'failcase'`).first<any>();
+    expect(row.status).toBe("failed");
+    expect(row.error).toBe("boom");
+  });
+
+  it("estimate falls back to 50 on non-numeric maxResults", async () => {
+    const r = await (await api("/api/searches/estimate?maxResults=abc")).json<any>();
+    expect(Number.isFinite(r.estUsd)).toBe(true);
+  });
+
   it("search detail returns lead rows with score, top finding, best contact, partial", async () => {
     const { s } = await seedLead();
     const r = await (await api(`/api/searches/${s.id}`)).json<any>();

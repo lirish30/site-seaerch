@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../env";
-import { createSearch, getSearch, listSearches } from "../db/searches";
+import { createSearch, getSearch, listSearches, setSearchStatus } from "../db/searches";
 import { listBusinessesForSearch } from "../db/businesses";
 import { checkSpend, estimateSearchCost } from "../cost";
 import { leadRows } from "./leads";
@@ -18,7 +18,8 @@ export const searchRoutes = new Hono<{ Bindings: Env }>();
 searchRoutes.get("/", async (c) => c.json(await listSearches(c.env.DB)));
 
 searchRoutes.get("/estimate", async (c) => {
-  const n = Math.min(200, Math.max(1, Number(c.req.query("maxResults") ?? 50)));
+  const raw = Number(c.req.query("maxResults") ?? 50);
+  const n = Math.min(200, Math.max(1, Number.isFinite(raw) ? raw : 50));
   const estUsd = estimateSearchCost(n);
   return c.json({ estUsd, ...(await checkSpend(c.env.DB, estUsd)) });
 });
@@ -29,7 +30,13 @@ searchRoutes.post("/", async (c) => {
   const spend = await checkSpend(c.env.DB, estimateSearchCost(parsed.data.maxResults));
   if (!spend.ok) return c.json({ error: "spend limit", ...spend }, 402);
   const s = await createSearch(c.env.DB, parsed.data);
-  await c.env.SEARCH_WORKFLOW.create({ id: `search-${s.id}`, params: { searchId: s.id } });
+  try {
+    await c.env.SEARCH_WORKFLOW.create({ id: `search-${s.id}`, params: { searchId: s.id } });
+  } catch (e) {
+    const error = (e as Error).message.slice(0, 500);
+    await setSearchStatus(c.env.DB, s.id, "failed", error);
+    return c.json({ error }, 502);
+  }
   return c.json(s, 201);
 });
 
