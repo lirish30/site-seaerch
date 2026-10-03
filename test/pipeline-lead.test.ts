@@ -1,0 +1,96 @@
+import { env } from "cloudflare:test";
+import { describe, it, expect } from "vitest";
+import { runLead, regenerateDraft, type LeadDeps, type StepLike } from "../src/worker/pipeline/lead";
+import { createSearch, getSearch } from "../src/worker/db/searches";
+import { upsertBusiness } from "../src/worker/db/businesses";
+import { latestAudit } from "../src/worker/db/audits";
+import { latestDraft } from "../src/worker/db/drafts";
+import { listContacts } from "../src/worker/db/contacts";
+import type { Listing } from "../src/worker/types";
+
+const step: StepLike = { do: (_n, fn) => fn(), sleep: async () => {} };
+const page = (b: string, h = "") => new Response(`<html><head>${h}</head><body>${b}</body></html>`, { headers: { "content-type": "text/html" } });
+const psiSlow = { lighthouseResult: { categories: { performance: { score: 0.3 } }, audits: {
+  "largest-contentful-paint": { numericValue: 7000 }, "cumulative-layout-shift": { numericValue: 0 }, viewport: { score: 1 } } } };
+
+function deps(over: Partial<LeadDeps> = {}): LeadDeps & { claudeCalls: number } {
+  const d: any = {
+    db: env.DB, raw: env.RAW, pagespeedKey: "K", now: () => new Date("2026-10-02T00:00:00Z"), claudeCalls: 0,
+    fetch: async (u: string) => {
+      if (u.startsWith("https://www.googleapis.com/pagespeedonline")) return Response.json(psiSlow);
+      if (u === "https://ace.com/") return page(`<a href="mailto:info@ace.com">m</a><p>© 2019</p>`, `<title>Ace</title><meta name="viewport" content="x">`);
+      return new Response("nf", { status: 404, headers: { "content-type": "text/html" } });
+    },
+    ...over,
+  };
+  d.claude = over.claude ?? (async () => { d.claudeCalls++; return { subject: "Hi", body: "Body", to_contact_id: null, recipient_reason: "r" }; });
+  return d;
+}
+const listing = (o: Partial<Listing>): Listing => ({ placeId: null, name: "Ace", category: "Plumber", address: "Boise", phone: null,
+  websiteUrl: "https://ace.com", mapsUrl: null, rating: null, reviewCount: null, ...o });
+
+describe("runLead", () => {
+  it("crawls, scores, drafts, stores contacts and raw, increments progress", async () => {
+    const s = await createSearch(env.DB, { location: "Boise", businessType: "plumber", radiusKm: 10, maxResults: 5 });
+    const b = await upsertBusiness(env.DB, listing({ placeId: "L1" }), s.id);
+    const d = deps();
+    const r = await runLead(d, step, { businessId: b.id, searchId: s.id });
+    const a = (await latestAudit(env.DB, b.id))!;
+    expect(a.site_status).toBe("ok");
+    expect(a.findings.map((f) => f.code)).toContain("slow_mobile");
+    expect(a.offer).toBe("performance");
+    expect(a.raw_r2_key).toMatch(/^audits\//);
+    expect(await env.RAW.get(a.raw_r2_key!)).not.toBeNull();
+    expect((await listContacts(env.DB, b.id))[0].value).toBe("info@ace.com");
+    expect(r.draftId).not.toBeNull();
+    expect((await latestDraft(env.DB, b.id))!.to_contact_id).toBe((await listContacts(env.DB, b.id))[0].id);
+    expect((await getSearch(env.DB, s.id))!.processed_count).toBe(1);
+  });
+
+  it("pagespeed failure → partial audit, still drafts", async () => {
+    const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 5 });
+    const b = await upsertBusiness(env.DB, listing({ placeId: "L2" }), s.id);
+    const base = deps();
+    const d = deps({ fetch: async (u, i) => u.includes("pagespeedonline") ? new Response("x", { status: 500 }) : base.fetch(u, i) });
+    await runLead(d, step, { businessId: b.id, searchId: s.id });
+    expect((await latestAudit(env.DB, b.id))!.partial).toBe(true);
+  });
+
+  it("low-priority lead is not drafted unless forced", async () => {
+    const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 5 });
+    const b = await upsertBusiness(env.DB, listing({ placeId: "L3", websiteUrl: "https://good.com" }), s.id);
+    const good = async (u: string) => u.includes("pagespeedonline")
+      ? Response.json({ lighthouseResult: { categories: { performance: { score: 0.95 } }, audits: { "largest-contentful-paint": { numericValue: 1000 }, "cumulative-layout-shift": { numericValue: 0 } } } })
+      : u === "https://good.com/" ? page(`<form><input name="email"><textarea></textarea></form><p>© 2026</p>`, `<title>G</title><meta name="description" content="d"><meta name="viewport" content="x">`)
+      : new Response("", { status: 404, headers: { "content-type": "text/html" } });
+    const d = deps({ fetch: good });
+    const r = await runLead(d, step, { businessId: b.id, searchId: s.id });
+    expect(r.draftId).toBeNull();
+    expect(d.claudeCalls).toBe(0);
+    const forced = await runLead(d, step, { businessId: b.id, searchId: null, forceDraft: true });
+    expect(forced.draftId).not.toBeNull();
+  });
+
+  it("no website → score 100, new_site, no pagespeed call", async () => {
+    const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 5 });
+    const b = await upsertBusiness(env.DB, listing({ placeId: "L4", websiteUrl: null }), s.id);
+    let psiCalled = false;
+    const d = deps({ fetch: async (u) => { if (u.includes("pagespeed")) psiCalled = true; return new Response(""); } });
+    await runLead(d, step, { businessId: b.id, searchId: s.id });
+    const a = (await latestAudit(env.DB, b.id))!;
+    expect(a.score).toBe(100);
+    expect(a.offer).toBe("new_site");
+    expect(psiCalled).toBe(false);
+  });
+
+  it("regenerateDraft passes steering note and keeps history", async () => {
+    const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 5 });
+    const b = await upsertBusiness(env.DB, listing({ placeId: "L5" }), s.id);
+    let lastUser = "";
+    const d = deps({ claude: async (p) => { lastUser = p.user; return { subject: "S2", body: "B2", to_contact_id: null, recipient_reason: "r" }; } });
+    await runLead(d, step, { businessId: b.id, searchId: s.id });
+    const dr = await regenerateDraft(d, b.id, "shorter");
+    expect(lastUser).toContain("shorter");
+    expect(dr.steering_note).toBe("shorter");
+  });
+});

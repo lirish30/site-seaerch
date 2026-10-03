@@ -12,5 +12,9 @@
     { "binding": "DB", "database_name": "site-search", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }
   ],
   "r2_buckets": [{ "binding": "RAW", "bucket_name": "site-search-raw" }],
+  "workflows": [
+    { "name": "lead-workflow", "binding": "LEAD_WORKFLOW", "class_name": "LeadWorkflow" },
+    { "name": "search-workflow", "binding": "SEARCH_WORKFLOW", "class_name": "SearchWorkflow" }
+  ],
   "observability": { "enabled": true }
 }
