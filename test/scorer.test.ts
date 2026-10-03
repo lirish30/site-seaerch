@@ -226,12 +226,12 @@ describe("score", () => {
     const run = (c: Partial<CrawlFacts>, ps: Partial<PageSpeedFacts> = {}) =>
       score({ siteStatus: "ok", crawl: { ...goodCrawl, ...c }, pagespeed: { ...goodPs, ...ps }, now });
     const find = (r: ReturnType<typeof score>, code: string) => r.findings.find((f) => f.code === code);
-    const BANNED = /lighthouse|schema|json|sitemap\.xml|robots|\bH1\b|alt text|viewport|meta description/i;
+    const BANNED = /lighthouse|schema|json|sitemap\.xml|robots|\bH1\b|alt text|viewport|meta description|jquery/i;
 
     it("no_click_to_call: phone shown but no tel link", () => {
       const r = run({ hasPhone: true });
       expect(find(r, "no_click_to_call")).toMatchObject({ group: "local", points: 8, severity: "medium",
-        evidence: "Their phone number isn't tappable on a phone, so visitors have to copy and paste it" });
+        evidence: "Their phone number isn't set up as a tap-to-call link, so on many phones visitors have to copy and paste it" });
       expect(codes(run({ hasPhone: true, hasTelLink: true }))).toEqual([]);
       expect(codes(run({ hasPhone: false }))).toEqual([]);
     });
@@ -250,7 +250,7 @@ describe("score", () => {
     });
 
     it("no_h1", () => {
-      expect(find(run({ h1Count: 0 }), "no_h1")).toMatchObject({ group: "seo", points: 3, evidence: "The homepage has no main heading" });
+      expect(find(run({ h1Count: 0 }), "no_h1")).toMatchObject({ group: "seo", points: 3, evidence: "The homepage's headline isn't marked as the main heading, which Google uses to understand the page" });
       expect(codes(run({ h1Count: 2 }))).toEqual([]);
     });
 
@@ -278,7 +278,7 @@ describe("score", () => {
     });
 
     it("no_https_redirect only when definitely false", () => {
-      expect(find(run({ httpRedirectsToHttps: false }), "no_https_redirect")).toMatchObject({ group: "basics", points: 6,
+      expect(find(run({ httpRedirectsToHttps: false }), "no_https_redirect")).toMatchObject({ group: "basics", points: 4,
         evidence: "Visiting the site without the secure 'https' version doesn't send people to the secure page" });
       expect(codes(run({ httpRedirectsToHttps: null }))).toEqual([]);
       expect(codes(run({ httpRedirectsToHttps: true }))).toEqual([]);
@@ -342,12 +342,18 @@ describe("score", () => {
     it("evidence of every new finding is free of jargon", () => {
       const r = run({ hasPhone: true, hasLocalBusinessSchema: false, wordCount: 10, h1Count: 0, imageCount: 8, imagesMissingAlt: 8, hasSitemap: false,
         mixedContentCount: 3, httpRedirectsToHttps: false,
-        datedBuildMarkers: ["old-style font tags", "scrolling or blinking text", "frames", "Flash", "old-style centering tags", "an outdated jQuery version", "table-based page layout"] });
+        datedBuildMarkers: ["old-style font tags", "scrolling or blinking text", "frames", "Flash", "old-style centering tags", "an old, no-longer-updated code library", "table-based page layout"] });
       const newCodes = ["no_click_to_call", "no_local_schema", "thin_content", "no_h1", "missing_alt", "no_sitemap", "mixed_content", "no_https_redirect", "dated_build"];
       expect(codes(r)).toEqual([...newCodes].sort());
       for (const c of newCodes) expect(find(r, c)!.evidence, c).not.toMatch(BANNED);
-      for (const m of ["old-style font tags", "scrolling or blinking text", "frames", "Flash", "old-style centering tags", "an outdated jQuery version", "table-based page layout"])
-        expect(run({ datedBuildMarkers: [m] }).findings[0].evidence).not.toMatch(BANNED);
+      expect(find(run({ datedBuildMarkers: ["an old, no-longer-updated code library"] }), "dated_build")!.evidence)
+        .toBe("The site is built with outdated techniques (an old, no-longer-updated code library)");
+      for (const m of ["old-style font tags", "scrolling or blinking text", "frames", "Flash", "old-style centering tags", "an old, no-longer-updated code library", "table-based page layout"])
+      {
+        const ev = run({ datedBuildMarkers: [m] }).findings[0].evidence;
+        expect(ev).not.toMatch(BANNED);
+        expect(ev.match(/outdated/g)).toHaveLength(1);
+      }
     });
   });
 

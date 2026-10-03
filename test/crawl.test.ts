@@ -183,6 +183,49 @@ describe("crawlSite", () => {
       expect((await crawl({ "https://s.com/sitemap.xml": { status: 500 } })).facts!.hasSitemap).toBeNull();
     });
 
+    it("sitemap body decides, not just the content type: a real sitemap served as text/html is true", async () => {
+      const xml = `<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://s.com/</loc></url></urlset>`;
+      expect((await crawl({ "https://s.com/sitemap.xml": { body: xml } })).facts!.hasSitemap).toBe(true);
+      expect((await crawl({ "https://s.com/sitemap.xml": { body: `<sitemapindex></sitemapindex>`, type: "text/html; charset=utf-8" } })).facts!.hasSitemap).toBe(true);
+    });
+
+    it("a bot-challenge page at /sitemap.xml is unknown (null), not 'no sitemap'", async () => {
+      const chal = html("<div id='cf-browser-verification'>Checking</div>", "<title>Just a moment...</title>");
+      expect((await crawl({ "https://s.com/sitemap.xml": { body: chal } })).facts!.hasSitemap).toBeNull();
+    });
+
+    it("falls back to /sitemap_index.xml and /wp-sitemap.xml when /sitemap.xml is not conclusive", async () => {
+      const xml = { type: "application/xml", body: "<sitemapindex/>" };
+      expect((await crawl({ "https://s.com/sitemap_index.xml": xml })).facts!.hasSitemap).toBe(true);
+      expect((await crawl({ "https://s.com/wp-sitemap.xml": { type: "text/xml", body: "<sitemapindex/>" } })).facts!.hasSitemap).toBe(true);
+      // all three 404 / soft-404 HTML -> false
+      expect((await crawl({ "https://s.com/sitemap_index.xml": { body: html("<p>home</p>") } })).facts!.hasSitemap).toBe(false);
+    });
+
+    it("an error or block on any probe with no success is unknown (null); a success elsewhere still wins", async () => {
+      expect((await crawl({ "https://s.com/sitemap_index.xml": { throws: true } })).facts!.hasSitemap).toBeNull();
+      expect((await crawl({ "https://s.com/wp-sitemap.xml": { status: 403 } })).facts!.hasSitemap).toBeNull();
+      expect((await crawl({ "https://s.com/sitemap.xml": { throws: true }, "https://s.com/wp-sitemap.xml": { type: "text/xml", body: "<urlset/>" } })).facts!.hasSitemap).toBe(true);
+    });
+
+    it("does not probe the extra sitemap paths once /sitemap.xml or robots.txt answers it", async () => {
+      const urls: string[] = [];
+      const inner = fakeFetch({ ...home, "https://s.com/sitemap.xml": { type: "text/xml", body: "<urlset/>" } });
+      await crawlSite("https://s.com", opts(async (u, i) => { urls.push(u); return inner(u, i); }));
+      expect(urls.some((u) => /sitemap_index|wp-sitemap/.test(u))).toBe(false);
+      urls.length = 0;
+      const inner2 = fakeFetch({ ...home, "https://s.com/robots.txt": { type: "text/plain", body: "Sitemap: https://s.com/x.xml" } });
+      await crawlSite("https://s.com", opts(async (u, i) => { urls.push(u); return inner2(u, i); }));
+      expect(urls.some((u) => /sitemap_index|wp-sitemap/.test(u))).toBe(false);
+    });
+
+    it("robots.txt served as text/html still counts when it is plain text with a Sitemap line; a real HTML page does not", async () => {
+      const r = await crawl({ "https://s.com/robots.txt": { body: "User-agent: *\nSitemap: https://s.com/sm.xml" } });
+      expect(r.facts).toMatchObject({ hasRobotsTxt: true, hasSitemap: true });
+      const soft = await crawl({ "https://s.com/robots.txt": { body: html("<p>Sitemap: https://s.com/sm.xml</p>") } });
+      expect(soft.facts).toMatchObject({ hasRobotsTxt: false, hasSitemap: false });
+    });
+
     it("sitemap declared only in robots.txt (any case) → true, even when /sitemap.xml is missing or errors", async () => {
       const robots = { type: "text/plain", body: "User-agent: *\nsitemap: https://s.com/wp-sitemap.xml" };
       expect((await crawl({ "https://s.com/robots.txt": robots, "https://s.com/sitemap.xml": { status: 404 } })).facts!.hasSitemap).toBe(true);
@@ -200,6 +243,40 @@ describe("crawlSite", () => {
       expect((await crawl({ "http://s.com/": { status: 301, location: "http://www.s.com/" } })).facts!.httpRedirectsToHttps).toBeNull();
       expect((await crawl({ "http://s.com/": { status: 500 } })).facts!.httpRedirectsToHttps).toBeNull();
       expect((await crawl({ "http://s.com/": { body: html("", `<meta http-equiv="refresh" content="0;url=https://s.com/">`) } })).facts!.httpRedirectsToHttps).toBeNull();
+    });
+
+    it("http:// 200 pages that redirect with a script, or are a bot challenge, are unknown (null)", async () => {
+      for (const script of [`location.replace("https://s.com/")`, `window.location.assign('https://s.com')`, `location.href = "https://s.com/"`, `window.location = "https://s.com/"`, `top.location.href="https://s.com/"`])
+        expect([script, (await crawl({ "http://s.com/": { body: html(`<script>${script}</script>`) } })).facts!.httpRedirectsToHttps]).toEqual([script, null]);
+      const chal = html("<div id='cf-browser-verification'>Checking</div>", "<title>Just a moment...</title>");
+      expect((await crawl({ "http://s.com/": { body: chal } })).facts!.httpRedirectsToHttps).toBeNull();
+      // plain text mentioning the words is not a redirect
+      expect((await crawl({ "http://s.com/": { body: html("<p>Our relocation = new office</p>") } })).facts!.httpRedirectsToHttps).toBe(false);
+    });
+
+    it("site on a non-default port: no http:// probe, robots and sitemap still probed on that origin", async () => {
+      const urls: string[] = [];
+      const inner = fakeFetch({ "https://s.com:8443/": { body: html("<p>hi</p>") }, "https://s.com:8443/robots.txt": { type: "text/plain", body: "User-agent: *" } });
+      const r = await crawlSite("https://s.com:8443", opts(async (u, i) => { urls.push(u); return inner(u, i); }));
+      expect(r.facts).toMatchObject({ httpRedirectsToHttps: null, hasRobotsTxt: true, hasSitemap: false });
+      expect(urls.some((u) => u.startsWith("http://"))).toBe(false);
+      expect(urls).toContain("https://s.com:8443/sitemap.xml");
+    });
+
+    it("robots/sitemap probes ask for any content type", async () => {
+      const accepts: Record<string, string | undefined> = {};
+      const f: Fetcher = async (url, init) => { accepts[url] = (init?.headers as Record<string, string>)?.accept; return new Response(url === "https://s.com/" ? html("hi") : "", { status: url === "https://s.com/" ? 200 : 404, headers: { "content-type": "text/html" } }); };
+      await crawlSite("https://s.com", opts(f));
+      expect(accepts["https://s.com/robots.txt"]).toBe("*/*");
+      expect(accepts["https://s.com/sitemap.xml"]).toBe("*/*");
+      expect(accepts["https://s.com/"]).toBe("text/html");
+    });
+
+    it("the robots.txt body read is capped", async () => {
+      const big = "# pad\n".repeat(100_000) + "Sitemap: https://s.com/late.xml";
+      const r = await crawl({ "https://s.com/robots.txt": { type: "text/plain", body: big } });
+      expect(r.facts!.hasRobotsTxt).toBe(true);
+      expect(r.facts!.hasSitemap).toBe(false); // the Sitemap line sits past the cap
     });
 
     it("the http:// probe uses redirect: manual; other requests still follow", async () => {
@@ -265,6 +342,8 @@ describe("crawlSite", () => {
       })));
       expect(r.facts).toMatchObject({ hasPhone: true, hasTelLink: true, hasLocalBusinessSchema: true, h1Count: 1 });
       const none = await crawlSite("https://b.com", opts(fakeFetch({ "https://b.com/": { body: html(`<p>Hello</p>`) } })));
+      const noise = await crawlSite("https://c.com", opts(fakeFetch({ "https://c.com/": { body: html(`<p>Order #123-456-7890, License # 100 200 3000, Fax: (208) 555-0199</p>`) } })));
+      expect(noise.facts!.hasPhone).toBe(false);
       expect(none.facts).toMatchObject({ hasPhone: false, hasTelLink: false, hasLocalBusinessSchema: false, h1Count: 0, imageCount: 0, mixedContentCount: 0, datedBuildMarkers: [] });
     });
 

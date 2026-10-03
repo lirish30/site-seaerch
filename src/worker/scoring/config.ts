@@ -20,7 +20,7 @@ export const WEIGHTS = {
   missing_alt: 4,
   no_sitemap: 3,
   mixed_content: 6,
-  no_https_redirect: 6,
+  no_https_redirect: 4,
   dated_build: 10,
 } as const;
 

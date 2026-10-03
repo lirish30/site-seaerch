@@ -8,12 +8,23 @@ export interface PageFacts {
   dates: string[]; eventDates: string[]; internalLinks: string[]; isParked: boolean; platform: Platform;
   h1Count: number; wordCount: number; imageCount: number; imagesMissingAlt: number; hasTelLink: boolean; hasLocalBusinessSchema: boolean;
   mixedContentCount: number; datedBuildMarkers: string[]; isLikelyJsRendered: boolean;
+  hasPhoneNumber: boolean;
 }
 
 const EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
 const OBFUSCATED_RE = /([a-z0-9._%+-]+)\s*[\[(]\s*at\s*[\])]\s*([a-z0-9-]+(?:\s*[\[(]\s*dot\s*[\])]\s*[a-z0-9-]+)+)/gi;
 const JUNK_EMAIL = /(@(example\.(com|org|net)|domain\.com|email\.com|yourdomain\.com)$|@([a-z0-9-]+\.)*sentry\.io$|@([a-z0-9-]+\.)*wixpress\.com$|\.(png|jpe?g|gif|svg|webp)$|^[0-9a-f]{20,}@|^yourname@)/i;
 const PHONE_RE = /(\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}/g;
+// Stricter than PHONE_RE (which feeds contact extraction): NANP area code and exchange start with 2-9, digit boundaries, and
+// a separator between groups, so order numbers, licence numbers and IDs are not read as phone numbers.
+const STRICT_PHONE_RE = /(?<!\d)(?:\+?1[\s.-]?)?(?:\([2-9]\d{2}\)\s?|[2-9]\d{2}[\s.-])[2-9]\d{2}[\s.-]\d{4}(?!\d)/g;
+function hasStrictPhone(text: string): boolean {
+  for (const m of text.matchAll(STRICT_PHONE_RE)) if (!/fax/i.test(text.slice(Math.max(0, m.index! - 16), m.index!))) return true;
+  return false;
+}
+// Anything that makes a number tappable: tel:/callto:/sms: links, WhatsApp links, or an inline handler that dials.
+const TAP_HREF = /^(?:tel:|callto:|sms:|https?:\/\/(?:[a-z0-9-]+\.)*(?:wa\.me|whatsapp\.com)(?:[/:?#]|$))/i;
+const TAP_HANDLER = /\bon[a-z]+\s*=\s*(?:"[^"]*?|'[^']*?)(?<![a-z0-9])(?:tel|callto|sms):/i;
 const SOCIAL_HOSTS = /(^|\.)(facebook|instagram|twitter|x|linkedin|youtube|tiktok|yelp|nextdoor)\.com$/i;
 const SOCIAL_ONLY = /(^|\.)(facebook\.com|fb\.com|instagram\.com|yelp\.com|linktr\.ee|business\.site|nextdoor\.com|twitter\.com|x\.com|tiktok\.com|square\.site|google\.com)$/i;
 const NON_HTML = /\.(pdf|jpe?g|png|gif|svg|webp|zip|docx?|xlsx?|mp4|mp3)(\?|$)/i;
@@ -124,20 +135,31 @@ function personFor(el: HTMLElement | null): { personName: string | null; role: s
   return { personName: null, role: null };
 }
 
-const BUSINESS_TYPES = new Set([
-  "Plumber", "Electrician", "HVACBusiness", "RoofingContractor", "GeneralContractor", "HomeAndConstructionBusiness", "Locksmith", "MovingCompany",
-  "Restaurant", "FoodEstablishment", "CafeOrCoffeeShop", "Bakery", "BarOrPub", "Dentist", "Physician", "MedicalBusiness", "MedicalClinic",
-  "HealthAndBeautyBusiness", "BeautySalon", "HairSalon", "DaySpa", "NailSalon", "AutoRepair", "AutomotiveBusiness", "AutoDealer", "RealEstateAgent",
-  "LegalService", "Attorney", "AccountingService", "FinancialService", "InsuranceAgency", "ProfessionalService", "Store", "LodgingBusiness", "Hotel",
-  "SportsActivityLocation", "ChildCare", "VeterinaryCare", "PetStore",
-]);
+// schema.org LocalBusiness and its descendants. The suffix rule catches types we left out; being generous is the safe direction here,
+// because a "true" only suppresses the no_local_schema finding.
+const BUSINESS_TYPES = new Set(`AnimalShelter ArchiveOrganization AutomotiveBusiness AutoBodyShop AutoDealer AutoPartsStore AutoRental AutoRepair AutoWash GasStation MotorcycleDealer
+  MotorcycleRepair ChildCare Dentist DryCleaningOrLaundry EmergencyService FireStation Hospital PoliceStation EmploymentAgency EntertainmentBusiness AdultEntertainment AmusementPark
+  ArtGallery Casino ComedyClub MovieTheater NightClub FinancialService AccountingService AutomatedTeller BankOrCreditUnion InsuranceAgency FoodEstablishment Bakery BarOrPub Brewery
+  CafeOrCoffeeShop Distillery FastFoodRestaurant IceCreamShop Restaurant Winery GovernmentOffice PostOffice HealthAndBeautyBusiness BeautySalon DaySpa HairSalon HealthClub NailSalon
+  TattooParlor HomeAndConstructionBusiness Electrician GeneralContractor HVACBusiness HousePainter Locksmith MovingCompany Plumber RoofingContractor InternetCafe LegalService Attorney
+  Notary Library LodgingBusiness BedAndBreakfast Campground Hostel Hotel Motel Resort SkiResort VacationRental MedicalBusiness CommunityHealth Dermatology DietNutrition Emergency
+  Geriatric Gynecologic MedicalClinic CovidTestingFacility Midwifery Nursing Obstetric Oncologic Optician Optometric Otolaryngologic Pediatric Pharmacy Physician Physiotherapy
+  PlasticSurgery Podiatric PrimaryCare Psychiatric PublicHealth ProfessionalService RadioStation RealEstateAgent RecyclingCenter SelfStorage ShoppingCenter SportsActivityLocation
+  BowlingAlley ExerciseGym GolfCourse PublicSwimmingPool SportsClub StadiumOrArena TennisComplex Store BikeStore BookStore ClothingStore ComputerStore ConvenienceStore DepartmentStore
+  ElectronicsStore Florist FurnitureStore GardenStore GroceryStore HardwareStore HobbyShop HomeGoodsStore JewelryStore LiquorStore MensClothingStore MobilePhoneStore MovieRentalStore
+  MusicStore OfficeEquipmentStore OutletStore PawnShop PetStore ShoeStore SportingGoodsStore TireShop ToyStore WholesaleStore TelevisionStation TouristInformationCenter TravelAgency
+  VeterinaryCare`.split(/\s+/));
+const BUSINESS_SUFFIX = /(?:Store|Shop|Restaurant|Business|Agency|Contractor|Salon|Clinic|Repair|Center|Centre)$/;
 
 // Accepts bare names, prefixed ("schema:Dentist") and IRIs, with or without trailing slashes.
 function isBusinessType(t: unknown): boolean {
   if (typeof t !== "string" || t.length > 200) return false;
   const name = t.trim().replace(/\/+$/, "").split(/[/:#]/).pop()!;
-  return name.endsWith("LocalBusiness") || BUSINESS_TYPES.has(name);
+  return name.endsWith("LocalBusiness") || BUSINESS_TYPES.has(name) || BUSINESS_SUFFIX.test(name);
 }
+// A node with an address or opening hours has the business details whatever its @type (a bare Organization with neither does not).
+const filled = (v: unknown) => v !== null && v !== undefined && v !== "" && !(Array.isArray(v) && !v.length);
+const hasDetails = (n: Record<string, unknown>) => filled(n.address) || filled(n.openingHours) || filled(n.openingHoursSpecification);
 
 const WRAPPERS = [["<!--", "-->"], ["//<![CDATA[", "//]]>"], ["/*<![CDATA[*/", "/*]]>*/"]];
 
@@ -164,6 +186,7 @@ function hasJsonLdBusiness(html: string): boolean {
       const v = stack.pop();
       if (Array.isArray(v)) { for (const x of v) if (x && typeof x === "object") stack.push(x); continue; }
       const type = (v as Record<string, unknown>)["@type"];
+      if (hasDetails(v as Record<string, unknown>)) return true;
       if (Array.isArray(type) ? type.some(isBusinessType) : isBusinessType(type)) return true;
       for (const x of Object.values(v as object)) if (x && typeof x === "object") stack.push(x);
     }
@@ -182,7 +205,7 @@ const MIXED_SRC_TAGS = new Set(["IMG", "SCRIPT", "IFRAME", "VIDEO", "AUDIO", "SO
 const SKIP_SUBTREE = new Set(["TEMPLATE", "TEXTAREA", "TITLE"]);
 const M = {
   font: "old-style font tags", blink: "scrolling or blinking text", frames: "frames", flash: "Flash", center: "old-style centering tags",
-  jquery: "an outdated jQuery version", table: "table-based page layout",
+  jquery: "an old, no-longer-updated code library", table: "table-based page layout",
 } as const;
 const MARKER_ORDER = [M.font, M.blink, M.frames, M.flash, M.center, M.jquery, M.table];
 
@@ -261,7 +284,7 @@ function scanDom(root: HTMLElement, isHttps: boolean) {
       case "H1": r.h1Count++; if (top) top.nav += 3; break;
       case "A":
         if (top && el.getAttribute("href") !== undefined) top.nav++;
-        if (/^tel:/i.test((el.getAttribute("href") ?? "").trim())) r.hasTelLink = true;
+        if (TAP_HREF.test((el.getAttribute("href") ?? "").trim())) r.hasTelLink = true;
         break;
       // Nested tags come from one paste, and svg <font> is not the HTML tag: count outermost HTML occurrences only.
       case "FONT": if (!fontDepth && !svgDepth) fonts++; fontDepth++; break;
@@ -291,7 +314,8 @@ function scanDom(root: HTMLElement, isHttps: boolean) {
     }
     if (isHttps && (MIXED_SRC_TAGS.has(tag) ? isInsecure(el.getAttribute("src")) : tag === "LINK" && /(^|\s)stylesheet(\s|$)/i.test(el.getAttribute("rel") ?? "") && isInsecure(el.getAttribute("href")))) r.mixedContentCount++;
     if (MOUNT_IDS.has(el.getAttribute("id") ?? "") || tag === "APP-ROOT" || el.getAttribute("ng-app") !== undefined || el.getAttribute("data-ng-app") !== undefined) r.hasMount = true;
-    if (!r.microdataBusiness && (hasBusinessType(el.getAttribute("itemtype")) || hasBusinessType(el.getAttribute("typeof")))) r.microdataBusiness = true;
+    if (!r.hasTelLink && el.rawAttrs && TAP_HANDLER.test(el.rawAttrs)) r.hasTelLink = true;
+    if (!r.microdataBusiness && (/^(?:address|openinghours|openinghoursspecification)$/i.test(el.getAttribute("itemprop") ?? "") || hasBusinessType(el.getAttribute("itemtype")) || hasBusinessType(el.getAttribute("typeof")))) r.microdataBusiness = true;
   }
   if (fonts >= 3) markers.add(M.font);
   if (centers >= 2) markers.add(M.center);
@@ -395,6 +419,7 @@ export function extractPage(html: string, pageUrl: string): PageFacts {
     imageCount: dom.imageCount,
     imagesMissingAlt: dom.imagesMissingAlt,
     hasTelLink: dom.hasTelLink,
+    hasPhoneNumber: hasStrictPhone(text) || root.querySelectorAll('a[href^="tel:" i]').some((a) => (a.getAttribute("href")!.match(/\d/g) ?? []).length >= 10),
     hasLocalBusinessSchema: dom.microdataBusiness || hasJsonLdBusiness(html),
     mixedContentCount: dom.mixedContentCount,
     datedBuildMarkers: dom.datedBuildMarkers,

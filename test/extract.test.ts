@@ -261,7 +261,54 @@ describe("extra page facts", () => {
       expect(facts(b).hasTelLink).toBe(false);
   });
 
+  it("counts callto:, sms:, WhatsApp links and inline tel: handlers as tappable", () => {
+    for (const b of [`<a href="callto:2085550134">c</a>`, `<a href="SMS:+12085550134">t</a>`, `<a href="https://wa.me/12085550134">w</a>`,
+      `<a href="https://api.whatsapp.com/send?phone=1">w</a>`, `<a href="https://www.whatsapp.com/x">w</a>`, `<a href="#" onclick="window.location='tel:2085550134'">c</a>`,
+      `<a href="#" ONCLICK='location.href="tel:2085550134"'>c</a>`])
+      expect([b, facts(b).hasTelLink]).toEqual([b, true]);
+    for (const b of [`<a href="https://notwhatsapp.com/x">w</a>`, `<a href="#" onclick="doHotel('x')">c</a>`, `<a href="#" onclick="hotel:1">c</a>`, `<p onfoo="x">tel:1</p>`])
+      expect([b, facts(b).hasTelLink]).toEqual([b, false]);
+  });
+
+  describe("hasPhoneNumber (strict)", () => {
+    const has = (t: string) => facts(`<p>${t}</p>`).hasPhoneNumber;
+    it.each(["Call (208) 555-0134", "208-555-0134", "208.555.0134", "+1 208 555 0134", "1-208-555-0134", "(208)555-0134", "Phone: 208 555 0134."])("%s -> true", (t) => expect(has(t)).toBe(true));
+    it.each(["Order #123-456-7890", "License # 100 200 3000", "Ref 98765 432 1098", "ID 2085550134", "Serial 12208-555-01345", "Call 555-0134", "Fax: (208) 555-0199", "FAX 208-555-0199",
+      "Fax number is (208) 555-0199", "number 208-155-0134", "code 108-555-0134"])("%s -> false", (t) => expect(has(t)).toBe(false));
+    it("a number far after 'fax' still counts, and a tel: href number counts", () => {
+      expect(has("Fax: (208) 555-0199 and for service call (208) 555-0134")).toBe(true);
+      expect(facts(`<a href="tel:+12085550134">Call us</a>`).hasPhoneNumber).toBe(true);
+      expect(facts(`<a href="tel:123">x</a>`).hasPhoneNumber).toBe(false);
+    });
+    it("leaves the loose phones list for contacts unchanged", () => {
+      expect(facts(`<p>Order #123-456-7890</p>`).phones).toEqual(["123-456-7890"]);
+    });
+  });
+
   describe("LocalBusiness schema", () => {
+    it.each(["HardwareStore", "Florist", "Pharmacy", "Optician", "HousePainter", "AutoBodyShop", "ExerciseGym", "BedAndBreakfast", "Winery", "FastFoodRestaurant", "IceCreamShop",
+      "ClothingStore", "Motel", "Campground", "DryCleaningOrLaundry", "SelfStorage", "TravelAgency", "Notary", "TattooParlor", "GolfCourse", "EmergencyService", "AnimalShelter",
+      "Library", "TouristInformationCenter", "PawnShop", "TireShop", "Brewery", "Physiotherapy"])("%s -> true (JSON-LD and microdata)", (t) => {
+      expect(facts(ld(`{"@type":"${t}"}`)).hasLocalBusinessSchema).toBe(true);
+      expect(facts(`<div itemscope itemtype="https://schema.org/${t}"></div>`).hasLocalBusinessSchema).toBe(true);
+    });
+    it("unlisted types with a business-like suffix count; unrelated ones do not", () => {
+      for (const t of ["PiercingShop", "YogaStudioStore", "CarpetRepair", "FencingContractor", "NailSalon", "UrgentCareClinic", "TaxAgency", "ConferenceCentre", "SpaBusiness"])
+        expect([t, facts(ld(`{"@type":"${t}"}`)).hasLocalBusinessSchema]).toEqual([t, true]);
+      for (const t of ["WebSite", "WebPage", "Person", "Article", "BreadcrumbList", "Product", "Event", "Organization", "ImageObject", "SearchAction"])
+        expect([t, facts(ld(`{"@type":"${t}"}`)).hasLocalBusinessSchema]).toEqual([t, false]);
+    });
+    it("any JSON-LD node carrying an address or opening hours has the business details", () => {
+      for (const j of [`{"@type":"Organization","address":{"@type":"PostalAddress","streetAddress":"1 Main"}}`, `{"@type":"Organization","address":"1 Main St, Boise"}`,
+        `{"@type":"Organization","openingHours":"Mo-Fr 09:00-17:00"}`, `{"@type":"Organization","openingHoursSpecification":[{"@type":"OpeningHoursSpecification"}]}`,
+        `{"@graph":[{"@type":"WebSite"},{"@type":"Organization","name":"A","address":{"streetAddress":"1 Main"}}]}`])
+        expect([j, facts(ld(j)).hasLocalBusinessSchema]).toEqual([j, true]);
+      for (const j of [`{"@type":"Organization","name":"A","url":"https://a.com"}`, `{"@type":"Organization","address":""}`, `{"@type":"Organization","address":null}`,
+        `{"@type":"Organization","description":"our address and openingHours"}`])
+        expect([j, facts(ld(j)).hasLocalBusinessSchema]).toEqual([j, false]);
+      expect(facts(`<div itemscope itemtype="https://schema.org/Organization"><span itemprop="address">1 Main</span></div>`).hasLocalBusinessSchema).toBe(true);
+    });
+
     const yes: [string, string][] = [
       ["plain LocalBusiness", ld(`{"@context":"https://schema.org","@type":"LocalBusiness","name":"Ace"}`)],
       ["specific subtype", ld(`{"@type":"Plumber"}`)],
@@ -405,7 +452,7 @@ describe("extra page facts", () => {
 
     it("flags jQuery older than 1.12 only", () => {
       for (const s of ["/js/jquery-1.7.2.min.js", "https://ajax.googleapis.com/ajax/libs/jquery/1.8.3/jquery.min.js", "/js/jquery.1.9.1.js", "/jquery-1.11.3.js?v=2", "/js/jquery-1.4.min.js", "/JS/JQuery-1.7.2.MIN.js", "/jquery-0.9.js"])
-        expect(m("", jq(s))).toEqual(["an outdated jQuery version"]);
+        expect(m("", jq(s))).toEqual(["an old, no-longer-updated code library"]);
       for (const s of ["/js/jquery-1.12.4.min.js", "/js/jquery-2.2.4.js", "/js/jquery-3.6.0.min.js", "https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js",
         "/js/jquery.min.js", "/js/jquery-migrate-1.2.1.min.js", "/js/jquery-ui-1.8.24.min.js", "/js/jquery.cookie-1.4.1.js", "/assets/1.2/jquery.min.js", "/js/app-1.7.2.js", "/x.js?jquery-1.7.2.js"])
         expect(m("", jq(s))).toEqual([]);
@@ -470,7 +517,7 @@ describe("extra page facts", () => {
 
     it("de-duplicates and reports several markers", () => {
       expect(m(`<center><font>a</font></center><center>b</center><font>d</font><font>e</font><marquee>c</marquee>`, jq("/jquery-1.7.2.js"))).toEqual([
-        "old-style font tags", "scrolling or blinking text", "old-style centering tags", "an outdated jQuery version",
+        "old-style font tags", "scrolling or blinking text", "old-style centering tags", "an old, no-longer-updated code library",
       ]);
     });
   });

@@ -121,12 +121,12 @@ export function score(input: { siteStatus: SiteStatus; crawl: CrawlFacts | null;
     // We only read static HTML, so a JS-built page can hide anything: absence claims are suppressed for it.
     const js = crawl.isLikelyJsRendered;
     if (crawl.hasPhone && !crawl.hasTelLink && !js)
-      out.push(f("no_click_to_call", "Their phone number isn't tappable on a phone, so visitors have to copy and paste it"));
+      out.push(f("no_click_to_call", "Their phone number isn't set up as a tap-to-call link, so on many phones visitors have to copy and paste it"));
     if (!crawl.hasLocalBusinessSchema && !js)
       out.push(f("no_local_schema", "The site doesn't include business details (name, address, hours) in a form Google can read"));
     if (crawl.wordCount < T.thinContentWords && !js)
       out.push(f("thin_content", `The homepage has very little text (about ${crawl.wordCount} words), which gives Google little to show`));
-    if (crawl.h1Count === 0 && !js) out.push(f("no_h1", "The homepage has no main heading"));
+    if (crawl.h1Count === 0 && !js) out.push(f("no_h1", "The homepage's headline isn't marked as the main heading, which Google uses to understand the page"));
     if (missingAlt)
       out.push(f("missing_alt", `${crawl.imagesMissingAlt} of ${crawl.imageCount} images have no description, so Google and screen readers can't tell what they show`));
     if (crawl.hasSitemap === false)

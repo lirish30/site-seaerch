@@ -13,8 +13,21 @@ const MAX_BROKEN_CHECKS = 15;
 
 // One deadline covers headers AND (optionally) the body read; racing it also covers
 // fetchers that ignore the abort signal.
-// `x.redirect` defaults to "follow"; `x.anyBody` also reads non-HTML bodies (robots.txt).
-async function get(url: string, o: Opts, method = "GET", readBody = false, x: { redirect?: RequestRedirect; anyBody?: boolean } = {}): Promise<{ res: Response; body: string }> {
+// `x.redirect` defaults to "follow"; `x.anyBody` also reads non-HTML bodies (robots.txt); `x.maxBytes` stops reading
+// after that many bytes; `x.accept` overrides the Accept header (text/html by default).
+interface GetX { redirect?: RequestRedirect; anyBody?: boolean; maxBytes?: number; accept?: string }
+async function readText(res: Response, maxBytes?: number): Promise<string> {
+  if (!maxBytes || !res.body) return res.text();
+  const reader = res.body.getReader(); const dec = new TextDecoder(); let out = "", n = 0;
+  while (n < maxBytes) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.byteLength; out += dec.decode(value, { stream: true });
+  }
+  await reader.cancel().catch(() => {});
+  return out;
+}
+async function get(url: string, o: Opts, method = "GET", readBody = false, x: GetX = {}): Promise<{ res: Response; body: string }> {
   const ctrl = new AbortController();
   const ms = o.timeoutMs ?? 10_000;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -25,9 +38,9 @@ async function get(url: string, o: Opts, method = "GET", readBody = false, x: { 
   try {
     return await Promise.race([
       (async () => {
-        const res = await o.fetch(url, { method, redirect: x.redirect ?? "follow", signal: ctrl.signal, headers: { "user-agent": o.userAgent, accept: "text/html" } });
-        const body = readBody && res.status < 400 && (x.anyBody || isHtml(res)) ? await res.text() : "";
-        return { res, body };
+        const res = await o.fetch(url, { method, redirect: x.redirect ?? "follow", signal: ctrl.signal, headers: { "user-agent": o.userAgent, accept: x.accept ?? "text/html" } });
+        if (!(readBody && res.status < 400 && (x.anyBody || isHtml(res)))) { await res.body?.cancel().catch(() => {}); return { res, body: "" }; }
+        return { res, body: await readText(res, x.maxBytes) };
       })(),
       deadline,
     ]);
@@ -49,26 +62,43 @@ const empty = (status: SiteStatus, error: string | null = null): CrawlResult =>
 
 const GONE = (s: number) => s === 404 || s === 410;
 const SITEMAP_LINE = /^\s*sitemap\s*:\s*\S/im;
+const PROBE: GetX = { anyBody: true, maxBytes: 64 * 1024, accept: "*/*" };
+const titleOf = (html: string) => html.match(/<title[^>]*>([^<]*)/i)?.[1] ?? null;
 
 // null = could not tell. A 200 that serves HTML is a soft-404 (the homepage again), never a robots/sitemap file.
 async function checkRobots(origin: string, o: Opts): Promise<{ present: boolean | null; sitemapDeclared: boolean }> {
   try {
-    const { res, body } = await get(`${origin}/robots.txt`, o, "GET", true, { anyBody: true });
+    const { res, body } = await get(`${origin}/robots.txt`, o, "GET", true, PROBE);
     if (GONE(res.status)) return { present: false, sitemapDeclared: false };
     if (res.status !== 200) return { present: null, sitemapDeclared: false };
-    if (isHtml(res)) return { present: false, sitemapDeclared: false };
+    // Some servers send plain-text robots.txt as text/html: no <html> tag means it is the file, not a page.
+    if (isHtml(res) && (/<html/i.test(body) || !body.trim())) return { present: false, sitemapDeclared: false };
     return { present: true, sitemapDeclared: SITEMAP_LINE.test(body) };
   } catch { return { present: null, sitemapDeclared: false }; }
 }
-async function checkSitemap(origin: string, o: Opts): Promise<boolean | null> {
+// true = a sitemap, false = definitely none here (404/410 or an ordinary HTML page), null = could not tell.
+async function probeSitemap(url: string, o: Opts): Promise<boolean | null> {
   try {
-    const { res } = await get(`${origin}/sitemap.xml`, o);
+    const { res, body } = await get(url, o, "GET", true, PROBE);
     if (GONE(res.status)) return false;
     if (res.status !== 200) return null;
-    const type = res.headers.get("content-type") ?? "";
-    return isHtml(res) ? false : /xml|text\/plain/i.test(type) ? true : null;
+    if (/<urlset|<sitemapindex/i.test(body)) return true;
+    if (isHtml(res)) return isChallengePage(titleOf(body), body) ? null : false;
+    return /xml|text\/plain/i.test(res.headers.get("content-type") ?? "") ? true : null;
   } catch { return null; }
 }
+// Common sitemap locations, tried in turn only while the answer is still open. Any success wins; false needs every probe to say "none".
+async function checkSitemap(origin: string, o: Opts, declared: boolean): Promise<boolean | null> {
+  if (declared) return true;
+  const results: (boolean | null)[] = [];
+  for (const path of ["/sitemap.xml", "/sitemap_index.xml", "/wp-sitemap.xml"]) {
+    const r = await probeSitemap(`${origin}${path}`, o);
+    if (r === true) return true;
+    results.push(r);
+  }
+  return results.includes(null) ? null : false;
+}
+const SCRIPT_REDIRECT = /(?<![a-z0-9_$])(?:location\s*\.\s*(?:replace|assign)\s*\(|location(?:\s*\.\s*href)?\s*=(?!=)|top\s*\.\s*location)/i;
 // true = sends visitors to https, false = serves the page over plain http, null = could not tell.
 async function checkHttpRedirect(host: string, o: Opts): Promise<boolean | null> {
   try {
@@ -79,9 +109,10 @@ async function checkHttpRedirect(host: string, o: Opts): Promise<boolean | null>
       // Only a redirect that lands on https counts; one that goes to another http address could still end on https.
       return loc && new URL(loc, base).protocol === "https:" ? true : null;
     }
-    // A meta-refresh page is a redirect we can't see, so it proves nothing.
-    if (res.status === 200 && isHtml(res)) return /http-equiv\s*=\s*["']?refresh/i.test(body) ? null : false;
-    return null;
+    if (res.status !== 200 || !isHtml(res)) return null;
+    // A meta-refresh or script redirect is one we can't follow, and a bot-check page says nothing about the site: both prove nothing.
+    if (/http-equiv\s*=\s*["']?refresh/i.test(body) || SCRIPT_REDIRECT.test(body) || isChallengePage(titleOf(body), body)) return null;
+    return false;
   } catch { return null; }
 }
 
@@ -141,8 +172,8 @@ export async function crawlSite(websiteUrl: string | null, o: Opts): Promise<Cra
   let broken = 0;
   const hu = new URL(homeUrl);
   // A site on a non-default port has no meaningful plain-http twin, so that probe is skipped (null).
-  const [robots, sitemapFile, httpRedirect] = await Promise.all([
-    checkRobots(hu.origin, o), checkSitemap(hu.origin, o),
+  const [siteFiles, httpRedirect] = await Promise.all([
+    checkRobots(hu.origin, o).then(async (robots) => ({ robots, sitemap: await checkSitemap(hu.origin, o, robots.sitemapDeclared) })),
     hu.protocol === "https:" && !hu.port ? checkHttpRedirect(hu.host, o) : Promise.resolve(null),
     ...toCheck.map(async (l) => {
       try { const { res: r } = await get(l, o, "HEAD"); if (r.status === 404 || r.status === 410) broken++; } catch { /* ignore */ }
@@ -187,14 +218,14 @@ export async function crawlSite(websiteUrl: string | null, o: Opts): Promise<Cra
       wordCount: homeFacts.wordCount,
       imageCount: homeFacts.imageCount,
       imagesMissingAlt: homeFacts.imagesMissingAlt,
-      hasPhone: facts.some((x) => x.f.phones.length > 0),
+      hasPhone: facts.some((x) => x.f.hasPhoneNumber),
       hasTelLink: facts.some((x) => x.f.hasTelLink),
       hasLocalBusinessSchema: facts.some((x) => x.f.hasLocalBusinessSchema),
       mixedContentCount: homeFacts.mixedContentCount,
       datedBuildMarkers: [...new Set(homeFacts.datedBuildMarkers)],
       isLikelyJsRendered: homeFacts.isLikelyJsRendered,
-      hasRobotsTxt: robots.present,
-      hasSitemap: robots.sitemapDeclared ? true : sitemapFile,
+      hasRobotsTxt: siteFiles.robots.present,
+      hasSitemap: siteFiles.sitemap,
       httpRedirectsToHttps: httpRedirect,
     },
   };
