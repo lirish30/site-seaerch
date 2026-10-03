@@ -1,0 +1,46 @@
+import { useEffect, useState } from "react";
+import { api } from "../api";
+
+type S = Record<string, string | number>;
+const FIELDS: [string, string, "input" | "textarea"][] = [
+  ["your_name", "Your name", "input"], ["business_name", "Business name", "input"], ["contact_email", "Contact email (used in crawler user-agent)", "input"],
+  ["services_blurb", "What you offer", "textarea"], ["signature", "Signature", "textarea"],
+  ["physical_address", "Physical mailing address (required by CAN-SPAM)", "input"], ["opt_out_line", "Opt-out line", "input"],
+  ["tone_notes", "Voice / tone notes for drafts", "textarea"],
+];
+
+export default function Settings() {
+  const [s, setS] = useState<S | null>(null);
+  const [usage, setUsage] = useState<{ service: string; units: number; est_cost_usd: number }[]>([]);
+  const [saved, setSaved] = useState(false);
+  useEffect(() => { api.get<{ settings: S; usage: typeof usage }>("/settings").then((r) => { setS(r.settings); setUsage(r.usage); }); }, []);
+  if (!s) return <p>Loading…</p>;
+  const set = (k: string, v: string | number) => { setS({ ...s, [k]: v }); setSaved(false); };
+  async function save() { setS(await api.put<S>("/settings", { ...s, monthly_spend_limit_usd: Number(s!.monthly_spend_limit_usd) })); setSaved(true); }
+  const total = usage.reduce((t, u) => t + u.est_cost_usd, 0);
+  return (
+    <div className="grid2">
+      <div className="card">
+        <h2>Your profile</h2>
+        {FIELDS.map(([k, label, kind]) => (
+          <div key={k}>
+            <label htmlFor={k}>{label}</label>
+            {kind === "input"
+              ? <input id={k} value={String(s[k] ?? "")} onChange={(e) => set(k, e.target.value)} />
+              : <textarea id={k} value={String(s[k] ?? "")} onChange={(e) => set(k, e.target.value)} />}
+          </div>
+        ))}
+        <label htmlFor="limit">Monthly spend limit (USD)</label>
+        <input id="limit" type="number" min={0} value={Number(s.monthly_spend_limit_usd)} onChange={(e) => set("monthly_spend_limit_usd", e.target.value)} />
+        <p className="row"><button className="primary" onClick={save}>Save</button>{saved && <span className="muted">Saved</span>}</p>
+      </div>
+      <div className="card">
+        <h2>This month</h2>
+        <table><tbody>
+          {usage.map((u) => <tr key={u.service}><td>{u.service}</td><td>{u.units} calls</td><td>${u.est_cost_usd.toFixed(2)}</td></tr>)}
+          <tr><td><strong>Total</strong></td><td /><td><strong>${total.toFixed(2)}</strong> of ${Number(s.monthly_spend_limit_usd).toFixed(2)}</td></tr>
+        </tbody></table>
+      </div>
+    </div>
+  );
+}

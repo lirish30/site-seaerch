@@ -1,0 +1,23 @@
+:root { --bg:#fafaf9; --fg:#1c1917; --muted:#78716c; --line:#e7e5e4; --accent:#2563eb; --bad:#dc2626; --warn:#d97706; --ok:#16a34a; --card:#fff; }
+@media (prefers-color-scheme: dark) { :root { --bg:#0c0a09; --fg:#f5f5f4; --muted:#a8a29e; --line:#292524; --card:#1c1917; } }
+* { box-sizing: border-box; }
+body { margin:0; font: 15px/1.5 system-ui, sans-serif; background:var(--bg); color:var(--fg); }
+.shell { max-width: 1200px; margin: 0 auto; padding: 16px; }
+.nav { display:flex; gap:16px; align-items:center; padding-bottom:12px; border-bottom:1px solid var(--line); margin-bottom:16px; flex-wrap:wrap; }
+.nav a { color:var(--muted); text-decoration:none; } .nav a.active { color:var(--fg); font-weight:600; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:16px; }
+.grid2 { display:grid; grid-template-columns: 1fr 1fr; gap:16px; } @media (max-width: 800px) { .grid2 { grid-template-columns: 1fr; } }
+label { display:block; font-weight:600; margin:12px 0 4px; }
+input, textarea, select { width:100%; padding:8px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--fg); font:inherit; }
+textarea { min-height: 120px; }
+button { padding:8px 14px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--fg); cursor:pointer; font:inherit; }
+button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+button:disabled { opacity:.5; cursor:default; }
+.row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+table { width:100%; border-collapse:collapse; } th, td { text-align:left; padding:8px; border-bottom:1px solid var(--line); vertical-align:top; }
+th { cursor:pointer; user-select:none; color:var(--muted); font-weight:600; }
+.table-wrap { overflow-x:auto; }
+.score { font-weight:700; } .score.high { color:var(--bad); } .score.mid { color:var(--warn); } .score.low { color:var(--muted); }
+.muted { color:var(--muted); } .error { color:var(--bad); }
+.badge { display:inline-block; padding:1px 8px; border-radius:99px; border:1px solid var(--line); font-size:12px; }
+progress { width:100%; }
