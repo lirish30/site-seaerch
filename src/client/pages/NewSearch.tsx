@@ -40,7 +40,7 @@ export default function NewSearch() {
     // The search above is the first run, so the radar's first run is due in `every` days (runNow stays false).
     let notice = "";
     try { await api.post<Radar>("/radar", radarBodyFor({ location: s.location, businessType: s.business_type, radiusKm: s.radius_km, maxResults: s.max_results }, every)); }
-    catch (x) { notice = x instanceof ApiError ? radarFollowUpNotice(x.status, x.message) : radarFollowUpNotice(0, ""); }
+    catch (x) { notice = radarFollowUpNotice(x instanceof ApiError ? x.message : ""); }
     nav(`/searches/${s.id}`, notice ? { state: { notice } } : undefined);
   }
 
@@ -55,14 +55,17 @@ export default function NewSearch() {
         <datalist id="types">{TYPES.map((t) => <option key={t} value={t} />)}</datalist>
         <label htmlFor="m">Max results</label>
         <input id="m" type="number" min={1} max={200} value={maxResults} onChange={(e) => setMax(Number(e.target.value))} />
-        <label className="row" style={{ fontWeight: 400 }}>
-          <input type="checkbox" style={{ width: "auto" }} checked={repeat} onChange={(e) => setRepeat(e.target.checked)} />
-          Repeat this search every
-          <select style={{ width: "auto" }} aria-label="Radar interval" value={every} disabled={!repeat} onChange={(e) => setEvery(Number(e.target.value))}>
+        <div className="row" style={{ marginTop: 12 }}>
+          <label className="row" style={{ fontWeight: 400, margin: 0 }}>
+            <input type="checkbox" style={{ width: "auto" }} checked={repeat} onChange={(e) => setRepeat(e.target.checked)} />
+            Repeat this search (Radar)
+          </label>
+          <label htmlFor="every" style={{ fontWeight: 400, margin: 0 }}>every</label>
+          <select id="every" style={{ width: "auto" }} value={every} disabled={!repeat} onChange={(e) => setEvery(Number(e.target.value))}>
             {RADAR_INTERVALS.map((d) => <option key={d} value={d}>{d}</option>)}
           </select>
-          days (Radar)
-        </label>
+          <span>days</span>
+        </div>
         {est && <p className="muted">Estimated cost: up to ${est.estUsd.toFixed(2)} · spent this month ${est.spent.toFixed(2)} of ${est.limit.toFixed(2)}</p>}
         {estErr && <p className="error">{estErr}</p>}
         {err && <p className="error">{err}</p>}

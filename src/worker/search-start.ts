@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Search } from "./types";
-import { createSearch, setSearchStatus } from "./db/searches";
+import type { Env } from "./env";
+import { createSearch, runningMaxResultsSince, setSearchStatus } from "./db/searches";
 import { checkSpend, estimateSearchCost } from "./cost";
 import { mailingSettingsMissing, MISSING_MAILING_SETTINGS } from "./routes/compliance";
 
@@ -20,18 +21,28 @@ export type StartFailure =
   | { ok: false; kind: "start_failed"; error: string };
 export type StartResult = { ok: true; search: Search; estUsd: number } | StartFailure;
 
+// Workflows write `usage` only as they run, so a just-started search is invisible to checkSpend. Searches still
+// 'running' this recently are counted at their estimated cost instead. Counting one whose usage is already partly
+// recorded double-counts a little, which errs on the safe side; a stuck 'running' row stops counting after the window.
+export const IN_FLIGHT_WINDOW_HOURS = 6;
+
+async function inFlightUsd(db: D1Database): Promise<number> {
+  const since = new Date(Date.now() - IN_FLIGHT_WINDOW_HOURS * 3600000).toISOString();
+  return (await runningMaxResultsSince(db, since)).reduce((sum, n) => sum + estimateSearchCost(n), 0);
+}
+
 /**
- * The one place that decides whether a paid search may begin. The manual route and Radar both go through it,
- * so a scheduled run can never skip a guard. `extraUsd` is spend already committed but not yet recorded
- * (workflows only write `usage` as they run), e.g. searches started earlier in the same cron tick.
+ * The one place that decides whether a paid search may begin. The manual route, Run now and the cron all go
+ * through it, so a scheduled run can never skip a guard. In-flight searches (including ones this same cron tick
+ * just created) are counted from the database only, never also by hand, so nothing is counted twice.
  */
-export async function checkSearchGuards(db: D1Database, input: unknown, extraUsd = 0):
+export async function checkSearchGuards(db: D1Database, input: unknown):
   Promise<{ ok: true; data: SearchInput; estUsd: number } | Exclude<StartFailure, { kind: "start_failed" }>> {
   const parsed = NewSearch.safeParse(input);
   if (!parsed.success) return { ok: false, kind: "invalid", error: parsed.error.issues.map((i) => i.message).join("; ") };
   if (await mailingSettingsMissing(db)) return { ok: false, kind: "compliance", error: MISSING_MAILING_SETTINGS };
   const estUsd = estimateSearchCost(parsed.data.maxResults);
-  const spend = await checkSpend(db, estUsd + extraUsd);
+  const spend = await checkSpend(db, estUsd + (await inFlightUsd(db)));
   if (!spend.ok) return { ok: false, kind: "spend", spend };
   return { ok: true, data: parsed.data, estUsd };
 }
@@ -39,15 +50,14 @@ export async function checkSearchGuards(db: D1Database, input: unknown, extraUsd
 export async function startSearchRun(
   deps: { db: D1Database; startWorkflow: (searchId: string) => Promise<unknown> },
   input: unknown,
-  extraUsd = 0,
 ): Promise<StartResult> {
-  const g = await checkSearchGuards(deps.db, input, extraUsd);
+  const g = await checkSearchGuards(deps.db, input);
   if (!g.ok) return g;
   const search = await createSearch(deps.db, g.data);
   try {
     await deps.startWorkflow(search.id);
   } catch (e) {
-    const error = (e as Error).message.slice(0, 500);
+    const error = String((e as Error)?.message ?? e).slice(0, 500); // workflows can throw non-Errors
     await setSearchStatus(deps.db, search.id, "failed", error);
     return { ok: false, kind: "start_failed", error };
   }
@@ -65,3 +75,6 @@ export function failureResponse(f: StartFailure): { status: 400 | 402 | 502; bod
 export function failureMessage(f: StartFailure): string {
   return f.kind === "spend" ? `Spend limit: $${f.spend.spent.toFixed(2)} spent of $${f.spend.limit.toFixed(2)} this month` : f.error;
 }
+
+export const searchWorkflowStarter = (env: Pick<Env, "SEARCH_WORKFLOW">) => (searchId: string) =>
+  env.SEARCH_WORKFLOW.create({ id: `search-${searchId}`, params: { searchId } });

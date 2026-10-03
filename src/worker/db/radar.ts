@@ -42,15 +42,21 @@ export async function listDueRadars(db: D1Database, nowIso: string, limit: numbe
     .bind(nowIso, limit).all<Radar>()).results;
 }
 
+// A radar can be claimed at most once per this window, however the claims interleave.
+export const CLAIM_COOLDOWN_MS = 10_000;
+
 /**
- * Atomic claim: only the caller whose snapshot of next_run_at is still current wins, so overlapping cron
- * deliveries or a double-click cannot both start the radar. Stamps last_run_at so a manual re-run can
- * be refused for a few seconds even when the second request read the already-advanced row.
+ * Single-statement claim (compare-and-set): moves next_run_at out and stamps claimed_at, and returns the radar
+ * only for the one caller that wins. Cron claims also require the radar to be due right now, so a stale snapshot
+ * (e.g. one since blocked and pushed to tomorrow) cannot be claimed; manual claims skip the due check. The cooldown
+ * lives in the WHERE clause, so a double-click or overlapping cron delivery cannot start it twice.
  */
-export async function claimRadar(db: D1Database, id: string, expectedNextRunAt: string, newNextRunAt: string, nowIso: string): Promise<boolean> {
-  const r = await db.prepare(`UPDATE radars SET next_run_at = ?, last_run_at = ? WHERE id = ? AND next_run_at = ? AND enabled = 1`)
-    .bind(newNextRunAt, nowIso, id, expectedNextRunAt).run();
-  return (r.meta.changes ?? 0) === 1;
+export async function claimRadar(db: D1Database, id: string, newNextRunAt: string, nowIso: string, dueOnly: boolean): Promise<Radar | null> {
+  const cooldownEnd = new Date(new Date(nowIso).getTime() - CLAIM_COOLDOWN_MS).toISOString();
+  return db.prepare(
+    `UPDATE radars SET next_run_at = ?, claimed_at = ? WHERE id = ? AND enabled = 1${dueOnly ? " AND next_run_at <= ?" : ""}
+     AND (claimed_at IS NULL OR claimed_at < ?) RETURNING *`,
+  ).bind(newNextRunAt, nowIso, id, ...(dueOnly ? [nowIso] : []), cooldownEnd).first<Radar>();
 }
 
 export async function recordRadarStarted(db: D1Database, id: string, searchId: string, nowIso: string) {

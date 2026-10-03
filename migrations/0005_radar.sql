@@ -10,6 +10,7 @@ CREATE TABLE radars (
   last_run_at TEXT,
   last_search_id TEXT,
   last_error TEXT,
+  claimed_at TEXT,
   created_at TEXT NOT NULL
 );
 -- Two radars for the same market would run (and bill) the same search twice.

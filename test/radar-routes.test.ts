@@ -249,6 +249,8 @@ describe("POST /api/radar/:id/run", () => {
     expect(row.last_search_id).toBeNull();
     expect(row.last_error).toMatch(/spend limit/i);
     expect(row.next_run_at).toBe(r.next_run_at); // not due yet: a blocked manual run must not reschedule
+    expect(row.last_run_at).toBeNull();
+    expect((await post(`/api/radar/${r.id}/run`)).status).toBe(409); // claimed_at stays set: can't be hammered
   });
 
   it("400 when mailing settings are missing", async () => {
@@ -276,7 +278,7 @@ describe("POST /api/radar/:id/run", () => {
     expect(created).toEqual([]);
   });
 
-  it("a double-click starts exactly one search", async () => {
+  it("two simultaneous clicks start exactly one search (claim + cooldown)", async () => {
     const r = await addRadar();
     const rs = await Promise.all([post(`/api/radar/${r.id}/run`), post(`/api/radar/${r.id}/run`)]);
     expect(rs.map((x) => x.status).sort()).toEqual([200, 409]);
@@ -284,10 +286,21 @@ describe("POST /api/radar/:id/run", () => {
     expect(await searchCount()).toBe(1);
   });
 
-  it("a second click right after the first is refused too", async () => {
+  it("a second click right after the first is refused by the cooldown", async () => {
     const r = await addRadar();
     expect((await post(`/api/radar/${r.id}/run`)).status).toBe(200);
     expect((await post(`/api/radar/${r.id}/run`)).status).toBe(409);
     expect(created).toHaveLength(1);
+  });
+
+  it("Run now on several radars stops once started-but-unrecorded searches use up the limit", async () => {
+    const { estimateSearchCost } = await import("../src/worker/cost");
+    await saveSettings(env.DB, { monthly_spend_limit_usd: estimateSearchCost(50) * 2.5 });
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i++) ids.push((await addRadar({ location: `City ${i}` })).id);
+    const statuses: number[] = [];
+    for (const id of ids) statuses.push((await post(`/api/radar/${id}/run`)).status);
+    expect(statuses).toEqual([200, 200, 402, 402, 402]);
+    expect(created).toHaveLength(2);
   });
 });

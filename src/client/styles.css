@@ -20,6 +20,7 @@ th { cursor:pointer; user-select:none; color:var(--muted); font-weight:600; }
 .table-wrap { overflow-x:auto; }
 .score { font-weight:700; } .score.high { color:var(--bad); } .score.mid { color:var(--warn); } .score.low { color:var(--muted); }
 .muted { color:var(--muted); } .error { color:var(--bad); }
+.notice { display:flex; gap:12px; justify-content:space-between; align-items:center; padding:8px 12px; margin-bottom:12px; border:1px solid var(--warn); border-radius:6px; background:var(--card); }
 .badge { display:inline-block; padding:1px 8px; border-radius:99px; border:1px solid var(--line); font-size:12px; }
 progress { width:100%; }
 .report { max-width: 720px; margin: 0 auto; padding: 16px; }

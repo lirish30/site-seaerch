@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { radarBodyFor, radarFollowUpNotice, relativeDay, startErrorText, RADAR_INTERVALS } from "../src/client/radar";
+import { radarBodyFor, radarFollowUpNotice, radarLabel, relativeDay, runConfirmText, startErrorText } from "../src/client/radar";
 
 const NOW = new Date("2026-10-03T12:00:00Z").getTime();
 const at = (days: number) => new Date(NOW + days * 86400000).toISOString();
@@ -27,12 +27,15 @@ describe("radar helpers", () => {
     expect(radarBodyFor({ location: "Boise", businessType: "plumber", radiusKm: 15, maxResults: 50 }, 30))
       .toEqual({ location: "Boise", businessType: "plumber", radiusKm: 15, maxResults: 50, intervalDays: 30, runNow: false });
   });
-  it("words the follow-up notice for duplicates and other failures", () => {
-    expect(radarFollowUpNotice(409, "a radar for this location and business type already exists")).toMatch(/already exists/);
-    expect(radarFollowUpNotice(500, "")).toMatch(/unexpected error/);
+  it("words the follow-up notice for a duplicate and for an empty error", () => {
+    expect(radarFollowUpNotice("a radar for this location and business type already exists")).toBe(
+      "Search started, but the Radar wasn't saved: a radar for this location and business type already exists.");
+    expect(radarFollowUpNotice("")).toMatch(/unexpected error/);
   });
-  it("offers 7/14/30/60/90 day intervals within the API's 7-90 range", () => {
-    expect(RADAR_INTERVALS.every((d) => d >= 7 && d <= 90)).toBe(true);
-    expect(RADAR_INTERVALS).toContain(30);
+  it("shows the cost, the market and per-row labels before spending", () => {
+    const r = { business_type: "plumber", location: "Boise" };
+    expect(runConfirmText(0.0515, r)).toBe("Run this search now? plumber in Boise. Estimated cost about $0.05.");
+    expect(radarLabel("Run now", r)).toBe("Run now for plumber in Boise");
+    expect(radarLabel("Delete", r)).not.toBe(radarLabel("Delete", { ...r, location: "Reno" }));
   });
 });

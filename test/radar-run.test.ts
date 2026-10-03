@@ -1,6 +1,7 @@
 import { env, createExecutionContext, createScheduledController, waitOnExecutionContext } from "cloudflare:test";
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
 import { saveSettings } from "../src/worker/db/settings";
+import { createSearch } from "../src/worker/db/searches";
 import { claimRadar, getRadar } from "../src/worker/db/radar";
 import { runDueRadars, DEFAULT_MAX_PER_RUN } from "../src/worker/radar-run";
 import { estimateSearchCost } from "../src/worker/cost";
@@ -64,15 +65,39 @@ describe("runDueRadars selection", () => {
 });
 
 describe("runDueRadars claim", () => {
-  it("claimRadar succeeds once for a given snapshot", async () => {
-    await seed({ id: "r", next: ago(1) });
-    expect(await claimRadar(env.DB, "r", ago(1), ahead(30), NOW.toISOString())).toBe(true);
-    expect(await claimRadar(env.DB, "r", ago(1), ahead(30), NOW.toISOString())).toBe(false);
+  const claim = (id: string, o: { manual?: boolean; at?: Date } = {}) =>
+    claimRadar(env.DB, id, ahead(30), (o.at ?? NOW).toISOString(), !o.manual);
+
+  it("claimRadar hands the row to exactly one of two interleaved claims on the same snapshot", async () => {
+    for (const manual of [false, true]) {
+      await env.DB.prepare(`DELETE FROM radars`).run();
+      await seed({ id: "r", next: ago(1) });
+      const res = await Promise.all([claim("r", { manual }), claim("r", { manual })]);
+      expect(res.filter(Boolean), manual ? "manual" : "due").toHaveLength(1);
+      expect(res.find(Boolean)).toMatchObject({ id: "r", next_run_at: ahead(30), claimed_at: NOW.toISOString() });
+    }
   });
 
-  it("claimRadar refuses a disabled radar", async () => {
-    await seed({ id: "r", next: ago(1), enabled: 0 });
-    expect(await claimRadar(env.DB, "r", ago(1), ahead(30), NOW.toISOString())).toBe(false);
+  it("the cooldown is part of the claim: a second claim within 10s loses, one after it wins", async () => {
+    await seed({ id: "r", next: ago(1) });
+    expect(await claim("r", { manual: true })).not.toBeNull();
+    expect(await claim("r", { manual: true, at: new Date(NOW.getTime() + 5_000) })).toBeNull();
+    expect(await claim("r", { manual: true, at: new Date(NOW.getTime() + 11_000) })).not.toBeNull();
+  });
+
+  it("a due-only claim needs the radar to be due and enabled; a manual claim needs only enabled", async () => {
+    await seed({ id: "later", next: ahead(3) });
+    await seed({ id: "off", next: ago(1), enabled: 0 });
+    expect(await claim("later")).toBeNull();
+    expect(await claim("later", { manual: true })).not.toBeNull();
+    expect(await claim("off")).toBeNull();
+    expect(await claim("off", { manual: true })).toBeNull();
+  });
+
+  it("claiming does not stamp last_run_at (only a started search does)", async () => {
+    await seed({ id: "r", next: ago(1) });
+    await claim("r");
+    expect((await getRadar(env.DB, "r"))!.last_run_at).toBeNull();
   });
 
   it("overlapping cron deliveries start the radar only once", async () => {
@@ -84,17 +109,20 @@ describe("runDueRadars claim", () => {
     expect(await searchCount()).toBe(1);
   });
 
-  it("a radar changed between select and claim is skipped, not started", async () => {
+  it.each([
+    ["advanced by another worker's claim", ahead(30)],
+    ["blocked by a concurrent run (retry tomorrow)", ahead(1)], // stale snapshot must not turn blocked into started
+  ])("a radar %s between select and claim is skipped, not started", async (_n, bumpTo) => {
     await seed({ id: "r", next: ago(1) });
     const s = fakeStart();
-    // Another worker advances next_run_at right after our select returns, before our claim.
+    // The other run lands right after our select returns, before our claim.
     const racing = new Proxy(env.DB, { get(t, p) {
       if (p === "prepare") return (sql: string) => {
         const st = t.prepare(sql);
         if (!/FROM radars/.test(sql) || !/next_run_at <=/.test(sql)) return st;
         return { bind: (...a: unknown[]) => { const b = st.bind(...a); return { all: async () => {
           const res = await b.all();
-          await env.DB.prepare(`UPDATE radars SET next_run_at = ? WHERE id = 'r'`).bind(ahead(30)).run();
+          await env.DB.prepare(`UPDATE radars SET next_run_at = ?, claimed_at = ? WHERE id = 'r'`).bind(bumpTo, NOW.toISOString()).run();
           return res;
         } }; } };
       };
@@ -103,7 +131,7 @@ describe("runDueRadars claim", () => {
     const r = await runDueRadars({ db: racing, startWorkflow: s.fn, now: () => NOW });
     expect(s.ids).toEqual([]);
     expect(r).toEqual({ started: 0, skipped: 1, failed: 0 });
-    expect((await getRadar(env.DB, "r"))!.next_run_at).toBe(ahead(30));
+    expect((await getRadar(env.DB, "r"))!.next_run_at).toBe(bumpTo);
   });
 });
 
@@ -120,6 +148,7 @@ describe("runDueRadars guards", () => {
     expect(row.last_error).toMatch(/spend limit/i);
     expect(row.next_run_at).toBe(ahead(1)); // retry tomorrow, not a whole interval later
     expect(row.last_search_id).toBeNull();
+    expect(row.last_run_at).toBeNull(); // "last run" means a search actually started
   });
 
   it.each([["physical_address"], ["opt_out_line"]])("missing %s blocks the run the same way", async (field) => {
@@ -226,6 +255,55 @@ describe("runDueRadars failures and success", () => {
     await seed({ id: "later", next: ahead(3) });
     const s = fakeStart();
     expect(await runDueRadars(deps(s.fn))).toEqual({ started: 0, skipped: 0, failed: 0 });
+    expect(s.ids).toEqual([]);
+  });
+});
+
+describe("a failure to record a started search", () => {
+  const failingRecordOnce = () => {
+    let thrown = false;
+    return new Proxy(env.DB, { get(t, p) {
+      if (p === "prepare") return (sql: string) => {
+        if (sql.startsWith("UPDATE radars SET last_run_at") && !thrown) { thrown = true; throw new Error("d1 hiccup"); }
+        return t.prepare(sql);
+      };
+      const v = (t as any)[p]; return typeof v === "function" ? v.bind(t) : v;
+    } }) as D1Database;
+  };
+
+  it("still counts as started, keeps the schedule one interval out, and is not re-run the next day", async () => {
+    await seed({ id: "r", next: ago(1), days: 30 });
+    const s = fakeStart();
+    const r = await runDueRadars({ db: failingRecordOnce(), startWorkflow: s.fn, now: () => NOW });
+    expect(r).toEqual({ started: 1, skipped: 0, failed: 0 });
+    const row = (await getRadar(env.DB, "r"))!;
+    expect(row.next_run_at).toBe(ahead(30)); // NOT tomorrow
+    expect(row.last_error).toBeNull();
+    const tomorrow = new Date(NOW.getTime() + DAY);
+    const again = await runDueRadars({ db: env.DB, startWorkflow: s.fn, now: () => tomorrow });
+    expect(again).toEqual({ started: 0, skipped: 0, failed: 0 });
+    expect(s.ids).toHaveLength(1);
+    expect(await searchCount()).toBe(1);
+  });
+
+  it("its spend still counts against the next radar in the same tick", async () => {
+    await saveSettings(env.DB, { monthly_spend_limit_usd: estimateSearchCost(50) * 1.5 });
+    await seed({ id: "a", next: ago(3) });
+    await seed({ id: "b", next: ago(2) });
+    const s = fakeStart();
+    const r = await runDueRadars({ db: failingRecordOnce(), startWorkflow: s.fn, now: () => NOW });
+    expect(r).toEqual({ started: 1, skipped: 1, failed: 0 });
+    expect((await getRadar(env.DB, "b"))!.last_error).toMatch(/spend limit/i);
+  });
+});
+
+describe("in-flight spend across ticks", () => {
+  it("a search still running from an earlier tick counts toward the limit", async () => {
+    await saveSettings(env.DB, { monthly_spend_limit_usd: estimateSearchCost(50) * 1.5 });
+    await createSearch(env.DB, { location: "Elsewhere", businessType: "roofer", radiusKm: 15, maxResults: 50 }); // running, no usage recorded yet
+    await seed({ id: "r", next: ago(1) });
+    const s = fakeStart();
+    expect(await runDueRadars(deps(s.fn))).toEqual({ started: 0, skipped: 1, failed: 0 });
     expect(s.ids).toEqual([]);
   });
 });

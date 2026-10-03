@@ -4,7 +4,7 @@ import { getSearch, listSearches } from "../db/searches";
 import { listBusinessesForSearch } from "../db/businesses";
 import { checkSpend, estimateSearchCost } from "../cost";
 import { leadRows } from "./leads";
-import { failureResponse, startSearchRun } from "../search-start";
+import { failureResponse, searchWorkflowStarter, startSearchRun } from "../search-start";
 
 export const searchRoutes = new Hono<{ Bindings: Env }>();
 
@@ -18,10 +18,7 @@ searchRoutes.get("/estimate", async (c) => {
 });
 
 searchRoutes.post("/", async (c) => {
-  const r = await startSearchRun(
-    { db: c.env.DB, startWorkflow: (id) => c.env.SEARCH_WORKFLOW.create({ id: `search-${id}`, params: { searchId: id } }) },
-    await c.req.json().catch(() => ({})),
-  );
+  const r = await startSearchRun({ db: c.env.DB, startWorkflow: searchWorkflowStarter(c.env) }, await c.req.json().catch(() => ({})));
   if (!r.ok) { const f = failureResponse(r); return c.json(f.body, f.status); }
   return c.json(r.search, 201);
 });

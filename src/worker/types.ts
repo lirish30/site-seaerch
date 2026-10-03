@@ -42,7 +42,7 @@ export interface Search {
 export interface Radar {
   id: string; location: string; business_type: string; radius_km: number; max_results: number;
   interval_days: number; enabled: 0 | 1; next_run_at: string; last_run_at: string | null;
-  last_search_id: string | null; last_error: string | null; created_at: string;
+  last_search_id: string | null; last_error: string | null; claimed_at: string | null; created_at: string;
 }
 
 export interface Business {

@@ -23,8 +23,15 @@ export function radarBodyFor(s: { location: string; businessType: string; radius
   return { location: s.location, businessType: s.businessType, radiusKm: s.radiusKm, maxResults: s.maxResults, intervalDays, runNow: false };
 }
 
-/** Non-blocking notice when the search started but its Radar could not be saved. */
-export function radarFollowUpNotice(status: number, message: string): string {
-  const why = status === 409 ? message : status === 401 ? "please sign in again" : message || "unexpected error";
-  return `Search started, but the Radar wasn't saved: ${why}.`;
+/** Non-blocking notice when the search started but its Radar could not be saved (api.ts already handles 401). */
+export function radarFollowUpNotice(message: string): string {
+  return `Search started, but the Radar wasn't saved: ${message || "unexpected error"}.`;
 }
+
+/** Shown before "Run now" spends money. */
+export function runConfirmText(estUsd: number, r: { business_type: string; location: string }): string {
+  return `Run this search now? ${r.business_type} in ${r.location}. Estimated cost about $${estUsd.toFixed(2)}.`;
+}
+
+/** Per-row accessible names so a screen reader can tell the rows apart. */
+export const radarLabel = (what: string, r: { business_type: string; location: string }) => `${what} for ${r.business_type} in ${r.location}`;

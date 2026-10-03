@@ -36,3 +36,9 @@ export async function incrementProcessed(db: D1Database, id: string) {
 export async function setProcessedCount(db: D1Database, id: string, n: number) {
   await db.prepare(`UPDATE searches SET processed_count = ? WHERE id = ?`).bind(n, id).run();
 }
+
+/** max_results of searches still running that were created at or after `sinceIso`. */
+export async function runningMaxResultsSince(db: D1Database, sinceIso: string): Promise<number[]> {
+  return (await db.prepare(`SELECT max_results FROM searches WHERE status = 'running' AND created_at > ?`).bind(sinceIso).all<{ max_results: number }>())
+    .results.map((r) => r.max_results);
+}
