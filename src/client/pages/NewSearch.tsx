@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api";
 import type { Radar, Search } from "../types";
-import { RADAR_INTERVALS, radarBodyFor, radarFollowUpNotice, startErrorText } from "../radar";
+import { RADAR_INTERVALS, actionErrorText, radarBodyFor, radarFollowUpNotice } from "../radar";
 
 const TYPES = ["plumber", "electrician", "roofer", "HVAC", "dentist", "chiropractor", "restaurant", "landscaper", "auto repair", "law firm", "salon", "church"];
 
@@ -10,7 +10,7 @@ export default function NewSearch() {
   const nav = useNavigate();
   const [location, setLocation] = useState(""); const [type, setType] = useState("");
   const [maxResults, setMax] = useState(50);
-  const [est, setEst] = useState<{ estUsd: number; spent: number; limit: number; ok: boolean } | null>(null);
+  const [est, setEst] = useState<{ estUsd: number; inFlightUsd?: number; spent: number; limit: number; ok: boolean } | null>(null);
   const [err, setErr] = useState(""); const [busy, setBusy] = useState(false);
   const [recent, setRecent] = useState<Search[]>([]);
   const [repeat, setRepeat] = useState(false); const [every, setEvery] = useState(30);
@@ -35,7 +35,7 @@ export default function NewSearch() {
     e.preventDefault(); setErr(""); setBusy(true);
     let s: Search;
     try { s = await api.post<Search>("/searches", { location, businessType: type, maxResults }); }
-    catch (x) { setErr(x instanceof ApiError ? startErrorText(x.status, x.message) : "Failed"); setBusy(false); return; }
+    catch (x) { setErr(actionErrorText(x)); setBusy(false); return; }
     if (!repeat) { nav(`/searches/${s.id}`); return; }
     // The search above is the first run, so the radar's first run is due in `every` days (runNow stays false).
     let notice = "";
@@ -66,7 +66,7 @@ export default function NewSearch() {
           </select>
           <span>days</span>
         </div>
-        {est && <p className="muted">Estimated cost: up to ${est.estUsd.toFixed(2)} · spent this month ${est.spent.toFixed(2)} of ${est.limit.toFixed(2)}</p>}
+        {est && <p className="muted">Estimated cost: up to ${est.estUsd.toFixed(2)} · spent this month ${est.spent.toFixed(2)} of ${est.limit.toFixed(2)}{est.inFlightUsd ? ` + $${est.inFlightUsd.toFixed(2)} in searches still running` : ""}</p>}
         {estErr && <p className="error">{estErr}</p>}
         {err && <p className="error">{err}</p>}
         <button className="primary" disabled={busy || (est !== null && !est.ok)}>{busy ? "Starting…" : "Find businesses"}</button>

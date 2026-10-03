@@ -1,3 +1,4 @@
+import { ApiError } from "./api";
 export const RADAR_INTERVALS = [7, 14, 30, 60, 90];
 const DAY = 86400000;
 
@@ -35,3 +36,6 @@ export function runConfirmText(estUsd: number, r: { business_type: string; locat
 
 /** Per-row accessible names so a screen reader can tell the rows apart. */
 export const radarLabel = (what: string, r: { business_type: string; location: string }) => `${what} for ${r.business_type} in ${r.location}`;
+
+/** Text for a failed button action: 402 spend-limit wording, the API's own message, or a generic fallback. */
+export const actionErrorText = (e: unknown) => (e instanceof ApiError ? startErrorText(e.status, e.message) : "Failed");

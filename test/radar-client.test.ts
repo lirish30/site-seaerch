@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { radarBodyFor, radarFollowUpNotice, radarLabel, relativeDay, runConfirmText, startErrorText } from "../src/client/radar";
+import { ApiError } from "../src/client/api";
+import { actionErrorText, radarBodyFor, radarFollowUpNotice, radarLabel, relativeDay, runConfirmText, startErrorText } from "../src/client/radar";
 
 const NOW = new Date("2026-10-03T12:00:00Z").getTime();
 const at = (days: number) => new Date(NOW + days * 86400000).toISOString();
@@ -37,5 +38,10 @@ describe("radar helpers", () => {
     expect(runConfirmText(0.0515, r)).toBe("Run this search now? plumber in Boise. Estimated cost about $0.05.");
     expect(radarLabel("Run now", r)).toBe("Run now for plumber in Boise");
     expect(radarLabel("Delete", r)).not.toBe(radarLabel("Delete", { ...r, location: "Reno" }));
+  });
+  it("words action errors: spend limit, API message, or a generic fallback", () => {
+    expect(actionErrorText(new ApiError(402, "spend limit"))).toMatch(/monthly spend limit/);
+    expect(actionErrorText(new ApiError(409, "this radar just ran"))).toBe("this radar just ran");
+    expect(actionErrorText(new TypeError("network"))).toBe("Failed");
   });
 });

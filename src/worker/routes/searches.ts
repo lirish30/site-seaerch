@@ -4,7 +4,7 @@ import { getSearch, listSearches } from "../db/searches";
 import { listBusinessesForSearch } from "../db/businesses";
 import { checkSpend, estimateSearchCost } from "../cost";
 import { leadRows } from "./leads";
-import { failureResponse, searchWorkflowStarter, startSearchRun } from "../search-start";
+import { failureResponse, inFlightUsd, searchWorkflowStarter, startSearchRun } from "../search-start";
 
 export const searchRoutes = new Hono<{ Bindings: Env }>();
 
@@ -14,7 +14,8 @@ searchRoutes.get("/estimate", async (c) => {
   const raw = Number(c.req.query("maxResults") ?? 50);
   const n = Math.min(200, Math.max(1, Number.isFinite(raw) ? raw : 50));
   const estUsd = estimateSearchCost(n);
-  return c.json({ estUsd, ...(await checkSpend(c.env.DB, estUsd)) });
+  const inFlight = await inFlightUsd(c.env.DB); // same total the POST guard uses, so the two cannot disagree
+  return c.json({ estUsd, inFlightUsd: inFlight, ...(await checkSpend(c.env.DB, estUsd + inFlight)) });
 });
 
 searchRoutes.post("/", async (c) => {

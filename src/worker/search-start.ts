@@ -19,14 +19,14 @@ export type StartFailure =
   | { ok: false; kind: "compliance"; error: string }
   | { ok: false; kind: "spend"; spend: SpendCheck }
   | { ok: false; kind: "start_failed"; error: string };
-export type StartResult = { ok: true; search: Search; estUsd: number } | StartFailure;
+export type StartResult = { ok: true; search: Search } | StartFailure;
 
 // Workflows write `usage` only as they run, so a just-started search is invisible to checkSpend. Searches still
 // 'running' this recently are counted at their estimated cost instead. Counting one whose usage is already partly
 // recorded double-counts a little, which errs on the safe side; a stuck 'running' row stops counting after the window.
 export const IN_FLIGHT_WINDOW_HOURS = 6;
 
-async function inFlightUsd(db: D1Database): Promise<number> {
+export async function inFlightUsd(db: D1Database): Promise<number> {
   const since = new Date(Date.now() - IN_FLIGHT_WINDOW_HOURS * 3600000).toISOString();
   return (await runningMaxResultsSince(db, since)).reduce((sum, n) => sum + estimateSearchCost(n), 0);
 }
@@ -37,14 +37,13 @@ async function inFlightUsd(db: D1Database): Promise<number> {
  * just created) are counted from the database only, never also by hand, so nothing is counted twice.
  */
 export async function checkSearchGuards(db: D1Database, input: unknown):
-  Promise<{ ok: true; data: SearchInput; estUsd: number } | Exclude<StartFailure, { kind: "start_failed" }>> {
+  Promise<{ ok: true; data: SearchInput } | Exclude<StartFailure, { kind: "start_failed" }>> {
   const parsed = NewSearch.safeParse(input);
   if (!parsed.success) return { ok: false, kind: "invalid", error: parsed.error.issues.map((i) => i.message).join("; ") };
   if (await mailingSettingsMissing(db)) return { ok: false, kind: "compliance", error: MISSING_MAILING_SETTINGS };
-  const estUsd = estimateSearchCost(parsed.data.maxResults);
-  const spend = await checkSpend(db, estUsd + (await inFlightUsd(db)));
+  const spend = await checkSpend(db, estimateSearchCost(parsed.data.maxResults) + (await inFlightUsd(db)));
   if (!spend.ok) return { ok: false, kind: "spend", spend };
-  return { ok: true, data: parsed.data, estUsd };
+  return { ok: true, data: parsed.data };
 }
 
 export async function startSearchRun(
@@ -54,6 +53,14 @@ export async function startSearchRun(
   const g = await checkSearchGuards(deps.db, input);
   if (!g.ok) return g;
   const search = await createSearch(deps.db, g.data);
+  // Requests arriving together all read the same in-flight total above. Now that our row exists (and counts), check
+  // again: alone this is the same math as the pre-check; under a true race it may reject every racer, which is the
+  // safe direction for a spend guard.
+  const spend = await checkSpend(deps.db, await inFlightUsd(deps.db));
+  if (!spend.ok) {
+    await setSearchStatus(deps.db, search.id, "failed", "spend limit");
+    return { ok: false, kind: "spend", spend };
+  }
   try {
     await deps.startWorkflow(search.id);
   } catch (e) {
@@ -61,7 +68,7 @@ export async function startSearchRun(
     await setSearchStatus(deps.db, search.id, "failed", error);
     return { ok: false, kind: "start_failed", error };
   }
-  return { ok: true, search, estUsd: g.estUsd };
+  return { ok: true, search };
 }
 
 /** HTTP mapping shared by every route that starts a search, so statuses and bodies cannot drift. */

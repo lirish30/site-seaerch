@@ -1,29 +1,30 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError } from "../api";
-import { RADAR_INTERVALS, radarLabel, relativeDay, runConfirmText, startErrorText } from "../radar";
+import { RADAR_INTERVALS, actionErrorText, radarLabel, relativeDay, runConfirmText } from "../radar";
 import type { Radar as RadarT } from "../types";
 
 export default function Radar() {
   const [radars, setRadars] = useState<RadarT[] | null>(null);
-  const [err, setErr] = useState("");
+  // Two separate messages: reloading the table must never wipe the result of the button the user just pressed.
+  const [loadErr, setLoadErr] = useState(""); const [actionErr, setActionErr] = useState("");
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
   // A failed reload keeps whatever table is already on screen and just reports the problem inline.
   const load = useCallback(async () => {
-    try { const r = await api.get<RadarT[]>("/radar"); if (alive.current) { setRadars(r); setErr(""); } }
-    catch (e) { if (alive.current) setErr(e instanceof ApiError ? e.message : "Couldn't load radars."); }
+    try { const r = await api.get<RadarT[]>("/radar"); if (alive.current) { setRadars(r); setLoadErr(""); } }
+    catch (e) { if (alive.current) setLoadErr(e instanceof ApiError ? e.message : "Couldn't load radars."); }
   }, []);
   useEffect(() => { load(); }, [load]);
 
   const mark = (id: string, on: boolean) => { if (alive.current) setBusy((b) => { const n = new Set(b); on ? n.add(id) : n.delete(id); return n; }); };
   async function act(id: string, fn: () => Promise<unknown>) {
-    if (alive.current) setErr("");
+    if (alive.current) setActionErr("");
     mark(id, true);
     try { await fn(); }
-    catch (x) { if (alive.current) setErr(x instanceof ApiError ? startErrorText(x.status, x.message) : "Failed"); }
+    catch (x) { if (alive.current) setActionErr(actionErrorText(x)); }
     await load(); mark(id, false);
   }
   const toggle = (r: RadarT) => act(r.id, () => api.patch(`/radar/${r.id}`, { enabled: !r.enabled }));
@@ -31,7 +32,7 @@ export default function Radar() {
   async function runNow(r: RadarT) {
     let estUsd: number;
     try { estUsd = (await api.get<{ estUsd: number }>(`/searches/estimate?maxResults=${r.max_results}`)).estUsd; }
-    catch { if (alive.current) setErr("Couldn't load the cost estimate, so nothing was run."); return; }
+    catch { if (alive.current) setActionErr("Couldn't load the cost estimate, so nothing was run."); return; }
     if (!confirm(runConfirmText(estUsd, r))) return;
     await act(r.id, () => api.post(`/radar/${r.id}/run`));
   }
@@ -44,8 +45,9 @@ export default function Radar() {
     <div>
       <h2>Radar</h2>
       <p className="muted">Saved searches that re-run on their own and surface new prospects. Each run spends like a normal search and obeys your monthly limit.</p>
-      {err && <p className="error" role="alert">{err}</p>}
-      {!radars ? (err ? null : <p>Loading…</p>) : radars.length === 0 ? (
+      {loadErr && <p className="error" role="alert">{loadErr}</p>}
+      {actionErr && <p className="error row" role="alert"><span>{actionErr}</span><button onClick={() => setActionErr("")}>Dismiss</button></p>}
+      {!radars ? (loadErr ? null : <p>Loading…</p>) : radars.length === 0 ? (
         <div className="card"><p>No radars yet. Tick “Repeat this search” on the <Link to="/">New search</Link> page to create one.</p></div>
       ) : (
         <div className="table-wrap"><table>

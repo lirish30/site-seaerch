@@ -308,6 +308,29 @@ describe("in-flight spend across ticks", () => {
   });
 });
 
+describe("a spend block found by the post-insert re-check", () => {
+  it("is treated like any spend block: last_error, retry tomorrow, no workflow", async () => {
+    await saveSettings(env.DB, { monthly_spend_limit_usd: estimateSearchCost(50) * 1.5 });
+    await seed({ id: "r", next: ago(1) });
+    const racer = new Proxy(env.DB, { get(t, p) {
+      if (p === "prepare") return (sql: string) => {
+        const st = t.prepare(sql);
+        if (!sql.startsWith("INSERT INTO searches")) return st;
+        return { bind: (...a: unknown[]) => { const b = st.bind(...a); return { run: async () => { const x = await b.run(); await createSearch(env.DB, { location: "Racer", businessType: "x", radiusKm: 15, maxResults: 50 }); return x; } }; } };
+      };
+      const v = (t as any)[p]; return typeof v === "function" ? v.bind(t) : v;
+    } }) as D1Database;
+    const s = fakeStart();
+    const r = await runDueRadars({ db: racer, startWorkflow: s.fn, now: () => NOW });
+    expect(r).toEqual({ started: 0, skipped: 1, failed: 0 });
+    expect(s.ids).toEqual([]);
+    const row = (await getRadar(env.DB, "r"))!;
+    expect(row.last_error).toMatch(/spend limit/i);
+    expect(row.next_run_at).toBe(ahead(1));
+    expect(row.last_search_id).toBeNull();
+  });
+});
+
 describe("scheduled handler", () => {
   it("default export has fetch and scheduled", () => {
     expect(typeof worker.fetch).toBe("function");

@@ -62,3 +62,35 @@ describe("startSearchRun start failures", () => {
     expect(rows).toEqual([{ status: "failed", error: thrown instanceof Error ? "boom" : String(thrown) }]);
   });
 });
+
+// Simulates a competing request that inserts its own 'running' search right after ours is inserted, i.e. after our
+// pre-check read the in-flight total but before our re-check.
+function withRacer(): D1Database {
+  return new Proxy(env.DB, { get(t, p) {
+    if (p === "prepare") return (sql: string) => {
+      const st = t.prepare(sql);
+      if (!sql.startsWith("INSERT INTO searches")) return st;
+      return { bind: (...a: unknown[]) => { const b = st.bind(...a); return { run: async () => { const r = await b.run(); await running(); return r; } }; } };
+    };
+    const v = (t as any)[p]; return typeof v === "function" ? v.bind(t) : v;
+  } }) as D1Database;
+}
+
+describe("spend re-check after insert", () => {
+  it("alone: a search that fits starts, counting its own estimate exactly once", async () => {
+    await saveSettings(env.DB, { monthly_spend_limit_usd: EST }); // exactly one search fits
+    const calls: string[] = [];
+    const r = await startSearchRun({ db: env.DB, startWorkflow: async (id) => { calls.push(id); } }, INPUT);
+    expect(r.ok).toBe(true);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("a competing running search inserted before the re-check fails this one with the 402 shape and starts nothing", async () => {
+    const calls: string[] = [];
+    const r = await startSearchRun({ db: withRacer(), startWorkflow: async (id) => { calls.push(id); } }, INPUT);
+    expect(r).toMatchObject({ ok: false, kind: "spend", spend: { ok: false, spent: 0, limit: EST * 1.5 } });
+    expect(calls).toEqual([]);
+    const mine = (await env.DB.prepare(`SELECT status, error FROM searches WHERE location = 'Boise'`).all<any>()).results;
+    expect(mine).toEqual([{ status: "failed", error: "spend limit" }]);
+  });
+});
