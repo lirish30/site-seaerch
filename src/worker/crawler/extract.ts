@@ -145,6 +145,9 @@ const WRAPPERS = [["<!--", "-->"], ["//<![CDATA[", "//]]>"], ["/*<![CDATA[*/", "
 function unwrapJson(raw: string): string {
   let j = raw.trim();
   for (const [a, b] of WRAPPERS) if (j.startsWith(a) && j.endsWith(b) && j.length >= a.length + b.length) { j = j.slice(a.length, j.length - b.length).trim(); break; }
+  // One leading comment some generators emit before the JSON.
+  if (j.startsWith("/*")) { const e = j.indexOf("*/"); if (e > 0) j = j.slice(e + 2).trim(); }
+  else if (j.startsWith("//")) { const e = j.indexOf("\n"); j = e < 0 ? "" : j.slice(e + 1).trim(); }
   return j;
 }
 
@@ -211,21 +214,24 @@ function isOldJquery(src: string): boolean {
   return !!v && (+v[1] < 1 || (+v[1] === 1 && +v[2] < 12));
 }
 
-interface TableFrame { legacy: boolean; cells: number; openCells: number; block: boolean; dataLike: boolean; text: number }
+// nav: +1 per link and +3 per h1 inside the table (nested tables included): a real layout table wraps the site navigation or the main heading.
+interface TableFrame { legacy: boolean; cells: number; openCells: number; block: boolean; dataLike: boolean; text: number; nav: number }
+const isDoctype = (t: string) => /^<!doctype/i.test(t);
 
 // One iterative walk over the main parse's element and text nodes, linear even for pathologically nested markup. Script/style/noscript
 // elements are visited (their src/href count) but the parse drops their text, and comments are never nodes.
 function scanDom(root: HTMLElement, isHttps: boolean) {
   const r = { h1Count: 0, imageCount: 0, imagesMissingAlt: 0, hasTelLink: false, mixedContentCount: 0, hasMount: false, hasScript: false, microdataBusiness: false };
   const markers = new Set<string>(); const tables: TableFrame[] = [];
-  let roleTables = 0, fonts = 0, centers = 0, totalText = 0, layoutText = 0;
+  let roleTables = 0, fonts = 0, centers = 0, fontDepth = 0, centerDepth = 0, svgDepth = 0, totalText = 0;
+  let layout = { text: 0, nav: 0 };
   const stack: [Node, boolean][] = [];
   const push = (el: HTMLElement) => { for (let i = el.childNodes.length - 1; i >= 0; i--) stack.push([el.childNodes[i], false]); };
   push(root);
   while (stack.length) {
     const [node, exiting] = stack.pop()!;
     if (node.nodeType === 3) {
-      const len = node.rawText.trim().length; totalText += len;
+      const t = node.rawText.trim(); const len = isDoctype(t) ? 0 : t.length; totalText += len;
       if (tables.length) tables[tables.length - 1].text += len;
       continue;
     }
@@ -234,25 +240,33 @@ function scanDom(root: HTMLElement, isHttps: boolean) {
     const inRoleTable = TABLE_ROLES.has(roleOf(el));
     if (exiting) {
       if (tag === "TD" && tables.length) tables[tables.length - 1].openCells--;
+      if (tag === "FONT") fontDepth--; else if (tag === "CENTER") centerDepth--; else if (tag === "SVG") svgDepth--;
       // roleTables still includes this table's own role here, so a role=table/grid table or one nested in such an element is treated as data.
       if (tag === "TABLE") {
         const t = tables.pop()!;
-        if (tables.length) tables[tables.length - 1].text += t.text;
-        if (t.legacy && t.cells >= 3 && t.block && !t.dataLike && roleTables === 0) layoutText = Math.max(layoutText, t.text);
+        if (tables.length) { tables[tables.length - 1].text += t.text; tables[tables.length - 1].nav += t.nav; }
+        // An outer table exits after its inner ones and holds at least their text and nav, so >= keeps the outermost qualifying table.
+        if (t.legacy && t.cells >= 3 && t.block && !t.dataLike && roleTables === 0 && t.text >= layout.text) layout = { text: t.text, nav: t.nav };
       }
       if (inRoleTable) roleTables--;
       continue;
     }
-    if (SKIP_SUBTREE.has(tag)) continue;
+    // Declarative shadow DOM templates are rendered by browsers (Lit SSR etc.); plain templates are inert.
+    if (SKIP_SUBTREE.has(tag) && !(tag === "TEMPLATE" && (el.getAttribute("shadowrootmode") !== undefined || el.getAttribute("shadowroot") !== undefined))) continue;
     stack.push([el, true]); push(el);
     if (inRoleTable) roleTables++;
     const top = tables[tables.length - 1];
     if (top && BLOCK_IN_CELL.has(tag) && top.openCells > 0) top.block = true;
     switch (tag) {
-      case "H1": r.h1Count++; break;
-      case "A": if (/^tel:/i.test((el.getAttribute("href") ?? "").trim())) r.hasTelLink = true; break;
-      case "FONT": fonts++; break;
-      case "CENTER": centers++; break;
+      case "H1": r.h1Count++; if (top) top.nav += 3; break;
+      case "A":
+        if (top && el.getAttribute("href") !== undefined) top.nav++;
+        if (/^tel:/i.test((el.getAttribute("href") ?? "").trim())) r.hasTelLink = true;
+        break;
+      // Nested tags come from one paste, and svg <font> is not the HTML tag: count outermost HTML occurrences only.
+      case "FONT": if (!fontDepth && !svgDepth) fonts++; fontDepth++; break;
+      case "CENTER": if (!centerDepth) centers++; centerDepth++; break;
+      case "SVG": svgDepth++; break;
       case "MARQUEE": case "BLINK": markers.add(M.blink); break;
       case "FRAME": case "FRAMESET": markers.add(M.frames); break;
       case "EMBED": case "OBJECT":
@@ -260,7 +274,7 @@ function scanDom(root: HTMLElement, isHttps: boolean) {
           || FLASH_CLASSID.test(el.getAttribute("classid") ?? "")) markers.add(M.flash);
         break;
       case "PARAM": if (/^movie$/i.test((el.getAttribute("name") ?? "").trim()) && SWF_URL.test(el.getAttribute("value") ?? "")) markers.add(M.flash); break;
-      case "TABLE": tables.push({ legacy: ["cellspacing", "cellpadding", "bgcolor"].some((a) => el.getAttribute(a) !== undefined), cells: 0, openCells: 0, block: false, dataLike: false, text: 0 }); break;
+      case "TABLE": tables.push({ legacy: ["cellspacing", "cellpadding", "bgcolor"].some((a) => el.getAttribute(a) !== undefined), cells: 0, openCells: 0, block: false, dataLike: false, text: 0, nav: 0 }); break;
       case "TD": if (top) { top.cells++; top.openCells++; } break;
       case "TH": case "CAPTION": case "THEAD": if (top) top.dataLike = true; break;
       case "IMG": {
@@ -279,10 +293,10 @@ function scanDom(root: HTMLElement, isHttps: boolean) {
     if (MOUNT_IDS.has(el.getAttribute("id") ?? "") || tag === "APP-ROOT" || el.getAttribute("ng-app") !== undefined || el.getAttribute("data-ng-app") !== undefined) r.hasMount = true;
     if (!r.microdataBusiness && (hasBusinessType(el.getAttribute("itemtype")) || hasBusinessType(el.getAttribute("typeof")))) r.microdataBusiness = true;
   }
-  if (fonts >= 2) markers.add(M.font);
+  if (fonts >= 3) markers.add(M.font);
   if (centers >= 2) markers.add(M.center);
   // Only a table holding most of the page's text is the page layout; hours, pricing, badge and newsletter tables are not.
-  if (layoutText > 0 && layoutText >= 0.6 * totalText) markers.add(M.table);
+  if (layout.text > 0 && layout.text >= 0.6 * totalText && layout.nav >= 3) markers.add(M.table);
   return { ...r, datedBuildMarkers: MARKER_ORDER.filter((m) => markers.has(m)) };
 }
 
@@ -291,7 +305,7 @@ function visibleText(root: HTMLElement): string {
   const body = root.querySelector("body");
   if (body) return body.structuredText;
   return (root.querySelector("html") ?? root).childNodes
-    .map((c) => c.nodeType === 1 ? (/^(HEAD|TITLE)$/.test((c as HTMLElement).tagName) ? "" : (c as HTMLElement).structuredText) : c.nodeType === 3 ? c.text : "").join(" ");
+    .map((c) => c.nodeType === 1 ? (/^(HEAD|TITLE)$/.test((c as HTMLElement).tagName) ? "" : (c as HTMLElement).structuredText) : c.nodeType === 3 && !isDoctype(c.rawText.trim()) ? c.text : "").join(" ");
 }
 
 function isContactForm(f: HTMLElement): boolean {

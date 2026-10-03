@@ -214,6 +214,20 @@ describe("extra page facts", () => {
     expect(extractPage("<title>T T T</title><p>one two three</p>", "https://a.com/").wordCount).toBe(3);
   });
 
+  it("descends into declarative shadow DOM templates but still skips plain ones", () => {
+    for (const attr of [`shadowrootmode="open"`, `shadowroot="open"`, `SHADOWROOTMODE="closed"`]) {
+      const f = facts(`<my-hero><template ${attr}><h1>Bob's Plumbing</h1><img src="x.png"><a href="tel:1">Call</a></template></my-hero>`);
+      expect([attr, f.h1Count, f.imageCount, f.imagesMissingAlt, f.hasTelLink]).toEqual([attr, 1, 1, 1, true]);
+    }
+    const plain = facts(`<template><h1>x</h1><img src="x.png"><a href="tel:1">Call</a></template>`);
+    expect([plain.h1Count, plain.imageCount, plain.hasTelLink]).toEqual([0, 0, false]);
+  });
+
+  it("the doctype is not page text", () => {
+    expect(extractPage("<!doctype html>\n<html><head><title>T</title></head><p>one two</p></html>", "https://a.com/").wordCount).toBe(2);
+    expect(extractPage("<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01//EN\"><p>one</p>", "https://a.com/").wordCount).toBe(1);
+  });
+
   it("counts images and missing alt: alt='' is decorative, presentational and hidden images are skipped", () => {
     const f = facts([
       `<img src="a.png">`, `<img src="b.png" alt="Logo">`, `<img src="c.png" alt="">`, `<IMG SRC="d.png">`, `<IMG SRC="e.png" ALT="">`,
@@ -283,7 +297,7 @@ describe("extra page facts", () => {
       const j = `{"@type":"Plumber"}`;
       for (const body of [
         ld(j, `type="application/ld+json; charset=utf-8"`), ld(j, `type=" Application/LD+JSON ;charset=utf-8"`), ld(`\uFEFF  \n${j}\n `), ld(`<!-- ${j} -->`),
-        ld(`//<![CDATA[\n${j}\n//]]>`), ld(`/*<![CDATA[*/${j}/*]]>*/`), ld(`{"@type":"http://schema.org/Plumber/"}`), ld(`{"@type":"https://schema.org/Plumber//"}`),
+        ld(`//<![CDATA[\n${j}\n//]]>`), ld(`/*<![CDATA[*/${j}/*]]>*/`), ld(`/* generated */ ${j}`), ld(`// generated\n${j}`), ld(`{"@type":"http://schema.org/Plumber/"}`), ld(`{"@type":"https://schema.org/Plumber//"}`),
       ]) expect([body, facts(body).hasLocalBusinessSchema]).toEqual([body, true]);
       expect(facts(ld(`<!-- {"@type":"Organization"} -->`)).hasLocalBusinessSchema).toBe(false);
     });
@@ -349,7 +363,7 @@ describe("extra page facts", () => {
     });
 
     it("flags each legacy tag once, in lowercase or uppercase", () => {
-      expect(m(`<font size=2>a</font><FONT>b</FONT>`)).toEqual(["old-style font tags"]);
+      expect(m(`<font size=2>a</font><FONT>b</FONT><font>c</font>`)).toEqual(["old-style font tags"]);
       expect(m(`<marquee>a</marquee>`)).toEqual(["scrolling or blinking text"]);
       expect(m(`<BLINK>a</BLINK><marquee>b</marquee>`)).toEqual(["scrolling or blinking text"]);
       expect(m(`<center>a</center><CENTER>b</CENTER>`)).toEqual(["old-style centering tags"]);
@@ -360,11 +374,22 @@ describe("extra page facts", () => {
     it("a single <font> or <center> is not enough; two are; markup in templates does not count", () => {
       expect(m(`<center><img src="b.png" alt="BBB"></center>`)).toEqual([]);
       expect(m(`<font>a</font>`)).toEqual([]);
-      expect(m(`<font>a</font><font>b</font>`)).toEqual(["old-style font tags"]);
+      expect(m(`<font>a</font><font>b</font><font>c</font>`)).toEqual(["old-style font tags"]);
       expect(m(`<center>a</center><center>b</center>`)).toEqual(["old-style centering tags"]);
       expect(m(`<template><center>a</center><center>b</center><marquee>x</marquee></template>`)).toEqual([]);
-      expect(m(`<textarea><font>a</font><font>b</font><center>c</center></textarea>`)).toEqual([]);
+      expect(m(`<textarea><font>a</font><font>b</font><font>c</font><center>c</center></textarea>`)).toEqual([]);
       expect(m(`<center>a</center><template><center>b</center></template>`)).toEqual([]);
+    });
+
+    it("counts font tags per paste, not per nesting; needs three; ignores svg and nested centers", () => {
+      const filler = `<p>${lorem}</p>`;
+      expect(m(filler + `<p><font face="Arial"><font size="2">Call today</font></font></p>`)).toEqual([]);
+      expect(m(filler + `<font>a</font><font>b</font>`)).toEqual([]);
+      expect(m(filler + `<font>a</font><font>b</font><FONT>c</FONT>`)).toEqual(["old-style font tags"]);
+      expect(m(filler + `<font><font>a</font></font><font>b</font><font><font><font>c</font></font></font>`)).toEqual(["old-style font tags"]);
+      expect(m(filler + `<svg><font></font><font></font><font></font><font></font></svg>`)).toEqual([]);
+      expect(m(filler + `<center><center>a</center></center>`)).toEqual([]);
+      expect(m(filler + `<center><center>a</center></center><center>b</center>`)).toEqual(["old-style centering tags"]);
     });
 
     it("does not flag iframes, 'font' in text or css, or tags in comments and scripts", () => {
@@ -388,8 +413,8 @@ describe("extra page facts", () => {
 
     const cell = (inner: string) => `<td>${inner}</td>`;
     it("flags a layout table: legacy attributes, 3+ cells with block content", () => {
-      expect(m(`<table cellspacing="0" cellpadding="0"><tr>${cell("<div>a</div>")}${cell("<p>b</p>")}${cell("<img src=c.png alt=c>")}</tr></table>`)).toEqual(["table-based page layout"]);
-      expect(m(`<TABLE BGCOLOR="#fff"><TR>${cell("<H2>a</H2>")}${cell("b")}${cell("c")}</TR></TABLE>`)).toEqual(["table-based page layout"]);
+      expect(m(`<table cellspacing="0" cellpadding="0"><tr>${cell(`<div><a href="/a">a</a></div>`)}${cell(`<p><a href="/b">b</a></p>`)}${cell(`<a href="/c"><img src=c.png alt=c></a>`)}</tr></table>`)).toEqual(["table-based page layout"]);
+      expect(m(`<TABLE BGCOLOR="#fff"><TR>${cell("<H1>a</H1>")}${cell("b")}${cell("c")}</TR></TABLE>`)).toEqual(["table-based page layout"]);
     });
 
     it("does not flag data tables or tables lacking the layout signals", () => {
@@ -416,6 +441,26 @@ describe("extra page facts", () => {
         expect(m(`<table cellpadding="4">${tr(`<img src="bbb.png" alt="BBB">`, `<img src="a.png" alt="A+">`, `<img src="y.png" alt="Yelp">`)}</table>`)).toEqual([]);
         expect(m(prose + `<table bgcolor="#eee" cellpadding="8"><tr><td><div>Join our newsletter</div></td><td><div><input name="email"></div></td><td><div><input type="submit"></div></td></tr></table>`)).toEqual([]);
       });
+      // Thin pages: no long prose to dilute the table, so only "wraps the navigation or the main heading" separates layout from content tables.
+      const doc = (body: string) => extractPage(`<!doctype html>\n<html><head><title>Acme</title></head><body>${body}</body></html>`, "https://a.com/").datedBuildMarkers;
+      const nav = `<nav><a href="/">Home</a> <a href="/menu">Menu</a> <a href="/contact">Contact</a></nav>`;
+      it("thin pages whose only legacy-attribute table is a menu, hours, pricing or pasted table do not flag", () => {
+        const row = (...c: string[]) => `<tr>${c.map((x) => `<td><p>${x}</p></td>`).join("")}</tr>`;
+        expect(doc(`<header>${nav}</header><h1>Our Menu</h1><p>Fresh and local.</p><table cellpadding="6">${row("Margherita", "Tomato, basil", "$14")}${row("Pepperoni", "Tomato, pepperoni", "$16")}${row("Tiramisu", "Mascarpone", "$8")}</table>`)).toEqual([]);
+        expect(doc(`<h1>Contact</h1><p>Call 208-555-0134.</p><table cellpadding="0" cellspacing="0"><tbody>${row("Monday", "8-5")}${row("Tuesday", "8-5")}${row("Wednesday", "8-5")}</tbody></table>`)).toEqual([]);
+        expect(doc(`<nav><a>Home</a><a>Pricing</a></nav><h1>Pricing</h1><p>Simple plans.</p><table cellpadding="10"><tr><td><h3>Basic</h3><p>$29</p></td><td><h3>Pro</h3><p>$79</p></td><td><h3>Business</h3><p>$199</p></td></tr></table>`)).toEqual([]);
+        expect(doc(`<h1>Blog</h1><table cellspacing="0"><tr><td><p>${"Long pasted paragraph. ".repeat(30)}</p></td><td><p>x</p></td><td><p>y</p></td></tr></table>`)).toEqual([]);
+        expect(doc(`<table cellpadding="8"><tr><td><p>Basic plan</p></td><td><p>Pro plan</p></td><td><p>Enterprise</p></td></tr></table>`)).toEqual([]);
+        expect(doc(`<table cellpadding="8"><tbody><tr><td><p>Basic plan</p></td><td><p>Pro plan</p></td><td><p>Enterprise</p></td></tr></tbody></table>`)).toEqual([]);
+      });
+      it("a 1990s page built from nested layout tables flags, in lower and upper case", () => {
+        const nineties = `<html><head><title>Bob's Plumbing</title></head><body bgcolor="#ffffff"><table width="760" border="0" cellspacing="0" cellpadding="0" align="center"><tr><td colspan="2"><img src="header.gif" width="760" height="120"></td></tr>`
+          + `<tr><td width="160" valign="top" bgcolor="#003366"><p><a href="index.html">Home</a><br><a href="services.html">Services</a><br><a href="contact.html">Contact</a></p></td><td width="600" valign="top"><h1>Welcome to Bob's Plumbing</h1>`
+          + `<p>Serving the valley since 1978. We do residential and commercial plumbing, drain cleaning and water heaters. Call us today for a free estimate.</p><table width="100%" cellpadding="4"><tr><td><p>Licensed</p></td><td><p>Bonded</p></td><td><p>Insured</p></td></tr></table></td></tr>`
+          + `<tr><td colspan="2"><p>Copyright 2003 Bob's Plumbing</p></td></tr></table></body></html>`;
+        for (const h of [nineties, `<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN">` + nineties, nineties.toUpperCase()])
+          expect(extractPage(h, "http://a.com/").datedBuildMarkers).toEqual(["table-based page layout"]);
+      });
       it("a classic page whose content lives in one nested layout table still flags", () => {
         const body = `<table width="100%" cellspacing="0" cellpadding="0"><tr><td colspan="3"><h1>Ace Plumbing</h1></td></tr><tr><td><p>${lorem}</p></td><td>`
           + `<table cellpadding="5"><tr>${cell(`<p>${lorem}</p>`)}${cell(`<p>${lorem}</p>`)}${cell(`<div>${lorem}</div>`)}</tr></table></td><td><p>Links</p></td></tr></table><p>Copyright</p>`;
@@ -424,7 +469,7 @@ describe("extra page facts", () => {
     });
 
     it("de-duplicates and reports several markers", () => {
-      expect(m(`<center><font>a</font></center><center>b</center><font>d</font><marquee>c</marquee>`, jq("/jquery-1.7.2.js"))).toEqual([
+      expect(m(`<center><font>a</font></center><center>b</center><font>d</font><font>e</font><marquee>c</marquee>`, jq("/jquery-1.7.2.js"))).toEqual([
         "old-style font tags", "scrolling or blinking text", "old-style centering tags", "an outdated jQuery version",
       ]);
     });
