@@ -9,12 +9,12 @@ export interface PageFacts {
 
 const EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
 const OBFUSCATED_RE = /([a-z0-9._%+-]+)\s*[\[(]\s*at\s*[\])]\s*([a-z0-9-]+(?:\s*[\[(]\s*dot\s*[\])]\s*[a-z0-9-]+)+)/gi;
-const JUNK_EMAIL = /(example\.(com|org)|sentry|wixpress|\.(png|jpe?g|gif|svg|webp)$|^[0-9a-f]{20,}@|domain\.com|email\.com|yourname)/i;
+const JUNK_EMAIL = /(@(example\.(com|org|net)|domain\.com|email\.com|yourdomain\.com)$|@([a-z0-9-]+\.)*sentry\.io$|@([a-z0-9-]+\.)*wixpress\.com$|\.(png|jpe?g|gif|svg|webp)$|^[0-9a-f]{20,}@|^yourname@)/i;
 const PHONE_RE = /(\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}/g;
 const SOCIAL_HOSTS = /(^|\.)(facebook|instagram|twitter|x|linkedin|youtube|tiktok|yelp|nextdoor)\.com$/i;
 const SOCIAL_ONLY = /(^|\.)(facebook\.com|fb\.com|instagram\.com|yelp\.com|linktr\.ee|business\.site|nextdoor\.com|twitter\.com|x\.com|tiktok\.com|square\.site|google\.com)$/i;
 const NON_HTML = /\.(pdf|jpe?g|png|gif|svg|webp|zip|docx?|xlsx?|mp4|mp3)(\?|$)/i;
-const PARKED = /(domain (may be|is) for sale|buy this domain|this domain is parked|parked free|related searches|godaddy\.com\/domainsearch|sedo\.com|hugedomains|dan\.com)/i;
+const PARKED = /(domain (may be|is) for sale|buy this domain|this domain is parked|parked free|godaddy\.com\/domainsearch|\bsedo\.com\b|\bhugedomains\b|\bdan\.com\b)/i;
 const ROLE_RE = /^(owner|co-owner|founder|co-founder|president|ceo|manager|office manager|general manager|principal|director|partner|administrator|marketing( manager| director)?)$/i;
 const MONTHS = ["january","february","march","april","may","june","july","august","september","october","november","december"];
 const MONTH_DATE_RE = new RegExp(`\\b(${MONTHS.join("|")}|${MONTHS.map((m) => m.slice(0, 3)).join("|")})\\.?\\s+(\\d{1,2}),?\\s+(20\\d{2}|19\\d{2})\\b`, "gi");
@@ -44,16 +44,29 @@ function cleanEmail(e: string): string | null {
   return v;
 }
 
+const NAME_STOP = /\b(events?|contact|services?|welcome|about|home|hours|location|news|blog|upcoming)\b/i;
+
+function distinctEmails(node: HTMLElement): Set<string> {
+  const out = new Set<string>();
+  for (const a of node.querySelectorAll('a[href^="mailto:"]')) { const v = cleanEmail(a.getAttribute("href")!); if (v) out.add(v); }
+  for (const m of node.structuredText.matchAll(EMAIL_RE)) { const v = cleanEmail(m[0]); if (v) out.add(v); }
+  return out;
+}
+
 function personFor(el: HTMLElement | null): { personName: string | null; role: string | null } {
-  // Walk up to 3 ancestors looking for a heading (name) and a short role line.
+  // Walk up to 3 ancestors; stop at the first one holding a name-like heading, and give up
+  // once a container holds more than one email (it would be ambiguous who the heading is).
   let node: HTMLElement | null = el;
   for (let i = 0; i < 3 && node; i++) {
     node = node.parentNode as HTMLElement | null;
-    if (!node) break;
-    const heading = node.querySelector("h2, h3, h4, strong");
-    const role = node.querySelectorAll("p, span, em").map((x) => x.text.trim()).find((t) => ROLE_RE.test(t));
-    if (heading && /^[A-Z][a-z]+(\s[A-Z][a-z'.-]+){1,2}$/.test(heading.text.trim()))
+    if (!node || typeof node.querySelectorAll !== "function") break;
+    if (distinctEmails(node).size > 1) break;
+    const heading = node.querySelectorAll("h2, h3, h4, strong")
+      .find((h) => { const t = h.text.trim(); return /^[A-Z][a-z]+(\s[A-Z][a-z'.-]+){1,2}$/.test(t) && !NAME_STOP.test(t); });
+    if (heading) {
+      const role = node.querySelectorAll("p, span, em").map((x) => x.text.trim()).find((t) => ROLE_RE.test(t));
       return { personName: heading.text.trim(), role: role ?? null };
+    }
   }
   return { personName: null, role: null };
 }
@@ -104,7 +117,7 @@ export function extractPage(html: string, pageUrl: string): PageFacts {
   for (const h of root.querySelectorAll("h1, h2, h3, h4")) {
     if (!/event|calendar|upcoming|schedule/i.test(h.text)) continue;
     let sib = h.nextElementSibling; let hops = 0;
-    while (sib && hops < 6 && !/^H[1-4]$/.test(sib.tagName)) { findDates(sib.text).forEach((d) => eventDates.add(d)); sib = sib.nextElementSibling; hops++; }
+    while (sib && hops < 3 && !/^H[1-4]$/.test(sib.tagName)) { if (!/posted|published|updated/i.test(sib.text)) findDates(sib.text).forEach((d) => eventDates.add(d)); sib = sib.nextElementSibling; hops++; }
   }
 
   const internal = new Set<string>(); const socials = new Set<string>();
@@ -140,12 +153,20 @@ export function extractPage(html: string, pageUrl: string): PageFacts {
 const TARGET_PATTERNS = [/contact/i, /about/i, /team|staff|people/i, /blog/i, /news|updates/i, /event|calendar/i];
 
 export function pickCrawlTargets(links: string[], baseUrl: string, max: number): string[] {
-  const base = new URL(baseUrl).toString();
-  const seen = new Set<string>([base]);
+  const base = new URL(baseUrl);
+  const baseHost = base.hostname.toLowerCase().replace(/^www\./, "");
+  const seen = new Set<string>([base.toString()]);
+  const candidates: URL[] = [];
+  for (const l of links) {
+    let u: URL;
+    try { u = new URL(l, base); } catch { continue; }
+    if (!/^https?:$/.test(u.protocol) || u.hostname.toLowerCase().replace(/^www\./, "") !== baseHost) continue;
+    u.hash = "";
+    candidates.push(u);
+  }
   const out: string[] = [];
   for (const pat of TARGET_PATTERNS) {
-    for (const l of links) {
-      const u = new URL(l); u.hash = "";
+    for (const u of candidates) {
       const s = u.toString();
       if (seen.has(s) || !pat.test(u.pathname)) continue;
       seen.add(s); out.push(s);

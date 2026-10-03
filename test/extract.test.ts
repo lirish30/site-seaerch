@@ -26,6 +26,7 @@ describe("extractPage", () => {
   it("collects dates and event dates as ISO", () => {
     expect(old.dates).toContain("2019-06-03");
     expect(old.eventDates).toContain("2023-03-14");
+    expect(old.eventDates).not.toContain("2019-06-03");
   });
 
   it("collects phones and socials", () => {
@@ -60,6 +61,20 @@ describe("extractPage", () => {
     expect(jane.personName).toBe("Jane Doe");
     expect(jane.role).toBe("Owner");
     expect(t.emails.find((e) => e.value === "tom@aceplumbing.com")!.role).toBe("Office Manager");
+    expect(t.emails.find((e) => e.value === "tom@aceplumbing.com")!.personName).toBe("Tom Lee");
+  });
+
+  it("does not attribute a section heading as a person name", () => {
+    expect(old.emails.find((e) => e.value === "bob@aceplumbing.com")!.personName).toBeNull();
+  });
+
+  it("does not flag jordan.com as a parked page", () => {
+    expect(extractPage("<h1>Jordan Plumbing</h1><p>Visit www.jordan.com</p>", "http://jordan.com/").isParked).toBe(false);
+  });
+
+  it("keeps real domains that merely contain junk words, drops placeholders", () => {
+    const h = "<p>info@sentryalarm.com x@mydomain.com example@example.com name@domain.com</p>";
+    expect(extractPage(h, "http://x.com/").emails.map((e) => e.value)).toEqual(["info@sentryalarm.com", "x@mydomain.com"]);
   });
 });
 
@@ -72,6 +87,13 @@ describe("pickCrawlTargets", () => {
     expect(pickCrawlTargets(links, "https://a.com/", 5)).toEqual([
       "https://a.com/contact", "https://a.com/about", "https://a.com/our-team", "https://a.com/blog", "https://a.com/news",
     ]);
+  });
+});
+
+describe("pickCrawlTargets robustness", () => {
+  it("same host only, resolves relative links, skips garbage", () => {
+    expect(pickCrawlTargets(["https://evil.com/contact", "/contact", "http://[bad", "https://www.a.com/about"], "https://a.com/", 3))
+      .toEqual(["https://a.com/contact", "https://www.a.com/about"]);
   });
 });
 
