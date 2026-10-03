@@ -6,7 +6,7 @@ import { getBusiness, listAllBusinesses, updateLead, domainOf } from "../db/busi
 import { latestAudit, latestAuditsFor } from "../db/audits";
 import { listContacts, contactsFor } from "../db/contacts";
 import { latestDraft, updateDraftBody } from "../db/drafts";
-import { activeReportFor, createReport, revokeReports, type ReportRow } from "../db/reports";
+import { activeReportFor, createReport, otherActiveCount, revokeReports, type ReportRow } from "../db/reports";
 import { pickRecipient } from "../recipient";
 import { regenerateDraft } from "../pipeline/lead";
 import { depsFromEnv } from "../workflows";
@@ -105,7 +105,7 @@ leadRoutes.get("/:id/report", async (c) => {
   const id = c.req.param("id");
   const audit = await latestAudit(c.env.DB, id);
   const report = audit ? await activeReportFor(c.env.DB, id, audit.id) : null;
-  return c.json({ report: report ? reportView(report) : null });
+  return c.json({ report: report ? reportView(report) : null, otherActive: await otherActiveCount(c.env.DB, id, report?.token ?? null) });
 });
 
 leadRoutes.delete("/:id/report", async (c) => {

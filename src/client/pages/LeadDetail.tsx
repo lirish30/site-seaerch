@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../api";
 import { safeHttpUrl } from "../links";
+import { shareState } from "../reportView";
 import { STATUSES, type Business, type LeadStatus } from "../types";
 
 interface Finding { code: string; severity: string; points: number; evidence: string; }
@@ -17,7 +18,7 @@ export default function LeadDetail() {
   const [subject, setSubject] = useState(""); const [body, setBody] = useState("");
   const [steer, setSteer] = useState(""); const [busy, setBusy] = useState(""); const [msg, setMsg] = useState("");
   const [notes, setNotes] = useState("");
-  const [report, setReport] = useState<ShareReport | null>(null); const [shareMsg, setShareMsg] = useState("");
+  const [report, setReport] = useState<ShareReport | null>(null); const [otherActive, setOtherActive] = useState(0); const [shareMsg, setShareMsg] = useState("");
   const linkInput = useRef<HTMLInputElement>(null);
   // Serialises saves and lets other actions wait for in-flight ones.
   const pending = useRef<Promise<unknown>>(Promise.resolve());
@@ -34,8 +35,9 @@ export default function LeadDetail() {
   const hasAudit = !!d?.audit;
   useEffect(() => {
     let cancelled = false;
-    setReport(null); setShareMsg("");
-    if (hasAudit) api.get<{ report: ShareReport | null }>(`/leads/${id}/report`).then((r) => { if (!cancelled) setReport(r.report); }).catch(() => {});
+    setReport(null); setOtherActive(0); setShareMsg("");
+    if (hasAudit) api.get<{ report: ShareReport | null; otherActive: number }>(`/leads/${id}/report`)
+      .then((r) => { if (!cancelled) { setReport(r.report); setOtherActive(r.otherActive); } }).catch(() => {});
     return () => { cancelled = true; };
   }, [id, hasAudit, d?.audit?.created_at]);
   if (!d) return <p>{msg || "Loading…"}</p>;
@@ -92,8 +94,8 @@ export default function LeadDetail() {
     catch (e) { setShareMsg((e as Error).message); }
   }
   async function revokeReport() {
-    if (!confirm("Revoke this link? Anyone who has it will no longer be able to open the report.")) return;
-    try { await api.del(`/leads/${id}/report`); setReport(null); setShareMsg("Link revoked"); }
+    if (!confirm(otherActive > 0 ? "Revoke all report links for this business? Nobody with a link will be able to open it." : "Revoke this link? Anyone who has it will no longer be able to open the report.")) return;
+    try { await api.del(`/leads/${id}/report`); setReport(null); setOtherActive(0); setShareMsg("Link revoked"); }
     catch (e) { setShareMsg((e as Error).message); }
   }
   async function copyLink() {
@@ -102,6 +104,7 @@ export default function LeadDetail() {
     try { await navigator.clipboard.writeText(link); setShareMsg("Link copied"); }
     catch { linkInput.current?.select(); setShareMsg("Press Ctrl+C to copy the selected link"); }
   }
+  const share = shareState(report, otherActive);
   const mailto = d.toContact ? `mailto:${d.toContact.value}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}` : null;
 
   return (
@@ -123,11 +126,15 @@ export default function LeadDetail() {
           <ul>{d.audit.findings.map((f) => <li key={f.code}><strong>+{f.points}</strong> {f.evidence}</li>)}</ul>
           <p className="muted">Audited {new Date(d.audit.created_at).toLocaleString()}</p>
           <h3>Share report</h3>
-          {report ? <>
+          {report && <>
             <input ref={linkInput} readOnly aria-label="Report link" value={location.origin + report.url} onFocus={(e) => e.currentTarget.select()} />
             <p className="muted">Expires {new Date(report.expiresAt).toLocaleDateString()}</p>
-            <p className="row"><button onClick={copyLink}>Copy link</button><button onClick={revokeReport}>Revoke link</button></p>
-          </> : <p className="row"><button onClick={createReport}>Create report link</button></p>}
+          </>}
+          {share.olderText && <p className="muted">{share.olderText}</p>}
+          <p className="row">
+            {report ? <button onClick={copyLink}>Copy link</button> : <button onClick={createReport}>Create report link</button>}
+            {share.canRevoke && <button onClick={revokeReport}>{share.revokeLabel}</button>}
+          </p>
           {shareMsg && <p className="muted">{shareMsg}</p>}
         </> : <p className="muted">Audit in progress…</p>}
         <h3>Contacts</h3>

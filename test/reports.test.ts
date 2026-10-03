@@ -85,19 +85,19 @@ describe("report management API", () => {
     const s = await createSearch(env.DB, { location: "Boise", businessType: "x", radiusKm: 10, maxResults: 5 });
     const b = await upsertBusiness(env.DB, { placeId: crypto.randomUUID(), name: "NoAudit", category: null, address: null, phone: null, websiteUrl: null, mapsUrl: null, rating: null, reviewCount: null }, s.id);
     expect((await api(`/api/leads/${b.id}/report`, { method: "POST" })).status).toBe(404);
-    expect((await (await api(`/api/leads/${b.id}/report`)).json<any>())).toEqual({ report: null });
+    expect((await (await api(`/api/leads/${b.id}/report`)).json<any>())).toEqual({ report: null, otherActive: 0 });
   });
 
   it("GET returns the active report or null; DELETE revokes all and the public page 404s", async () => {
     const { b } = await seedLead();
-    expect(await (await api(`/api/leads/${b.id}/report`)).json()).toEqual({ report: null });
+    expect(await (await api(`/api/leads/${b.id}/report`)).json()).toEqual({ report: null, otherActive: 0 });
     const j = await (await api(`/api/leads/${b.id}/report`, { method: "POST" })).json<any>();
-    expect(await (await api(`/api/leads/${b.id}/report`)).json()).toEqual({ report: { token: j.token, url: j.url, expiresAt: j.expiresAt } });
+    expect(await (await api(`/api/leads/${b.id}/report`)).json()).toEqual({ report: { token: j.token, url: j.url, expiresAt: j.expiresAt }, otherActive: 0 });
     expect((await pub(j.token)).status).toBe(200);
     const d = await api(`/api/leads/${b.id}/report`, { method: "DELETE" });
     expect(d.status).toBe(200);
     expect(await d.json()).toEqual({ ok: true });
-    expect(await (await api(`/api/leads/${b.id}/report`)).json()).toEqual({ report: null });
+    expect(await (await api(`/api/leads/${b.id}/report`)).json()).toEqual({ report: null, otherActive: 0 });
     expect((await pub(j.token)).status).toBe(404);
     // a fresh POST after revoke creates a new token
     const j2 = await (await api(`/api/leads/${b.id}/report`, { method: "POST" })).json<any>();
@@ -111,6 +111,29 @@ describe("report management API", () => {
     await api(`/api/leads/${x.b.id}/report`, { method: "DELETE" });
     expect((await pub(jx.token)).status).toBe(404);
     expect((await pub(jy.token)).status).toBe(200);
+  });
+
+  it("GET counts other active links (older audits) but not expired, revoked or the returned one", async () => {
+    const { b } = await seedLead();
+    const old1 = await (await api(`/api/leads/${b.id}/report`, { method: "POST" })).json<any>();
+    await seedAudit(b.id, { findings: [fnd("no_h1", "low", 2, "Second")] });
+    const old2 = await (await api(`/api/leads/${b.id}/report`, { method: "POST" })).json<any>();
+    await seedAudit(b.id, { findings: [fnd("no_h1", "low", 2, "Third")] });
+    // old links are still live but belong to earlier audits
+    expect(await (await api(`/api/leads/${b.id}/report`)).json()).toEqual({ report: null, otherActive: 2 });
+    const cur = await (await api(`/api/leads/${b.id}/report`, { method: "POST" })).json<any>();
+    expect((await (await api(`/api/leads/${b.id}/report`)).json<any>())).toMatchObject({ report: { token: cur.token }, otherActive: 2 });
+    await env.DB.prepare(`UPDATE audit_reports SET expires_at = ? WHERE token = ?`).bind("2020-01-01T00:00:00.000Z", old1.token).run();
+    expect((await (await api(`/api/leads/${b.id}/report`)).json<any>()).otherActive).toBe(1);
+    await env.DB.prepare(`UPDATE audit_reports SET revoked = 1 WHERE token = ?`).bind(old2.token).run();
+    expect((await (await api(`/api/leads/${b.id}/report`)).json<any>()).otherActive).toBe(0);
+    // another business's links are never counted
+    const other = await seedLead("Other Co");
+    await api(`/api/leads/${other.b.id}/report`, { method: "POST" });
+    expect((await (await api(`/api/leads/${b.id}/report`)).json<any>()).otherActive).toBe(0);
+    // DELETE revokes the old ones too
+    await api(`/api/leads/${b.id}/report`, { method: "DELETE" });
+    expect(await (await api(`/api/leads/${b.id}/report`)).json()).toEqual({ report: null, otherActive: 0 });
   });
 
   it("requires auth", async () => {
@@ -173,7 +196,7 @@ describe("public report endpoint", () => {
   it("sets privacy headers on success and on 404", async () => {
     const { b } = await seedLead();
     const j = await (await api(`/api/leads/${b.id}/report`, { method: "POST" })).json<any>();
-    for (const res of [await pub(j.token), await pub("unknowntoken")]) {
+    for (const res of [await pub(j.token), await pub("A".repeat(43))]) {
       expect(res.headers.get("x-robots-tag")).toBe("noindex, nofollow");
       expect(res.headers.get("cache-control")).toBe("no-store");
       expect(res.headers.get("referrer-policy")).toBe("no-referrer");
@@ -187,7 +210,7 @@ describe("public report endpoint", () => {
     const { b: b2 } = await seedLead();
     const revoked = await (await api(`/api/leads/${b2.id}/report`, { method: "POST" })).json<any>();
     await api(`/api/leads/${b2.id}/report`, { method: "DELETE" });
-    const tokens = [crypto.randomUUID().replace(/-/g, ""), expired.token, revoked.token, "a".repeat(65), "bad.token", "bad%20token", "%E2%9C%93"];
+    const tokens = ["A".repeat(43), "A".repeat(42), crypto.randomUUID().replace(/-/g, ""), expired.token, revoked.token, "a".repeat(65), "bad.token", "bad%20token", "%E2%9C%93"];
     const bodies: string[] = [];
     for (const t of tokens) {
       const r = await pub(t);
@@ -197,6 +220,14 @@ describe("public report endpoint", () => {
     expect(new Set(bodies)).toEqual(new Set([JSON.stringify({ error: "not found" })]));
   });
 
+  it("404s when a report row's audit belongs to a different business", async () => {
+    const x = await seedLead("X Co"), y = await seedLead("Y Co");
+    const token = "M".repeat(43);
+    await env.DB.prepare(`INSERT INTO audit_reports (token, business_id, audit_id, created_at, expires_at, revoked) VALUES (?,?,?,?,?,0)`)
+      .bind(token, x.b.id, y.a.id, new Date().toISOString(), "2099-01-01T00:00:00.000Z").run();
+    expect((await pub(token)).status).toBe(404);
+  });
+
   it("does not query the DB for malformed tokens", async () => {
     const orig = env.DB.prepare.bind(env.DB);
     let calls = 0;
@@ -204,6 +235,7 @@ describe("public report endpoint", () => {
     try {
       expect((await pub("a".repeat(65))).status).toBe(404);
       expect((await pub("bad.token")).status).toBe(404);
+      expect((await pub("A".repeat(42))).status).toBe(404);
       expect(calls).toBe(0);
     } finally { (env.DB as any).prepare = orig; }
   });

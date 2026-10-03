@@ -180,6 +180,13 @@ describe("routes", () => {
     for (const bad of ["http://example.com/l.png", "javascript:alert(1)", "data:image/png;base64,AAAA", "ftp://x.com/a", "example.com/l.png", "https://", "https://exa mple.com/a", `https://example.com/${"a".repeat(500)}`]) {
       expect((await put(bad)).status, bad).toBe(400);
     }
+    const bad = await put("http://example.com/l.png");
+    expect(await bad.json()).toEqual({ error: "invalid", fields: ["logo_url"] });
+    expect((await put("  https://example.com/trimmed.png  ")).status).toBe(200);
+    expect((await (await api("/api/settings")).json<any>()).settings.logo_url).toBe("https://example.com/trimmed.png");
+    const other = await api("/api/settings", { method: "PUT", body: JSON.stringify({ your_name: 5 }) });
+    expect(other.status).toBe(400);
+    expect((await other.json<any>()).fields).toEqual(["your_name"]);
     expect((await put("")).status).toBe(200);
     expect((await (await api("/api/settings")).json<any>()).settings.logo_url).toBe("");
   });

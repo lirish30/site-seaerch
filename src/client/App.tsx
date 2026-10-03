@@ -11,7 +11,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
-      <Route path="/r/:token" element={<Report />} />
+      <Route path="/r/*" element={<Report />} />
       <Route path="*" element={
         <div className="shell">
           <nav className="nav">

@@ -5,7 +5,7 @@ import { getSettings, saveSettings } from "../db/settings";
 import { monthUsage } from "../db/usage";
 
 // The logo is embedded in a public page, so only a plain https URL (or none) is accepted.
-const logoUrl = z.string().max(500).refine((v) => v === "" || (/^https:\/\/[^\s]+$/.test(v) && URL.canParse(v)));
+const logoUrl = z.string().trim().max(500).refine((v) => v === "" || (/^https:\/\/[^\s]+$/.test(v) && URL.canParse(v)));
 
 const S = z.object({
   your_name: z.string().max(200), business_name: z.string().max(200), contact_email: z.string().max(200),
@@ -21,6 +21,6 @@ settingsRoutes.get("/", async (c) => c.json({
 
 settingsRoutes.put("/", async (c) => {
   const p = S.safeParse(await c.req.json().catch(() => ({})));
-  if (!p.success) return c.json({ error: "invalid" }, 400);
+  if (!p.success) return c.json({ error: "invalid", fields: [...new Set(p.error.issues.map((i) => String(i.path[0])))] }, 400);
   return c.json(await saveSettings(c.env.DB, p.data));
 });

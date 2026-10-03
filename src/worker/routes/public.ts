@@ -12,7 +12,8 @@ publicRoutes.use("*", async (c, next) => {
   c.header("Referrer-Policy", "no-referrer");
 });
 
-const TOKEN = /^[A-Za-z0-9_-]{1,64}$/;
+// Tokens are always exactly 43 chars (32 bytes, base64url), so anything else never touches the DB.
+const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 
 publicRoutes.get("/report/:token", async (c) => {
   const token = c.req.param("token");

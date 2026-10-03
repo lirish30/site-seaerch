@@ -57,12 +57,19 @@ describe("auth routes", () => {
   });
 
   it.each(["/api/leads", "/api/settings", "/api/searches", "/api/publicx", "/api/public/", "/api/public", "/api/public/other/x",
-    "/api/public/report", "/api/public/report/", "/api/public/report/abc/def", "/api/public/report/../leads"])("%s stays protected without a cookie", async (p) => {
+    "/api/public/report", "/api/public/report/", "/api/public/report/abc/def", "/api/public/report/%2e%2e/leads",
+    `/api/public/report/${"A".repeat(43)}/x`])("%s stays protected without a cookie", async (p) => {
     expect((await SELF.fetch(`https://x${p}`)).status).toBe(401);
   });
 
+  it("an encoded-slash token segment reaches the public route and is just a malformed token (404)", async () => {
+    const r = await SELF.fetch("https://x/api/public/report/..%2fleads");
+    expect(r.status).toBe(404);
+    expect(await r.json()).toEqual({ error: "not found" });
+  });
+
   it("public report route needs no cookie (404 for an unknown token, not 401)", async () => {
-    const r = await SELF.fetch("https://x/api/public/report/abcDEF123_-");
+    const r = await SELF.fetch(`https://x/api/public/report/${"abcDEF123_-".padEnd(43, "x")}`);
     expect(r.status).toBe(404);
     expect(await r.json()).toEqual({ error: "not found" });
   });

@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { groupFindings, isHttpsLogo, summaryText, type ReportData } from "../reportView";
+import { groupFindings, isHttpsLogo, isReportToken, summaryText, type ReportData } from "../reportView";
 
 // Public page: deliberately bypasses api.ts, whose 401 handling redirects to /login.
 export default function Report() {
-  const { token } = useParams();
+  const token = useParams()["*"]; // wildcard route, so truncated or extended links land here instead of the app shell
   const [r, setR] = useState<ReportData | null>(null);
-  const [state, setState] = useState<"loading" | "ok" | "gone">("loading");
+  const [state, setState] = useState<"loading" | "ok" | "gone" | "error">("loading");
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     const prevTitle = document.title;
@@ -20,19 +21,22 @@ export default function Report() {
   }, []);
 
   useEffect(() => {
+    if (!isReportToken(token)) { setState("gone"); return; }
     let cancelled = false;
     setState("loading");
-    fetch(`/api/public/report/${encodeURIComponent(token ?? "")}`, { credentials: "omit" })
+    fetch(`/api/public/report/${token}`, { credentials: "omit" })
       .then(async (res) => {
+        if (res.status === 404) { if (!cancelled) setState("gone"); return; }
         if (!res.ok) throw new Error(String(res.status));
         const data = (await res.json()) as ReportData;
         if (!cancelled) { setR(data); setState("ok"); document.title = `Website check for ${data.businessName}`; }
       })
-      .catch(() => { if (!cancelled) setState("gone"); });
+      .catch(() => { if (!cancelled) setState("error"); });
     return () => { cancelled = true; };
-  }, [token]);
+  }, [token, attempt]);
 
   if (state === "loading") return <div className="report"><p className="muted">Loading…</p></div>;
+  if (state === "error") return <div className="report"><p>Couldn't load this report. Please try again.</p><button onClick={() => setAttempt((n) => n + 1)}>Retry</button></div>;
   if (state === "gone" || !r) return <div className="report"><p>This report link has expired or is no longer available.</p></div>;
 
   const groups = groupFindings(r.findings);
@@ -46,9 +50,9 @@ export default function Report() {
         {groups.length ? <>
           <h2>{summaryText(r.counts)}</h2>
           <p className="row">
-            <span className="badge sev-high">{r.counts.high} high</span>
-            <span className="badge sev-medium">{r.counts.medium} medium</span>
-            <span className="badge sev-low">{r.counts.low} low</span>
+            {r.counts.high > 0 && <span className="badge sev-high">{r.counts.high} high</span>}
+            {r.counts.medium > 0 && <span className="badge sev-medium">{r.counts.medium} medium</span>}
+            {r.counts.low > 0 && <span className="badge sev-low">{r.counts.low} low</span>}
           </p>
           {groups.map((g) => (
             <section key={g.severity} className={`sev-group sev-${g.severity}`}>

@@ -21,3 +21,15 @@ export function summaryText(counts: Record<Severity, number>): string {
 
 // Defence in depth: the server already blanks non-https logos, but the client never trusts that.
 export const isHttpsLogo = (url: string) => url.startsWith("https://");
+
+export const isReportToken = (t: string | undefined) => !!t && /^[A-Za-z0-9_-]{43}$/.test(t);
+
+/** What the owner's share control shows: any active link (current or older) can be revoked. */
+export function shareState(report: { token: string } | null, otherActive: number) {
+  const plural = otherActive === 1 ? "link" : "links";
+  return {
+    canRevoke: !!report || otherActive > 0,
+    revokeLabel: otherActive > 0 ? "Revoke all" : "Revoke link",
+    olderText: otherActive > 0 ? `${otherActive} older ${plural} still active` : null,
+  };
+}

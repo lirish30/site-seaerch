@@ -22,6 +22,13 @@ export async function activeReportFor(db: D1Database, businessId: string, auditI
   ).bind(businessId, auditId, now.toISOString()).first<ReportRow>();
 }
 
+/** Other live links for the business (e.g. made for an earlier audit), so the owner can see and revoke them. */
+export async function otherActiveCount(db: D1Database, businessId: string, exceptToken: string | null, now = new Date()): Promise<number> {
+  const r = await db.prepare(`SELECT COUNT(*) AS n FROM audit_reports WHERE business_id = ? AND revoked = 0 AND expires_at > ? AND token != ?`)
+    .bind(businessId, now.toISOString(), exceptToken ?? "").first<{ n: number }>();
+  return r?.n ?? 0;
+}
+
 export async function revokeReports(db: D1Database, businessId: string): Promise<void> {
   await db.prepare(`UPDATE audit_reports SET revoked = 1 WHERE business_id = ?`).bind(businessId).run();
 }
@@ -39,7 +46,7 @@ export async function publicReport(db: D1Database, token: string, now = new Date
   const r = await db.prepare(
     `SELECT b.name AS business_name, a.created_at AS audited_at, a.partial AS partial, a.findings AS findings, r.expires_at AS expires_at,
             s.your_name AS your_name, s.business_name AS sender_business, s.contact_email AS contact_email, s.logo_url AS logo_url
-     FROM audit_reports r JOIN audits a ON a.id = r.audit_id JOIN businesses b ON b.id = r.business_id JOIN settings s ON s.id = 1
+     FROM audit_reports r JOIN audits a ON a.id = r.audit_id AND a.business_id = r.business_id JOIN businesses b ON b.id = r.business_id JOIN settings s ON s.id = 1
      WHERE r.token = ? AND r.revoked = 0 AND r.expires_at > ?`,
   ).bind(token, now.toISOString()).first<{ business_name: string; audited_at: string; partial: number; findings: string; expires_at: string;
     your_name: string; sender_business: string; contact_email: string; logo_url: string }>();

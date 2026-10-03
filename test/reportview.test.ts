@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupFindings, summaryText, isHttpsLogo } from "../src/client/reportView";
+import { groupFindings, summaryText, isHttpsLogo, isReportToken, shareState } from "../src/client/reportView";
 
 const f = (severity: "high" | "medium" | "low", evidence: string) => ({ severity, evidence });
 
@@ -21,5 +21,21 @@ describe("reportView", () => {
     expect(isHttpsLogo("http://x.com/a.png")).toBe(false);
     expect(isHttpsLogo("javascript:alert(1)")).toBe(false);
     expect(isHttpsLogo("")).toBe(false);
+  });
+  it("recognises well-formed report tokens only", () => {
+    expect(isReportToken("A".repeat(43))).toBe(true);
+    expect(isReportToken("a-_".repeat(14) + "a")).toBe(true);
+    expect(isReportToken("A".repeat(42))).toBe(false);
+    expect(isReportToken("A".repeat(44))).toBe(false);
+    expect(isReportToken("A".repeat(42) + "/")).toBe(false);
+    expect(isReportToken("")).toBe(false);
+    expect(isReportToken(undefined)).toBe(false);
+  });
+  it("derives share-link UI state so any active link can be revoked", () => {
+    const r = { token: "t", url: "/r/t", expiresAt: "x" };
+    expect(shareState(null, 0)).toEqual({ canRevoke: false, revokeLabel: "Revoke link", olderText: null });
+    expect(shareState(r, 0)).toEqual({ canRevoke: true, revokeLabel: "Revoke link", olderText: null });
+    expect(shareState(null, 1)).toEqual({ canRevoke: true, revokeLabel: "Revoke all", olderText: "1 older link still active" });
+    expect(shareState(r, 2)).toEqual({ canRevoke: true, revokeLabel: "Revoke all", olderText: "2 older links still active" });
   });
 });
