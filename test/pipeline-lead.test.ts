@@ -1,5 +1,7 @@
 import { env } from "cloudflare:test";
 import { describe, it, expect } from "vitest";
+import { runLeadWithErrorHandling } from "../src/worker/workflows";
+import { getBusiness } from "../src/worker/db/businesses";
 import { runLead, regenerateDraft, type LeadDeps, type StepLike } from "../src/worker/pipeline/lead";
 import { createSearch, getSearch } from "../src/worker/db/searches";
 import { upsertBusiness } from "../src/worker/db/businesses";
@@ -92,5 +94,27 @@ describe("runLead", () => {
     const dr = await regenerateDraft(d, b.id, "shorter");
     expect(lastUser).toContain("shorter");
     expect(dr.steering_note).toBe("shorter");
+  });
+
+  it("pagespeed step failing after retries → partial audit, draft still runs", async () => {
+    const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 5 });
+    const b = await upsertBusiness(env.DB, listing({ placeId: "L6" }), s.id);
+    const d = deps();
+    const failing: StepLike = { do: (n, fn) => (n === "pagespeed" ? Promise.reject(new Error("rate limited")) : fn()), sleep: async () => {} };
+    const r = await runLead(d, failing, { businessId: b.id, searchId: s.id, forceDraft: true });
+    expect((await latestAudit(env.DB, b.id))!.partial).toBe(true);
+    expect(r.draftId).not.toBeNull();
+  });
+});
+
+describe("runLeadWithErrorHandling", () => {
+  it("records a non-Error throw and increments progress exactly once", async () => {
+    const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 5 });
+    const b = await upsertBusiness(env.DB, listing({ placeId: "L7" }), s.id);
+    const fake: any = { do: (n: string, c: any, f?: () => Promise<unknown>) => (n === "score" ? Promise.reject("boom-string") : (f ?? c)()), sleep: async () => {} };
+    const r = await runLeadWithErrorHandling(deps(), fake, { businessId: b.id, searchId: s.id });
+    expect(r).toEqual({ auditId: null, draftId: null });
+    expect((await getBusiness(env.DB, b.id))!.last_error).toBe("boom-string");
+    expect((await getSearch(env.DB, s.id))!.processed_count).toBe(1);
   });
 });

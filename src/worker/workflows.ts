@@ -23,21 +23,24 @@ export function adaptStep(step: WorkflowStep): StepLike {
 
 export type LeadParams = { businessId: string; searchId: string | null; forceDraft?: boolean };
 
+export async function runLeadWithErrorHandling(deps: LeadDeps, step: WorkflowStep, p: LeadParams) {
+  try {
+    await step.do("clear-error", () => setBusinessError(deps.db, p.businessId, null).then(() => true));
+    return await runLead(deps, adaptStep(step), p);
+  } catch (e) {
+    const message = String((e as any)?.message ?? e).slice(0, 500);
+    await step.do("record-error", async () => {
+      await setBusinessError(deps.db, p.businessId, message);
+      if (p.searchId) await incrementProcessed(deps.db, p.searchId);
+      return true;
+    });
+    return { auditId: null, draftId: null };
+  }
+}
+
 export class LeadWorkflow extends WorkflowEntrypoint<Env, LeadParams> {
   async run(event: WorkflowEvent<LeadParams>, step: WorkflowStep) {
-    const deps = depsFromEnv(this.env);
-    const p = event.payload;
-    try {
-      await step.do("clear-error", () => setBusinessError(deps.db, p.businessId, null).then(() => true));
-      return await runLead(deps, adaptStep(step), p);
-    } catch (e) {
-      await step.do("record-error", async () => {
-        await setBusinessError(deps.db, p.businessId, (e as Error).message.slice(0, 500));
-        if (p.searchId) await incrementProcessed(deps.db, p.searchId);
-        return true;
-      });
-      return { auditId: null, draftId: null };
-    }
+    return runLeadWithErrorHandling(depsFromEnv(this.env), step, event.payload);
   }
 }
 

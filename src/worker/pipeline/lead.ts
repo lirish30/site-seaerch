@@ -55,7 +55,11 @@ export async function runLead(
     return { siteStatus: r.siteStatus, finalUrl: r.finalUrl, facts: r.facts, rawKey };
   });
 
-  const ps = await step.do("pagespeed", async () => {
+  // Retries may be exhausted (e.g. rate limited); degrade to a partial audit rather than failing the lead.
+  // No instanceof check: error classes may not survive Workflows' step-error serialization.
+  let ps: Awaited<ReturnType<typeof runPageSpeed>>["facts"] | null = null;
+  try {
+    ps = await step.do("pagespeed", async () => {
     if (crawl.siteStatus !== "ok" || !crawl.finalUrl) return null;
     try {
       const r = await runPageSpeed(crawl.finalUrl, { apiKey: deps.pagespeedKey, fetch: deps.fetch });
@@ -69,7 +73,10 @@ export async function runLead(
       if (e instanceof RateLimitedError) throw e;
       return null;
     }
-  });
+    });
+  } catch {
+    ps = null;
+  }
 
   const audit = await step.do("score", async () => {
     const s = score({ siteStatus: crawl.siteStatus, crawl: crawl.facts, pagespeed: ps, now: deps.now() });
