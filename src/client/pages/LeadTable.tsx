@@ -1,14 +1,14 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import type { LeadRow } from "../types";
-import { applyLeadFilters, defaultFilters, NOT_CRAWLED, OFFERS, platformOptions } from "../leadFilters";
+import { applyLeadFilters, defaultFilters, type LeadFilters, NOT_CRAWLED, OFFERS, platformOptions } from "../leadFilters";
 
 type Key = "score" | "name" | "status";
 const scoreClass = (s: number | null) => (s === null ? "low" : s >= 60 ? "high" : s >= 20 ? "mid" : "low");
 
 export default function LeadTable({ rows }: { rows: LeadRow[] }) {
   const [sort, setSort] = useState<Key>("score");
-  const [f, setF] = useState(defaultFilters);
+  const [f, setF] = useState<LeadFilters>(defaultFilters);
   const set = (p: Partial<typeof f>) => setF((x) => ({ ...x, ...p }));
   const num = (v: string) => (v === "" ? null : Number(v));
   const platforms = useMemo(() => platformOptions(rows), [rows]);
@@ -26,7 +26,7 @@ export default function LeadTable({ rows }: { rows: LeadRow[] }) {
         <label className="row" style={{ margin: 0, fontWeight: 400 }}>Min score <input type="number" min={0} max={100} style={{ width: 70 }} value={f.minScore} onChange={(e) => set({ minScore: Number(e.target.value) })} /></label>
         <label className="row" style={{ margin: 0, fontWeight: 400 }}>Min reviews <input type="number" min={0} style={{ width: 70 }} value={f.minReviews ?? ""} onChange={(e) => set({ minReviews: num(e.target.value) })} /></label>
         <label className="row" style={{ margin: 0, fontWeight: 400 }}>Max rating <input type="number" min={0} max={5} step={0.1} style={{ width: 70 }} value={f.maxRating ?? ""} onChange={(e) => set({ maxRating: num(e.target.value) })} /></label>
-        <label className="row" style={{ margin: 0, fontWeight: 400 }}>Offer <select style={{ width: "auto" }} value={f.offer} onChange={(e) => set({ offer: e.target.value })}>
+        <label className="row" style={{ margin: 0, fontWeight: 400 }}>Offer <select style={{ width: "auto" }} value={f.offer} onChange={(e) => set({ offer: e.target.value as LeadFilters["offer"] })}>
           <option value="any">any</option>{OFFERS.map((o) => <option key={o} value={o}>{o}</option>)}</select></label>
         <label className="row" style={{ margin: 0, fontWeight: 400 }}>Platform <select style={{ width: "auto" }} value={f.platform} onChange={(e) => set({ platform: e.target.value })}>
           <option value="any">any</option>{platforms.map((p) => <option key={p} value={p}>{p}</option>)}<option value={NOT_CRAWLED}>not crawled</option></select></label>

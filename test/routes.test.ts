@@ -78,8 +78,18 @@ describe("routes", () => {
     const all = (await (await api(`/api/leads?limit=500`)).json<any[]>()).find((r) => r.business.id === b.id);
     expect(all).toMatchObject({ platform: "wix", rating: 3.8, reviewCount: 12 });
     const bare = await seedLead();
-    const row = (await (await api(`/api/searches/${bare.s.id}`)).json<any>()).leads[0];
-    expect(row).toMatchObject({ platform: null, rating: null, reviewCount: null });
+    const bareRow = (await (await api(`/api/searches/${bare.s.id}`)).json<any>()).leads[0];
+    expect(bareRow).toMatchObject({ platform: null, rating: null, reviewCount: null });
+    const bareAll = (await (await api(`/api/leads?limit=500`)).json<any[]>()).find((r) => r.business.id === bare.b.id);
+    expect(bareAll).toMatchObject({ platform: null, rating: null, reviewCount: null });
+  });
+
+  it("lead rows for a business with no audit keep rating/reviewCount and null platform/score", async () => {
+    const s = await createSearch(env.DB, { location: "Boise", businessType: "noaudit", radiusKm: 10, maxResults: 5 });
+    const b = await upsertBusiness(env.DB, { placeId: crypto.randomUUID(), name: "NoAudit", category: null, address: null, phone: null, websiteUrl: null, mapsUrl: null, rating: 4.2, reviewCount: 7 }, s.id);
+    const want = { platform: null, score: null, offer: null, rating: 4.2, reviewCount: 7 };
+    expect((await (await api(`/api/searches/${s.id}`)).json<any>()).leads[0]).toMatchObject(want);
+    expect((await (await api(`/api/leads?limit=500`)).json<any[]>()).find((r) => r.business.id === b.id)).toMatchObject(want);
   });
 
   it("opening a lead marks it reviewed and returns draft + recipient", async () => {

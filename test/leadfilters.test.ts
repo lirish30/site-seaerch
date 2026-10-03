@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { applyLeadFilters, defaultFilters, platformOptions, type LeadFilters } from "../src/client/leadFilters";
+import { applyLeadFilters, defaultFilters, NOT_CRAWLED, platformOptions, type LeadFilters } from "../src/client/leadFilters";
 import type { LeadRow } from "../src/client/types";
 
 let n = 0;
 const row = (o: Partial<Omit<LeadRow, "business">> & { status?: string } = {}): LeadRow => {
   const { status, ...rest } = o;
+  const flat = { rating: 4, reviewCount: 10, ...rest }; // business row mirrors the flat fields, as leadRows builds them
   return { business: { id: `b${n++}`, name: "N", category: null, address: null, phone: null, website_url: null, maps_url: null,
-    lead_status: (status ?? "new") as any, notes: null, contacted_at: null, last_error: null, rating: null, review_count: null },
-  score: 50, topFinding: null, offer: "care_plan", bestContact: null, hasEmail: false, partial: false, platform: "wix", rating: 4, reviewCount: 10, ...rest };
+    lead_status: (status ?? "new") as any, notes: null, contacted_at: null, last_error: null, rating: flat.rating, review_count: flat.reviewCount },
+  score: 50, topFinding: null, offer: "care_plan", bestContact: null, hasEmail: false, partial: false, platform: "wix", ...flat };
 };
 const f = (o: Partial<LeadFilters> = {}): LeadFilters => ({ ...defaultFilters, ...o });
 const ids = (rows: LeadRow[]) => rows.map((r) => r.business.id);
@@ -33,6 +34,7 @@ describe("applyLeadFilters", () => {
     expect(ids(applyLeadFilters([a, b, c], f({ minReviews: 10 })))).toEqual([a.business.id]);
     expect(applyLeadFilters([a, b, c], f({ minReviews: 0 }))).toHaveLength(3);
     expect(applyLeadFilters([a, b, c], f({ minReviews: null }))).toHaveLength(3);
+    expect(applyLeadFilters([a, b, c], f({ minReviews: -5 }))).toHaveLength(3);
   });
   it("max rating is at-or-below and excludes null ratings; empty is off", () => {
     const [a, b, c, d] = [row({ rating: 3.5 }), row({ rating: 4 }), row({ rating: 4.6 }), row({ rating: null })];
@@ -52,7 +54,7 @@ describe("applyLeadFilters", () => {
     const [a, b, c] = [row({ platform: "wix" }), row({ platform: "other" }), row({ platform: null })];
     expect(applyLeadFilters([a, b, c], f({ platform: "wix" }))).toEqual([a]);
     expect(applyLeadFilters([a, b, c], f({ platform: "other" }))).toEqual([b]);
-    expect(applyLeadFilters([a, b, c], f({ platform: "not_crawled" }))).toEqual([c]);
+    expect(applyLeadFilters([a, b, c], f({ platform: NOT_CRAWLED }))).toEqual([c]);
     expect(applyLeadFilters([a, b, c], f({ platform: "any" }))).toHaveLength(3);
   });
   it("combines filters with AND", () => {
@@ -66,11 +68,11 @@ describe("applyLeadFilters", () => {
     const filters = f({ emailOnly: true, minScore: 50, minReviews: 20, maxRating: 4, offer: "new_site", platform: "godaddy" });
     expect(applyLeadFilters([hit, ...misses], filters)).toEqual([hit]);
   });
-  it("does not mutate or reorder the input", () => {
+  it("returns a new array even when nothing is filtered out, so callers can sort in place", () => {
     const rows = [row({ score: 1 }), row({ score: 2 })];
-    const copy = [...rows];
-    applyLeadFilters(rows, f());
-    expect(rows).toEqual(copy);
+    const out = applyLeadFilters(rows, f());
+    expect(out).toEqual(rows);
+    expect(out).not.toBe(rows);
   });
 });
 
