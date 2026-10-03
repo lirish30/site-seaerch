@@ -11,6 +11,18 @@ export const WEIGHTS = {
   no_https: 15,
   no_title_or_meta: 6,
   no_contact_form: 6,
+  low_seo_score: 12,
+  low_accessibility: 6,
+  no_click_to_call: 8,
+  no_local_schema: 5,
+  thin_content: 5,
+  no_h1: 3,
+  missing_alt: 4,
+  no_sitemap: 3,
+  mixed_content: 6,
+  no_https_redirect: 4,
+  dated_build: 10,
+  no_email_auth: 4,
 } as const;
 
 export const THRESHOLDS = {
@@ -22,6 +34,17 @@ export const THRESHOLDS = {
   staleContentMonths: 18,
   brokenLinksMin: 3,
   lowPriorityBelow: 20,
+  // A paid auto-draft needs at least one finding this heavy: a pile of small ones (no sitemap, no headline...) on an otherwise
+  // healthy site isn't a reason to pitch.
+  autoDraftMinFindingPoints: 8,
+  seoLowBelow: 70,
+  a11yLowBelow: 70,
+  thinContentWords: 150,
+  missingAltMinImages: 4,
+  missingAltShare: 0.5,
 } as const;
 
 export const SITE_STATUS_SCORE = { no_website: 100, parked: 90, unreachable: 90 } as const;
+
+// Max points a group can add to the total score; groups not listed here are uncapped.
+export const GROUP_CAPS = { seo: 20, local: 15 } as const;

@@ -20,5 +20,19 @@ th { cursor:pointer; user-select:none; color:var(--muted); font-weight:600; }
 .table-wrap { overflow-x:auto; }
 .score { font-weight:700; } .score.high { color:var(--bad); } .score.mid { color:var(--warn); } .score.low { color:var(--muted); }
 .muted { color:var(--muted); } .error { color:var(--bad); }
+.notice { display:flex; gap:12px; justify-content:space-between; align-items:center; padding:8px 12px; margin-bottom:12px; border:1px solid var(--warn); border-radius:6px; background:var(--card); }
 .badge { display:inline-block; padding:1px 8px; border-radius:99px; border:1px solid var(--line); font-size:12px; }
 progress { width:100%; }
+.report { max-width: 720px; margin: 0 auto; padding: 16px; }
+.report h1 { font-size: 24px; line-height: 1.25; margin: 0 0 4px; } .report h2 { font-size: 20px; margin: 24px 0 8px; } .report h3 { font-size: 16px; margin: 16px 0 4px; }
+.report li { margin: 4px 0; }
+.report .badge.sev-high { color:var(--bad); border-color:var(--bad); } .report .badge.sev-medium { color:var(--warn); border-color:var(--warn); }
+.report .sev-group { border-left: 3px solid var(--line); padding-left: 12px; margin-top: 16px; } .report .sev-group h3 { margin-top: 0; }
+.report .sev-group.sev-high { border-color: var(--bad); } .report .sev-group.sev-medium { border-color: var(--warn); }
+.report-sender { display:flex; gap:12px; align-items:center; margin-top:24px; padding-top:16px; border-top:1px solid var(--line); }
+.report-sender img { max-height: 56px; max-width: 160px; object-fit: contain; }
+/* Light tokens again so printing from dark mode isn't pale-on-white. */
+@media print {
+  :root { --bg:#fff; --fg:#000; --muted:#57534e; --line:#d6d3d1; --card:#fff; --link:#1d4ed8; }
+  body { background:#fff; color:#000; } .report { max-width:none; padding:0; } .report .card { background:none; border:0; padding:0; }
+}

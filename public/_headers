@@ -1,0 +1,6 @@
+/r
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+/r/*
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer

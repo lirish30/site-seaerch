@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { pollDelay, searchFinished } from "../poll";
 import type { LeadRow, Search } from "../types";
@@ -7,6 +7,10 @@ import LeadTable from "./LeadTable";
 
 export default function SearchDetail() {
   const { id } = useParams();
+  const loc = useLocation(); const nav = useNavigate();
+  // e.g. Radar couldn't be saved after NewSearch. Taken out of history state at once so reload/back don't bring it back.
+  const [notice, setNotice] = useState<string | undefined>(() => (loc.state as { notice?: string } | null)?.notice);
+  useEffect(() => { if ((loc.state as { notice?: string } | null)?.notice) nav(loc.pathname, { replace: true, state: null }); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [data, setData] = useState<{ search: Search; leads: LeadRow[] } | null>(null);
   const [refreshErr, setRefreshErr] = useState("");
   const [notFound, setNotFound] = useState(false);
@@ -41,6 +45,7 @@ export default function SearchDetail() {
   return (
     <div>
       <h2>{search.business_type} in {search.location}</h2>
+      {notice && <div className="notice" role="status"><span>⚠ {notice}</span><button aria-label="Dismiss notice" onClick={() => setNotice(undefined)}>✕</button></div>}
       {refreshErr && <p className="error">{refreshErr}</p>}
       {search.status === "failed"
         ? <p className="error">Search failed: {search.error}</p>

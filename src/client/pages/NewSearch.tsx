@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api";
-import type { Search } from "../types";
+import type { Radar, Search } from "../types";
+import { RADAR_INTERVALS, actionErrorText, radarBodyFor, radarFollowUpNotice } from "../radar";
 
 const TYPES = ["plumber", "electrician", "roofer", "HVAC", "dentist", "chiropractor", "restaurant", "landscaper", "auto repair", "law firm", "salon", "church"];
 
@@ -9,9 +10,10 @@ export default function NewSearch() {
   const nav = useNavigate();
   const [location, setLocation] = useState(""); const [type, setType] = useState("");
   const [maxResults, setMax] = useState(50);
-  const [est, setEst] = useState<{ estUsd: number; spent: number; limit: number; ok: boolean } | null>(null);
+  const [est, setEst] = useState<{ estUsd: number; inFlightUsd?: number; spent: number; limit: number; ok: boolean } | null>(null);
   const [err, setErr] = useState(""); const [busy, setBusy] = useState(false);
   const [recent, setRecent] = useState<Search[]>([]);
+  const [repeat, setRepeat] = useState(false); const [every, setEvery] = useState(30);
   const [recentErr, setRecentErr] = useState(""); const [estErr, setEstErr] = useState("");
 
   useEffect(() => {
@@ -31,8 +33,15 @@ export default function NewSearch() {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault(); setErr(""); setBusy(true);
-    try { const s = await api.post<Search>("/searches", { location, businessType: type, maxResults }); nav(`/searches/${s.id}`); }
-    catch (x) { setErr(x instanceof ApiError ? (x.status === 402 ? "This search would go over your monthly spend limit." : x.message) : "Failed"); setBusy(false); }
+    let s: Search;
+    try { s = await api.post<Search>("/searches", { location, businessType: type, maxResults }); }
+    catch (x) { setErr(actionErrorText(x)); setBusy(false); return; }
+    if (!repeat) { nav(`/searches/${s.id}`); return; }
+    // The search above is the first run, so the radar's first run is due in `every` days (runNow stays false).
+    let notice = "";
+    try { await api.post<Radar>("/radar", radarBodyFor({ location: s.location, businessType: s.business_type, radiusKm: s.radius_km, maxResults: s.max_results }, every)); }
+    catch (x) { notice = radarFollowUpNotice(x instanceof ApiError ? x.message : ""); }
+    nav(`/searches/${s.id}`, notice ? { state: { notice } } : undefined);
   }
 
   return (
@@ -46,7 +55,18 @@ export default function NewSearch() {
         <datalist id="types">{TYPES.map((t) => <option key={t} value={t} />)}</datalist>
         <label htmlFor="m">Max results</label>
         <input id="m" type="number" min={1} max={200} value={maxResults} onChange={(e) => setMax(Number(e.target.value))} />
-        {est && <p className="muted">Estimated cost: up to ${est.estUsd.toFixed(2)} · spent this month ${est.spent.toFixed(2)} of ${est.limit.toFixed(2)}</p>}
+        <div className="row" style={{ marginTop: 12 }}>
+          <label className="row" style={{ fontWeight: 400, margin: 0 }}>
+            <input type="checkbox" style={{ width: "auto" }} checked={repeat} onChange={(e) => setRepeat(e.target.checked)} />
+            Repeat this search (Radar)
+          </label>
+          <label htmlFor="every" style={{ fontWeight: 400, margin: 0 }}>every</label>
+          <select id="every" style={{ width: "auto" }} value={every} disabled={!repeat} onChange={(e) => setEvery(Number(e.target.value))}>
+            {RADAR_INTERVALS.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+          <span>days</span>
+        </div>
+        {est && <p className="muted">Estimated cost: up to ${est.estUsd.toFixed(2)} · spent this month ${est.spent.toFixed(2)} of ${est.limit.toFixed(2)}{est.inFlightUsd ? ` + $${est.inFlightUsd.toFixed(2)} in searches still running` : ""}</p>}
         {estErr && <p className="error">{estErr}</p>}
         {err && <p className="error">{err}</p>}
         <button className="primary" disabled={busy || (est !== null && !est.ok)}>{busy ? "Starting…" : "Find businesses"}</button>

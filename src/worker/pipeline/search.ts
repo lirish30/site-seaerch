@@ -4,6 +4,7 @@ import type { Business, Listing } from "../types";
 import { getSearch, setFoundCount, setSearchStatus, setProcessedCount } from "../db/searches";
 import { upsertBusiness } from "../db/businesses";
 import { latestDraft } from "../db/drafts";
+import { latestAudit } from "../db/audits";
 import { recordUsage } from "../db/usage";
 import { PRICES } from "../cost";
 
@@ -16,10 +17,13 @@ export interface SearchDeps {
 
 // Only (re)work leads nobody has acted on: brand new ones, or reviewed ones whose latest draft
 // hasn't been hand-edited. Skipped/contacted/replied/won/lost leads are never re-crawled or re-drafted.
-async function shouldStartLead(db: D1Database, b: Business): Promise<boolean> {
-  if (b.lead_status === "new") return true;
-  if (b.lead_status !== "reviewed") return false;
-  return !(await latestDraft(db, b.id))?.edited;
+// A new-only (Radar) search narrows that further: only businesses with no audit row at all, so a lead the owner
+// already has an audit and draft for is never re-paid. Any audit row counts, even a partial or unreachable one.
+// The exception is a lead whose last run FAILED (last_error is set when a lead workflow gives up, e.g. the draft step
+// after the audit was saved, and cleared when the next run starts): it never completed, so it is worth retrying.
+async function shouldStartLead(db: D1Database, b: Business, newOnly: boolean): Promise<boolean> {
+  const open = b.lead_status === "new" || (b.lead_status === "reviewed" && !(await latestDraft(db, b.id))?.edited);
+  return open && (!newOnly || !!b.last_error || !(await latestAudit(db, b.id)));
 }
 
 export async function runSearch(deps: SearchDeps, step: StepLike, searchId: string) {
@@ -54,7 +58,7 @@ export async function runSearch(deps: SearchDeps, step: StepLike, searchId: stri
       for (const l of fetched.listings) {
         const b = await upsertBusiness(deps.db, l, searchId);
         if (ids.has(b.id) || notStarted.has(b.id)) continue;
-        if (await shouldStartLead(deps.db, b)) ids.add(b.id); else notStarted.add(b.id);
+        if (await shouldStartLead(deps.db, b, search.new_only === 1)) ids.add(b.id); else notStarted.add(b.id);
       }
       await setFoundCount(deps.db, searchId, ids.size + notStarted.size);
       // Absolute set (no leads started yet) so a step retry cannot double-count.

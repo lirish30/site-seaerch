@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../api";
 import { safeHttpUrl } from "../links";
+import { shareState } from "../reportView";
 import { STATUSES, type Business, type LeadStatus } from "../types";
 
 interface Finding { code: string; severity: string; points: number; evidence: string; }
-interface Audit { score: number; offer: string; partial: boolean; site_status: string; findings: Finding[]; created_at: string; }
+interface Audit { score: number; offer: string; partial: boolean; site_status: string; findings: Finding[]; created_at: string; seo_score: number | null; accessibility_score: number | null; mail_warning: string | null; }
 interface Contact { id: string; type: string; value: string; source_url: string | null; person_name: string | null; role: string | null; }
 interface Draft { id: string; subject: string; body: string; recipient_reason: string; edited: boolean; }
+interface ShareReport { token: string; url: string; expiresAt: string; }
 interface Data { business: Business; audit: Audit | null; contacts: Contact[]; draft: Draft | null; toContact: Contact | null; }
 
 export default function LeadDetail() {
@@ -16,6 +18,8 @@ export default function LeadDetail() {
   const [subject, setSubject] = useState(""); const [body, setBody] = useState("");
   const [steer, setSteer] = useState(""); const [busy, setBusy] = useState(""); const [msg, setMsg] = useState("");
   const [notes, setNotes] = useState("");
+  const [report, setReport] = useState<ShareReport | null>(null); const [otherActive, setOtherActive] = useState(0); const [shareMsg, setShareMsg] = useState("");
+  const linkInput = useRef<HTMLInputElement>(null);
   // Serialises saves and lets other actions wait for in-flight ones.
   const pending = useRef<Promise<unknown>>(Promise.resolve());
   const savedDraft = useRef({ subject: "", body: "" });
@@ -28,6 +32,14 @@ export default function LeadDetail() {
     setD(x); setSubject(savedDraft.current.subject); setBody(savedDraft.current.body); setNotes(savedNotes.current);
   }
   useEffect(() => { load().catch((e) => setMsg((e as Error).message)); }, [id]);
+  const hasAudit = !!d?.audit;
+  useEffect(() => {
+    let cancelled = false;
+    setReport(null); setOtherActive(0); setShareMsg("");
+    if (hasAudit) api.get<{ report: ShareReport | null; otherActive: number }>(`/leads/${id}/report`)
+      .then((r) => { if (!cancelled) { setReport(r.report); setOtherActive(r.otherActive); } }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [id, hasAudit, d?.audit?.created_at]);
   if (!d) return <p>{msg || "Loading…"}</p>;
   const b = d.business;
   const website = safeHttpUrl(b.website_url);
@@ -76,6 +88,23 @@ export default function LeadDetail() {
     try { await api.post(`/leads/${id}/reaudit`); setMsg("Re-audit started. Refresh in a minute."); }
     catch (e) { setMsg((e as Error).message); }
   }
+  async function createReport() {
+    setShareMsg("");
+    try { setReport(await api.post<ShareReport>(`/leads/${id}/report`)); }
+    catch (e) { setShareMsg((e as Error).message); }
+  }
+  async function revokeReport() {
+    if (!confirm(otherActive > 0 ? "Revoke all report links for this business? Nobody with a link will be able to open it." : "Revoke this link? Anyone who has it will no longer be able to open the report.")) return;
+    try { await api.del(`/leads/${id}/report`); setReport(null); setOtherActive(0); setShareMsg("Link revoked"); }
+    catch (e) { setShareMsg((e as Error).message); }
+  }
+  async function copyLink() {
+    if (!report) return;
+    const link = location.origin + report.url;
+    try { await navigator.clipboard.writeText(link); setShareMsg("Link copied"); }
+    catch { linkInput.current?.select(); setShareMsg("Press Ctrl+C to copy the selected link"); }
+  }
+  const share = shareState(report, otherActive);
   const mailto = d.toContact ? `mailto:${d.toContact.value}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}` : null;
 
   return (
@@ -91,8 +120,23 @@ export default function LeadDetail() {
         {b.last_error && <p className="error">⚠ {b.last_error}</p>}
         {d.audit ? <>
           <h3>Score {d.audit.score} <span className="badge">{d.audit.offer}</span> {d.audit.partial && <span className="badge">partial audit</span>} {d.audit.site_status === "blocked" && <span className="badge" title="The site's bot protection blocked our crawler; only PageSpeed data was used">site blocks crawlers</span>}</h3>
+          {(d.audit.seo_score != null || d.audit.accessibility_score != null) && <p className="muted">
+            {d.audit.seo_score != null && <>SEO {d.audit.seo_score}/100</>}{d.audit.seo_score != null && d.audit.accessibility_score != null && " · "}
+            {d.audit.accessibility_score != null && <>Accessibility {d.audit.accessibility_score}/100</>}</p>}
           <ul>{d.audit.findings.map((f) => <li key={f.code}><strong>+{f.points}</strong> {f.evidence}</li>)}</ul>
+          {d.audit.mail_warning && <div className="notice" role="status"><span>⚠ {d.audit.mail_warning}</span></div>}
           <p className="muted">Audited {new Date(d.audit.created_at).toLocaleString()}</p>
+          <h3>Share report</h3>
+          {report && <>
+            <input ref={linkInput} readOnly aria-label="Report link" value={location.origin + report.url} onFocus={(e) => e.currentTarget.select()} />
+            <p className="muted">Expires {new Date(report.expiresAt).toLocaleDateString()}</p>
+          </>}
+          {share.olderText && <p className="muted">{share.olderText}</p>}
+          <p className="row">
+            {report ? <button onClick={copyLink}>Copy link</button> : <button onClick={createReport}>Create report link</button>}
+            {share.canRevoke && <button onClick={revokeReport}>{share.revokeLabel}</button>}
+          </p>
+          {shareMsg && <p className="muted">{shareMsg}</p>}
         </> : <p className="muted">Audit in progress…</p>}
         <h3>Contacts</h3>
         <ul>{d.contacts.map((c) => {
