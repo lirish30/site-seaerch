@@ -9,7 +9,7 @@
     "run_worker_first": ["/api/*"]
   },
   "d1_databases": [
-    { "binding": "DB", "database_name": "site-search", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }
+    { "binding": "DB", "database_name": "site-search", "database_id": "373804f6-ecf3-448e-a9ed-ddc82b853f01", "migrations_dir": "migrations" }
   ],
   "r2_buckets": [{ "binding": "RAW", "bucket_name": "site-search-raw" }],
   "workflows": [
