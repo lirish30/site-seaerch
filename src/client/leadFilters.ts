@@ -10,12 +10,12 @@ export const platformOptions = (rows: LeadRow[]) => [...new Set(rows.flatMap((r)
 
 export const applyLeadFilters = (rows: LeadRow[], f: LeadFilters): LeadRow[] => {
   const minReviews = f.minReviews ?? 0;
-    return rows.filter((r) =>
+  return rows.filter((r) =>
     (!f.hideSkipped || r.business.lead_status !== "skip")
     && (r.score ?? 0) >= f.minScore
     && (!f.emailOnly || r.hasEmail)
     && (minReviews <= 0 || (r.reviewCount !== null && r.reviewCount >= minReviews))
     && (f.maxRating === null || (r.rating !== null && r.rating <= f.maxRating))
     && (f.offer === "any" || r.offer === f.offer)
-  && (f.platform === "any" || (f.platform === NOT_CRAWLED ? r.platform === null : r.platform === f.platform)));
-}
+    && (f.platform === "any" || (f.platform === NOT_CRAWLED ? r.platform === null : r.platform === f.platform)));
+};
