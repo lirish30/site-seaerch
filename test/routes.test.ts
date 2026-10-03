@@ -35,6 +35,14 @@ describe("routes", () => {
     expect((await api("/api/searches", { method: "POST", body: JSON.stringify({ location: "Boise", businessType: "x", maxResults: 500 }) })).status).toBe(400);
   });
 
+  it("a manual search is not new-only", async () => {
+    const r = await api("/api/searches", { method: "POST", body: JSON.stringify({ location: "Boise", businessType: "plumber", maxResults: 10 }) });
+    expect(r.status).toBe(201);
+    const { id, new_only } = await r.json<any>();
+    expect(new_only).toBe(0);
+    expect(await env.DB.prepare(`SELECT new_only FROM searches WHERE id = ?`).bind(id).first()).toEqual({ new_only: 0 });
+  });
+
   it("blocks search over spend limit with 402", async () => {
     await saveSettings(env.DB, { monthly_spend_limit_usd: 0 });
     const r = await api("/api/searches", { method: "POST", body: JSON.stringify({ location: "Boise", businessType: "plumber", maxResults: 10 }) });

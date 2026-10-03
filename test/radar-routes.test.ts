@@ -95,6 +95,11 @@ describe("POST /api/radar", () => {
     expect(await env.DB.prepare(`SELECT location, max_results FROM searches WHERE id = ?`).bind(b.last_search_id).first()).toEqual({ location: "Boise, ID", max_results: 10 });
   });
 
+  it("runNow's first search is new-only", async () => {
+    const b = await (await post("/api/radar", { ...OK, runNow: true, maxResults: 10 })).json<any>();
+    expect(await env.DB.prepare(`SELECT new_only FROM searches WHERE id = ?`).bind(b.last_search_id).first()).toEqual({ new_only: 1 });
+  });
+
   it("runNow rejects BEFORE creating anything when over the spend limit (same 402 as the manual route)", async () => {
     await saveSettings(env.DB, { monthly_spend_limit_usd: 0 });
     const manual = await post("/api/searches", { ...OK, maxResults: 10 });
@@ -235,6 +240,12 @@ describe("POST /api/radar/:id/run", () => {
     expect(b.last_error).toBeNull();
     expect(near(b.next_run_at, Date.now() + 14 * DAY)).toBe(true);
     expect(created).toEqual([{ id: `search-${b.last_search_id}`, params: { searchId: b.last_search_id } }]);
+  });
+
+  it("the search it starts is new-only", async () => {
+    const r = await addRadar({ maxResults: 10 });
+    const b = await (await post(`/api/radar/${r.id}/run`)).json<any>();
+    expect(await env.DB.prepare(`SELECT new_only FROM searches WHERE id = ?`).bind(b.last_search_id).first()).toEqual({ new_only: 1 });
   });
 
   it("402 spend limit, exactly like the manual route, and the schedule is not pushed out", async () => {

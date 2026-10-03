@@ -94,3 +94,37 @@ describe("spend re-check after insert", () => {
     expect(mine).toEqual([{ status: "failed", error: "spend limit" }]);
   });
 });
+
+describe("newOnly pass-through", () => {
+  const newOnlyRows = async () => (await env.DB.prepare(`SELECT new_only FROM searches WHERE location = 'Boise'`).all<{ new_only: number }>()).results.map((r) => r.new_only);
+
+  it("startSearchRun stores new_only 1 only when asked; the default is 0", async () => {
+    // Each started search stays 'running' and would count as in flight; finish it so the next one fits the limit.
+    const start = async () => { await env.DB.prepare(`UPDATE searches SET status = 'done'`).run(); };
+    expect((await startSearchRun({ db: env.DB, startWorkflow: start }, INPUT)).ok).toBe(true);
+    expect((await startSearchRun({ db: env.DB, startWorkflow: start }, INPUT, { newOnly: false })).ok).toBe(true);
+    const r = await startSearchRun({ db: env.DB, startWorkflow: start }, INPUT, { newOnly: true });
+    expect(r.ok && r.search.new_only).toBe(1);
+    expect(await newOnlyRows()).toEqual([0, 0, 1]);
+  });
+
+  it.each([[false], [true]])("guards, estimate and 402 are identical with newOnly %s", async (newOnly) => {
+    await running(); // one in-flight search at the full estimate: the next one no longer fits
+    const calls: string[] = [];
+    const r = await startSearchRun({ db: env.DB, startWorkflow: async (id) => { calls.push(id); } }, INPUT, { newOnly });
+    expect(r).toMatchObject({ ok: false, kind: "spend", spend: { ok: false, spent: 0, limit: EST * 1.5 } });
+    expect(calls).toEqual([]);
+    expect(await newOnlyRows()).toEqual([]); // rejected by the pre-check: nothing inserted
+    expect(await startSearchRun({ db: env.DB, startWorkflow: async () => {} }, { ...INPUT, location: "" }, { newOnly })).toMatchObject({ ok: false, kind: "invalid" });
+    await saveSettings(env.DB, { physical_address: "", opt_out_line: "" });
+    expect(await startSearchRun({ db: env.DB, startWorkflow: async () => {} }, INPUT, { newOnly })).toMatchObject({ ok: false, kind: "compliance" });
+    await saveSettings(env.DB, { physical_address: "1 Main St", opt_out_line: "Reply no." });
+  });
+
+  it.each([[false], [true]])("the post-insert recheck still fails the search with newOnly %s", async (newOnly) => {
+    const r = await startSearchRun({ db: withRacer(), startWorkflow: async () => {} }, INPUT, { newOnly });
+    expect(r).toMatchObject({ ok: false, kind: "spend" });
+    expect((await env.DB.prepare(`SELECT status, error, new_only FROM searches WHERE location = 'Boise'`).all<any>()).results)
+      .toEqual([{ status: "failed", error: "spend limit", new_only: newOnly ? 1 : 0 }]);
+  });
+});

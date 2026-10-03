@@ -255,6 +255,7 @@ Saved searches re-run by a Cloudflare Cron Trigger (`triggers.crons: ["17 13 * *
 - Starts go through `src/worker/search-start.ts`, the same guards as the manual search route: mailing settings and monthly spend limit. Spend counts recorded usage plus searches still `running` that started within 6 hours, at estimated cost; a recheck after the search row is inserted stops simultaneous starts from overshooting.
 - At most 3 radars start per tick; max 20 radars; a duplicate market (location + business type, case-insensitive) is rejected (409).
 - A radar is claimed atomically (single-statement compare-and-set that moves `next_run_at` out and stamps `claimed_at`) before it runs: no double runs, and a 10 s cooldown on manual Run now. A crash after the claim skips that interval rather than risking a double spend.
+- Searches a radar starts are `new_only` (`searches.new_only = 1`): `runSearch` starts the per-lead pipeline only for businesses with no audit row at all, still excluding skipped/contacted/replied/won/lost leads. Other businesses it finds are linked to the search and counted in `found_count` and `processed_count` but keep their existing audit and draft (re-audit one from its lead page). The spend estimate is unchanged (`maxResults` drafts). Manual searches still re-audit and re-draft leads the owner has not acted on.
 - A blocked or failed radar records the reason in `last_error` (shown on the Radar page) and retries the next day. A manual Run now that is blocked (spend limit, missing mailing settings) on a radar that is not yet due keeps its existing schedule; a Run now that starts a search moves `next_run_at` to now + the interval.
 - No email or push notification. New leads show as a count (businesses first seen by the last run) on the Radar page.
 - Local test: `npx wrangler dev -c wrangler.jsonc --local --test-scheduled`, then `curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=17+13+*+*+*"`.
@@ -271,6 +272,7 @@ Migrations (additive; run `npm run db:migrate:remote` BEFORE `npm run deploy`):
 | 0005 | `radars` table, unique market index |
 | 0006 | `radars.claimed_at` |
 | 0007 | `audits.mail_warning` |
+| 0008 | `searches.new_only` |
 
 Endpoints (all behind the session cookie except the public report):
 
@@ -289,6 +291,5 @@ Screens: **Radar** (`/radar`: list, enable/disable, interval, Run now with cost 
 ### 12.9 Known limitations
 
 - The PageSpeed test fixture is hand-written, not a live capture; the Lighthouse audit ids in `labels.ts` and the `viewport` / `font-size` / `tap-targets` audits behind mobile-friendliness (a missing audit counts as passing) are unverified against a real response.
-- Each Radar re-run re-audits and re-drafts leads the owner hasn't acted on (about $0.01 each, inside the search estimate); limiting runs to never-audited businesses is an open option.
 - No email notification for Radar.
 - The extractor is slow on very large pages (roughly 5 s CPU at 1 MB; HTML size cap filed as a separate task) and the HTML parser is slow on deeply nested unclosed markup.

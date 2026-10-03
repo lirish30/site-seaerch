@@ -20,6 +20,15 @@ describe("db", () => {
     expect((await getSearch(env.DB, s.id))!.processed_count).toBe(1);
   });
 
+  it("createSearch defaults new_only to 0 and round-trips newOnly", async () => {
+    const i = { location: "Boise, ID", businessType: "plumber", radiusKm: 15, maxResults: 50 };
+    expect((await createSearch(env.DB, i)).new_only).toBe(0);
+    expect((await createSearch(env.DB, i, { newOnly: false })).new_only).toBe(0);
+    const s = await createSearch(env.DB, i, { newOnly: true });
+    expect(s.new_only).toBe(1);
+    expect((await getSearch(env.DB, s.id))!.new_only).toBe(1);
+  });
+
   it("dedupes businesses by place_id and links to both searches", async () => {
     const s1 = await createSearch(env.DB, { location: "A", businessType: "b", radiusKm: 1, maxResults: 5 });
     const s2 = await createSearch(env.DB, { location: "A", businessType: "b", radiusKm: 1, maxResults: 5 });

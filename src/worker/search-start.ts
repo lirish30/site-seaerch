@@ -49,10 +49,12 @@ export async function checkSearchGuards(db: D1Database, input: unknown):
 export async function startSearchRun(
   deps: { db: D1Database; startWorkflow: (searchId: string) => Promise<unknown> },
   input: unknown,
+  opts: { newOnly?: boolean } = {},
 ): Promise<StartResult> {
   const g = await checkSearchGuards(deps.db, input);
   if (!g.ok) return g;
-  const search = await createSearch(deps.db, g.data);
+  // newOnly (Radar) changes what the workflow does per lead, not what it may cost: the estimate stays maxResults drafts.
+  const search = await createSearch(deps.db, g.data, { newOnly: opts.newOnly });
   // Requests arriving together all read the same in-flight total above. Now that our row exists (and counts), check
   // again: alone this is the same math as the pre-check; under a true race it may reject every racer, which is the
   // safe direction for a spend guard.

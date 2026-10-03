@@ -37,6 +37,7 @@ export interface Search {
   id: string; location: string; business_type: string; radius_km: number; max_results: number;
   status: "running" | "done" | "failed"; error: string | null;
   found_count: number; processed_count: number; created_at: string;
+  new_only: 0 | 1; // Radar-started: only businesses never audited get the per-lead pipeline
 }
 
 export interface Radar {

@@ -64,6 +64,15 @@ describe("runDueRadars selection", () => {
   });
 });
 
+describe("radar-started searches are new-only", () => {
+  it("the cron path creates searches with new_only = 1", async () => {
+    await seed({ id: "a", next: ago(1) }); await seed({ id: "b", next: ago(2) });
+    expect((await runDueRadars(deps(fakeStart().fn))).started).toBe(2);
+    const rows = (await env.DB.prepare(`SELECT new_only FROM searches`).all<{ new_only: number }>()).results;
+    expect(rows).toEqual([{ new_only: 1 }, { new_only: 1 }]);
+  });
+});
+
 describe("runDueRadars claim", () => {
   const claim = (id: string, o: { manual?: boolean; at?: Date } = {}) =>
     claimRadar(env.DB, id, ahead(30), (o.at ?? NOW).toISOString(), !o.manual);

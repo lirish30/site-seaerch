@@ -10,7 +10,7 @@ Personal tool: find local businesses, audit their websites, draft outreach email
 5. `npm run db:migrate:local && npm run dev`
 
 ## Deploy
-1. `npm run db:migrate:remote`. Always run this BEFORE `npm run deploy`. Migrations 0002-0007 are additive, so the old worker keeps running on the new schema, but the new worker writes columns the old schema lacks (`audits.platform`, `seo_score`, `accessibility_score`, `mail_warning`; `radars.claimed_at`). Deploy it first and every audit insert and every Radar claim fails.
+1. `npm run db:migrate:remote`. Always run this BEFORE `npm run deploy`. Migrations 0002-0008 are additive, so the old worker keeps running on the new schema, but the new worker writes columns the old schema lacks (`audits.platform`, `seo_score`, `accessibility_score`, `mail_warning`; `radars.claimed_at`; `searches.new_only`). Deploy it first and every audit insert and every Radar claim fails.
 2. Set secrets: `npx wrangler secret put APP_PASSWORD` (repeat for SESSION_SECRET, BRIGHTDATA_API_KEY, BRIGHTDATA_SERP_ZONE, PAGESPEED_API_KEY, ANTHROPIC_API_KEY). `BRIGHTDATA_SERP_ZONE` is required: the SERP API will not run without it.
    - `APP_PASSWORD` is the only thing guarding the app: use a long random value, at least 20 characters (e.g. `openssl rand -base64 24`). `SESSION_SECRET` should be similarly long and random.
    - Login attempts are throttled by the `LOGIN_LIMITER` Workers Rate Limiting binding in `wrangler.jsonc` (10 attempts per minute per client IP; over the limit `/api/login` returns 429). Its `namespace_id` (`1001`) just needs to be unique among rate limiters on your account.
@@ -49,13 +49,13 @@ Radar re-runs saved searches on a schedule. Tick "Repeat this search (Radar)" on
 - A Cloudflare Cron Trigger runs daily at 13:17 UTC (`triggers.crons` in `wrangler.jsonc`). Each radar decides whether it is due.
 - Same guards as a manual search (mailing settings, monthly spend limit). Spend counting includes searches still running (started in the last 6 hours, at estimated cost) plus recorded usage.
 - At most 3 radars start per tick; max 20 radars; a duplicate market (same location + business type, case-insensitive) is rejected. Each radar is claimed atomically before it runs, so there are no double runs; manual "Run now" has a 10 s cooldown and asks for confirmation with the estimated cost.
+- Radar-started searches only audit and draft businesses that were never audited before (`searches.new_only`). A business a radar finds again keeps its existing audit and draft; re-audit it from its lead page. Manual searches still refresh leads you have not acted on.
 - A blocked radar retries the next day and shows the reason.
 - Radar sends no email or push notification. New leads show as a count on the Radar page.
 - Test the cron locally: `npx wrangler dev -c wrangler.jsonc --local --test-scheduled`, then `curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=17+13+*+*+*"`. Keep `-c wrangler.jsonc`: a stale `.wrangler/deploy/config.json` can otherwise redirect to an old build.
 
 ## Known limitations
 - The PageSpeed test fixture is hand-written, not a live capture. Capture one real PageSpeed response, then verify the Lighthouse audit ids in `src/worker/scoring/labels.ts` and the `viewport` / `font-size` / `tap-targets` audits used for mobile-friendliness (a missing audit counts as passing).
-- Each Radar re-run re-audits and re-drafts leads you haven't acted on (about $0.01 each, within the search estimate). Consider limiting Radar runs to never-audited businesses.
 - No email notification for Radar.
 - After the first deploy, audits created before this release have no platform, so they appear under "not crawled" in the platform filter until they are re-audited.
 - Lead workflows that are mid-run during a deploy can fail at the score step (their cached crawl result predates the new fields). Deploy when no search is running and no re-audit is pending; a failed lead shows a ⚠ and can be re-run with "Re-audit" on its lead page.

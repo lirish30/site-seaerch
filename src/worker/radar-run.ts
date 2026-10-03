@@ -25,7 +25,7 @@ export async function runRadar(deps: RadarDeps, radar: Radar, opts: { manual?: b
   if (!claimed) return { status: "claim_lost" };
   let r: StartResult;
   try {
-    r = await startSearchRun(deps, { location: claimed.location, businessType: claimed.business_type, radiusKm: claimed.radius_km, maxResults: claimed.max_results });
+    r = await startSearchRun(deps, { location: claimed.location, businessType: claimed.business_type, radiusKm: claimed.radius_km, maxResults: claimed.max_results }, { newOnly: true });
   } catch (e) {
     r = { ok: false, kind: "start_failed", error: String((e as Error)?.message ?? e).slice(0, 500) };
   }
