@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { buildPrompt, generateDraft, wordCount, type DraftInput } from "../src/worker/drafter/draft";
 import type { Business, Contact, Settings } from "../src/worker/types";
 
@@ -77,5 +77,20 @@ describe("generateDraft", () => {
 
   it("wordCount counts words", () => {
     expect(wordCount("a b  c\n d")).toBe(4);
+  });
+});
+
+describe("anthropicCaller", () => {
+  it("does not force tool use, which the draft model rejects", async () => {
+    const create = vi.fn(async () => ({ content: [{ type: "tool_use", input: { subject: "s" } }] }));
+    vi.doMock("@anthropic-ai/sdk", () => ({ default: class { messages = { create }; } }));
+    vi.resetModules();
+    const { anthropicCaller: caller } = await import("../src/worker/drafter/draft");
+    const out = await caller("k")({ system: "sys", user: "usr" });
+    const req = (create.mock.calls[0] as unknown as [any])[0];
+    expect(req.tool_choice).toEqual({ type: "auto" });
+    expect(req.system).toContain("write_email");
+    expect(out).toEqual({ subject: "s" });
+    vi.doUnmock("@anthropic-ai/sdk");
   });
 });
