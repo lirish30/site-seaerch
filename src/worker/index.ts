@@ -6,6 +6,8 @@ import { searchRoutes } from "./routes/searches";
 import { leadRoutes } from "./routes/leads";
 import { settingsRoutes } from "./routes/settings";
 import { publicRoutes } from "./routes/public";
+import { radarRoutes } from "./routes/radar";
+import { runDueRadars } from "./radar-run";
 
 const app = new Hono<{ Bindings: Env }>();
 app.use("/api/*", requireAuth);
@@ -15,6 +17,18 @@ app.route("/api/searches", searchRoutes);
 app.route("/api/leads", leadRoutes);
 app.route("/api/settings", settingsRoutes);
 app.route("/api/public", publicRoutes);
+app.route("/api/radar", radarRoutes);
 
-export default app;
+export default {
+  fetch: app.fetch,
+  // Cron Trigger: unattended spend, so a crash here must be logged, never thrown into a retry loop.
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(
+      runDueRadars({
+        db: env.DB, now: () => new Date(),
+        startWorkflow: (id) => env.SEARCH_WORKFLOW.create({ id: `search-${id}`, params: { searchId: id } }),
+      }).then((s) => console.log("radar run", JSON.stringify(s)), (e) => console.error("radar run failed", e)),
+    );
+  },
+} satisfies ExportedHandler<Env>;
 export { LeadWorkflow, SearchWorkflow } from "./workflows";

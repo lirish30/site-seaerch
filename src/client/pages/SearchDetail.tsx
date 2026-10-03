@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useLocation, useParams } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { pollDelay, searchFinished } from "../poll";
 import type { LeadRow, Search } from "../types";
@@ -7,6 +7,7 @@ import LeadTable from "./LeadTable";
 
 export default function SearchDetail() {
   const { id } = useParams();
+  const notice = (useLocation().state as { notice?: string } | null)?.notice; // e.g. Radar couldn't be saved after NewSearch
   const [data, setData] = useState<{ search: Search; leads: LeadRow[] } | null>(null);
   const [refreshErr, setRefreshErr] = useState("");
   const [notFound, setNotFound] = useState(false);
@@ -41,6 +42,7 @@ export default function SearchDetail() {
   return (
     <div>
       <h2>{search.business_type} in {search.location}</h2>
+      {notice && <p className="muted" role="status">{notice}</p>}
       {refreshErr && <p className="error">{refreshErr}</p>}
       {search.status === "failed"
         ? <p className="error">Search failed: {search.error}</p>

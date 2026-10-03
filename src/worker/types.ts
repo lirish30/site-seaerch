@@ -39,6 +39,12 @@ export interface Search {
   found_count: number; processed_count: number; created_at: string;
 }
 
+export interface Radar {
+  id: string; location: string; business_type: string; radius_km: number; max_results: number;
+  interval_days: number; enabled: 0 | 1; next_run_at: string; last_run_at: string | null;
+  last_search_id: string | null; last_error: string | null; created_at: string;
+}
+
 export interface Business {
   id: string; place_id: string | null; domain: string | null; name: string; category: string | null;
   address: string | null; phone: string | null; website_url: string | null; maps_url: string | null;
