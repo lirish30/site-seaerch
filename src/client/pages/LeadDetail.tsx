@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../api";
+import { safeHttpUrl } from "../links";
 import { STATUSES, type Business, type LeadStatus } from "../types";
 
 interface Finding { code: string; severity: string; points: number; evidence: string; }
@@ -15,26 +16,66 @@ export default function LeadDetail() {
   const [subject, setSubject] = useState(""); const [body, setBody] = useState("");
   const [steer, setSteer] = useState(""); const [busy, setBusy] = useState(""); const [msg, setMsg] = useState("");
   const [notes, setNotes] = useState("");
+  // Serialises saves and lets other actions wait for in-flight ones.
+  const pending = useRef<Promise<unknown>>(Promise.resolve());
+  const savedDraft = useRef({ subject: "", body: "" });
+  const savedNotes = useRef("");
 
   async function load() {
     const x = await api.get<Data>(`/leads/${id}`);
-    setD(x); setSubject(x.draft?.subject ?? ""); setBody(x.draft?.body ?? ""); setNotes(x.business.notes ?? "");
+    savedDraft.current = { subject: x.draft?.subject ?? "", body: x.draft?.body ?? "" };
+    savedNotes.current = x.business.notes ?? "";
+    setD(x); setSubject(savedDraft.current.subject); setBody(savedDraft.current.body); setNotes(savedNotes.current);
   }
-  useEffect(() => { load(); }, [id]);
-  if (!d) return <p>Loading…</p>;
+  useEffect(() => { load().catch((e) => setMsg((e as Error).message)); }, [id]);
+  if (!d) return <p>{msg || "Loading…"}</p>;
   const b = d.business;
-  const dirty = d.draft && (subject !== d.draft.subject || body !== d.draft.body);
+  const website = safeHttpUrl(b.website_url);
+  const maps = safeHttpUrl(b.maps_url);
 
-  async function saveDraft() { if (dirty) await api.patch(`/leads/${id}/draft`, { subject, body }); }
-  async function setStatus(s: LeadStatus) { await api.patch(`/leads/${id}`, { leadStatus: s }); await load(); }
-  async function copy() { await saveDraft(); await navigator.clipboard.writeText(`Subject: ${subject}\n\n${body}`); setMsg("Copied"); }
-  async function copyAndMark() { await copy(); await setStatus("contacted"); setMsg("Copied and marked contacted"); }
+  function queue(fn: () => Promise<void>): Promise<void> {
+    const run = pending.current.then(fn).catch((e) => setMsg((e as Error).message));
+    pending.current = run;
+    return run;
+  }
+  const flush = () => pending.current;
+  const saveDraft = () => queue(async () => {
+    if (!d!.draft || (subject === savedDraft.current.subject && body === savedDraft.current.body)) return;
+    await api.patch(`/leads/${id}/draft`, { subject, body });
+    savedDraft.current = { subject, body };
+    setD((p) => (p && p.draft ? { ...p, draft: { ...p.draft, subject, body } } : p));
+  });
+  const saveNotes = () => queue(async () => {
+    if (notes === savedNotes.current) return;
+    const nb = await api.patch<Business>(`/leads/${id}`, { notes });
+    savedNotes.current = notes;
+    setD((p) => (p ? { ...p, business: nb } : p));
+  });
+  async function setStatus(s: LeadStatus): Promise<boolean> {
+    await flush();
+    try {
+      const nb = await api.patch<Business>(`/leads/${id}`, { leadStatus: s });
+      setD((p) => (p ? { ...p, business: nb } : p));
+      return true;
+    } catch (e) { setMsg((e as Error).message); return false; }
+  }
+  async function copy(): Promise<boolean> {
+    await saveDraft(); await flush();
+    if (subject !== savedDraft.current.subject || body !== savedDraft.current.body) return false; // save failed; msg already set
+    try { await navigator.clipboard.writeText(`Subject: ${subject}\n\n${body}`); setMsg("Copied"); return true; }
+    catch (e) { setMsg((e as Error).message); return false; }
+  }
+  async function copyAndMark() { if (await copy() && await setStatus("contacted")) setMsg("Copied and marked contacted"); }
   async function regenerate() {
-    setBusy("regen"); setMsg("");
+    await flush(); setBusy("regen"); setMsg("");
     try { await api.post(`/leads/${id}/regenerate`, { steeringNote: steer }); setSteer(""); await load(); }
     catch (e) { setMsg((e as Error).message); } finally { setBusy(""); }
   }
-  async function reaudit() { await api.post(`/leads/${id}/reaudit`); setMsg("Re-audit started. Refresh in a minute."); }
+  async function reaudit() {
+    await flush();
+    try { await api.post(`/leads/${id}/reaudit`); setMsg("Re-audit started. Refresh in a minute."); }
+    catch (e) { setMsg((e as Error).message); }
+  }
   const mailto = d.toContact ? `mailto:${d.toContact.value}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}` : null;
 
   return (
@@ -43,8 +84,8 @@ export default function LeadDetail() {
         <h2>{b.name}</h2>
         <p className="muted">{b.category} · {b.address}</p>
         <p className="row">
-          {b.website_url ? <a href={b.website_url} target="_blank" rel="noreferrer">Website</a> : <span className="badge">no website</span>}
-          {b.maps_url && <a href={b.maps_url} target="_blank" rel="noreferrer">Google Maps</a>}
+          {website ? <a href={website} target="_blank" rel="noreferrer">Website</a> : <span className="badge">no website</span>}
+          {maps && <a href={maps} target="_blank" rel="noreferrer">Google Maps</a>}
           {b.phone && <span>{b.phone}</span>}
         </p>
         {b.last_error && <p className="error">⚠ {b.last_error}</p>}
@@ -54,16 +95,19 @@ export default function LeadDetail() {
           <p className="muted">Audited {new Date(d.audit.created_at).toLocaleString()}</p>
         </> : <p className="muted">Audit in progress…</p>}
         <h3>Contacts</h3>
-        <ul>{d.contacts.map((c) => (
-          <li key={c.id}>{c.type}: {c.value}{c.person_name && ` (${c.person_name}${c.role ? `, ${c.role}` : ""})`}
-            {c.source_url && <> · <a href={c.source_url} target="_blank" rel="noreferrer">source</a></>}</li>
-        ))}{!d.contacts.length && <li className="muted">None found</li>}</ul>
+        <ul>{d.contacts.map((c) => {
+          const src = safeHttpUrl(c.source_url);
+          return (
+            <li key={c.id}>{c.type}: {c.value}{c.person_name && ` (${c.person_name}${c.role ? `, ${c.role}` : ""})`}
+              {src && <> · <a href={src} target="_blank" rel="noreferrer">source</a></>}</li>
+          );
+        })}{!d.contacts.length && <li className="muted">None found</li>}</ul>
         <label htmlFor="status">Status</label>
         <select id="status" value={b.lead_status} onChange={(e) => setStatus(e.target.value as LeadStatus)}>
           {STATUSES.map((s) => <option key={s}>{s}</option>)}
         </select>
         <label htmlFor="notes">Notes</label>
-        <textarea id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} onBlur={() => api.patch(`/leads/${id}`, { notes })} />
+        <textarea id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} onBlur={saveNotes} />
         <p className="row"><button onClick={reaudit}>Re-audit</button><button onClick={() => setStatus("skip")}>Skip</button></p>
       </div>
 
