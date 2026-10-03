@@ -1,4 +1,4 @@
-import { parse, type HTMLElement } from "node-html-parser";
+import { parse, type HTMLElement, type Node } from "node-html-parser";
 import type { Platform } from "../types";
 
 export interface PageFacts {
@@ -132,27 +132,37 @@ const BUSINESS_TYPES = new Set([
   "SportsActivityLocation", "ChildCare", "VeterinaryCare", "PetStore",
 ]);
 
+// Accepts bare names, prefixed ("schema:Dentist") and IRIs, with or without trailing slashes.
 function isBusinessType(t: unknown): boolean {
   if (typeof t !== "string" || t.length > 200) return false;
-  const name = t.trim().split(/[/:#]/).pop()!;
+  const name = t.trim().replace(/\/+$/, "").split(/[/:#]/).pop()!;
   return name.endsWith("LocalBusiness") || BUSINESS_TYPES.has(name);
+}
+
+const WRAPPERS = [["<!--", "-->"], ["//<![CDATA[", "//]]>"], ["/*<![CDATA[*/", "/*]]>*/"]];
+
+// trim() also strips a BOM; comment / CDATA wrappers are common in hand-pasted or CMS-generated JSON-LD.
+function unwrapJson(raw: string): string {
+  let j = raw.trim();
+  for (const [a, b] of WRAPPERS) if (j.startsWith(a) && j.endsWith(b) && j.length >= a.length + b.length) { j = j.slice(a.length, j.length - b.length).trim(); break; }
+  return j;
 }
 
 // The main parse (script:false) discards script text, so JSON-LD needs its own default-options parse. It only runs when the page mentions
 // ld+json at all, and reads rawText: script data is not entity-decoded by browsers, while .text would turn &quot; into a JSON-breaking quote.
-function hasLocalBusinessSchema(html: string): boolean {
-  if (!html.toLowerCase().includes("ld+json")) return false;
+function hasJsonLdBusiness(html: string): boolean {
+  if (!/ld\+json/i.test(html)) return false;
   for (const s of parse(html).querySelectorAll("script")) {
-    if ((s.getAttribute("type") ?? "").trim().toLowerCase() !== "application/ld+json") continue;
-    let data: unknown; try { data = JSON.parse(s.rawText.replace(/^﻿/, "")); } catch { continue; }
-    const stack: unknown[] = [data]; // iterative: hostile JSON can nest deeper than the call stack allows
+    if ((s.getAttribute("type") ?? "").split(";")[0].trim().toLowerCase() !== "application/ld+json") continue;
+    let data: unknown; try { data = JSON.parse(unwrapJson(s.rawText)); } catch { continue; }
+    // Iterative, and only containers are pushed (never spread: a 200k-element array overflows the argument limit); the cap counts containers.
+    const stack: unknown[] = data && typeof data === "object" ? [data] : [];
     for (let n = 0; stack.length && n < 100_000; n++) {
       const v = stack.pop();
-      if (!v || typeof v !== "object") continue;
-      if (Array.isArray(v)) { stack.push(...v); continue; }
+      if (Array.isArray(v)) { for (const x of v) if (x && typeof x === "object") stack.push(x); continue; }
       const type = (v as Record<string, unknown>)["@type"];
       if (Array.isArray(type) ? type.some(isBusinessType) : isBusinessType(type)) return true;
-      stack.push(...Object.values(v));
+      for (const x of Object.values(v as object)) if (x && typeof x === "object") stack.push(x);
     }
   }
   return false;
@@ -160,14 +170,37 @@ function hasLocalBusinessSchema(html: string): boolean {
 
 const SWF_URL = /\.swf(?:[?#]|$)/i;
 const FLASH_CLASSID = /d27cdb6e-ae6d-11cf-96b8-444553540000/i;
-const MOUNT_IDS = new Set(["root", "app", "__next", "___gatsby"]);
+const MOUNT_IDS = new Set(["root", "app", "__next", "___gatsby", "__nuxt", "ember-app", "svelte", "q-app"]);
 const TABLE_ROLES = new Set(["table", "grid", "treegrid"]);
-const BLOCK_IN_CELL = new Set(["DIV", "P", "H1", "H2", "H3", "H4", "H5", "H6", "IMG"]);
+// Images are inline content, not block content: a row of badges in a padded table is not a page layout.
+const BLOCK_IN_CELL = new Set(["DIV", "P", "H1", "H2", "H3", "H4", "H5", "H6"]);
 const MIXED_SRC_TAGS = new Set(["IMG", "SCRIPT", "IFRAME", "VIDEO", "AUDIO", "SOURCE"]);
-const MARKER_ORDER = ["old-style font tags", "scrolling or blinking text", "frames", "Flash", "old-style centering tags", "an outdated jQuery version", "table-based page layout"];
+// Inert or non-rendered content: never descended into, so nothing inside counts as a fact or as visible text.
+const SKIP_SUBTREE = new Set(["TEMPLATE", "TEXTAREA", "TITLE"]);
+const M = {
+  font: "old-style font tags", blink: "scrolling or blinking text", frames: "frames", flash: "Flash", center: "old-style centering tags",
+  jquery: "an outdated jQuery version", table: "table-based page layout",
+} as const;
+const MARKER_ORDER = [M.font, M.blink, M.frames, M.flash, M.center, M.jquery, M.table];
 
-const isInsecure = (v: string | undefined) => !!v && /^http:\/\//i.test(v.trim());
+const LOOPBACK = /^http:\/\/(localhost|127(?:\.\d+){3}|\[::1\])(?=[:/?#]|$)/i;
+const isInsecure = (v: string | undefined) => { const u = (v ?? "").trim(); return /^http:\/\//i.test(u) && !LOOPBACK.test(u); };
 const roleOf = (el: HTMLElement) => (el.getAttribute("role") ?? "").trim().toLowerCase().split(/\s+/)[0];
+const hasBusinessType = (v: string | undefined) => !!v && v.length <= 2000 && v.split(/\s+/).some(isBusinessType);
+
+const PX = (name: string) => new RegExp(`(?:^|;)\\s*${name}\\s*:\\s*(\\d+(?:\\.\\d+)?)px\\s*(?:;|$)`, "i");
+const STYLE_PX: Record<string, RegExp> = { width: PX("width"), height: PX("height") };
+function pixels(el: HTMLElement, name: "width" | "height"): number | undefined {
+  const a = (el.getAttribute(name) ?? "").match(/^\s*(\d+(?:\.\d+)?)\s*(?:px)?\s*$/i);
+  const v = a ?? (el.getAttribute("style") ?? "").match(STYLE_PX[name]);
+  return v ? +v[1] : undefined;
+}
+// Hidden or 1x1 images are tracking pixels / spacers, not content a prospect could be told is missing alt text.
+function isInvisibleImg(el: HTMLElement): boolean {
+  if (el.getAttribute("hidden") !== undefined || /(?:^|;)\s*display\s*:\s*none/i.test(el.getAttribute("style") ?? "")) return true;
+  const [w, h] = [pixels(el, "width"), pixels(el, "height")];
+  return w !== undefined && h !== undefined && w <= 1 && h <= 1;
+}
 
 // Only a jQuery that is demonstrably old: a versioned filename, or a jquery/<version>/ CDN directory. Plugins (migrate, ui, cookie) never match.
 function isOldJquery(src: string): boolean {
@@ -178,25 +211,39 @@ function isOldJquery(src: string): boolean {
   return !!v && (+v[1] < 1 || (+v[1] === 1 && +v[2] < 12));
 }
 
-interface TableFrame { legacy: boolean; cells: number; openCells: number; block: boolean; dataLike: boolean }
+interface TableFrame { legacy: boolean; cells: number; openCells: number; block: boolean; dataLike: boolean; text: number }
 
-// One iterative walk over real element nodes (comments/scripts/text never are), linear even for pathologically nested markup.
+// One iterative walk over the main parse's element and text nodes, linear even for pathologically nested markup. Script/style/noscript
+// elements are visited (their src/href count) but the parse drops their text, and comments are never nodes.
 function scanDom(root: HTMLElement, isHttps: boolean) {
-  const r = { h1Count: 0, imageCount: 0, imagesMissingAlt: 0, hasTelLink: false, mixedContentCount: 0, hasMount: false };
-  const markers = new Set<string>(); const tables: TableFrame[] = []; let roleTables = 0;
-  const stack: [HTMLElement, boolean][] = [];
-  const push = (el: HTMLElement) => { for (let i = el.childNodes.length - 1; i >= 0; i--) if (el.childNodes[i].nodeType === 1) stack.push([el.childNodes[i] as HTMLElement, false]); };
+  const r = { h1Count: 0, imageCount: 0, imagesMissingAlt: 0, hasTelLink: false, mixedContentCount: 0, hasMount: false, hasScript: false, microdataBusiness: false };
+  const markers = new Set<string>(); const tables: TableFrame[] = [];
+  let roleTables = 0, fonts = 0, centers = 0, totalText = 0, layoutText = 0;
+  const stack: [Node, boolean][] = [];
+  const push = (el: HTMLElement) => { for (let i = el.childNodes.length - 1; i >= 0; i--) stack.push([el.childNodes[i], false]); };
   push(root);
   while (stack.length) {
-    const [el, exiting] = stack.pop()!; const tag = el.tagName;
+    const [node, exiting] = stack.pop()!;
+    if (node.nodeType === 3) {
+      const len = node.rawText.trim().length; totalText += len;
+      if (tables.length) tables[tables.length - 1].text += len;
+      continue;
+    }
+    if (node.nodeType !== 1) continue;
+    const el = node as HTMLElement; const tag = el.tagName;
     const inRoleTable = TABLE_ROLES.has(roleOf(el));
     if (exiting) {
       if (tag === "TD" && tables.length) tables[tables.length - 1].openCells--;
       // roleTables still includes this table's own role here, so a role=table/grid table or one nested in such an element is treated as data.
-      if (tag === "TABLE") { const t = tables.pop()!; if (t.legacy && t.cells >= 3 && t.block && !t.dataLike && roleTables === 0) markers.add("table-based page layout"); }
+      if (tag === "TABLE") {
+        const t = tables.pop()!;
+        if (tables.length) tables[tables.length - 1].text += t.text;
+        if (t.legacy && t.cells >= 3 && t.block && !t.dataLike && roleTables === 0) layoutText = Math.max(layoutText, t.text);
+      }
       if (inRoleTable) roleTables--;
       continue;
     }
+    if (SKIP_SUBTREE.has(tag)) continue;
     stack.push([el, true]); push(el);
     if (inRoleTable) roleTables++;
     const top = tables[tables.length - 1];
@@ -204,30 +251,47 @@ function scanDom(root: HTMLElement, isHttps: boolean) {
     switch (tag) {
       case "H1": r.h1Count++; break;
       case "A": if (/^tel:/i.test((el.getAttribute("href") ?? "").trim())) r.hasTelLink = true; break;
-      case "FONT": markers.add("old-style font tags"); break;
-      case "MARQUEE": case "BLINK": markers.add("scrolling or blinking text"); break;
-      case "FRAME": case "FRAMESET": markers.add("frames"); break;
-      case "CENTER": markers.add("old-style centering tags"); break;
+      case "FONT": fonts++; break;
+      case "CENTER": centers++; break;
+      case "MARQUEE": case "BLINK": markers.add(M.blink); break;
+      case "FRAME": case "FRAMESET": markers.add(M.frames); break;
       case "EMBED": case "OBJECT":
         if (SWF_URL.test(el.getAttribute("src") ?? "") || SWF_URL.test(el.getAttribute("data") ?? "") || /x-shockwave-flash/i.test(el.getAttribute("type") ?? "")
-          || FLASH_CLASSID.test(el.getAttribute("classid") ?? "")) markers.add("Flash");
+          || FLASH_CLASSID.test(el.getAttribute("classid") ?? "")) markers.add(M.flash);
         break;
-      case "PARAM": if (/^movie$/i.test((el.getAttribute("name") ?? "").trim()) && SWF_URL.test(el.getAttribute("value") ?? "")) markers.add("Flash"); break;
-      case "TABLE": tables.push({ legacy: ["cellspacing", "cellpadding", "bgcolor"].some((a) => el.getAttribute(a) !== undefined), cells: 0, openCells: 0, block: false, dataLike: false }); break;
+      case "PARAM": if (/^movie$/i.test((el.getAttribute("name") ?? "").trim()) && SWF_URL.test(el.getAttribute("value") ?? "")) markers.add(M.flash); break;
+      case "TABLE": tables.push({ legacy: ["cellspacing", "cellpadding", "bgcolor"].some((a) => el.getAttribute(a) !== undefined), cells: 0, openCells: 0, block: false, dataLike: false, text: 0 }); break;
       case "TD": if (top) { top.cells++; top.openCells++; } break;
       case "TH": case "CAPTION": case "THEAD": if (top) top.dataLike = true; break;
-    }
-    if (tag === "IMG") {
-      const role = roleOf(el);
-      if (role !== "presentation" && role !== "none" && (el.getAttribute("aria-hidden") ?? "").trim().toLowerCase() !== "true") {
-        r.imageCount++; if (el.getAttribute("alt") === undefined) r.imagesMissingAlt++;
+      case "IMG": {
+        const role = roleOf(el);
+        if (role !== "presentation" && role !== "none" && (el.getAttribute("aria-hidden") ?? "").trim().toLowerCase() !== "true" && !isInvisibleImg(el)) {
+          r.imageCount++; if (el.getAttribute("alt") === undefined) r.imagesMissingAlt++;
+        }
+        break;
       }
+      case "SCRIPT":
+        if (isOldJquery(el.getAttribute("src") ?? "")) markers.add(M.jquery);
+        if (el.getAttribute("src")?.trim() || (el.getAttribute("type") ?? "").trim().toLowerCase() === "module") r.hasScript = true;
+        break;
     }
-    if (tag === "SCRIPT" && isOldJquery(el.getAttribute("src") ?? "")) markers.add("an outdated jQuery version");
     if (isHttps && (MIXED_SRC_TAGS.has(tag) ? isInsecure(el.getAttribute("src")) : tag === "LINK" && /(^|\s)stylesheet(\s|$)/i.test(el.getAttribute("rel") ?? "") && isInsecure(el.getAttribute("href")))) r.mixedContentCount++;
     if (MOUNT_IDS.has(el.getAttribute("id") ?? "") || tag === "APP-ROOT" || el.getAttribute("ng-app") !== undefined || el.getAttribute("data-ng-app") !== undefined) r.hasMount = true;
+    if (!r.microdataBusiness && (hasBusinessType(el.getAttribute("itemtype")) || hasBusinessType(el.getAttribute("typeof")))) r.microdataBusiness = true;
   }
+  if (fonts >= 2) markers.add(M.font);
+  if (centers >= 2) markers.add(M.center);
+  // Only a table holding most of the page's text is the page layout; hours, pricing, badge and newsletter tables are not.
+  if (layoutText > 0 && layoutText >= 0.6 * totalText) markers.add(M.table);
   return { ...r, datedBuildMarkers: MARKER_ORDER.filter((m) => markers.has(m)) };
+}
+
+// Body text, or without a <body> the document minus <head>/<title>.
+function visibleText(root: HTMLElement): string {
+  const body = root.querySelector("body");
+  if (body) return body.structuredText;
+  return (root.querySelector("html") ?? root).childNodes
+    .map((c) => c.nodeType === 1 ? (/^(HEAD|TITLE)$/.test((c as HTMLElement).tagName) ? "" : (c as HTMLElement).structuredText) : c.nodeType === 3 ? c.text : "").join(" ");
 }
 
 function isContactForm(f: HTMLElement): boolean {
@@ -293,7 +357,7 @@ export function extractPage(html: string, pageUrl: string): PageFacts {
   }
 
   // The main parse drops script/style/noscript text, so structuredText is visible text; the head (title) is not, hence body when there is one.
-  const visible = (root.querySelector("body") ?? root).structuredText.replace(/\s+/g, " ").trim();
+  const visible = visibleText(root).replace(/\s+/g, " ").trim();
   const dom = scanDom(root, base.protocol === "https:");
   const platform = detectPlatform(root, base.hostname);
 
@@ -317,11 +381,11 @@ export function extractPage(html: string, pageUrl: string): PageFacts {
     imageCount: dom.imageCount,
     imagesMissingAlt: dom.imagesMissingAlt,
     hasTelLink: dom.hasTelLink,
-    hasLocalBusinessSchema: hasLocalBusinessSchema(html),
+    hasLocalBusinessSchema: dom.microdataBusiness || hasJsonLdBusiness(html),
     mixedContentCount: dom.mixedContentCount,
     datedBuildMarkers: dom.datedBuildMarkers,
     // Absence checks are unreliable on builders that render client-side; Shopify/WordPress serve real HTML so they are deliberately excluded.
-    isLikelyJsRendered: ["wix", "squarespace", "webflow"].includes(platform) || (visible.length < 200 && dom.hasMount),
+    isLikelyJsRendered: ["wix", "squarespace", "webflow"].includes(platform) || (visible.length < 200 && (dom.hasMount || (dom.h1Count === 0 && dom.hasScript))),
   };
 }
 

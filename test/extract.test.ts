@@ -209,6 +209,11 @@ describe("extra page facts", () => {
     expect(facts("").wordCount).toBe(0);
   });
 
+  it("wordCount without a <body> still excludes the head and title", () => {
+    expect(extractPage("<html><head><title>T T T</title></head><p>one two three</p></html>", "https://a.com/").wordCount).toBe(3);
+    expect(extractPage("<title>T T T</title><p>one two three</p>", "https://a.com/").wordCount).toBe(3);
+  });
+
   it("counts images and missing alt: alt='' is decorative, presentational and hidden images are skipped", () => {
     const f = facts([
       `<img src="a.png">`, `<img src="b.png" alt="Logo">`, `<img src="c.png" alt="">`, `<IMG SRC="d.png">`, `<IMG SRC="e.png" ALT="">`,
@@ -217,6 +222,17 @@ describe("extra page facts", () => {
     ].join(""));
     expect(f.imageCount).toBe(6);
     expect(f.imagesMissingAlt).toBe(3);
+  });
+
+  it("skips tracking pixels, hidden images and images inside templates", () => {
+    const hidden = [
+      `<img src="p.gif" width="1" height="1">`, `<img src="p.gif" width="0" height="0">`, `<img src="p.gif" style="width:1px; height: 1px">`,
+      `<IMG SRC="p.gif" WIDTH="1px" HEIGHT="1">`, `<img src="a.png" hidden>`, `<img src="a.png" style="color: red; DISPLAY : none">`,
+      `<template><img src="a.png"></template>`,
+    ];
+    for (const h of hidden) { const f = facts(h); expect([h, f.imageCount, f.imagesMissingAlt]).toEqual([h, 0, 0]); }
+    const real = facts(`<img src="a.png" width="1" height="50"><img src="b.png" width="1%" height="1%"><img src="c.png" style="width:1px">`);
+    expect([real.imageCount, real.imagesMissingAlt]).toEqual([3, 3]);
   });
 
   it("ignores images in comments, scripts and noscript", () => {
@@ -263,6 +279,38 @@ describe("extra page facts", () => {
     ];
     it.each(no)("%s -> false", (_l, body) => expect(facts(body).hasLocalBusinessSchema).toBe(false));
 
+    it("tolerates real-world JSON-LD wrappers and IRIs", () => {
+      const j = `{"@type":"Plumber"}`;
+      for (const body of [
+        ld(j, `type="application/ld+json; charset=utf-8"`), ld(j, `type=" Application/LD+JSON ;charset=utf-8"`), ld(`\uFEFF  \n${j}\n `), ld(`<!-- ${j} -->`),
+        ld(`//<![CDATA[\n${j}\n//]]>`), ld(`/*<![CDATA[*/${j}/*]]>*/`), ld(`{"@type":"http://schema.org/Plumber/"}`), ld(`{"@type":"https://schema.org/Plumber//"}`),
+      ]) expect([body, facts(body).hasLocalBusinessSchema]).toEqual([body, true]);
+      expect(facts(ld(`<!-- {"@type":"Organization"} -->`)).hasLocalBusinessSchema).toBe(false);
+    });
+
+    it("recognises microdata itemtype and RDFa typeof, ignoring non-business types", () => {
+      for (const b of [`<div itemscope itemtype="https://schema.org/Plumber"></div>`, `<div itemscope itemtype="http://schema.org/Dentist/"></div>`,
+        `<div ITEMSCOPE ITEMTYPE="https://schema.org/LocalBusiness"></div>`, `<div itemtype="https://schema.org/Thing https://schema.org/Restaurant"></div>`,
+        `<div vocab="https://schema.org/" typeof="LocalBusiness"></div>`, `<div typeof="schema:Dentist"></div>`, `<div typeof="Person schema:Restaurant"></div>`])
+        expect([b, facts(b).hasLocalBusinessSchema]).toEqual([b, true]);
+      for (const b of [`<div itemscope itemtype="https://schema.org/Product"></div>`, `<div typeof="Product"></div>`, `<div typeof="schema:Organization"></div>`,
+        `<p itemprop="Plumber">x</p>`, `<template><div itemtype="https://schema.org/Plumber"></div></template>`, `<!-- <div itemtype="https://schema.org/Plumber"></div> -->`,
+        `<p>itemtype="https://schema.org/Plumber"</p>`])
+        expect([b, facts(b).hasLocalBusinessSchema]).toEqual([b, false]);
+    });
+
+    it("never throws on huge or deeply nested JSON-LD", () => {
+      const big = ld(`[${"0,".repeat(200_000)}0]`);
+      expect(facts(big).hasLocalBusinessSchema).toBe(false);
+      const wide = ld(`{${Array.from({ length: 300_000 }, (_, i) => `"k${i}":${i}`).join(",")}}`);
+      expect(facts(wide).hasLocalBusinessSchema).toBe(false);
+      const deepArr = ld("[".repeat(5000) + "]".repeat(5000));
+      expect(facts(deepArr).hasLocalBusinessSchema).toBe(false);
+      const deepObj = ld(`{"a":`.repeat(5000) + `{"@type":"Plumber"}` + "}".repeat(5000));
+      expect(facts(deepObj).hasLocalBusinessSchema).toBe(true);
+      expect(facts(ld(`[${"[],".repeat(200_000)}[]]`)).hasLocalBusinessSchema).toBe(false);
+    });
+
     it("reads JSON-LD placed in the head", () => {
       expect(facts("<p>x</p>", "https://a.com/", ld(`{"@type":"Store"}`)).hasLocalBusinessSchema).toBe(true);
     });
@@ -279,6 +327,11 @@ describe("extra page facts", () => {
     it("does not count plain links, secure or relative urls, or non-stylesheet links", () => {
       const f = facts(`<a href="http://other.com/">x</a><img src="https://a.com/a.png"><img src="//a.com/b.png"><img src="/c.png"><link rel="canonical" href="http://a.com/"><link rel="icon" href="http://a.com/f.ico"><form action="http://a.com/post"></form>`);
       expect(f.mixedContentCount).toBe(0);
+    });
+    it("does not count loopback hosts (dev leftovers are not mixed content a visitor can fix)", () => {
+      const f = facts(`<img src="http://localhost/a.png"><img src="http://localhost:3000/a.png"><img src="http://127.0.0.1/a.png"><img src="http://[::1]:8080/a.png"><img src="HTTP://LOCALHOST/a.png">`);
+      expect(f.mixedContentCount).toBe(0);
+      expect(facts(`<img src="http://localhost.evil.com/a.png"><img src="http://localhost@evil.com/a.png">`).mixedContentCount).toBe(2);
     });
     it("ignores insecure urls inside comments, scripts and text", () => {
       expect(facts(`<!-- <img src="http://a.com/a.png"> --><script>document.write('<img src="http://a.com/b.png">')</script><p>&lt;img src="http://a.com/c.png"&gt;</p>`).mixedContentCount).toBe(0);
@@ -302,6 +355,16 @@ describe("extra page facts", () => {
       expect(m(`<center>a</center><CENTER>b</CENTER>`)).toEqual(["old-style centering tags"]);
       expect(extractPage(`<html><head><title>x</title></head><frameset cols="20%,80%"><frame src="a.html"><frame src="b.html"></frameset></html>`, "http://a.com/").datedBuildMarkers).toEqual(["frames"]);
       expect(extractPage(`<FRAMESET><FRAME SRC="a.html"></FRAMESET>`, "http://a.com/").datedBuildMarkers).toEqual(["frames"]);
+    });
+
+    it("a single <font> or <center> is not enough; two are; markup in templates does not count", () => {
+      expect(m(`<center><img src="b.png" alt="BBB"></center>`)).toEqual([]);
+      expect(m(`<font>a</font>`)).toEqual([]);
+      expect(m(`<font>a</font><font>b</font>`)).toEqual(["old-style font tags"]);
+      expect(m(`<center>a</center><center>b</center>`)).toEqual(["old-style centering tags"]);
+      expect(m(`<template><center>a</center><center>b</center><marquee>x</marquee></template>`)).toEqual([]);
+      expect(m(`<textarea><font>a</font><font>b</font><center>c</center></textarea>`)).toEqual([]);
+      expect(m(`<center>a</center><template><center>b</center></template>`)).toEqual([]);
     });
 
     it("does not flag iframes, 'font' in text or css, or tags in comments and scripts", () => {
@@ -342,8 +405,26 @@ describe("extra page facts", () => {
       expect(m(`<table cellspacing="0"><tr><td>a</td></tr></table><div><p>x</p></div><div><p>y</p></div><div><p>z</p></div>`)).toEqual([]);
     });
 
+    describe("layout tables must be structural", () => {
+      const prose = `<h1>Ace Plumbing</h1><p>${lorem}</p><p>${lorem}</p>`;
+      const tr = (...c: string[]) => `<tr>${c.map(cell).join("")}</tr>`;
+      const hours = `<table cellpadding="4">${tr("<p>Mon</p>", "<p>9-5</p>", "<p>Tue</p>", "<p>9-5</p>")}${tr("<p>Wed</p>", "<p>9-5</p>", "<p>Thu</p>", "<p>9-5</p>")}</table>`;
+      it("business hours, pricing, badge and newsletter tables inside a normal page do not flag", () => {
+        expect(m(prose + hours)).toEqual([]);
+        expect(m(prose + `<table cellspacing="0" cellpadding="6">${tr("<div>Basic</div>", "<div>Pro</div>", "<div>Team</div>")}${tr("<p>$10</p>", "<p>$20</p>", "<p>$30</p>")}</table>`)).toEqual([]);
+        expect(m(prose + `<table cellpadding="4">${tr(`<img src="bbb.png" alt="BBB">`, `<img src="a.png" alt="A+">`, `<img src="y.png" alt="Yelp">`)}</table>`)).toEqual([]);
+        expect(m(`<table cellpadding="4">${tr(`<img src="bbb.png" alt="BBB">`, `<img src="a.png" alt="A+">`, `<img src="y.png" alt="Yelp">`)}</table>`)).toEqual([]);
+        expect(m(prose + `<table bgcolor="#eee" cellpadding="8"><tr><td><div>Join our newsletter</div></td><td><div><input name="email"></div></td><td><div><input type="submit"></div></td></tr></table>`)).toEqual([]);
+      });
+      it("a classic page whose content lives in one nested layout table still flags", () => {
+        const body = `<table width="100%" cellspacing="0" cellpadding="0"><tr><td colspan="3"><h1>Ace Plumbing</h1></td></tr><tr><td><p>${lorem}</p></td><td>`
+          + `<table cellpadding="5"><tr>${cell(`<p>${lorem}</p>`)}${cell(`<p>${lorem}</p>`)}${cell(`<div>${lorem}</div>`)}</tr></table></td><td><p>Links</p></td></tr></table><p>Copyright</p>`;
+        expect(m(body)).toEqual(["table-based page layout"]);
+      });
+    });
+
     it("de-duplicates and reports several markers", () => {
-      expect(m(`<center><font>a</font></center><center>b</center><marquee>c</marquee>`, jq("/jquery-1.7.2.js"))).toEqual([
+      expect(m(`<center><font>a</font></center><center>b</center><font>d</font><marquee>c</marquee>`, jq("/jquery-1.7.2.js"))).toEqual([
         "old-style font tags", "scrolling or blinking text", "old-style centering tags", "an outdated jQuery version",
       ]);
     });
@@ -358,12 +439,24 @@ describe("extra page facts", () => {
       for (const mount of [`<div id="app"></div>`, `<div id="__next"></div>`, `<div id="___gatsby"></div>`, `<app-root></app-root>`, `<APP-ROOT>Loading</APP-ROOT>`, `<body ng-app="x"></body>`, `<div ng-app></div>`])
         expect(spa(mount + `<script src="/b.js"></script>`)).toBe(true);
     });
+    it("recognises Nuxt, Ember, Svelte and Quasar shells and a script-only shell", () => {
+      for (const b of [`<div id="__nuxt"></div>`, `<div id="ember-app"></div>`, `<div id="svelte"></div>`, `<div id="q-app"></div>`])
+        expect(spa(b)).toBe(true);
+      expect(spa(`<div style="display: contents"></div><script type="module" src="/_app/start.js"></script>`)).toBe(true);
+      expect(spa(`<div style="display: contents"><script type="module">import("/_app/start.js")</script></div>`)).toBe(true);
+      expect(spa(`<p></p>`, `<script type="module" crossorigin src="/assets/index.js"></script>`)).toBe(true);
+    });
+    it("a script alone is not a shell when the page has real text or a heading", () => {
+      expect(spa(`<p>${lorem}</p><script src="/b.js"></script>`)).toBe(false);
+      expect(spa(`<h1>Closed for the season</h1><script src="/b.js"></script>`)).toBe(false);
+      expect(spa(`<p>Hi</p><script>var a = 1</script>`)).toBe(false);
+    });
     it("a mount node with plenty of server-rendered text is not JS-rendered", () => {
       expect(spa(`<div id="root"><p>${lorem}</p></div>`)).toBe(false);
       expect(spa(`<div id="app"><p>${lorem}</p></div><script src="/b.js"></script>`)).toBe(false);
     });
     it("short text without a mount node is not flagged", () => {
-      expect(spa(`<p>Hello</p><script src="/b.js"></script>`)).toBe(false);
+      expect(spa(`<p>Hello</p>`)).toBe(false);
       expect(spa(`<div id="main"></div><div class="root app"></div>`)).toBe(false);
     });
     it("script contents do not count as visible text", () => {
