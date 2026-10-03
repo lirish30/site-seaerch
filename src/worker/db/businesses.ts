@@ -1,4 +1,5 @@
 import type { Business, LeadStatus, Listing } from "../types";
+import { isSocialOnlyUrl } from "../crawler/extract";
 
 export function domainOf(url: string | null): string | null {
   if (!url) return null;
@@ -15,10 +16,17 @@ export async function getBusiness(db: D1Database, id: string): Promise<Business 
 }
 
 export async function upsertBusiness(db: D1Database, l: Listing, searchId: string): Promise<Business> {
-  const domain = domainOf(l.websiteUrl);
+  // Social/platform hosts (facebook.com, yelp.com, ...) are shared by unrelated businesses: never store or match them.
+  const rawDomain = domainOf(l.websiteUrl);
+  const domain = rawDomain && !isSocialOnlyUrl(`https://${rawDomain}/`) ? rawDomain : null;
   let existing: Business | null = null;
   if (l.placeId) existing = await db.prepare(`SELECT * FROM businesses WHERE place_id = ?`).bind(l.placeId).first<Business>();
-  if (!existing && domain) existing = await db.prepare(`SELECT * FROM businesses WHERE domain = ?`).bind(domain).first<Business>();
+  // Domain fallback only when one side lacks a place_id; two distinct place_ids are two businesses (e.g. chain branches).
+  if (!existing && domain) {
+    existing = l.placeId
+      ? await db.prepare(`SELECT * FROM businesses WHERE domain = ? AND place_id IS NULL`).bind(domain).first<Business>()
+      : await db.prepare(`SELECT * FROM businesses WHERE domain = ?`).bind(domain).first<Business>();
+  }
 
   let id: string;
   if (existing) {

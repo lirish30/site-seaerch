@@ -36,6 +36,40 @@ describe("db", () => {
     expect(b.id).toBe(a.id);
   });
 
+  it("never merges listings with different place_ids that share a social/platform host", async () => {
+    const s = await createSearch(env.DB, { location: "A", businessType: "b", radiusKm: 1, maxResults: 5 });
+    const a = await upsertBusiness(env.DB, listing({ placeId: "fb-1", name: "Joe's", websiteUrl: "https://facebook.com/joes" }), s.id);
+    const b = await upsertBusiness(env.DB, listing({ placeId: "fb-2", name: "Ann's", websiteUrl: "https://www.facebook.com/anns" }), s.id);
+    expect(b.id).not.toBe(a.id);
+    expect(b.name).toBe("Ann's");
+    expect(a.domain).toBeNull();
+    expect(b.domain).toBeNull();
+  });
+
+  it("does not store or match a domain for social hosts even without place_id", async () => {
+    const s = await createSearch(env.DB, { location: "A", businessType: "b", radiusKm: 1, maxResults: 5 });
+    const a = await upsertBusiness(env.DB, listing({ placeId: null, name: "Y1", websiteUrl: "https://yelp.com/biz/y1" }), s.id);
+    const b = await upsertBusiness(env.DB, listing({ placeId: null, name: "Y2", websiteUrl: "https://yelp.com/biz/y2" }), s.id);
+    expect(b.id).not.toBe(a.id);
+    expect(a.domain).toBeNull();
+  });
+
+  it("keeps two listings with different place_ids but the same real domain separate", async () => {
+    const s = await createSearch(env.DB, { location: "A", businessType: "b", radiusKm: 1, maxResults: 5 });
+    const a = await upsertBusiness(env.DB, listing({ placeId: "chain-1", name: "Chain East", websiteUrl: "https://chain-co.com" }), s.id);
+    const b = await upsertBusiness(env.DB, listing({ placeId: "chain-2", name: "Chain West", websiteUrl: "https://chain-co.com/west" }), s.id);
+    expect(b.id).not.toBe(a.id);
+    expect(a.name).toBe("Chain East");
+  });
+
+  it("a listing with a place_id merges into a domain match that has no place_id", async () => {
+    const s = await createSearch(env.DB, { location: "A", businessType: "b", radiusKm: 1, maxResults: 5 });
+    const a = await upsertBusiness(env.DB, listing({ placeId: null, websiteUrl: "https://dom-np.com" }), s.id);
+    const b = await upsertBusiness(env.DB, listing({ placeId: "p-np", websiteUrl: "https://dom-np.com" }), s.id);
+    expect(b.id).toBe(a.id);
+    expect(b.place_id).toBe("p-np");
+  });
+
   it("re-upsert does not reset lead status; skip hides from search list", async () => {
     const s = await createSearch(env.DB, { location: "A", businessType: "b", radiusKm: 1, maxResults: 5 });
     const a = await upsertBusiness(env.DB, listing({ placeId: "p-skip" }), s.id);
