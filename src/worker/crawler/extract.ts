@@ -85,7 +85,7 @@ export function isSocialOnlyUrl(url: string): boolean {
 export function extractPage(html: string, pageUrl: string): PageFacts {
   const root = parse(html, { comment: false, blockTextElements: { script: false, style: false, noscript: false } });
   const base = new URL(pageUrl);
-  const text = root.text.replace(/\s+/g, " ");
+  const text = root.structuredText.replace(/\s+/g, " ");
 
   const emails = new Map<string, { value: string; personName: string | null; role: string | null }>();
   for (const a of root.querySelectorAll('a[href^="mailto:"]')) {
