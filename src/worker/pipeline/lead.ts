@@ -91,7 +91,7 @@ export async function runLead(
       https: f?.https ?? null, has_title: f?.hasTitle ?? null, has_meta_description: f?.hasMetaDescription ?? null,
       has_contact_form: f?.hasContactForm ?? null, copyright_year: f?.copyrightYear ?? null,
       latest_content_date: f?.latestContentDate ?? null, broken_link_count: f?.brokenLinkCount ?? null,
-      platform: f?.platform ?? null,
+      platform: f?.platform ?? null, // null = not crawled; "other" = crawled but unrecognised
       score: s.score, offer: s.offer, findings: s.findings, raw_r2_key: crawl.rawKey,
     });
     return { id: a.id, lowPriority: s.lowPriority };

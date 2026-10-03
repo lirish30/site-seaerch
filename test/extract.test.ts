@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { extractPage, pickCrawlTargets, isSocialOnlyUrl, detectPlatform, type Platform } from "../src/worker/crawler/extract";
+import { extractPage, pickCrawlTargets, isSocialOnlyUrl } from "../src/worker/crawler/extract";
+import type { Platform } from "../src/worker/types";
 import oldHtml from "./fixtures/html/old-plumber.html?raw";
 import modernHtml from "./fixtures/html/modern.html?raw";
 import parkedHtml from "./fixtures/html/parked.html?raw";
@@ -105,36 +106,75 @@ describe("isSocialOnlyUrl", () => {
   });
 });
 
-describe("detectPlatform", () => {
+describe("platform detection", () => {
   const h = (head: string, body = "") => `<html><head>${head}</head><body>${body}</body></html>`;
-  const cases: [Platform, string][] = [
-    ["wix", h(`<meta name="generator" content="Wix.com Website Builder">`)],
-    ["wix", h("", `<img src="https://static.wixstatic.com/media/a.jpg">`)],
-    ["squarespace", h(`<meta name="generator" content="Squarespace">`)],
-    ["squarespace", h("", `<script src="https://static1.squarespace.com/static/x.js"></script>`)],
-    ["squarespace", h(`<link href="https://assets.sqsp.net/a.css" rel="stylesheet">`)],
-    ["godaddy", h(`<meta name="generator" content="Starfield Technologies; Go Daddy Website Builder 8.0.0000">`)],
-    ["godaddy", h("", `<img src="https://img1.wsimg.com/isteam/ip/a.png">`)],
-    ["wordpress", h(`<meta name="generator" content="WordPress 6.4.2">`)],
-    ["wordpress", h(`<link rel="stylesheet" href="/wp-content/themes/x/style.css">`)],
-    ["weebly", h(`<meta name="generator" content="Weebly">`)],
-    ["weebly", h("", `<script src="//cdn2.editmysite.com/js/a.js"></script><a href="https://www.weebly.com">w</a>`)],
-    ["shopify", h(`<meta name="generator" content="Shopify">`)],
-    ["shopify", h(`<link rel="stylesheet" href="https://cdn.shopify.com/s/files/1/a.css">`)],
-    ["webflow", h(`<meta name="generator" content="Webflow">`)],
-    ["webflow", h("", `<img src="https://assets.website-files.com/abc/a.png">`)],
-    ["webflow", `<html data-wf-page="123" data-wf-site="456"><head></head><body></body></html>`],
-    ["other", h(`<title>Hand rolled</title>`, "<p>hi</p>")],
-    ["other", h(`<meta name="generator" content="Hugo 0.120">`)],
-  ];
-  it.each(cases)("%s", (want, html) => expect(detectPlatform(html)).toBe(want));
+  const detect = (html: string) => extractPage(html, "https://a.com/").platform;
+  const gen = (c: string) => `<meta name="generator" content="${c}">`;
+  const wp = `<link rel="stylesheet" href="/wp-content/themes/x/style.css">`;
 
-  it("generator meta wins over asset markers, whatever the attribute order", () => {
-    expect(detectPlatform(h(`<meta content="Squarespace" name="generator">`, `<img src="https://static.wixstatic.com/a.jpg">`))).toBe("squarespace");
-    expect(detectPlatform(h(`<meta name="generator" content="WordPress 6.4">`, `<script src="https://cdn.shopify.com/a.js"></script>`))).toBe("wordpress");
+  const positives: [string, Platform, string][] = [
+    ["wix generator", "wix", h(gen("Wix.com Website Builder"))],
+    ["wix wixstatic image", "wix", h("", `<img src="https://static.wixstatic.com/media/a.jpg">`)],
+    ["wix parastorage script", "wix", h("", `<script src="https://static.parastorage.com/services/x.js"></script>`)],
+    ["wix srcset", "wix", h("", `<img srcset="/a.jpg 1x, https://static.wixstatic.com/media/b.jpg 2x">`)],
+    ["wix inline style url", "wix", h("", `<div style="background:url('https://static.wixstatic.com/media/c.jpg')"></div>`)],
+    ["squarespace generator", "squarespace", h(gen("Squarespace"))],
+    ["squarespace static1 script", "squarespace", h("", `<script src="https://static1.squarespace.com/static/x.js"></script>`)],
+    ["squarespace cdn image", "squarespace", h("", `<img data-src="https://images.squarespace-cdn.com/content/a.jpg">`)],
+    ["godaddy generator", "godaddy", h(gen("Starfield Technologies; Go Daddy Website Builder 8.0.0000"))],
+    ["godaddy wsimg image", "godaddy", h("", `<img src="https://img1.wsimg.com/isteam/ip/a.png">`)],
+    ["wordpress generator", "wordpress", h(gen("WordPress 6.4.2"))],
+    ["wordpress wp-content", "wordpress", h(wp)],
+    ["wordpress wp-includes", "wordpress", h("", `<script src="https://a.com/wp-includes/js/jquery.js"></script>`)],
+    ["weebly generator", "weebly", h(gen("Weebly"))],
+    ["weebly editmysite script", "weebly", h("", `<script src="//cdn2.editmysite.com/js/a.js"></script>`)],
+    ["shopify generator", "shopify", h(gen("Shopify"))],
+    ["shopify cdn stylesheet", "shopify", h(`<link rel="stylesheet" href="https://cdn.shopify.com/s/files/1/a.css">`)],
+    ["webflow generator", "webflow", h(gen("Webflow"))],
+    ["webflow website-files image", "webflow", h("", `<img src="https://assets.website-files.com/abc/a.png">`)],
+    ["webflow data-wf html attribute", "webflow", `<html data-wf-page="123" data-wf-site="456"><head></head><body></body></html>`],
+    ["unquoted generator attribute", "wordpress", h(`<meta name=generator content=WordPress>`)],
+    ["uppercase generator tag", "wix", h(`<META NAME="GENERATOR" CONTENT="Wix.com Website Builder">`)],
+    ["generator content before name", "squarespace", h(`<meta content="Squarespace" name="generator">`)],
+    ["unrecognised generator", "other", h(gen("Hugo 0.120"))],
+    ["no signals", "other", h(`<title>Hand rolled</title>`, "<p>hi</p>")],
+  ];
+  it.each(positives)("%s -> %s", (_label, want, html) => expect(detect(html)).toBe(want));
+
+  // Platform later gates "X is missing" findings, so mislabelling a real WordPress/static site is costly.
+  const negatives: [string, Platform, string][] = [
+    ["wordpress with footer link to wix.com", "wordpress", h(wp, `<a href="https://www.wix.com">Wix</a>`)],
+    ["wordpress hotlinking one wixstatic image", "wordpress", h(wp, `<img src="https://static.wixstatic.com/media/a.jpg">`)],
+    ["wordpress with a Shopify Buy Button script", "wordpress", h(wp, `<script src="https://cdn.shopify.com/s/buy-button.js"></script>`)],
+    ["wordpress with a foreign builder asset and no generator", "wordpress", h(wp, `<img src="https://assets.website-files.com/a.png">`)],
+    ["text: moved off squarespace.com", "other", h("", `<p>we moved off squarespace.com last year</p>`)],
+    ["text: weebly.com vs wordpress", "other", h("", `<p>weebly.com vs wordpress</p>`)],
+    ["mailto support@wix.com", "other", h("", `<a href="mailto:support@wix.com">mail</a>`)],
+    ["link to a path containing wix.com", "other", h("", `<a href="https://example.com/wix.com-review">r</a>`)],
+    ["text: avoid the GoDaddy Website Builder", "other", h("", `<p>Avoid the GoDaddy Website Builder</p>`)],
+    ["data-wf-page as text", "other", h("", `<code>data-wf-page</code>`)],
+    ["the word sqspx", "other", h("", `<p>sqspx</p>`)],
+    ["www.squarespace.com link", "other", h("", `<a href="https://www.squarespace.com/pricing">p</a>`)],
+    ["www.weebly.com link", "other", h("", `<a href="https://www.weebly.com">w</a>`)],
+    ["data-wf attribute on a non-html element", "other", h("", `<div data-wf-page="1"></div>`)],
+    ["commented-out generator", "other", h(`<!-- <meta name="generator" content="Wix.com Website Builder"> -->`)],
+    ["generator tag inside an inline script", "other", h(`<script>document.write('<meta name="generator" content="Wix.com">')</script>`)],
+    ["meta description mentioning wixstatic.com", "other", h(`<meta name="description" content="images from wixstatic.com">`)],
+  ];
+  it.each(negatives)("%s -> %s", (_label, want, html) => expect(detect(html)).toBe(want));
+
+  it("reads every generator tag, not just the first", () => {
+    expect(detect(h(gen("Elementor 3.18.0") + gen("WordPress 6.4")))).toBe("wordpress");
   });
 
-  it("extractPage populates platform", () => {
-    expect(extractPage(h("", `<img src="https://static.wixstatic.com/a.jpg">`), "https://a.com/").platform).toBe("wix");
+  it("a recognised generator wins over asset markers", () => {
+    expect(detect(h(gen("Squarespace"), `<img src="https://static.wixstatic.com/a.jpg">`))).toBe("squarespace");
+    expect(detect(h(gen("WordPress 6.4"), `<script src="https://cdn.shopify.com/a.js"></script>`))).toBe("wordpress");
+  });
+
+  it("does not take long on a hostile page of unclosed meta tags", () => {
+    const t = Date.now();
+    detect("<html><head>" + `<meta name="x"`.repeat(10_000));
+    expect(Date.now() - t).toBeLessThan(1000);
   });
 });

@@ -1,6 +1,5 @@
 import { parse, type HTMLElement } from "node-html-parser";
-
-export type Platform = "wix" | "squarespace" | "godaddy" | "wordpress" | "weebly" | "shopify" | "webflow" | "other";
+import type { Platform } from "../types";
 
 export interface PageFacts {
   title: string | null; metaDescription: string | null; hasViewport: boolean; hasForm: boolean;
@@ -23,28 +22,48 @@ const MONTH_DATE_RE = new RegExp(`\\b(${MONTHS.join("|")}|${MONTHS.map((m) => m.
 const ISO_DATE_RE = /\b(20\d{2}|19\d{2})-(\d{2})-(\d{2})\b/g;
 const SLASH_DATE_RE = /\b(\d{1,2})\/(\d{1,2})\/(20\d{2})\b/g;
 
-// Order matters in both tables: the generic /wp-content/ marker goes last so a builder's own assets win.
-const PLATFORM_MARKERS: [Exclude<Platform, "other">, RegExp][] = [
-  ["wix", /wixstatic\.com|(^|[^a-z0-9])wix\.com/i],
-  ["squarespace", /squarespace\.com|\bsqsp/i],
-  ["godaddy", /wsimg\.com|godaddysites\.com|go\s?daddy website builder/i],
-  ["weebly", /weebly\.com|editmysite\.com/i],
-  ["shopify", /cdn\.shopify\.com/i],
-  ["webflow", /website-files\.com|\bdata-wf-/i],
-  ["wordpress", /\/wp-content\//i],
-];
 const PLATFORM_GENERATORS: [Exclude<Platform, "other">, RegExp][] = [
   ["wix", /\bwix\b/i], ["squarespace", /squarespace/i], ["godaddy", /go\s?daddy|starfield/i], ["wordpress", /wordpress/i],
   ["weebly", /weebly/i], ["shopify", /shopify/i], ["webflow", /webflow/i],
 ];
+// Asset HOSTS only (never bare brand domains or free text): a footer link to wix.com says nothing about the site's own platform.
+const PLATFORM_HOSTS: [Exclude<Platform, "wordpress" | "other">, RegExp][] = [
+  ["wix", /(^|\.)(wixstatic|parastorage)\.com$/], ["squarespace", /^(static\d*|assets)\.squarespace\.com$|(^|\.)(squarespace-cdn|sqspcdn)\.com$/],
+  ["godaddy", /(^|\.)wsimg\.com$/], ["weebly", /(^|\.)(editmysite|weeblycloud)\.com$/],
+  ["shopify", /^cdn\.shopify\.com$/], ["webflow", /(^|\.)website-files\.com$/],
+];
+const WP_PATH = /(^|\/)wp-(content|includes)\//i;
 
-export function detectPlatform(html: string): Platform {
-  // Attribute order varies, so find the generator tag first and read content from it.
-  const tag = html.match(/<meta\b[^>]*\bname\s*=\s*["']generator["'][^>]*>/i)?.[0];
-  const gen = tag?.match(/\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)')/i);
-  const content = gen?.[1] ?? gen?.[2];
-  if (content) for (const [p, re] of PLATFORM_GENERATORS) if (re.test(content)) return p;
-  for (const [p, re] of PLATFORM_MARKERS) if (re.test(html)) return p;
+function urlsIn(el: HTMLElement): string[] {
+  const a = el.attributes; const out: string[] = [];
+  for (const k of ["src", "href", "data-src"]) if (a[k]) out.push(a[k]);
+  if (a.content && /^(https?:)?\/\//i.test(a.content.trim())) out.push(a.content);
+  if (a.srcset) for (const c of a.srcset.split(",")) out.push(c.trim().split(/\s+/)[0]);
+  if (a.style) for (const m of a.style.matchAll(/url\(\s*["']?([^"')]+)/gi)) out.push(m[1]);
+  return out;
+}
+
+// Reads the DOM, never raw HTML: no regex runs over the whole page, and markup inside scripts/comments/text is never a node.
+export function detectPlatform(root: HTMLElement): Platform {
+  for (const m of root.querySelectorAll("meta")) {
+    if (!/^generator$/i.test(m.getAttribute("name") ?? "")) continue;
+    const g = m.getAttribute("content") ?? "";
+    for (const [p, re] of PLATFORM_GENERATORS) if (re.test(g)) return p;
+  }
+  const hosts = new Set<Platform>();
+  for (const el of root.querySelectorAll("[src],[href],[srcset],[data-src],[content],[style]")) {
+    for (const raw of urlsIn(el)) {
+      const u = raw.trim();
+      // WordPress paths are checked first: a builder never serves its own /wp-content/, while WordPress pages commonly embed foreign builder assets.
+      if (WP_PATH.test(u.replace(/^(https?:)?\/\/[^/?#]*/i, "").split(/[?#]/)[0])) return "wordpress";
+      const host = u.match(/^(?:https?:)?\/\/([^/?#:@]+)/i)?.[1].toLowerCase();
+      const hit = host && PLATFORM_HOSTS.find(([, re]) => re.test(host));
+      if (hit) hosts.add(hit[0]);
+    }
+  }
+  for (const [p] of PLATFORM_HOSTS) if (hosts.has(p)) return p;
+  const html = root.querySelector("html");
+  if (html && Object.keys(html.attributes).some((k) => /^data-wf-/i.test(k))) return "webflow";
   return "other";
 }
 
@@ -174,7 +193,7 @@ export function extractPage(html: string, pageUrl: string): PageFacts {
     eventDates: [...eventDates],
     internalLinks: [...internal],
     isParked: PARKED.test(`${title ?? ""} ${text.slice(0, 3000)}`),
-    platform: detectPlatform(html),
+    platform: detectPlatform(root),
   };
 }
 

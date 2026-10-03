@@ -1,5 +1,7 @@
 export type LeadStatus = "new" | "reviewed" | "contacted" | "replied" | "won" | "lost" | "skip";
 export type SiteStatus = "ok" | "no_website" | "unreachable" | "parked" | "blocked";
+// Detected site builder. Audit.platform is null when the site was not crawled; "other" means crawled but unrecognised.
+export type Platform = "wix" | "squarespace" | "godaddy" | "wordpress" | "weebly" | "shopify" | "webflow" | "other";
 export type Offer = "new_site" | "performance" | "care_plan" | "seo_basics";
 export type FindingGroup = "speed" | "stale" | "basics";
 export type FindingCode =
@@ -47,7 +49,7 @@ export interface Audit {
   pagespeed_mobile: number | null; lcp_ms: number | null; cls: number | null; mobile_friendly: boolean | null;
   https: boolean | null; has_title: boolean | null; has_meta_description: boolean | null;
   has_contact_form: boolean | null; copyright_year: number | null; latest_content_date: string | null;
-  broken_link_count: number | null; platform: string | null; score: number; offer: Offer; findings: Finding[]; raw_r2_key: string | null;
+  broken_link_count: number | null; platform: Platform | null; score: number; offer: Offer; findings: Finding[]; raw_r2_key: string | null;
 }
 export type AuditInsert = Omit<Audit, "id" | "created_at">;
 

@@ -1,6 +1,5 @@
-import type { Finding, FindingCode, FindingGroup, Offer, SiteStatus } from "../types";
+import type { Finding, FindingCode, FindingGroup, Offer, Platform, SiteStatus } from "../types";
 import { SITE_STATUS_SCORE, THRESHOLDS as T, WEIGHTS as W } from "./config";
-import type { Platform } from "../crawler/extract";
 
 export interface CrawlFacts {
   https: boolean; hasTitle: boolean; hasMetaDescription: boolean; hasViewport: boolean;
