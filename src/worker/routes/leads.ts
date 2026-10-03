@@ -22,7 +22,7 @@ export async function leadRows(db: D1Database, businesses: Business[]) {
     return {
       business: b, score: audit?.score ?? null, topFinding: audit?.findings[0]?.evidence ?? null,
       offer: audit?.offer ?? null, bestContact: best.contact?.value ?? null, hasEmail: !!best.emailContact,
-      partial: audit?.partial ?? false,
+      partial: audit?.partial ?? false, platform: audit?.platform ?? null, rating: b.rating, reviewCount: b.review_count,
     };
   });
 }

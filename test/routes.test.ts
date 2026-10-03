@@ -18,11 +18,11 @@ beforeAll(async () => {
   cookie = r.headers.get("set-cookie")!.split(";")[0];
 });
 
-async function seedLead() {
+async function seedLead(o: { platform?: "wix" | null; rating?: number | null; reviewCount?: number | null } = {}) {
   const s = await createSearch(env.DB, { location: "Boise", businessType: "plumber", radiusKm: 10, maxResults: 5 });
-  const b = await upsertBusiness(env.DB, { placeId: crypto.randomUUID(), name: "Ace", category: null, address: null, phone: null, websiteUrl: "https://ace.com", mapsUrl: null, rating: null, reviewCount: null }, s.id);
+  const b = await upsertBusiness(env.DB, { placeId: crypto.randomUUID(), name: "Ace", category: null, address: null, phone: null, websiteUrl: "https://ace.com", mapsUrl: null, rating: o.rating ?? null, reviewCount: o.reviewCount ?? null }, s.id);
   const a = await insertAudit(env.DB, { business_id: b.id, site_status: "ok", partial: true, pagespeed_mobile: null, lcp_ms: null, cls: null, mobile_friendly: null,
-    https: false, has_title: true, has_meta_description: true, has_contact_form: false, copyright_year: null, latest_content_date: null, broken_link_count: 0, platform: null,
+    https: false, has_title: true, has_meta_description: true, has_contact_form: false, copyright_year: null, latest_content_date: null, broken_link_count: 0, platform: o.platform ?? null,
     score: 15, offer: "seo_basics", findings: [{ code: "no_https", group: "basics", severity: "high", points: 15, evidence: "Not secure" }], raw_r2_key: null });
   const [c] = await replaceContacts(env.DB, b.id, [{ type: "email", value: "info@ace.com", source_url: null, person_name: null, role: null, confidence: 0.7 }]);
   await insertDraft(env.DB, { business_id: b.id, audit_id: a.id, to_contact_id: c.id, recipient_reason: "r", subject: "S", body: "B", offer: "seo_basics", steering_note: null });
@@ -69,6 +69,17 @@ describe("routes", () => {
     expect(r.leads[0].bestContact).toBe("info@ace.com");
     expect(r.leads[0].hasEmail).toBe(true);
     expect(r.leads[0].partial).toBe(true);
+  });
+
+  it("lead rows expose platform, rating and reviewCount (null when absent)", async () => {
+    const { s, b } = await seedLead({ platform: "wix", rating: 3.8, reviewCount: 12 });
+    const detail = await (await api(`/api/searches/${s.id}`)).json<any>();
+    expect(detail.leads[0]).toMatchObject({ platform: "wix", rating: 3.8, reviewCount: 12 });
+    const all = (await (await api(`/api/leads?limit=500`)).json<any[]>()).find((r) => r.business.id === b.id);
+    expect(all).toMatchObject({ platform: "wix", rating: 3.8, reviewCount: 12 });
+    const bare = await seedLead();
+    const row = (await (await api(`/api/searches/${bare.s.id}`)).json<any>()).leads[0];
+    expect(row).toMatchObject({ platform: null, rating: null, reviewCount: null });
   });
 
   it("opening a lead marks it reviewed and returns draft + recipient", async () => {
