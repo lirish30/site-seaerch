@@ -11,7 +11,7 @@ import { getSettings } from "../db/settings";
 import { incrementProcessed } from "../db/searches";
 import { recordUsage } from "../db/usage";
 import { PRICES } from "../cost";
-import type { Draft } from "../types";
+import type { Draft, SiteStatus } from "../types";
 
 export interface StepLike {
   do<T>(name: string, fn: () => Promise<T>): Promise<T>;
@@ -30,6 +30,8 @@ async function draftFor(deps: LeadDeps, businessId: string, steeringNote: string
   await recordUsage(deps.db, "claude", 1, PRICES.claudePerDraft);
   return insertDraft(deps.db, { business_id: businessId, audit_id: audit.id, offer: audit.offer, steering_note: steeringNote, ...d });
 }
+
+const measurable = (s: SiteStatus) => s === "ok" || s === "blocked";
 
 export function regenerateDraft(deps: LeadDeps, businessId: string, steeringNote: string | null) {
   return draftFor(deps, businessId, steeringNote);
@@ -60,7 +62,8 @@ export async function runLead(
   let ps: Awaited<ReturnType<typeof runPageSpeed>>["facts"] | null = null;
   try {
     ps = await step.do("pagespeed", async () => {
-    if (crawl.siteStatus !== "ok" || !crawl.finalUrl) return null;
+    // Bot-blocked sites still get PageSpeed (Google's runner is usually let through).
+    if (!measurable(crawl.siteStatus) || !crawl.finalUrl) return null;
     try {
       const r = await runPageSpeed(crawl.finalUrl, { apiKey: deps.pagespeedKey, fetch: deps.fetch });
       await recordUsage(deps.db, "pagespeed", 1, PRICES.pagespeedPerCall);
@@ -82,7 +85,7 @@ export async function runLead(
     const s = score({ siteStatus: crawl.siteStatus, crawl: crawl.facts, pagespeed: ps, now: deps.now() });
     const f = crawl.facts;
     const a = await insertAudit(deps.db, {
-      business_id: p.businessId, site_status: crawl.siteStatus, partial: crawl.siteStatus === "ok" && ps === null,
+      business_id: p.businessId, site_status: crawl.siteStatus, partial: measurable(crawl.siteStatus) && ps === null,
       pagespeed_mobile: ps?.performanceScore ?? null, lcp_ms: ps?.lcpMs ?? null, cls: ps?.cls ?? null,
       mobile_friendly: ps ? ps.mobileFriendly : f ? f.hasViewport : null,
       https: f?.https ?? null, has_title: f?.hasTitle ?? null, has_meta_description: f?.hasMetaDescription ?? null,

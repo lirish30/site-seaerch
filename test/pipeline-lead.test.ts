@@ -72,6 +72,37 @@ describe("runLead", () => {
     expect(a.findings.map((f) => f.group)).not.toContain("speed");
   });
 
+  it("bot-blocked site → blocked audit scored from PageSpeed on the original URL, no 'didn't load' claim", async () => {
+    const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 5 });
+    const b = await upsertBusiness(env.DB, listing({ placeId: "L2c", websiteUrl: "https://walled.com" }), s.id);
+    let psiUrl = "";
+    const d = deps({ fetch: async (u) => {
+      if (u.includes("pagespeedonline")) { psiUrl = u; return Response.json(psiSlow); }
+      return new Response("Just a moment...", { status: 403, headers: { "content-type": "text/html" } });
+    } });
+    await runLead(d, step, { businessId: b.id, searchId: s.id });
+    const a = (await latestAudit(env.DB, b.id))!;
+    expect(a.site_status).toBe("blocked");
+    expect(psiUrl).toContain(encodeURIComponent("https://walled.com/"));
+    expect(a.partial).toBe(false);
+    expect(a.findings.map((f) => f.code)).toContain("slow_mobile");
+    expect(a.findings.map((f) => f.code)).not.toContain("site_unreachable");
+  });
+
+  it("bot-blocked site with PageSpeed failing → score 0, partial, no findings", async () => {
+    const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 5 });
+    const b = await upsertBusiness(env.DB, listing({ placeId: "L2d", websiteUrl: "https://walled2.com" }), s.id);
+    const d = deps({ fetch: async (u) => u.includes("pagespeedonline")
+      ? new Response("x", { status: 500 })
+      : new Response("", { status: 503, headers: { "content-type": "text/html" } }) });
+    await runLead(d, step, { businessId: b.id, searchId: s.id });
+    const a = (await latestAudit(env.DB, b.id))!;
+    expect(a.site_status).toBe("blocked");
+    expect(a.score).toBe(0);
+    expect(a.partial).toBe(true);
+    expect(a.findings).toEqual([]);
+  });
+
   it("low-priority lead is not drafted unless forced", async () => {
     const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 5 });
     const b = await upsertBusiness(env.DB, listing({ placeId: "L3", websiteUrl: "https://good.com" }), s.id);

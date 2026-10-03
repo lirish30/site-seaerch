@@ -33,6 +33,15 @@ async function get(url: string, o: Opts, method = "GET", readBody = false): Prom
   } finally { clearTimeout(timer); }
 }
 
+const BLOCKED_STATUSES = new Set([401, 403, 429, 503]);
+// Title markers are reliable; body markers are limited to challenge-only tokens so pages that merely
+// embed reCAPTCHA on a contact form are not misread as blocked.
+const CHALLENGE_TITLE = /just a moment|attention required|captcha|security check|access denied/i;
+const CHALLENGE_BODY = /cf-browser-verification|cf_chl_opt|cf-challenge-running/i;
+function isChallengePage(title: string | null, html: string): boolean {
+  return (!!title && CHALLENGE_TITLE.test(title)) || CHALLENGE_BODY.test(html);
+}
+
 const isHtml = (r: Response) => (r.headers.get("content-type") ?? "").includes("text/html");
 const empty = (status: SiteStatus, error: string | null = null): CrawlResult =>
   ({ siteStatus: status, finalUrl: null, facts: null, contacts: [], pages: [], error });
@@ -61,13 +70,18 @@ export async function crawlSite(websiteUrl: string | null, o: Opts): Promise<Cra
     } catch (e) { lastErr = (e as Error).message; }
   }
   if (!home) return empty("unreachable", lastErr ?? "fetch failed");
+  // Bot protection: the site exists but refuses automated visitors. Keep the URL so PageSpeed can still run.
+  const blocked = (why: string): CrawlResult => ({ ...empty("blocked", why), finalUrl: homeUrl });
+  if (BLOCKED_STATUSES.has(home.status)) return blocked(`HTTP ${home.status}`);
   if (home.status >= 400) return empty("unreachable", `HTTP ${home.status}`);
+  if (!home.headers.get("content-type")) return blocked("Homepage has no content-type");
   if (!isHtml(home)) return empty("unreachable", `Homepage is ${home.headers.get("content-type")}`);
   // A redirect that lands on a social/listing page is not a real website.
   if (isSocialOnlyUrl(homeUrl)) return empty("no_website");
 
   const homeHtml = homeBody;
   const homeFacts = extractPage(homeHtml, homeUrl);
+  if (isChallengePage(homeFacts.title, homeHtml)) return blocked("Homepage is a bot-check challenge");
   if (homeFacts.isParked) return { ...empty("parked"), finalUrl: homeUrl };
 
   const pages: CrawlResult["pages"] = [{ url: homeUrl, status: home.status, html: homeHtml }];

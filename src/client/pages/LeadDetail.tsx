@@ -90,7 +90,7 @@ export default function LeadDetail() {
         </p>
         {b.last_error && <p className="error">⚠ {b.last_error}</p>}
         {d.audit ? <>
-          <h3>Score {d.audit.score} <span className="badge">{d.audit.offer}</span> {d.audit.partial && <span className="badge">partial audit</span>}</h3>
+          <h3>Score {d.audit.score} <span className="badge">{d.audit.offer}</span> {d.audit.partial && <span className="badge">partial audit</span>} {d.audit.site_status === "blocked" && <span className="badge" title="The site's bot protection blocked our crawler; only PageSpeed data was used">site blocks crawlers</span>}</h3>
           <ul>{d.audit.findings.map((f) => <li key={f.code}><strong>+{f.points}</strong> {f.evidence}</li>)}</ul>
           <p className="muted">Audited {new Date(d.audit.created_at).toLocaleString()}</p>
         </> : <p className="muted">Audit in progress…</p>}

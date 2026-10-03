@@ -29,8 +29,10 @@ const secs = (ms: number) => (ms / 1000).toFixed(1);
 export function score(input: { siteStatus: SiteStatus; crawl: CrawlFacts | null; pagespeed: PageSpeedFacts | null; now: Date }) {
   const { siteStatus, crawl, pagespeed: ps, now } = input;
 
-  if (siteStatus !== "ok") {
-    const map: Record<Exclude<SiteStatus, "ok">, [FindingCode, string]> = {
+  // "blocked" (bot protection) is scored like a site we could not crawl: PageSpeed findings only, and
+  // never a site-level claim that it didn't load.
+  if (siteStatus !== "ok" && siteStatus !== "blocked") {
+    const map: Record<Exclude<SiteStatus, "ok" | "blocked">, [FindingCode, string]> = {
       no_website: ["no_website", "No website listed on their Google Business profile"],
       parked: ["site_parked", "Their web address shows a placeholder or for-sale page"],
       unreachable: ["site_unreachable", "Their website didn't load when we tried it"],
@@ -52,6 +54,8 @@ export function score(input: { siteStatus: SiteStatus; crawl: CrawlFacts | null;
     if (ps.cls > T.layoutShiftCls)
       out.push(f("layout_shift", "The page jumps around while it loads"));
   }
+  if (!crawl && ps && !ps.mobileFriendly)
+    out.push(f("not_mobile_friendly", "The site isn't set up for phones, so text and buttons are hard to use"));
   if (crawl) {
     if (!crawl.hasViewport || (ps && !ps.mobileFriendly))
       out.push(f("not_mobile_friendly", "The site isn't set up for phones, so text and buttons are hard to use"));

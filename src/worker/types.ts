@@ -1,5 +1,5 @@
 export type LeadStatus = "new" | "reviewed" | "contacted" | "replied" | "won" | "lost" | "skip";
-export type SiteStatus = "ok" | "no_website" | "unreachable" | "parked";
+export type SiteStatus = "ok" | "no_website" | "unreachable" | "parked" | "blocked";
 export type Offer = "new_site" | "performance" | "care_plan" | "seo_basics";
 export type FindingGroup = "speed" | "stale" | "basics";
 export type FindingCode =

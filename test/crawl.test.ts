@@ -35,9 +35,43 @@ describe("crawlSite", () => {
     expect(r.error).toMatch(/timeout/);
   });
 
-  it("403 bot block → unreachable", async () => {
-    const r = await crawlSite("https://blocked.com", opts(fakeFetch({ "https://blocked.com/": { status: 403, body: "Just a moment..." } })));
-    expect(r.siteStatus).toBe("unreachable");
+  // Ruling H: bot protection is "blocked", not "your site didn't load".
+  it.each([401, 403, 429, 503])("homepage %i → blocked, keeps the URL for PageSpeed", async (status) => {
+    const r = await crawlSite("https://blocked.com", opts(fakeFetch({ "https://blocked.com/": { status, body: "Just a moment..." } })));
+    expect(r.siteStatus).toBe("blocked");
+    expect(r.finalUrl).toBe("https://blocked.com/");
+    expect(r.facts).toBeNull();
+  });
+
+  it("200 JS-challenge page → blocked", async () => {
+    const r = await crawlSite("https://chal.com", opts(fakeFetch({ "https://chal.com/": {
+      body: html("<div id='cf-browser-verification'>Checking your browser</div>", "<title>Just a moment...</title>") } })));
+    expect(r.siteStatus).toBe("blocked");
+    expect(r.finalUrl).toBe("https://chal.com/");
+  });
+
+  it("200 'Attention Required' page → blocked", async () => {
+    const r = await crawlSite("https://att.com", opts(fakeFetch({ "https://att.com/": {
+      body: html("<p>Sorry, you have been blocked</p>", "<title>Attention Required! | Cloudflare</title>") } })));
+    expect(r.siteStatus).toBe("blocked");
+  });
+
+  it("a normal page that merely embeds reCAPTCHA on its form stays ok", async () => {
+    const r = await crawlSite("https://rc.com", opts(fakeFetch({ "https://rc.com/": {
+      body: html("<form><input name='email'><textarea></textarea><div class='g-recaptcha'></div></form>", "<title>RC Plumbing</title>") } })));
+    expect(r.siteStatus).toBe("ok");
+  });
+
+  it("missing content-type → blocked", async () => {
+    const r = await crawlSite("https://noct.com", opts(async () => new Response(new TextEncoder().encode("<html></html>"), { status: 200 })));
+    expect(r.siteStatus).toBe("blocked");
+  });
+
+  it("404, 410 and 500 → unreachable", async () => {
+    for (const status of [404, 410, 500]) {
+      const r = await crawlSite("https://gone.com", opts(fakeFetch({ "https://gone.com/": { status } })));
+      expect(r.siteStatus).toBe("unreachable");
+    }
   });
 
   it("non-HTML homepage → unreachable", async () => {

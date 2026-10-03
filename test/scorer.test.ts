@@ -22,6 +22,20 @@ describe("score", () => {
     expect(score({ siteStatus: "unreachable", crawl: null, pagespeed: null, now }).offer).toBe("new_site");
   });
 
+  it("blocked without PageSpeed → 0, no site-level 'didn't load' finding, care_plan", () => {
+    const r = score({ siteStatus: "blocked", crawl: null, pagespeed: null, now });
+    expect(r.score).toBe(0);
+    expect(r.findings).toEqual([]);
+    expect(r.offer).toBe("care_plan");
+  });
+
+  it("blocked with PageSpeed → scored from PageSpeed only", () => {
+    const r = score({ siteStatus: "blocked", crawl: null, pagespeed: { performanceScore: 30, lcpMs: 6000, cls: 0.02, mobileFriendly: false }, now });
+    expect(codes(r)).toEqual(["not_mobile_friendly", "slow_lcp", "slow_mobile"]);
+    expect(r.findings.every((f) => f.group !== "site")).toBe(true);
+    expect(r.offer).toBe("performance");
+  });
+
   it("healthy site → 0, low priority", () => {
     const r = score({ siteStatus: "ok", crawl: goodCrawl, pagespeed: goodPs, now });
     expect(r.score).toBe(0);
