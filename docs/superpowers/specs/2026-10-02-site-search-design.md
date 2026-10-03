@@ -118,7 +118,7 @@ IDs are text UUIDs; timestamps are ISO-8601 text.
 2. Otherwise the group with the most points: speed → `performance`, stale → `care_plan`, basics → `seo_basics`. Ties break in that order.
 
 ### Thresholds
-- Score < 20: tagged "low priority"; no auto-draft (manual "Generate draft" available).
+- Score < 20: tagged "low priority"; no auto-draft (manual "Generate draft" available). (v2: a lead is also low priority when none of its findings is worth `autoDraftMinFindingPoints` = 8 points or more, so a pile of small findings on an otherwise healthy site is not pitched; see 12.2.)
 - If PageSpeed is unavailable, score from crawl data only and set `partial = true`.
 
 ## 5. Recipient selection
@@ -218,6 +218,7 @@ Existing v1 findings are unchanged. `not_mobile_friendly` is still emitted at mo
 - The total is `min(100, capGroups(findings))`. `capGroups` sums points per group and caps the groups listed in `GROUP_CAPS` (`seo` 20, `local` 15). `speed`, `stale`, `basics` and `site` stay uncapped.
 - Offer selection (section 4) deliberately uses raw, uncapped sums, and adds the raw `seo` and `local` points into the basics bucket. So SEO and local findings can only ever steer the offer to `seo_basics`.
 - The score is an INTERNAL opportunity score: higher = worse site = better prospect. It is never shown on the public report.
+- Auto-draft: `lowPriority` is `total < lowPriorityBelow` (20) OR no finding is worth at least `autoDraftMinFindingPoints` (8). The second clause exists because the v2 findings are mostly small: five of them (no local schema 5, thin content 5, no https redirect 4, no headline 3, no sitemap 3) add up to 20 on a fast, well-built site, which is not a reason to spend on a draft. A low-priority lead can still be drafted manually. The no_website / parked / unreachable shortcuts are never low priority.
 
 ### 12.3 Truthfulness rules
 
@@ -244,7 +245,7 @@ Lead tables (Search detail, All Leads) filter client-side on: hide skipped, min 
 
 ### 12.6 Mail DNS
 
-`lookupMailDns` (`src/worker/dns.ts`, Cloudflare DNS-over-HTTPS) checks MX and SPF only. DMARC is deliberately neither checked nor claimed. The domain comes from an email address the crawler found on the site that belongs to the site's own host (the host itself or a parent of it); free-mail, hosted-platform and public-suffix domains (`HOSTED_SUFFIXES`) never qualify, and with no such address nothing is looked up. Any lookup error is "unknown" and makes no claim.
+`lookupMailDns` (`src/worker/dns.ts`, Cloudflare DNS-over-HTTPS) checks MX and SPF only. DMARC is deliberately neither checked nor claimed. The domain comes from an email address the crawler found on the site that belongs to the site's own host (the host itself or a parent of it); free-mail, hosted-platform and public-suffix domains never qualify (`PUBLIC_SUFFIXES` are denied exactly, so `ace.co.uk` still counts; `PLATFORM_SUFFIXES` are denied along with everything under them, so `joe.wixsite.com` does not; `HOSTED_SUFFIXES` is both lists), and with no such address nothing is looked up. Any lookup error is "unknown" and makes no claim.
 - `no_email_auth` fires only when MX exists and SPF is absent.
 - When a site-listed address is at a domain with no MX, `audits.mail_warning` holds an owner-only note shown on the lead page. It is never scored, and never in drafts or the public report.
 
@@ -254,7 +255,7 @@ Saved searches re-run by a Cloudflare Cron Trigger (`triggers.crons: ["17 13 * *
 - Starts go through `src/worker/search-start.ts`, the same guards as the manual search route: mailing settings and monthly spend limit. Spend counts recorded usage plus searches still `running` that started within 6 hours, at estimated cost; a recheck after the search row is inserted stops simultaneous starts from overshooting.
 - At most 3 radars start per tick; max 20 radars; a duplicate market (location + business type, case-insensitive) is rejected (409).
 - A radar is claimed atomically (single-statement compare-and-set that moves `next_run_at` out and stamps `claimed_at`) before it runs: no double runs, and a 10 s cooldown on manual Run now. A crash after the claim skips that interval rather than risking a double spend.
-- A blocked or failed radar records the reason in `last_error` (shown on the Radar page) and retries the next day. A manual Run now on a radar that is not yet due keeps its schedule.
+- A blocked or failed radar records the reason in `last_error` (shown on the Radar page) and retries the next day. A manual Run now that is blocked (spend limit, missing mailing settings) on a radar that is not yet due keeps its existing schedule; a Run now that starts a search moves `next_run_at` to now + the interval.
 - No email or push notification. New leads show as a count (businesses first seen by the last run) on the Radar page.
 - Local test: `npx wrangler dev -c wrangler.jsonc --local --test-scheduled`, then `curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=17+13+*+*+*"`.
 

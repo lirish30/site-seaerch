@@ -34,6 +34,9 @@ export const THRESHOLDS = {
   staleContentMonths: 18,
   brokenLinksMin: 3,
   lowPriorityBelow: 20,
+  // A paid auto-draft needs at least one finding this heavy: a pile of small ones (no sitemap, no headline...) on an otherwise
+  // healthy site isn't a reason to pitch.
+  autoDraftMinFindingPoints: 8,
   seoLowBelow: 70,
   a11yLowBelow: 70,
   thinContentWords: 150,

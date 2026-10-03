@@ -8,15 +8,21 @@ const MX = 15, TXT = 16;
 
 // Domains a business can't own mail on: public suffixes and hosted-site builders. An address "at" one of these
 // says nothing about the business, and a site hosted on one must never be judged by the platform's DNS.
-export const HOSTED_SUFFIXES: readonly string[] = [
+// Public suffixes are denied only as an exact match (ace.co.uk is a real business domain; co.uk is not). Platform
+// domains are denied along with everything under them: joe.wixsite.com is the platform's name space, not Joe's own domain.
+export const PUBLIC_SUFFIXES: readonly string[] = [
   "co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "net.au", "org.au", "co.nz", "co.za", "com.br", "com.mx", "co.jp", "co.in",
   "com.sg", "co.id", "com.tr", "com.ar", "com.co", "com.pe", "com.ph", "com.my", "com.hk",
+];
+export const PLATFORM_SUFFIXES: readonly string[] = [
   "wixsite.com", "wixstudio.io", "editorx.io", "squarespace.com", "myshopify.com", "godaddysites.com", "weebly.com", "weeblysite.com",
   "webflow.io", "netlify.app", "vercel.app", "pages.dev", "github.io", "gitlab.io", "herokuapp.com", "web.app", "firebaseapp.com",
   "azurewebsites.net", "blogspot.com", "wordpress.com", "carrd.co", "jimdosite.com", "site123.me", "mystrikingly.com", "strikingly.com",
   "yolasite.com", "webnode.page", "multiscreensite.com", "business.site", "square.site",
 ];
+export const HOSTED_SUFFIXES: readonly string[] = [...PUBLIC_SUFFIXES, ...PLATFORM_SUFFIXES];
 const DENIED = new Set(HOSTED_SUFFIXES);
+const isDenied = (d: string) => DENIED.has(d) || PLATFORM_SUFFIXES.some((p) => d.endsWith(`.${p}`));
 
 const LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 // null = not a plausible hostname. The value comes from stored data, so it is checked before it goes into a URL.
@@ -81,7 +87,7 @@ export function siteMailDomain(site: string | null, contacts: Pick<Contact, "typ
   for (const c of contacts) {
     if (c.type !== "email" || !c.value.includes("@")) continue;
     const d = normalise(c.value.slice(c.value.lastIndexOf("@") + 1));
-    if (d && !DENIED.has(d) && (d === host || host.endsWith(`.${d}`))) found.push({ d, named: !!c.person_name, confidence: c.confidence });
+    if (d && !isDenied(d) && (d === host || host.endsWith(`.${d}`))) found.push({ d, named: !!c.person_name, confidence: c.confidence });
   }
   // Array.sort is stable, so ties keep the crawl order.
   found.sort((a, b) => Number(b.named) - Number(a.named) || b.confidence - a.confidence);

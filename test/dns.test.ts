@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { DNS_TIMEOUT_MS, HOSTED_SUFFIXES, UNKNOWN_MAIL_DNS, lookupMailDns, siteMailDomain } from "../src/worker/dns";
+import { DNS_TIMEOUT_MS, HOSTED_SUFFIXES, PLATFORM_SUFFIXES, PUBLIC_SUFFIXES, UNKNOWN_MAIL_DNS, lookupMailDns, siteMailDomain } from "../src/worker/dns";
 import type { Fetcher } from "../src/worker/crawler/crawl";
 
 type Ans = { type: number; data: string };
@@ -133,6 +133,11 @@ describe("siteMailDomain", () => {
     expect(siteMailDomain("https://ace.co.uk/", [em("info@ace.co.uk")])).toBe("ace.co.uk");
     expect(siteMailDomain("https://ace.wixsite.com/site", [em("info@wixsite.com")])).toBeNull();
     for (const h of HOSTED_SUFFIXES) expect(siteMailDomain(`https://ace.${h}/`, [em(`info@${h}`)]), h).toBeNull();
+    // An address on the business's own subdomain of a hosted platform is not "its own domain" either.
+    expect(siteMailDomain("https://joe.wixsite.com/", [em("joe@joe.wixsite.com")])).toBeNull();
+    for (const h of PLATFORM_SUFFIXES) expect(siteMailDomain(`https://joe.${h}/`, [em(`joe@joe.${h}`)]), `joe.${h}`).toBeNull();
+    // ...but a business on a public-suffix domain (joe.co.uk) owns that address.
+    for (const s of PUBLIC_SUFFIXES) expect(siteMailDomain(`https://joe.${s}/`, [em(`joe@joe.${s}`)]), `joe.${s}`).toBe(`joe.${s}`);
     expect(HOSTED_SUFFIXES).toEqual(expect.arrayContaining(["co.uk", "com.au", "wixsite.com", "myshopify.com", "business.site", "github.io"]));
   });
   it("needs two labels: a bare TLD never qualifies", () => {

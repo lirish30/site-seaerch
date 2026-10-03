@@ -159,5 +159,5 @@ export function score(input: {
   else offer = "care_plan";
 
   out.sort((a, b) => b.points - a.points);
-  return { score: total, findings: out, offer, lowPriority: total < T.lowPriorityBelow };
+  return { score: total, findings: out, offer, lowPriority: total < T.lowPriorityBelow || !out.some((x) => x.points >= T.autoDraftMinFindingPoints) };
 }

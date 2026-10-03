@@ -28,7 +28,8 @@ Optional voice check before relying on drafts: `ANTHROPIC_API_KEY=... TONE="$(ca
 ## Tuning
 - Scoring weights, thresholds and group caps: `src/worker/scoring/config.ts` (`WEIGHTS`, `THRESHOLDS`, `GROUP_CAPS`). `GROUP_CAPS` limits how many points the `seo` (20) and `local` (15) groups can add to the total; groups not listed are uncapped. Offer selection ignores the caps and counts raw seo + local points as basics.
 - Lighthouse audit id -> plain-English label: `AUDIT_LABELS` in `src/worker/scoring/labels.ts`. Ids not listed there are ignored, never shown raw.
-- Domains never treated as the business's own mail domain (public suffixes, hosted site builders): `HOSTED_SUFFIXES` in `src/worker/dns.ts`.
+- Domains never treated as the business's own mail domain: `PUBLIC_SUFFIXES` (exact match, so `ace.co.uk` still counts) and `PLATFORM_SUFFIXES` (hosted site builders, and everything under them) in `src/worker/dns.ts`.
+- Auto-draft rule: a lead is low priority (no paid draft) when its score is under `lowPriorityBelow` (20) or none of its findings is worth `autoDraftMinFindingPoints` (8) or more. `THRESHOLDS` in `config.ts`.
 - Prices for the spend guard: `src/worker/cost.ts`.
 
 ## Audit signals
@@ -56,4 +57,6 @@ Radar re-runs saved searches on a schedule. Tick "Repeat this search (Radar)" on
 - The PageSpeed test fixture is hand-written, not a live capture. Capture one real PageSpeed response, then verify the Lighthouse audit ids in `src/worker/scoring/labels.ts` and the `viewport` / `font-size` / `tap-targets` audits used for mobile-friendliness (a missing audit counts as passing).
 - Each Radar re-run re-audits and re-drafts leads you haven't acted on (about $0.01 each, within the search estimate). Consider limiting Radar runs to never-audited businesses.
 - No email notification for Radar.
+- After the first deploy, audits created before this release have no platform, so they appear under "not crawled" in the platform filter until they are re-audited.
+- Lead workflows that are mid-run during a deploy can fail at the score step (their cached crawl result predates the new fields). Deploy when no search is running and no re-audit is pending; a failed lead shows a ⚠ and can be re-run with "Re-audit" on its lead page.
 - The crawler's extractor gets slow on very large pages (roughly 5 s CPU at 1 MB; a separate task is filed to cap HTML size), and the HTML parser is slow on deeply nested unclosed markup.

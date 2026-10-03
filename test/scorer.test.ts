@@ -51,6 +51,21 @@ describe("score", () => {
     expect(r.lowPriority).toBe(true);
   });
 
+  it("a site whose findings are all low-weight stays low priority even at the score threshold (no paid draft)", () => {
+    // no_local_schema 5 + thin_content 5 + no_https_redirect 4 + no_h1 3 + no_sitemap 3 = 20: nothing serious is wrong.
+    const lowOnly = { ...goodCrawl, hasLocalBusinessSchema: false, wordCount: 100, httpRedirectsToHttps: false, h1Count: 0, hasSitemap: false };
+    const r = score({ siteStatus: "ok", crawl: lowOnly, pagespeed: goodPs, now });
+    expect(r.score).toBe(20);
+    expect(r.findings.every((f) => f.points < 8)).toBe(true);
+    expect(r.lowPriority).toBe(true);
+    // One medium-or-high finding (here no_click_to_call, 8) makes it worth a pitch again.
+    const withMedium = score({ siteStatus: "ok", crawl: { ...lowOnly, hasPhone: true }, pagespeed: goodPs, now });
+    expect(withMedium.score).toBe(28);
+    expect(withMedium.lowPriority).toBe(false);
+    // A real problem alone is unaffected.
+    expect(score({ siteStatus: "ok", crawl: goodCrawl, pagespeed: { ...goodPs, performanceScore: 30 }, now }).lowPriority).toBe(false);
+  });
+
   it("slow_mobile and meh_mobile are mutually exclusive", () => {
     const slow = score({ siteStatus: "ok", crawl: goodCrawl, pagespeed: { ...goodPs, performanceScore: 30 }, now });
     expect(codes(slow)).toEqual(["slow_mobile"]);
