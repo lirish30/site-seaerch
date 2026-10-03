@@ -33,9 +33,11 @@ const TOOL = {
 export function anthropicCaller(apiKey: string): ClaudeCaller {
   const client = new Anthropic({ apiKey });
   return async ({ system, user }) => {
+    // DRAFT_MODEL rejects forced tool use (tool_choice "tool"/"any"), so ask for the tool in the prompt instead.
     const msg = await client.messages.create({
-      model: DRAFT_MODEL, max_tokens: 800, system,
-      tools: [TOOL], tool_choice: { type: "tool", name: TOOL.name },
+      model: DRAFT_MODEL, max_tokens: 800,
+      system: `${system}\n\nRespond only by calling the ${TOOL.name} tool.`,
+      tools: [TOOL], tool_choice: { type: "auto" },
       messages: [{ role: "user", content: user }],
     });
     const block = msg.content.find((b) => b.type === "tool_use");
