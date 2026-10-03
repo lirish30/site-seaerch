@@ -107,6 +107,15 @@ describe("crawlSite", () => {
     expect(r.facts!.brokenLinkCount).toBe(3);
   });
 
+  it("reports the homepage platform in facts", async () => {
+    const r = await crawlSite("https://ace.com", opts(fakeFetch({
+      "https://ace.com/": { body: html("", `<meta name="generator" content="Squarespace">`) },
+    })));
+    expect(r.facts!.platform).toBe("squarespace");
+    const o = await crawlSite("https://plain.com", opts(fakeFetch({ "https://plain.com/": { body: html("hi") } })));
+    expect(o.facts!.platform).toBe("other");
+  });
+
   it("http-only site → https false", async () => {
     const r = await crawlSite("http://old.com", opts(fakeFetch({
       "https://old.com/": { throws: true },

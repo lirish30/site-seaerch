@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractPage, pickCrawlTargets, isSocialOnlyUrl } from "../src/worker/crawler/extract";
+import { extractPage, pickCrawlTargets, isSocialOnlyUrl, detectPlatform, type Platform } from "../src/worker/crawler/extract";
 import oldHtml from "./fixtures/html/old-plumber.html?raw";
 import modernHtml from "./fixtures/html/modern.html?raw";
 import parkedHtml from "./fixtures/html/parked.html?raw";
@@ -102,5 +102,39 @@ describe("isSocialOnlyUrl", () => {
     for (const u of ["https://www.facebook.com/ace", "https://instagram.com/ace", "https://www.yelp.com/biz/ace", "https://linktr.ee/ace", "https://ace.business.site"])
       expect(isSocialOnlyUrl(u)).toBe(true);
     expect(isSocialOnlyUrl("https://aceplumbing.com")).toBe(false);
+  });
+});
+
+describe("detectPlatform", () => {
+  const h = (head: string, body = "") => `<html><head>${head}</head><body>${body}</body></html>`;
+  const cases: [Platform, string][] = [
+    ["wix", h(`<meta name="generator" content="Wix.com Website Builder">`)],
+    ["wix", h("", `<img src="https://static.wixstatic.com/media/a.jpg">`)],
+    ["squarespace", h(`<meta name="generator" content="Squarespace">`)],
+    ["squarespace", h("", `<script src="https://static1.squarespace.com/static/x.js"></script>`)],
+    ["squarespace", h(`<link href="https://assets.sqsp.net/a.css" rel="stylesheet">`)],
+    ["godaddy", h(`<meta name="generator" content="Starfield Technologies; Go Daddy Website Builder 8.0.0000">`)],
+    ["godaddy", h("", `<img src="https://img1.wsimg.com/isteam/ip/a.png">`)],
+    ["wordpress", h(`<meta name="generator" content="WordPress 6.4.2">`)],
+    ["wordpress", h(`<link rel="stylesheet" href="/wp-content/themes/x/style.css">`)],
+    ["weebly", h(`<meta name="generator" content="Weebly">`)],
+    ["weebly", h("", `<script src="//cdn2.editmysite.com/js/a.js"></script><a href="https://www.weebly.com">w</a>`)],
+    ["shopify", h(`<meta name="generator" content="Shopify">`)],
+    ["shopify", h(`<link rel="stylesheet" href="https://cdn.shopify.com/s/files/1/a.css">`)],
+    ["webflow", h(`<meta name="generator" content="Webflow">`)],
+    ["webflow", h("", `<img src="https://assets.website-files.com/abc/a.png">`)],
+    ["webflow", `<html data-wf-page="123" data-wf-site="456"><head></head><body></body></html>`],
+    ["other", h(`<title>Hand rolled</title>`, "<p>hi</p>")],
+    ["other", h(`<meta name="generator" content="Hugo 0.120">`)],
+  ];
+  it.each(cases)("%s", (want, html) => expect(detectPlatform(html)).toBe(want));
+
+  it("generator meta wins over asset markers, whatever the attribute order", () => {
+    expect(detectPlatform(h(`<meta content="Squarespace" name="generator">`, `<img src="https://static.wixstatic.com/a.jpg">`))).toBe("squarespace");
+    expect(detectPlatform(h(`<meta name="generator" content="WordPress 6.4">`, `<script src="https://cdn.shopify.com/a.js"></script>`))).toBe("wordpress");
+  });
+
+  it("extractPage populates platform", () => {
+    expect(extractPage(h("", `<img src="https://static.wixstatic.com/a.jpg">`), "https://a.com/").platform).toBe("wix");
   });
 });

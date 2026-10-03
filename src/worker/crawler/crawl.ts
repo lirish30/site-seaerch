@@ -137,6 +137,7 @@ export async function crawlSite(websiteUrl: string | null, o: Opts): Promise<Cra
       latestContentDate: allDates.at(-1) ?? null,
       pastEventDates: pastEvents,
       brokenLinkCount: broken,
+      platform: homeFacts.platform,
     },
   };
 }

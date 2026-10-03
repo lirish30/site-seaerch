@@ -4,7 +4,7 @@ import { score, type CrawlFacts, type PageSpeedFacts } from "../src/worker/scori
 const now = new Date("2026-10-02T00:00:00Z");
 const goodCrawl: CrawlFacts = {
   https: true, hasTitle: true, hasMetaDescription: true, hasViewport: true, hasContactForm: true, emailCount: 1,
-  copyrightYear: 2026, latestContentDate: "2026-08-01", pastEventDates: [], brokenLinkCount: 0,
+  copyrightYear: 2026, latestContentDate: "2026-08-01", pastEventDates: [], brokenLinkCount: 0, platform: "other",
 };
 const goodPs: PageSpeedFacts = { performanceScore: 92, lcpMs: 1800, cls: 0.02, mobileFriendly: true };
 const codes = (r: ReturnType<typeof score>) => r.findings.map((f) => f.code).sort();
@@ -103,7 +103,7 @@ describe("score", () => {
     const r = score({
       siteStatus: "ok",
       crawl: { https: false, hasTitle: false, hasMetaDescription: false, hasViewport: false, hasContactForm: false, emailCount: 0,
-        copyrightYear: 2010, latestContentDate: "2015-01-01", pastEventDates: ["2020-01-01"], brokenLinkCount: 10 },
+        copyrightYear: 2010, latestContentDate: "2015-01-01", pastEventDates: ["2020-01-01"], brokenLinkCount: 10, platform: "other" },
       pagespeed: { performanceScore: 10, lcpMs: 9000, cls: 0.9, mobileFriendly: false }, now,
     });
     expect(r.score).toBe(100);

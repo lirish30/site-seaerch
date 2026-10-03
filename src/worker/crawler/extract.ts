@@ -1,10 +1,12 @@
 import { parse, type HTMLElement } from "node-html-parser";
 
+export type Platform = "wix" | "squarespace" | "godaddy" | "wordpress" | "weebly" | "shopify" | "webflow" | "other";
+
 export interface PageFacts {
   title: string | null; metaDescription: string | null; hasViewport: boolean; hasForm: boolean;
   emails: { value: string; personName: string | null; role: string | null }[];
   phones: string[]; socials: string[]; copyrightYear: number | null;
-  dates: string[]; eventDates: string[]; internalLinks: string[]; isParked: boolean;
+  dates: string[]; eventDates: string[]; internalLinks: string[]; isParked: boolean; platform: Platform;
 }
 
 const EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
@@ -20,6 +22,31 @@ const MONTHS = ["january","february","march","april","may","june","july","august
 const MONTH_DATE_RE = new RegExp(`\\b(${MONTHS.join("|")}|${MONTHS.map((m) => m.slice(0, 3)).join("|")})\\.?\\s+(\\d{1,2}),?\\s+(20\\d{2}|19\\d{2})\\b`, "gi");
 const ISO_DATE_RE = /\b(20\d{2}|19\d{2})-(\d{2})-(\d{2})\b/g;
 const SLASH_DATE_RE = /\b(\d{1,2})\/(\d{1,2})\/(20\d{2})\b/g;
+
+// Order matters in both tables: the generic /wp-content/ marker goes last so a builder's own assets win.
+const PLATFORM_MARKERS: [Exclude<Platform, "other">, RegExp][] = [
+  ["wix", /wixstatic\.com|(^|[^a-z0-9])wix\.com/i],
+  ["squarespace", /squarespace\.com|\bsqsp/i],
+  ["godaddy", /wsimg\.com|godaddysites\.com|go\s?daddy website builder/i],
+  ["weebly", /weebly\.com|editmysite\.com/i],
+  ["shopify", /cdn\.shopify\.com/i],
+  ["webflow", /website-files\.com|\bdata-wf-/i],
+  ["wordpress", /\/wp-content\//i],
+];
+const PLATFORM_GENERATORS: [Exclude<Platform, "other">, RegExp][] = [
+  ["wix", /\bwix\b/i], ["squarespace", /squarespace/i], ["godaddy", /go\s?daddy|starfield/i], ["wordpress", /wordpress/i],
+  ["weebly", /weebly/i], ["shopify", /shopify/i], ["webflow", /webflow/i],
+];
+
+export function detectPlatform(html: string): Platform {
+  // Attribute order varies, so find the generator tag first and read content from it.
+  const tag = html.match(/<meta\b[^>]*\bname\s*=\s*["']generator["'][^>]*>/i)?.[0];
+  const gen = tag?.match(/\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)')/i);
+  const content = gen?.[1] ?? gen?.[2];
+  if (content) for (const [p, re] of PLATFORM_GENERATORS) if (re.test(content)) return p;
+  for (const [p, re] of PLATFORM_MARKERS) if (re.test(html)) return p;
+  return "other";
+}
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
@@ -147,6 +174,7 @@ export function extractPage(html: string, pageUrl: string): PageFacts {
     eventDates: [...eventDates],
     internalLinks: [...internal],
     isParked: PARKED.test(`${title ?? ""} ${text.slice(0, 3000)}`),
+    platform: detectPlatform(html),
   };
 }
 

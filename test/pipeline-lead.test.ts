@@ -20,7 +20,7 @@ function deps(over: Partial<LeadDeps> = {}): LeadDeps & { claudeCalls: number } 
     db: env.DB, raw: env.RAW, pagespeedKey: "K", now: () => new Date("2026-10-02T00:00:00Z"), claudeCalls: 0,
     fetch: async (u: string) => {
       if (u.startsWith("https://www.googleapis.com/pagespeedonline")) return Response.json(psiSlow);
-      if (u === "https://ace.com/") return page(`<a href="mailto:info@ace.com">m</a><p>© 2019</p>`, `<title>Ace</title><meta name="viewport" content="x">`);
+      if (u === "https://ace.com/") return page(`<a href="mailto:info@ace.com">m</a><p>© 2019</p>`, `<title>Ace</title><meta name="viewport" content="x"><meta name="generator" content="WordPress 6.4">`);
       return new Response("nf", { status: 404, headers: { "content-type": "text/html" } });
     },
     ...over,
@@ -41,6 +41,7 @@ describe("runLead", () => {
     expect(a.site_status).toBe("ok");
     expect(a.findings.map((f) => f.code)).toContain("slow_mobile");
     expect(a.offer).toBe("performance");
+    expect(a.platform).toBe("wordpress");
     expect(a.raw_r2_key).toMatch(/^audits\//);
     expect(await env.RAW.get(a.raw_r2_key!)).not.toBeNull();
     expect((await listContacts(env.DB, b.id))[0].value).toBe("info@ace.com");
@@ -127,6 +128,7 @@ describe("runLead", () => {
     const a = (await latestAudit(env.DB, b.id))!;
     expect(a.score).toBe(100);
     expect(a.offer).toBe("new_site");
+    expect(a.platform).toBeNull();
     expect(psiCalled).toBe(false);
   });
 

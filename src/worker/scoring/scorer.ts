@@ -1,10 +1,12 @@
 import type { Finding, FindingCode, FindingGroup, Offer, SiteStatus } from "../types";
 import { SITE_STATUS_SCORE, THRESHOLDS as T, WEIGHTS as W } from "./config";
+import type { Platform } from "../crawler/extract";
 
 export interface CrawlFacts {
   https: boolean; hasTitle: boolean; hasMetaDescription: boolean; hasViewport: boolean;
   hasContactForm: boolean; emailCount: number; copyrightYear: number | null;
   latestContentDate: string | null; pastEventDates: string[]; brokenLinkCount: number;
+  platform: Platform;
 }
 export interface PageSpeedFacts { performanceScore: number; lcpMs: number; cls: number; mobileFriendly: boolean; }
 

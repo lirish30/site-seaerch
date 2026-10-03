@@ -92,12 +92,25 @@ describe("db", () => {
     await insertAudit(env.DB, {
       business_id: b.id, site_status: "ok", partial: false, pagespeed_mobile: 40, lcp_ms: 5000, cls: 0.1,
       mobile_friendly: true, https: true, has_title: true, has_meta_description: false, has_contact_form: true,
-      copyright_year: 2019, latest_content_date: null, broken_link_count: 0, score: 41, offer: "performance",
+      copyright_year: 2019, latest_content_date: null, broken_link_count: 0, platform: "wix", score: 41, offer: "performance",
       findings: [{ code: "slow_mobile", group: "speed", severity: "high", points: 25, evidence: "x" }], raw_r2_key: null,
     });
     const a = await latestAudit(env.DB, b.id);
     expect(a!.findings[0].code).toBe("slow_mobile");
     expect(a!.partial).toBe(false);
+    expect(a!.platform).toBe("wix");
+  });
+
+  it("stores a null platform", async () => {
+    const s = await createSearch(env.DB, { location: "A", businessType: "b", radiusKm: 1, maxResults: 5 });
+    const b = await upsertBusiness(env.DB, listing({ placeId: "p-np" }), s.id);
+    await insertAudit(env.DB, {
+      business_id: b.id, site_status: "no_website", partial: false, pagespeed_mobile: null, lcp_ms: null, cls: null,
+      mobile_friendly: null, https: null, has_title: null, has_meta_description: null, has_contact_form: null,
+      copyright_year: null, latest_content_date: null, broken_link_count: null, platform: null, score: 100, offer: "new_site",
+      findings: [], raw_r2_key: null,
+    });
+    expect((await latestAudit(env.DB, b.id))!.platform).toBeNull();
   });
 
   it("replaces contacts", async () => {
