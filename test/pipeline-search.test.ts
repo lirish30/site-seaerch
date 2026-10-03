@@ -2,6 +2,7 @@ import { env } from "cloudflare:test";
 import { describe, it, expect } from "vitest";
 import { runSearch } from "../src/worker/pipeline/search";
 import { FakeListingSource } from "../src/worker/listings/fake";
+import { RetryableError } from "../src/worker/listings/source";
 import { createSearch, getSearch } from "../src/worker/db/searches";
 import { listBusinessesForSearch, upsertBusiness, updateLead } from "../src/worker/db/businesses";
 import { insertDraft, updateDraftBody } from "../src/worker/db/drafts";
@@ -78,6 +79,26 @@ describe("runSearch", () => {
     expect(after.found_count).toBe(5);
     expect(after.processed_count).toBe(3);
     expect(await listBusinessesForSearch(env.DB, s.id, { hideSkipped: false })).toHaveLength(5);
+  });
+
+  it("retryable listing errors are rethrown from the fetch step (so Workflows retries); exhaustion ends failed", async () => {
+    const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 50 });
+    const threw: string[] = [];
+    const step: StepLike = { do: async (n, fn) => { try { return await fn(); } catch (e) { threw.push(n); throw e; } }, sleep: async () => {} };
+    await runSearch({ db: env.DB, source: new FakeListingSource(new RetryableError("Bright Data HTTP 503: busy")), startLead: async () => {} }, step, s.id);
+    expect(threw[0]).toBe("fetch-listings");
+    const after = (await getSearch(env.DB, s.id))!;
+    expect(after.status).toBe("failed");
+    expect(after.error).toMatch(/503/);
+  });
+
+  it("non-retryable listing errors are not rethrown: the step returns ok:false and marks failed", async () => {
+    const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 50 });
+    const threw: string[] = [];
+    const step: StepLike = { do: async (n, fn) => { try { return await fn(); } catch (e) { threw.push(n); throw e; } }, sleep: async () => {} };
+    await runSearch({ db: env.DB, source: new FakeListingSource(new Error("Bright Data HTTP 401: bad zone")), startLead: async () => {} }, step, s.id);
+    expect(threw).toEqual([]);
+    expect((await getSearch(env.DB, s.id))!.status).toBe("failed");
   });
 
   it("zero listings → done with found 0", async () => {

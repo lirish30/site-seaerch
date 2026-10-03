@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { BrightDataListingSource, mapBrightDataItem } from "../src/worker/listings/brightdata";
+import { isRetryable } from "../src/worker/listings/source";
 import fixture from "./fixtures/brightdata-maps.json";
 
 describe("mapBrightDataItem", () => {
@@ -50,5 +51,19 @@ describe("BrightDataListingSource", () => {
   it("throws with status on HTTP error", async () => {
     const src = new BrightDataListingSource({ apiKey: "K", zone: "Z", fetch: async () => new Response("bad zone", { status: 401 }) });
     await expect(src.search({ location: "x", businessType: "y", radiusKm: 1, maxResults: 5 })).rejects.toThrow(/401/);
+  });
+
+  it.each([429, 500, 503])("HTTP %i → retryable error", async (status) => {
+    const src = new BrightDataListingSource({ apiKey: "K", zone: "Z", fetch: async () => new Response("busy", { status }) });
+    const err = await src.search({ location: "x", businessType: "y", radiusKm: 1, maxResults: 5 }).catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toContain(String(status));
+    expect(isRetryable(err)).toBe(true);
+  });
+
+  it("HTTP 4xx (not 429) → non-retryable error", async () => {
+    const src = new BrightDataListingSource({ apiKey: "K", zone: "Z", fetch: async () => new Response("bad zone", { status: 401 }) });
+    const err = await src.search({ location: "x", businessType: "y", radiusKm: 1, maxResults: 5 }).catch((e) => e);
+    expect(isRetryable(err)).toBe(false);
   });
 });

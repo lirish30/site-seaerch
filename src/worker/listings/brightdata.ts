@@ -1,6 +1,6 @@
 import type { Listing } from "../types";
 import type { Fetcher } from "../crawler/crawl";
-import type { ListingQuery, ListingSource } from "./source";
+import { RetryableError, type ListingQuery, type ListingSource } from "./source";
 
 export const BRIGHTDATA_PAGE_SIZE = 20;
 const MAX_PAGES = 10;
@@ -59,7 +59,10 @@ export class BrightDataListingSource implements ListingSource {
         body: JSON.stringify({ zone: this.o.zone, url, format: "raw" }),
       });
       requests++;
-      if (!res.ok) throw new Error(`Bright Data HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      if (!res.ok) {
+        const msg = `Bright Data HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`;
+        throw res.status === 429 || res.status >= 500 ? new RetryableError(msg) : new Error(msg);
+      }
       const items = itemsOf(await res.json());
       if (!items.length) break;
       let added = 0;

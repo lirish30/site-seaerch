@@ -1,4 +1,4 @@
-import type { ListingSource } from "../listings/source";
+import { isRetryable, type ListingSource } from "../listings/source";
 import type { StepLike } from "./lead";
 import type { Business, Listing } from "../types";
 import { getSearch, setFoundCount, setSearchStatus, setProcessedCount } from "../db/searches";
@@ -34,6 +34,9 @@ export async function runSearch(deps: SearchDeps, step: StepLike, searchId: stri
         });
         return { ok: true as const, listings: r.listings, requests: r.requests };
       } catch (e) {
+        // Transient (429/5xx): rethrow so Workflows retries the step; once retries are exhausted the
+        // outer catch marks the search failed. Permanent (4xx) errors fail the search right away.
+        if (isRetryable(e)) throw e;
         return { ok: false as const, error: (e as Error).message, listings: [] as Listing[], requests: 0 };
       }
     });
