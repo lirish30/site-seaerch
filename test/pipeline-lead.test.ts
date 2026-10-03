@@ -58,6 +58,20 @@ describe("runLead", () => {
     expect((await latestAudit(env.DB, b.id))!.partial).toBe(true);
   });
 
+  it("Lighthouse runtimeError → partial audit with no speed findings (never a fake 0/100)", async () => {
+    const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 5 });
+    const b = await upsertBusiness(env.DB, listing({ placeId: "L2b" }), s.id);
+    const base = deps();
+    const d = deps({ fetch: async (u, i) => u.includes("pagespeedonline")
+      ? Response.json({ lighthouseResult: { runtimeError: { code: "NO_FCP" }, categories: { performance: { score: null } }, audits: {} } })
+      : base.fetch(u, i) });
+    await runLead(d, step, { businessId: b.id, searchId: s.id });
+    const a = (await latestAudit(env.DB, b.id))!;
+    expect(a.partial).toBe(true);
+    expect(a.pagespeed_mobile).toBeNull();
+    expect(a.findings.map((f) => f.group)).not.toContain("speed");
+  });
+
   it("low-priority lead is not drafted unless forced", async () => {
     const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 5 });
     const b = await upsertBusiness(env.DB, listing({ placeId: "L3", websiteUrl: "https://good.com" }), s.id);

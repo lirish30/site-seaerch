@@ -30,4 +30,16 @@ describe("runPageSpeed", () => {
     await expect(runPageSpeed("https://a.com/", { apiKey: "K", fetch: async () => new Response("boom", { status: 500 }) }))
       .rejects.toThrow(/500/);
   });
+
+  it.each([
+    ["missing lighthouseResult", {}],
+    ["runtimeError present", { lighthouseResult: { runtimeError: { code: "FAILED_DOCUMENT_REQUEST", message: "x" },
+      categories: { performance: { score: null } }, audits: {} } }],
+    ["null performance score", { lighthouseResult: { categories: { performance: { score: null } }, audits: {} } }],
+    ["missing performance category", { lighthouseResult: { categories: {}, audits: {} } }],
+  ])("%s → plain Error (not a 0 score, not rate limited)", async (_name, body) => {
+    const p = runPageSpeed("https://a.com/", { apiKey: "K", fetch: async () => Response.json(body) });
+    await expect(p).rejects.toThrow(/Lighthouse/);
+    await expect(p).rejects.not.toBeInstanceOf(RateLimitedError);
+  });
 });
