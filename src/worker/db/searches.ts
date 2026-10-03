@@ -32,3 +32,7 @@ export async function setFoundCount(db: D1Database, id: string, n: number) {
 export async function incrementProcessed(db: D1Database, id: string) {
   await db.prepare(`UPDATE searches SET processed_count = processed_count + 1 WHERE id = ?`).bind(id).run();
 }
+
+export async function setProcessedCount(db: D1Database, id: string, n: number) {
+  await db.prepare(`UPDATE searches SET processed_count = ? WHERE id = ?`).bind(n, id).run();
+}

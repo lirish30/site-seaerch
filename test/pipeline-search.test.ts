@@ -60,4 +60,23 @@ describe("runSearch", () => {
     expect(after.status).toBe("done");
     expect(after.found_count).toBe(0);
   });
+
+  it("duplicate listings are de-duped: found_count counts unique businesses, one lead each", async () => {
+    const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 50 });
+    const started: string[] = [];
+    const { step } = recorder();
+    await runSearch({ db: env.DB, source: new FakeListingSource([L("DUP-1"), L("DUP-1"), L("DUP-2")]), startLead: async (p) => { started.push(p.businessId); } }, step, s.id);
+    expect((await getSearch(env.DB, s.id))!.found_count).toBe(2);
+    expect(started).toHaveLength(2);
+    expect(new Set(started).size).toBe(2);
+  });
+
+  it("unexpected failure after fetch → failed with message", async () => {
+    const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 50 });
+    const { step } = recorder();
+    await runSearch({ db: env.DB, source: new FakeListingSource([L("ERR-1")]), startLead: async () => { throw new Error("boom start"); } }, step, s.id);
+    const after = (await getSearch(env.DB, s.id))!;
+    expect(after.status).toBe("failed");
+    expect(after.error).toMatch(/boom start/);
+  });
 });

@@ -48,15 +48,26 @@ export class LeadWorkflow extends WorkflowEntrypoint<Env, LeadParams> {
 
 export type SearchParams = { searchId: string };
 
+export async function startLeadIdempotent(
+  binding: Pick<Workflow, "create" | "get">, p: { businessId: string; searchId: string },
+) {
+  const id = `lead-${p.searchId}-${p.businessId}`;
+  try {
+    await binding.create({ id, params: { businessId: p.businessId, searchId: p.searchId } });
+  } catch (e) {
+    const existing = await binding.get(id).catch(() => null);
+    if (existing) return; // already started by a previous attempt
+    throw e;
+  }
+}
+
 export class SearchWorkflow extends WorkflowEntrypoint<Env, SearchParams> {
   async run(event: WorkflowEvent<SearchParams>, step: WorkflowStep) {
     const env = this.env;
     const source = new BrightDataListingSource({ apiKey: env.BRIGHTDATA_API_KEY, zone: env.BRIGHTDATA_SERP_ZONE, fetch: (u, i) => fetch(u, i) });
     await runSearch({
       db: env.DB, source,
-      startLead: async ({ businessId, searchId }) => {
-        await env.LEAD_WORKFLOW.create({ id: `lead-${searchId}-${businessId}`, params: { businessId, searchId } });
-      },
+      startLead: (p) => startLeadIdempotent(env.LEAD_WORKFLOW, p),
     }, adaptStep(step), event.payload.searchId);
   }
 }
