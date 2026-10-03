@@ -19,9 +19,11 @@ export interface SearchDeps {
 // hasn't been hand-edited. Skipped/contacted/replied/won/lost leads are never re-crawled or re-drafted.
 // A new-only (Radar) search narrows that further: only businesses with no audit row at all, so a lead the owner
 // already has an audit and draft for is never re-paid. Any audit row counts, even a partial or unreachable one.
+// The exception is a lead whose last run FAILED (last_error is set when a lead workflow gives up, e.g. the draft step
+// after the audit was saved, and cleared when the next run starts): it never completed, so it is worth retrying.
 async function shouldStartLead(db: D1Database, b: Business, newOnly: boolean): Promise<boolean> {
   const open = b.lead_status === "new" || (b.lead_status === "reviewed" && !(await latestDraft(db, b.id))?.edited);
-  return open && (!newOnly || !(await latestAudit(db, b.id)));
+  return open && (!newOnly || !!b.last_error || !(await latestAudit(db, b.id)));
 }
 
 export async function runSearch(deps: SearchDeps, step: StepLike, searchId: string) {

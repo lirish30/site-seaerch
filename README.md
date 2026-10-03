@@ -49,7 +49,7 @@ Radar re-runs saved searches on a schedule. Tick "Repeat this search (Radar)" on
 - A Cloudflare Cron Trigger runs daily at 13:17 UTC (`triggers.crons` in `wrangler.jsonc`). Each radar decides whether it is due.
 - Same guards as a manual search (mailing settings, monthly spend limit). Spend counting includes searches still running (started in the last 6 hours, at estimated cost) plus recorded usage.
 - At most 3 radars start per tick; max 20 radars; a duplicate market (same location + business type, case-insensitive) is rejected. Each radar is claimed atomically before it runs, so there are no double runs; manual "Run now" has a 10 s cooldown and asks for confirmation with the estimated cost.
-- Radar-started searches only audit and draft businesses that were never audited before (`searches.new_only`). A business a radar finds again keeps its existing audit and draft; re-audit it from its lead page. Manual searches still refresh leads you have not acted on.
+- Radar-started searches only audit and draft businesses that were never audited before (`searches.new_only`). A business a radar finds again keeps its existing audit and draft (unless its last run failed, which a radar retries); re-audit it from its lead page. Manual searches still refresh leads you have not acted on.
 - A blocked radar retries the next day and shows the reason.
 - Radar sends no email or push notification. New leads show as a count on the Radar page.
 - Test the cron locally: `npx wrangler dev -c wrangler.jsonc --local --test-scheduled`, then `curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=17+13+*+*+*"`. Keep `-c wrangler.jsonc`: a stale `.wrangler/deploy/config.json` can otherwise redirect to an old build.

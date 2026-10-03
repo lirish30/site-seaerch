@@ -4,7 +4,7 @@ import { runSearch } from "../src/worker/pipeline/search";
 import { FakeListingSource } from "../src/worker/listings/fake";
 import { RetryableError } from "../src/worker/listings/source";
 import { createSearch, getSearch } from "../src/worker/db/searches";
-import { listBusinessesForSearch, upsertBusiness, updateLead } from "../src/worker/db/businesses";
+import { listBusinessesForSearch, upsertBusiness, updateLead, setBusinessError } from "../src/worker/db/businesses";
 import { insertDraft, updateDraftBody } from "../src/worker/db/drafts";
 import { insertAudit } from "../src/worker/db/audits";
 import type { StepLike } from "../src/worker/pipeline/lead";
@@ -182,6 +182,18 @@ describe("runSearch", () => {
       await audit(reviewed.id);
       expect((await run([L("NO-REV-AUDITED")], true)).started).toEqual([]);
       expect((await run([L("NO-REV-AUDITED")], false)).started).toEqual([reviewed.id]);
+    });
+
+    it("retries an audited lead whose last run failed (last_error set, e.g. the draft step), but not once it has recovered", async () => {
+      const failed = await seedBusiness("NO-FAILED");
+      await audit(failed.id);
+      await setBusinessError(env.DB, failed.id, "Claude: overloaded");
+      const retried = await run([L("NO-FAILED")], true);
+      expect(retried.started).toEqual([failed.id]);
+      expect(retried.after).toMatchObject({ found_count: 1, processed_count: 0 });
+      // A successful run clears the error (the lead workflow's first step), so the next Radar run leaves it alone.
+      await setBusinessError(env.DB, failed.id, null);
+      expect((await run([L("NO-FAILED")], true)).started).toEqual([]);
     });
 
     it("never works skipped/contacted/replied/won/lost businesses even with no audit (new-only only restricts)", async () => {
