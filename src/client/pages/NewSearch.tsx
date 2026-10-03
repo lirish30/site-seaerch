@@ -8,17 +8,30 @@ const TYPES = ["plumber", "electrician", "roofer", "HVAC", "dentist", "chiroprac
 export default function NewSearch() {
   const nav = useNavigate();
   const [location, setLocation] = useState(""); const [type, setType] = useState("");
-  const [radiusKm, setRadius] = useState(15); const [maxResults, setMax] = useState(50);
+  const [maxResults, setMax] = useState(50);
   const [est, setEst] = useState<{ estUsd: number; spent: number; limit: number; ok: boolean } | null>(null);
   const [err, setErr] = useState(""); const [busy, setBusy] = useState(false);
   const [recent, setRecent] = useState<Search[]>([]);
+  const [recentErr, setRecentErr] = useState(""); const [estErr, setEstErr] = useState("");
 
-  useEffect(() => { api.get<Search[]>("/searches").then(setRecent); }, []);
-  useEffect(() => { api.get<typeof est>(`/searches/estimate?maxResults=${maxResults}`).then(setEst); }, [maxResults]);
+  useEffect(() => {
+    let cancelled = false;
+    api.get<Search[]>("/searches")
+      .then((r) => { if (!cancelled) setRecent(r); })
+      .catch(() => { if (!cancelled) setRecentErr("Couldn't load recent searches."); });
+    return () => { cancelled = true; };
+  }, []);
+  useEffect(() => {
+    let cancelled = false;
+    api.get<typeof est>(`/searches/estimate?maxResults=${maxResults}`)
+      .then((r) => { if (!cancelled) { setEst(r); setEstErr(""); } })
+      .catch(() => { if (!cancelled) { setEst(null); setEstErr("Couldn't load the cost estimate."); } });
+    return () => { cancelled = true; };
+  }, [maxResults]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault(); setErr(""); setBusy(true);
-    try { const s = await api.post<Search>("/searches", { location, businessType: type, radiusKm, maxResults }); nav(`/searches/${s.id}`); }
+    try { const s = await api.post<Search>("/searches", { location, businessType: type, maxResults }); nav(`/searches/${s.id}`); }
     catch (x) { setErr(x instanceof ApiError ? (x.status === 402 ? "This search would go over your monthly spend limit." : x.message) : "Failed"); setBusy(false); }
   }
 
@@ -31,16 +44,16 @@ export default function NewSearch() {
         <label htmlFor="type">Business type</label>
         <input id="type" list="types" placeholder="plumber" value={type} onChange={(e) => setType(e.target.value)} required />
         <datalist id="types">{TYPES.map((t) => <option key={t} value={t} />)}</datalist>
-        <div className="row">
-          <div style={{ flex: 1 }}><label htmlFor="r">Radius (km)</label><input id="r" type="number" min={1} max={100} value={radiusKm} onChange={(e) => setRadius(Number(e.target.value))} /></div>
-          <div style={{ flex: 1 }}><label htmlFor="m">Max results</label><input id="m" type="number" min={1} max={200} value={maxResults} onChange={(e) => setMax(Number(e.target.value))} /></div>
-        </div>
+        <label htmlFor="m">Max results</label>
+        <input id="m" type="number" min={1} max={200} value={maxResults} onChange={(e) => setMax(Number(e.target.value))} />
         {est && <p className="muted">Estimated cost: up to ${est.estUsd.toFixed(2)} · spent this month ${est.spent.toFixed(2)} of ${est.limit.toFixed(2)}</p>}
+        {estErr && <p className="error">{estErr}</p>}
         {err && <p className="error">{err}</p>}
         <button className="primary" disabled={busy || (est !== null && !est.ok)}>{busy ? "Starting…" : "Find businesses"}</button>
       </form>
       <div className="card">
         <h2>Recent searches</h2>
+        {recentErr && <p className="error">{recentErr}</p>}
         <table><tbody>
           {recent.map((s) => (
             <tr key={s.id}>

@@ -1,30 +1,47 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { api } from "../api";
+import { api, ApiError } from "../api";
+import { pollDelay, searchFinished } from "../poll";
 import type { LeadRow, Search } from "../types";
 import LeadTable from "./LeadTable";
 
 export default function SearchDetail() {
   const { id } = useParams();
   const [data, setData] = useState<{ search: Search; leads: LeadRow[] } | null>(null);
+  const [refreshErr, setRefreshErr] = useState("");
+  const [notFound, setNotFound] = useState(false);
 
   useEffect(() => {
-    let timer: ReturnType<typeof setTimeout>;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let failures = 0;
+    setData(null); setRefreshErr(""); setNotFound(false);
     const load = async () => {
-      const d = await api.get<{ search: Search; leads: LeadRow[] }>(`/searches/${id}`);
-      setData(d);
-      const finished = d.search.status === "failed" || (d.search.status === "done" && d.search.processed_count >= d.search.found_count);
-      if (!finished) timer = setTimeout(load, 4000);
+      try {
+        const d = await api.get<{ search: Search; leads: LeadRow[] }>(`/searches/${id}`);
+        if (cancelled) return;
+        failures = 0;
+        setData(d); setRefreshErr("");
+        if (searchFinished(d.search)) return;
+      } catch (e) {
+        if (cancelled) return;
+        if (e instanceof ApiError && e.status === 404) { setNotFound(true); return; }
+        failures++;
+        setRefreshErr("Couldn't refresh, retrying…");
+      }
+      timer = setTimeout(load, pollDelay(failures));
     };
     load();
-    return () => clearTimeout(timer);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [id]);
 
-  if (!data) return <p>Loading…</p>;
+  if (notFound) return <p className="error">Search not found.</p>;
+  if (!data) return refreshErr ? <p className="error">{refreshErr}</p> : <p>Loading…</p>;
   const { search, leads } = data;
   return (
     <div>
       <h2>{search.business_type} in {search.location}</h2>
+      {refreshErr && <p className="error">{refreshErr}</p>}
       {search.status === "failed"
         ? <p className="error">Search failed: {search.error}</p>
         : <div className="card">

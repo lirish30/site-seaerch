@@ -1,12 +1,20 @@
 import { useEffect, useState } from "react";
-import { api } from "../api";
+import { api, ApiError } from "../api";
 import { STATUSES, type LeadRow, type LeadStatus } from "../types";
 import LeadTable from "./LeadTable";
 
 export default function AllLeads() {
   const [status, setStatus] = useState<LeadStatus | "">("");
   const [rows, setRows] = useState<LeadRow[] | null>(null);
-  useEffect(() => { setRows(null); api.get<LeadRow[]>(`/leads${status ? `?status=${status}` : ""}`).then(setRows); }, [status]);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    let cancelled = false; // ignore responses for a filter the user has already changed away from
+    setRows(null); setErr("");
+    api.get<LeadRow[]>(`/leads${status ? `?status=${status}` : ""}`)
+      .then((r) => { if (!cancelled) setRows(r); })
+      .catch((e) => { if (!cancelled) setErr(e instanceof ApiError ? e.message : "Couldn't load leads."); });
+    return () => { cancelled = true; };
+  }, [status]);
   return (
     <div>
       <div className="row"><h2 style={{ margin: 0 }}>All leads</h2>
@@ -14,7 +22,7 @@ export default function AllLeads() {
           <option value="">All statuses</option>{STATUSES.map((s) => <option key={s}>{s}</option>)}
         </select>
       </div>
-      {rows ? <LeadTable rows={rows} /> : <p>Loading…</p>}
+      {err ? <p className="error">{err}</p> : rows ? <LeadTable rows={rows} /> : <p>Loading…</p>}
     </div>
   );
 }
