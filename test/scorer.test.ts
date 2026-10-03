@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { Finding } from "../src/worker/types";
+import { AUDIT_LABELS } from "../src/worker/scoring/labels";
 import { capGroups, score, type CrawlFacts, type PageSpeedFacts } from "../src/worker/scoring/scorer";
 
 const now = new Date("2026-10-02T00:00:00Z");
@@ -7,7 +8,7 @@ const goodCrawl: CrawlFacts = {
   https: true, hasTitle: true, hasMetaDescription: true, hasViewport: true, hasContactForm: true, emailCount: 1,
   copyrightYear: 2026, latestContentDate: "2026-08-01", pastEventDates: [], brokenLinkCount: 0, platform: "other",
 };
-const noLh = { seoScore: null, accessibilityScore: null, seoIssues: [], accessibilityIssues: [] };
+const noLh = { seoScore: null, accessibilityScore: null, seoIssueIds: [], accessibilityIssueIds: [] };
 const goodPs: PageSpeedFacts = { performanceScore: 92, lcpMs: 1800, cls: 0.02, mobileFriendly: true, ...noLh };
 const codes = (r: ReturnType<typeof score>) => r.findings.map((f) => f.code).sort();
 
@@ -134,30 +135,69 @@ describe("score", () => {
 
     it("no findings when pagespeed is missing or the scores are null", () => {
       expect(run(null).findings).toEqual([]);
-      expect(run({ seoScore: null, accessibilityScore: null, seoIssues: ["no page title"], accessibilityIssues: ["no page language set"] }).findings).toEqual([]);
+      expect(run({ seoScore: null, accessibilityScore: null, seoIssueIds: ["document-title"], accessibilityIssueIds: ["html-has-lang"] }).findings).toEqual([]);
     });
 
-    it("seo evidence: first three issues, or the score when there are none", () => {
-      expect(find(run({ seoScore: 40, seoIssues: ["a", "b", "c", "d"] }), "low_seo_score")!.evidence)
-        .toBe("Google's own check found problems that hurt how the site shows up in search: a, b, c");
-      expect(find(run({ seoScore: 40, seoIssues: ["no page title"] }), "low_seo_score")!.evidence)
-        .toBe("Google's own check found problems that hurt how the site shows up in search: no page title");
-      expect(find(run({ seoScore: 40 }), "low_seo_score")!.evidence)
-        .toBe("Google's own check scored the site's search-friendliness at 40/100");
+    it("seo evidence: first three labelled issues, or the score when there are none", () => {
+      const ev = (ps: Partial<PageSpeedFacts>) => find(run({ seoScore: 40, ...ps }), "low_seo_score")!.evidence;
+      expect(ev({ seoIssueIds: ["link-text", "crawlable-anchors", "hreflang", "is-crawlable"] }))
+        .toBe("Google's own check flagged things that can hold the site back in search: links that just say things like 'click here', links Google can't follow, broken language settings");
+      expect(ev({ seoIssueIds: ["link-text"] })).toBe("Google's own check flagged things that can hold the site back in search: links that just say things like 'click here'");
+      expect(ev({})).toBe("Google's own check scored the homepage's search-friendliness at 40/100");
+      // unmapped ids are ignored, never shown, and don't use up a truncation slot
+      expect(ev({ seoIssueIds: ["tap-targets", "robots-txt", "canonical"] }))
+        .toBe("Google's own check flagged things that can hold the site back in search: a page-address setting that points to the wrong place");
+      expect(ev({ seoIssueIds: ["tap-targets", "robots-txt"] })).toBe("Google's own check scored the homepage's search-friendliness at 40/100");
     });
 
-    it("accessibility evidence: first two issues, or generic when there are none", () => {
-      expect(find(run({ accessibilityScore: 50, accessibilityIssues: ["a", "b", "c"] }), "low_accessibility")!.evidence)
-        .toBe("Parts of the site are hard to read or use for some visitors (a, b)");
-      expect(find(run({ accessibilityScore: 50, accessibilityIssues: ["a"] }), "low_accessibility")!.evidence)
-        .toBe("Parts of the site are hard to read or use for some visitors (a)");
-      expect(find(run({ accessibilityScore: 50 }), "low_accessibility")!.evidence)
-        .toBe("Parts of the site are hard to read or use for some visitors");
+    it("accessibility evidence: first two labelled issues, or generic when there are none", () => {
+      const ev = (ids: string[]) => find(run({ accessibilityScore: 50, accessibilityIssueIds: ids }), "low_accessibility")!.evidence;
+      expect(ev(["color-contrast", "label", "html-has-lang"])).toBe("Parts of the site are hard to read or use for some visitors (text that's hard to read against its background, form fields without labels)");
+      expect(ev(["label"])).toBe("Parts of the site are hard to read or use for some visitors (form fields without labels)");
+      expect(ev(["aria-allowed-attr"])).toBe("Parts of the site are hard to read or use for some visitors");
+      expect(ev([])).toBe("Parts of the site are hard to read or use for some visitors");
     });
 
-    it("evidence stays free of jargon and legal claims", () => {
+    it("every label in the table is plain English", () => {
+      const labels = Object.values(AUDIT_LABELS);
+      expect(labels.length).toBeGreaterThan(5);
+      for (const l of labels) expect(l).not.toMatch(/robots|canonical|\balt\b|meta|hreflang|aria|lang attr|lighthouse|ADA|compliant/i);
       const r = run({ seoScore: 10, accessibilityScore: 10 });
-      for (const f of r.findings) expect(f.evidence).not.toMatch(/ADA|complian|lighthouse|lawsuit|legal/i);
+      for (const f of r.findings) expect(f.evidence).not.toMatch(/ADA\b|complian|lighthouse|lawsuit|legal/i);
+    });
+
+    it("image-alt is claimed under accessibility only, never under seo", () => {
+      const r = run({ seoScore: 40, accessibilityScore: 40, seoIssueIds: ["image-alt", "link-text"], accessibilityIssueIds: ["image-alt"] });
+      expect(find(r, "low_seo_score")!.evidence).not.toContain("images");
+      expect(find(r, "low_seo_score")!.evidence).toContain("links that just say");
+      expect(find(r, "low_accessibility")!.evidence).toContain("images without text descriptions");
+      // seo with only image-alt falls back to the score sentence
+      expect(find(run({ seoScore: 40, seoIssueIds: ["image-alt"] }), "low_seo_score")!.evidence).toContain("40/100");
+    });
+
+    it("drops title/summary ids from seo evidence when the crawler already reported them", () => {
+      const ids = ["document-title", "meta-description", "link-text"];
+      const crawled = run({ seoScore: 40, seoIssueIds: ids }, { ...goodCrawl, hasTitle: false });
+      expect(codes(crawled)).toEqual(["low_seo_score", "no_title_or_meta"]);
+      expect(find(crawled, "low_seo_score")!.evidence).toBe("Google's own check flagged things that can hold the site back in search: links that just say things like 'click here'");
+      const only = run({ seoScore: 40, seoIssueIds: ["meta-description"] }, { ...goodCrawl, hasMetaDescription: false });
+      expect(find(only, "low_seo_score")!.evidence).toBe("Google's own check scored the homepage's search-friendliness at 40/100");
+      // crawler saw both, so PageSpeed's version is kept; likewise with no crawl at all
+      expect(find(run({ seoScore: 40, seoIssueIds: ids }), "low_seo_score")!.evidence).toContain("no page title, no search-results summary");
+      expect(find(run({ seoScore: 40, seoIssueIds: ids }, null), "low_seo_score")!.evidence).toContain("no page title");
+    });
+
+    it("blocked site: scored from PageSpeed only, and is-crawlable is not claimed", () => {
+      const r = score({ siteStatus: "blocked", crawl: null, pagespeed: { ...goodPs, seoScore: 40, seoIssueIds: ["is-crawlable", "link-text"] }, now });
+      expect(codes(r)).toEqual(["low_seo_score"]);
+      expect(r.score).toBe(12);
+      expect(r.offer).toBe("seo_basics");
+      expect(r.findings[0].evidence).not.toContain("blocked from Google");
+      expect(r.findings[0].evidence).toContain("links that just say");
+      const only = score({ siteStatus: "blocked", crawl: null, pagespeed: { ...goodPs, seoScore: 40, seoIssueIds: ["is-crawlable"] }, now });
+      expect(only.findings[0].evidence).toBe("Google's own check scored the homepage's search-friendliness at 40/100");
+      // a normally crawled site keeps it
+      expect(find(run({ seoScore: 40, seoIssueIds: ["is-crawlable"] }), "low_seo_score")!.evidence).toContain("blocked from Google");
     });
 
     it("seo points push the offer to seo_basics", () => {

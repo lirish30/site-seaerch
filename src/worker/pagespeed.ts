@@ -5,37 +5,16 @@ export class RateLimitedError extends Error {}
 
 const ENDPOINT = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed";
 
-// Lighthouse audit id -> label that reads after a colon in outreach. Unlisted ids are ignored on purpose:
-// we never surface a raw id or Lighthouse's own jargon-heavy title to a business owner.
-const ISSUE_LABELS: Record<string, string> = {
-  "meta-description": "no search-results summary",
-  "document-title": "no page title",
-  "is-crawlable": "blocked from Google",
-  canonical: "no preferred page address set",
-  "link-text": "links that just say things like 'click here'",
-  "crawlable-anchors": "links Google can't follow",
-  "image-alt": "images without descriptions",
-  "http-status-code": "pages that return errors",
-  "robots-txt": "a broken robots file",
-  hreflang: "broken language settings",
-  "color-contrast": "text that's hard to read against its background",
-  label: "form fields without labels",
-  "link-name": "links with no readable name",
-  "button-name": "buttons with no readable name",
-  "html-has-lang": "no page language set",
-};
-
-// Only audits that count toward the category (weight > 0) are attributed to it; no auditRefs -> no issues.
-function failingIssues(lh: any, category: string): string[] {
-  const refs: any[] = lh.categories?.[category]?.auditRefs ?? [];
-  const out: string[] = [];
-  for (const r of Array.isArray(refs) ? refs : []) {
-    const label = ISSUE_LABELS[r?.id];
-    const sc = lh.audits?.[r?.id]?.score;
-    if (!label || !(r.weight > 0) || typeof sc !== "number" || sc >= 0.9 || out.includes(label)) continue;
-    out.push(label);
-  }
-  return out;
+// Failing audit ids attributed to a category: only audits that count toward it (weight > 0), most important
+// first (stable, so ties keep Lighthouse's order). No auditRefs -> no issues. Wording lives in the scorer.
+function failingIssueIds(lh: any, category: string): string[] {
+  const refs = lh.categories?.[category]?.auditRefs;
+  const failing = (Array.isArray(refs) ? refs : []).filter((r) => {
+    const sc = r && typeof r.id === "string" ? lh.audits?.[r.id]?.score : null;
+    return r?.weight > 0 && typeof sc === "number" && sc < 0.9;
+  });
+  failing.sort((x, y) => y.weight - x.weight);
+  return [...new Set<string>(failing.map((r) => r.id))];
 }
 const categoryScore = (lh: any, category: string) => {
   const s = lh.categories?.[category]?.score;
@@ -63,8 +42,8 @@ export async function runPageSpeed(url: string, o: { apiKey: string; fetch: Fetc
     mobileFriendly: passes("viewport") && passes("font-size") && passes("tap-targets"),
     seoScore: categoryScore(lh, "seo"),
     accessibilityScore: categoryScore(lh, "accessibility"),
-    seoIssues: failingIssues(lh, "seo"),
-    accessibilityIssues: failingIssues(lh, "accessibility"),
+    seoIssueIds: failingIssueIds(lh, "seo"),
+    accessibilityIssueIds: failingIssueIds(lh, "accessibility"),
   };
   return { facts, raw };
 }

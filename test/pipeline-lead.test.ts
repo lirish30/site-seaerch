@@ -56,15 +56,15 @@ describe("runLead", () => {
     const b = await upsertBusiness(env.DB, listing({ placeId: "L-lh" }), s.id);
     const psi = { lighthouseResult: { categories: {
       performance: { score: 0.95 },
-      seo: { score: 0.5, auditRefs: [{ id: "meta-description", weight: 1 }] },
+      seo: { score: 0.5, auditRefs: [{ id: "link-text", weight: 1 }] },
       accessibility: { score: 0.62, auditRefs: [{ id: "image-alt", weight: 10 }] } },
-      audits: { "meta-description": { score: 0 }, "image-alt": { score: 0 }, viewport: { score: 1 } } } };
+      audits: { "link-text": { score: 0, scoreDisplayMode: "binary" }, "image-alt": { score: 0, scoreDisplayMode: "binary" }, viewport: { score: 1 } } } };
     const base = deps();
     await runLead(deps({ fetch: async (u, i) => u.includes("pagespeedonline") ? Response.json(psi) : base.fetch(u, i) }), step, { businessId: b.id, searchId: null });
     const a = (await latestAudit(env.DB, b.id))!;
     expect([a.seo_score, a.accessibility_score]).toEqual([50, 62]);
     expect(a.findings.map((f) => f.code)).toEqual(expect.arrayContaining(["low_seo_score", "low_accessibility"]));
-    expect(a.findings.find((f) => f.code === "low_seo_score")!.evidence).toContain("no search-results summary");
+    expect(a.findings.find((f) => f.code === "low_seo_score")!.evidence).toContain("links that just say things like 'click here'");
   });
 
   it("pagespeed failure → partial audit, still drafts", async () => {

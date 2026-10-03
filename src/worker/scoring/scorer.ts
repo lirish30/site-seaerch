@@ -1,4 +1,5 @@
 import type { Finding, FindingCode, FindingGroup, Offer, Platform, SiteStatus } from "../types";
+import { labelsFor } from "./labels";
 import { GROUP_CAPS, SITE_STATUS_SCORE, THRESHOLDS as T, WEIGHTS as W } from "./config";
 
 export interface CrawlFacts {
@@ -10,7 +11,7 @@ export interface CrawlFacts {
 export interface PageSpeedFacts {
   performanceScore: number; lcpMs: number; cls: number; mobileFriendly: boolean;
   // null = Lighthouse didn't return that category (never a real 0).
-  seoScore: number | null; accessibilityScore: number | null; seoIssues: string[]; accessibilityIssues: string[];
+  seoScore: number | null; accessibilityScore: number | null; seoIssueIds: string[]; accessibilityIssueIds: string[];
 }
 
 const GROUP: Record<keyof typeof W, FindingGroup> = {
@@ -37,7 +38,7 @@ export function capGroups(findings: Finding[]): number {
   const sums = new Map<string, number>();
   for (const x of findings) sums.set(x.group, (sums.get(x.group) ?? 0) + x.points);
   let total = 0;
-  for (const [g, pts] of sums) total += g in GROUP_CAPS ? Math.min(pts, GROUP_CAPS[g as keyof typeof GROUP_CAPS]) : pts;
+  for (const [g, pts] of sums) total += Object.hasOwn(GROUP_CAPS, g) ? Math.min(pts, GROUP_CAPS[g as keyof typeof GROUP_CAPS]) : pts;
   return total;
 }
 
@@ -68,14 +69,23 @@ export function score(input: { siteStatus: SiteStatus; crawl: CrawlFacts | null;
       out.push(f("slow_lcp", `Main content takes about ${secs(ps.lcpMs)} seconds to appear on a phone`));
     if (ps.cls > T.layoutShiftCls)
       out.push(f("layout_shift", "The page jumps around while it loads"));
-    if (ps.seoScore !== null && ps.seoScore < T.seoLowBelow)
-      out.push(f("low_seo_score", ps.seoIssues.length
-        ? `Google's own check found problems that hurt how the site shows up in search: ${ps.seoIssues.slice(0, 3).join(", ")}`
-        : `Google's own check scored the site's search-friendliness at ${ps.seoScore}/100`));
-    if (ps.accessibilityScore !== null && ps.accessibilityScore < T.a11yLowBelow)
-      out.push(f("low_accessibility", ps.accessibilityIssues.length
-        ? `Parts of the site are hard to read or use for some visitors (${ps.accessibilityIssues.slice(0, 2).join(", ")})`
+    if (ps.seoScore !== null && ps.seoScore < T.seoLowBelow) {
+      // Drop ids that would repeat another claim or describe something that isn't the business's site:
+      // image-alt (accessibility's), title/summary (the crawler's no_title_or_meta), is-crawlable on a bot-challenge page.
+      const drop = new Set(["image-alt"]);
+      if (siteStatus === "blocked") drop.add("is-crawlable");
+      if (crawl && (!crawl.hasTitle || !crawl.hasMetaDescription)) { drop.add("document-title"); drop.add("meta-description"); }
+      const issues = labelsFor(ps.seoIssueIds.filter((id) => !drop.has(id)), 3);
+      out.push(f("low_seo_score", issues.length
+        ? `Google's own check flagged things that can hold the site back in search: ${issues.join(", ")}`
+        : `Google's own check scored the homepage's search-friendliness at ${ps.seoScore}/100`));
+    }
+    if (ps.accessibilityScore !== null && ps.accessibilityScore < T.a11yLowBelow) {
+      const issues = labelsFor(ps.accessibilityIssueIds, 2);
+      out.push(f("low_accessibility", issues.length
+        ? `Parts of the site are hard to read or use for some visitors (${issues.join(", ")})`
         : "Parts of the site are hard to read or use for some visitors"));
+    }
   }
   if (!crawl && ps && !ps.mobileFriendly)
     out.push(f("not_mobile_friendly", "The site isn't set up for phones, so text and buttons are hard to use"));
