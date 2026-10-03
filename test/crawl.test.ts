@@ -89,4 +89,27 @@ describe("crawlSite", () => {
     expect(r.facts!.latestContentDate).toBe("2025-05-01");
     expect(r.facts!.pastEventDates).toEqual(["2025-05-01"]);
   });
+
+  it("redirect landing on a social page → no_website", async () => {
+    const r = await crawlSite("https://short.com", opts(fakeFetch({
+      "https://short.com/": { body: html("<p>x</p>"), redirect: "https://www.facebook.com/x" },
+    })));
+    expect(r.siteStatus).toBe("no_website");
+  });
+
+  const stalled = () => new Response(new ReadableStream({ start() { /* never closes */ } }), { status: 200, headers: { "content-type": "text/html" } });
+
+  it("homepage body that stalls after headers → unreachable with timeout error", async () => {
+    const r = await crawlSite("https://tarpit.com", { ...opts(async () => stalled()), timeoutMs: 50 });
+    expect(r.siteStatus).toBe("unreachable");
+    expect(r.error).toMatch(/timeout/);
+  });
+
+  it("sub-page body that stalls is skipped", async () => {
+    const f: Fetcher = async (url) => url.endsWith("/contact") ? stalled()
+      : new Response(html(`<a href="/contact">Contact</a>`), { status: 200, headers: { "content-type": "text/html" } });
+    const r = await crawlSite("https://ok.com", { ...opts(f), timeoutMs: 50 });
+    expect(r.siteStatus).toBe("ok");
+    expect(r.pages).toHaveLength(1);
+  });
 });

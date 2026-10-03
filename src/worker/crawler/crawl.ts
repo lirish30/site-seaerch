@@ -11,12 +11,26 @@ interface Opts { fetch: Fetcher; userAgent: string; now: Date; timeoutMs?: numbe
 
 const MAX_BROKEN_CHECKS = 15;
 
-async function get(url: string, o: Opts, method = "GET") {
+// One deadline covers headers AND (optionally) the body read; racing it also covers
+// fetchers that ignore the abort signal.
+async function get(url: string, o: Opts, method = "GET", readBody = false): Promise<{ res: Response; body: string }> {
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), o.timeoutMs ?? 10_000);
+  const ms = o.timeoutMs ?? 10_000;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => { ctrl.abort(); reject(new Error(`timeout after ${ms}ms`)); }, ms);
+  });
+  deadline.catch(() => {});
   try {
-    return await o.fetch(url, { method, redirect: "follow", signal: ctrl.signal, headers: { "user-agent": o.userAgent, accept: "text/html" } });
-  } finally { clearTimeout(t); }
+    return await Promise.race([
+      (async () => {
+        const res = await o.fetch(url, { method, redirect: "follow", signal: ctrl.signal, headers: { "user-agent": o.userAgent, accept: "text/html" } });
+        const body = readBody && res.status < 400 && isHtml(res) ? await res.text() : "";
+        return { res, body };
+      })(),
+      deadline,
+    ]);
+  } finally { clearTimeout(timer); }
 }
 
 const isHtml = (r: Response) => (r.headers.get("content-type") ?? "").includes("text/html");
@@ -36,13 +50,13 @@ export async function crawlSite(websiteUrl: string | null, o: Opts): Promise<Cra
   if (isSocialOnlyUrl(start)) return empty("no_website");
 
   const candidates = start.startsWith("http://") ? [start.replace("http://", "https://"), start] : [start, start.replace("https://", "http://")];
-  let home: Response | null = null; let homeUrl = ""; let lastErr: string | null = null;
+  let home: Response | null = null; let homeBody = ""; let homeUrl = ""; let lastErr: string | null = null;
   for (const c of candidates) {
     try {
-      const r = await get(c, o);
+      const r = await get(c, o, "GET", true);
       // An http fallback that errors after https threw: report the original connection error.
-      if (lastErr && r.status >= 400) break;
-      home = r; homeUrl = r.url || c;
+      if (lastErr && r.res.status >= 400) break;
+      home = r.res; homeBody = r.body; homeUrl = r.res.url || c;
       break;
     } catch (e) { lastErr = (e as Error).message; }
   }
@@ -52,8 +66,7 @@ export async function crawlSite(websiteUrl: string | null, o: Opts): Promise<Cra
   // A redirect that lands on a social/listing page is not a real website.
   if (isSocialOnlyUrl(homeUrl)) return empty("no_website");
 
-  let homeHtml: string;
-  try { homeHtml = await home.text(); } catch (e) { return empty("unreachable", (e as Error).message); }
+  const homeHtml = homeBody;
   const homeFacts = extractPage(homeHtml, homeUrl);
   if (homeFacts.isParked) return { ...empty("parked"), finalUrl: homeUrl };
 
@@ -63,9 +76,8 @@ export async function crawlSite(websiteUrl: string | null, o: Opts): Promise<Cra
   const targets = pickCrawlTargets(homeFacts.internalLinks, homeUrl, (o.maxPages ?? 6) - 1);
   for (const t of targets) {
     try {
-      const r = await get(t, o);
+      const { res: r, body: h } = await get(t, o, "GET", true);
       if (r.status >= 400 || !isHtml(r)) continue;
-      const h = await r.text();
       pages.push({ url: t, status: r.status, html: h });
       facts.push({ url: t, f: extractPage(h, t) });
     } catch { /* skip page */ }
@@ -75,7 +87,7 @@ export async function crawlSite(websiteUrl: string | null, o: Opts): Promise<Cra
   const toCheck = homeFacts.internalLinks.filter((l) => !crawled.has(l)).slice(0, MAX_BROKEN_CHECKS);
   let broken = 0;
   await Promise.all(toCheck.map(async (l) => {
-    try { const r = await get(l, o, "HEAD"); if (r.status === 404 || r.status === 410) broken++; } catch { /* ignore */ }
+    try { const { res: r } = await get(l, o, "HEAD"); if (r.status === 404 || r.status === 410) broken++; } catch { /* ignore */ }
   }));
 
   const today = o.now.toISOString().slice(0, 10);
