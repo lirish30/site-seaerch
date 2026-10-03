@@ -7,7 +7,7 @@ const FIELDS: [string, string, "input" | "textarea"][] = [
   ["your_name", "Your name", "input"], ["business_name", "Business name", "input"], ["contact_email", "Contact email (used in crawler user-agent)", "input"],
   ["services_blurb", "What you offer", "textarea"], ["signature", "Signature", "textarea"],
   ["physical_address", "Physical mailing address (required by CAN-SPAM)", "input"], ["opt_out_line", "Opt-out line", "input"],
-  ["tone_notes", "Voice / tone notes for drafts", "textarea"],
+  ["tone_notes", "Voice / tone notes for drafts", "textarea"], ["logo_url", "Logo URL (https)", "input"],
 ];
 
 export default function Settings() {

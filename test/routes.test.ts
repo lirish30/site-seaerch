@@ -173,6 +173,17 @@ describe("routes", () => {
     }
   });
 
+  it("validates logo_url: https or empty only", async () => {
+    const put = (logo_url: string) => api("/api/settings", { method: "PUT", body: JSON.stringify({ logo_url }) });
+    expect((await put("https://example.com/logo.png")).status).toBe(200);
+    expect((await (await api("/api/settings")).json<any>()).settings.logo_url).toBe("https://example.com/logo.png");
+    for (const bad of ["http://example.com/l.png", "javascript:alert(1)", "data:image/png;base64,AAAA", "ftp://x.com/a", "example.com/l.png", "https://", "https://exa mple.com/a", `https://example.com/${"a".repeat(500)}`]) {
+      expect((await put(bad)).status, bad).toBe(400);
+    }
+    expect((await put("")).status).toBe(200);
+    expect((await (await api("/api/settings")).json<any>()).settings.logo_url).toBe("");
+  });
+
   it("settings round trip with usage", async () => {
     await api("/api/settings", { method: "PUT", body: JSON.stringify({ your_name: "Logan" }) });
     const r = await (await api("/api/settings")).json<any>();

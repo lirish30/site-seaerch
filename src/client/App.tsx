@@ -5,11 +5,13 @@ import SearchDetail from "./pages/SearchDetail";
 import LeadDetail from "./pages/LeadDetail";
 import AllLeads from "./pages/AllLeads";
 import Settings from "./pages/Settings";
+import Report from "./pages/Report";
 
 export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/r/:token" element={<Report />} />
       <Route path="*" element={
         <div className="shell">
           <nav className="nav">

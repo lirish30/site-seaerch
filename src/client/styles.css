@@ -22,3 +22,11 @@ th { cursor:pointer; user-select:none; color:var(--muted); font-weight:600; }
 .muted { color:var(--muted); } .error { color:var(--bad); }
 .badge { display:inline-block; padding:1px 8px; border-radius:99px; border:1px solid var(--line); font-size:12px; }
 progress { width:100%; }
+.report { max-width: 720px; margin: 0 auto; padding: 16px; }
+.report h1 { font-size: 24px; line-height: 1.25; margin: 0 0 4px; } .report h2 { font-size: 20px; margin: 24px 0 8px; } .report h3 { font-size: 16px; margin: 16px 0 4px; }
+.report li { margin: 4px 0; }
+.report .sev-group { border-left: 3px solid var(--line); padding-left: 12px; margin-top: 16px; } .report .sev-group h3 { margin-top: 0; }
+.report .sev-group.sev-high { border-color: var(--bad); } .report .sev-group.sev-medium { border-color: var(--warn); }
+.report-sender { display:flex; gap:12px; align-items:center; margin-top:24px; padding-top:16px; border-top:1px solid var(--line); }
+.report-sender img { max-height: 56px; max-width: 160px; object-fit: contain; }
+@media print { body { background:#fff; color:#000; } .report { max-width:none; padding:0; } .report .card { border:0; padding:0; } }

@@ -55,4 +55,15 @@ describe("auth routes", () => {
   it("health stays public", async () => {
     expect((await SELF.fetch("https://x/api/health")).status).toBe(200);
   });
+
+  it.each(["/api/leads", "/api/settings", "/api/searches", "/api/publicx", "/api/public/", "/api/public", "/api/public/other/x",
+    "/api/public/report", "/api/public/report/", "/api/public/report/abc/def", "/api/public/report/../leads"])("%s stays protected without a cookie", async (p) => {
+    expect((await SELF.fetch(`https://x${p}`)).status).toBe(401);
+  });
+
+  it("public report route needs no cookie (404 for an unknown token, not 401)", async () => {
+    const r = await SELF.fetch("https://x/api/public/report/abcDEF123_-");
+    expect(r.status).toBe(404);
+    expect(await r.json()).toEqual({ error: "not found" });
+  });
 });

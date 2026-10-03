@@ -17,4 +17,5 @@ export const api = {
   post: <T,>(p: string, b?: unknown) => req<T>("POST", p, b ?? {}),
   patch: <T,>(p: string, b: unknown) => req<T>("PATCH", p, b),
   put: <T,>(p: string, b: unknown) => req<T>("PUT", p, b),
+  del: <T,>(p: string) => req<T>("DELETE", p),
 };

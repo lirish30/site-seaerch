@@ -30,8 +30,12 @@ export async function passwordMatches(given: string, actual: string) {
 
 const PUBLIC = new Set(["/api/health", "/api/login"]);
 
+// The only unauthenticated data route: a single non-empty token segment under this prefix, nothing else.
+const PUBLIC_REPORT_PREFIX = "/api/public/report/";
+const isPublicReport = (path: string) => path.startsWith(PUBLIC_REPORT_PREFIX) && path.length > PUBLIC_REPORT_PREFIX.length && !path.includes("/", PUBLIC_REPORT_PREFIX.length);
+
 export const requireAuth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
-  if (PUBLIC.has(c.req.path)) return next();
+  if (PUBLIC.has(c.req.path) || isPublicReport(c.req.path)) return next();
   const token = getCookie(c, "session");
   if (!token || !(await verifySession(c.env.SESSION_SECRET, token, Date.now()))) return c.json({ error: "unauthorized" }, 401);
   return next();

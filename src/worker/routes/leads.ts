@@ -6,6 +6,7 @@ import { getBusiness, listAllBusinesses, updateLead, domainOf } from "../db/busi
 import { latestAudit, latestAuditsFor } from "../db/audits";
 import { listContacts, contactsFor } from "../db/contacts";
 import { latestDraft, updateDraftBody } from "../db/drafts";
+import { activeReportFor, createReport, revokeReports, type ReportRow } from "../db/reports";
 import { pickRecipient } from "../recipient";
 import { regenerateDraft } from "../pipeline/lead";
 import { depsFromEnv } from "../workflows";
@@ -87,4 +88,27 @@ leadRoutes.post("/:id/reaudit", async (c) => {
   if (await mailingSettingsMissing(c.env.DB)) return c.json({ error: MISSING_MAILING_SETTINGS }, 400);
   await c.env.LEAD_WORKFLOW.create({ id: `reaudit-${id}-${Date.now()}`, params: { businessId: id, searchId: null, forceDraft: true } });
   return c.json({ ok: true }, 202);
+});
+
+const reportView = (r: ReportRow) => ({ token: r.token, url: `/r/${r.token}`, expiresAt: r.expires_at });
+
+leadRoutes.post("/:id/report", async (c) => {
+  const id = c.req.param("id");
+  const audit = (await getBusiness(c.env.DB, id)) ? await latestAudit(c.env.DB, id) : null;
+  if (!audit) return c.json({ error: "not found" }, 404);
+  const existing = await activeReportFor(c.env.DB, id, audit.id);
+  if (existing) return c.json(reportView(existing));
+  return c.json(reportView(await createReport(c.env.DB, id, audit.id)), 201);
+});
+
+leadRoutes.get("/:id/report", async (c) => {
+  const id = c.req.param("id");
+  const audit = await latestAudit(c.env.DB, id);
+  const report = audit ? await activeReportFor(c.env.DB, id, audit.id) : null;
+  return c.json({ report: report ? reportView(report) : null });
+});
+
+leadRoutes.delete("/:id/report", async (c) => {
+  await revokeReports(c.env.DB, c.req.param("id"));
+  return c.json({ ok: true });
 });

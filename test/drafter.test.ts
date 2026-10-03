@@ -5,7 +5,7 @@ import type { Business, Contact, Settings } from "../src/worker/types";
 const settings: Settings = {
   your_name: "Logan Irish", business_name: "Irish Web", contact_email: "l@x.com", services_blurb: "I build and care for small-business sites.",
   signature: "Logan Irish\nIrish Web", physical_address: "123 Main St, Boise, ID 83702",
-  opt_out_line: "Reply 'no thanks' and I won't follow up.", tone_notes: "Plain, friendly, no hype.", monthly_spend_limit_usd: 25,
+  opt_out_line: "Reply 'no thanks' and I won't follow up.", tone_notes: "Plain, friendly, no hype.", monthly_spend_limit_usd: 25, logo_url: "",
 };
 const business = { id: "b1", name: "Ace Plumbing", category: "Plumber", address: "Boise, ID", website_url: "https://ace.com" } as Business;
 const contacts: Contact[] = [

@@ -73,5 +73,5 @@ export type DraftInsert = Omit<Draft, "id" | "created_at" | "edited">;
 export interface Settings {
   your_name: string; business_name: string; contact_email: string; services_blurb: string;
   signature: string; physical_address: string; opt_out_line: string; tone_notes: string;
-  monthly_spend_limit_usd: number;
+  monthly_spend_limit_usd: number; logo_url: string;
 }

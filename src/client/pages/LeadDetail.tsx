@@ -8,6 +8,7 @@ interface Finding { code: string; severity: string; points: number; evidence: st
 interface Audit { score: number; offer: string; partial: boolean; site_status: string; findings: Finding[]; created_at: string; seo_score: number | null; accessibility_score: number | null; }
 interface Contact { id: string; type: string; value: string; source_url: string | null; person_name: string | null; role: string | null; }
 interface Draft { id: string; subject: string; body: string; recipient_reason: string; edited: boolean; }
+interface ShareReport { token: string; url: string; expiresAt: string; }
 interface Data { business: Business; audit: Audit | null; contacts: Contact[]; draft: Draft | null; toContact: Contact | null; }
 
 export default function LeadDetail() {
@@ -16,6 +17,8 @@ export default function LeadDetail() {
   const [subject, setSubject] = useState(""); const [body, setBody] = useState("");
   const [steer, setSteer] = useState(""); const [busy, setBusy] = useState(""); const [msg, setMsg] = useState("");
   const [notes, setNotes] = useState("");
+  const [report, setReport] = useState<ShareReport | null>(null); const [shareMsg, setShareMsg] = useState("");
+  const linkInput = useRef<HTMLInputElement>(null);
   // Serialises saves and lets other actions wait for in-flight ones.
   const pending = useRef<Promise<unknown>>(Promise.resolve());
   const savedDraft = useRef({ subject: "", body: "" });
@@ -28,6 +31,13 @@ export default function LeadDetail() {
     setD(x); setSubject(savedDraft.current.subject); setBody(savedDraft.current.body); setNotes(savedNotes.current);
   }
   useEffect(() => { load().catch((e) => setMsg((e as Error).message)); }, [id]);
+  const hasAudit = !!d?.audit;
+  useEffect(() => {
+    let cancelled = false;
+    setReport(null); setShareMsg("");
+    if (hasAudit) api.get<{ report: ShareReport | null }>(`/leads/${id}/report`).then((r) => { if (!cancelled) setReport(r.report); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [id, hasAudit, d?.audit?.created_at]);
   if (!d) return <p>{msg || "Loading…"}</p>;
   const b = d.business;
   const website = safeHttpUrl(b.website_url);
@@ -76,6 +86,22 @@ export default function LeadDetail() {
     try { await api.post(`/leads/${id}/reaudit`); setMsg("Re-audit started. Refresh in a minute."); }
     catch (e) { setMsg((e as Error).message); }
   }
+  async function createReport() {
+    setShareMsg("");
+    try { setReport(await api.post<ShareReport>(`/leads/${id}/report`)); }
+    catch (e) { setShareMsg((e as Error).message); }
+  }
+  async function revokeReport() {
+    if (!confirm("Revoke this link? Anyone who has it will no longer be able to open the report.")) return;
+    try { await api.del(`/leads/${id}/report`); setReport(null); setShareMsg("Link revoked"); }
+    catch (e) { setShareMsg((e as Error).message); }
+  }
+  async function copyLink() {
+    if (!report) return;
+    const link = location.origin + report.url;
+    try { await navigator.clipboard.writeText(link); setShareMsg("Link copied"); }
+    catch { linkInput.current?.select(); setShareMsg("Press Ctrl+C to copy the selected link"); }
+  }
   const mailto = d.toContact ? `mailto:${d.toContact.value}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}` : null;
 
   return (
@@ -96,6 +122,13 @@ export default function LeadDetail() {
             {d.audit.accessibility_score != null && <>Accessibility {d.audit.accessibility_score}/100</>}</p>}
           <ul>{d.audit.findings.map((f) => <li key={f.code}><strong>+{f.points}</strong> {f.evidence}</li>)}</ul>
           <p className="muted">Audited {new Date(d.audit.created_at).toLocaleString()}</p>
+          <h3>Share report</h3>
+          {report ? <>
+            <input ref={linkInput} readOnly aria-label="Report link" value={location.origin + report.url} onFocus={(e) => e.currentTarget.select()} />
+            <p className="muted">Expires {new Date(report.expiresAt).toLocaleDateString()}</p>
+            <p className="row"><button onClick={copyLink}>Copy link</button><button onClick={revokeReport}>Revoke link</button></p>
+          </> : <p className="row"><button onClick={createReport}>Create report link</button></p>}
+          {shareMsg && <p className="muted">{shareMsg}</p>}
         </> : <p className="muted">Audit in progress…</p>}
         <h3>Contacts</h3>
         <ul>{d.contacts.map((c) => {
