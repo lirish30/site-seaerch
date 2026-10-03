@@ -5,6 +5,7 @@ import { createSearch, getSearch, listSearches, setSearchStatus } from "../db/se
 import { listBusinessesForSearch } from "../db/businesses";
 import { checkSpend, estimateSearchCost } from "../cost";
 import { leadRows } from "./leads";
+import { mailingSettingsMissing, MISSING_MAILING_SETTINGS } from "./compliance";
 
 const NewSearch = z.object({
   location: z.string().trim().min(2),
@@ -27,6 +28,7 @@ searchRoutes.get("/estimate", async (c) => {
 searchRoutes.post("/", async (c) => {
   const parsed = NewSearch.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ error: parsed.error.issues.map((i) => i.message).join("; ") }, 400);
+  if (await mailingSettingsMissing(c.env.DB)) return c.json({ error: MISSING_MAILING_SETTINGS }, 400);
   const spend = await checkSpend(c.env.DB, estimateSearchCost(parsed.data.maxResults));
   if (!spend.ok) return c.json({ error: "spend limit", ...spend }, 402);
   const s = await createSearch(c.env.DB, parsed.data);

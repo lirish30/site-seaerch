@@ -13,6 +13,7 @@ const api = (path: string, init: RequestInit = {}) =>
   SELF.fetch(`https://x${path}`, { ...init, headers: { cookie, "content-type": "application/json", ...(init.headers ?? {}) } });
 
 beforeAll(async () => {
+  await saveSettings(env.DB, { physical_address: "1 Main St, Boise, ID", opt_out_line: "Reply 'no thanks' and I won't email again." });
   const r = await SELF.fetch("https://x/api/login", { method: "POST", body: JSON.stringify({ password: "test-pass" }), headers: { "content-type": "application/json" } });
   cookie = r.headers.get("set-cookie")!.split(";")[0];
 });
@@ -127,6 +128,28 @@ describe("routes", () => {
   it("rejects invalid lead status", async () => {
     const { b } = await seedLead();
     expect((await api(`/api/leads/${b.id}`, { method: "PATCH", body: JSON.stringify({ leadStatus: "bogus" }) })).status).toBe(400);
+  });
+
+  it("refuses searches, regenerate and re-audit until physical address and opt-out line are set", async () => {
+    const { b } = await seedLead();
+    const msg = "Fill in your physical address and opt-out line in Settings first";
+    const calls = () => [
+      api("/api/searches", { method: "POST", body: JSON.stringify({ location: "Boise", businessType: "compliance", maxResults: 5 }) }),
+      api(`/api/leads/${b.id}/regenerate`, { method: "POST", body: JSON.stringify({}) }),
+      api(`/api/leads/${b.id}/reaudit`, { method: "POST", body: JSON.stringify({}) }),
+    ];
+    try {
+      for (const blank of [{ physical_address: "", opt_out_line: "Reply stop" }, { physical_address: "1 Main", opt_out_line: "   " }]) {
+        await saveSettings(env.DB, blank);
+        for (const r of await Promise.all(calls())) {
+          expect(r.status).toBe(400);
+          expect(await r.json()).toEqual({ error: msg });
+        }
+      }
+      expect(await env.DB.prepare(`SELECT COUNT(*) AS n FROM searches WHERE business_type = 'compliance'`).first<number>("n")).toBe(0);
+    } finally {
+      await saveSettings(env.DB, { physical_address: "1 Main St, Boise, ID", opt_out_line: "Reply 'no thanks' and I won't email again." });
+    }
   });
 
   it("settings round trip with usage", async () => {

@@ -9,6 +9,7 @@ import { latestDraft, updateDraftBody } from "../db/drafts";
 import { pickRecipient } from "../recipient";
 import { regenerateDraft } from "../pipeline/lead";
 import { depsFromEnv } from "../workflows";
+import { mailingSettingsMissing, MISSING_MAILING_SETTINGS } from "./compliance";
 
 const STATUSES = ["new", "reviewed", "contacted", "replied", "won", "lost", "skip"] as const;
 
@@ -71,6 +72,7 @@ leadRoutes.patch("/:id/draft", async (c) => {
 });
 
 leadRoutes.post("/:id/regenerate", async (c) => {
+  if (await mailingSettingsMissing(c.env.DB)) return c.json({ error: MISSING_MAILING_SETTINGS }, 400);
   const { steeringNote } = await c.req.json<{ steeringNote?: string }>().catch(() => ({ steeringNote: undefined }));
   try {
     return c.json(await regenerateDraft(depsFromEnv(c.env), c.req.param("id"), steeringNote?.trim() || null));
@@ -82,6 +84,7 @@ leadRoutes.post("/:id/regenerate", async (c) => {
 leadRoutes.post("/:id/reaudit", async (c) => {
   const id = c.req.param("id");
   if (!(await getBusiness(c.env.DB, id))) return c.json({ error: "not found" }, 404);
+  if (await mailingSettingsMissing(c.env.DB)) return c.json({ error: MISSING_MAILING_SETTINGS }, 400);
   await c.env.LEAD_WORKFLOW.create({ id: `reaudit-${id}-${Date.now()}`, params: { businessId: id, searchId: null, forceDraft: true } });
   return c.json({ ok: true }, 202);
 });
