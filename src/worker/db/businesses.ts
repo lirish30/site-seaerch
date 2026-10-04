@@ -72,8 +72,12 @@ export async function setArchived(db: D1Database, id: string, archived: boolean)
 
 /** Permanently removes a lead and everything recorded about it. Raw crawl files in R2 are left to expire. */
 export async function deleteBusiness(db: D1Database, id: string) {
-  await db.batch(["search_results", "audits", "contacts", "drafts", "people", "activity"].map((t) =>
-    db.prepare(`DELETE FROM ${t} WHERE business_id = ?`).bind(id)).concat(db.prepare(`DELETE FROM businesses WHERE id = ?`).bind(id)));
+  await db.batch([
+    db.prepare(`DELETE FROM cro_items WHERE cro_audit_id IN (SELECT id FROM cro_audits WHERE business_id = ?)`).bind(id),
+    ...["search_results", "audits", "contacts", "drafts", "people", "activity", "cro_audits"].map((t) =>
+      db.prepare(`DELETE FROM ${t} WHERE business_id = ?`).bind(id)),
+    db.prepare(`DELETE FROM businesses WHERE id = ?`).bind(id),
+  ]);
 }
 
 export async function updateLead(db: D1Database, id: string, u: {
