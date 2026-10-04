@@ -16,8 +16,28 @@ const money = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
 const pct = (x: number) => `${Math.round(x * 1000) / 10}%`;
 const effective = (a: CroAudit): BusinessModel | null => (a.business_model ? { ...a.business_model, ...a.model_overrides } : null);
 
+/**
+ * Slides are a fixed 1280x720 with overflow hidden, so model text is shortened at a word boundary (with an ellipsis)
+ * before escaping. Limits are sized from the CSS: the item slide's text column is ~560px at 19px (about 58 characters a line,
+ * ~8 lines of room once headings and the offer box are counted); full-width lists are ~90 characters a line at 22px.
+ */
+export const LIMIT = {
+  title: 70, observation: 120, change: 110, why: 100, offer: 100,
+  quote: 140, strength: 140, conversion: 80, cycle: 60, roadmapTitle: 56, event: 40, eventWhy: 120, offerList: 110,
+  roadmapPerColumn: 6, strengths: 6, tracking: 6, offers: 6,
+} as const;
+
+export function clip(s: string, max: number): string {
+  const t = String(s ?? "").replace(/\s+/g, " ").trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max - 1);
+  const sp = cut.lastIndexOf(" ");
+  return `${(sp > max * 0.5 ? cut.slice(0, sp) : cut).replace(/[\s.,;:!?-]+$/, "")}…`;
+}
+const fit = (s: string, max: number) => esc(clip(s, max));
+
 /** "Do this month" slides take the first few 30-day items; everything else goes on the 90-day roadmap slide. */
-function splitItems(items: CroItem[]): { top: CroItem[]; rest: CroItem[] } {
+export function splitItems(items: CroItem[]): { top: CroItem[]; rest: CroItem[] } {
   const top = items.filter((i) => i.horizon === 30).slice(0, CRO_LIMITS.topItems);
   return { top, rest: items.filter((i) => !top.includes(i)) };
 }
@@ -51,29 +71,33 @@ export function renderCroSlides(d: CroReportData): string[] {
     <h2>How your website makes money</h2>
     <div class="cro-grid">
       <div><h3>What we believe your business is</h3><p class="cro-big">${esc(BIZ_MODELS[m.model].label)}</p>
-        <p>Main goal: <strong>${esc(m.primary_conversion)}</strong></p>
-        <p class="muted">Typical job value ${money(m.deal_value_band.low)}–${money(m.deal_value_band.high)} · ${esc(m.sales_cycle.label)}</p></div>
-      ${a.positioning ? `<div><h3>Your site says</h3><p class="cro-quote">“${esc(a.positioning.says_now)}”</p><h3>It should say</h3><p class="cro-quote good">“${esc(a.positioning.should_say)}”</p></div>` : ""}
+        <p>Main goal: <strong>${fit(m.primary_conversion, LIMIT.conversion)}</strong></p>
+        <p class="muted">Typical job value ${money(m.deal_value_band.low)}–${money(m.deal_value_band.high)} · ${fit(m.sales_cycle.label, LIMIT.cycle)}</p></div>
+      ${a.positioning ? `<div><h3>Your site says</h3><p class="cro-quote">“${fit(a.positioning.says_now, LIMIT.quote)}”</p><h3>It should say</h3><p class="cro-quote good">“${fit(a.positioning.should_say, LIMIT.quote)}”</p></div>` : ""}
     </div>
     <p class="muted small">These are our assumptions. If any are off, tell us and we'll adjust the plan.</p>
   </section>`);
-  if (a.strengths.length) slides.push(`<section class="slide cro"><h2>What's already working</h2><ul class="cro-list">${a.strengths.map((s) => `<li>${esc(s)}</li>`).join("")}</ul></section>`);
+  if (a.strengths.length) slides.push(`<section class="slide cro"><h2>What's already working</h2><ul class="cro-list">${a.strengths.slice(0, LIMIT.strengths).map((s) => `<li>${fit(s, LIMIT.strength)}</li>`).join("")}</ul></section>`);
   top.forEach((it, i) => slides.push(`<section class="slide cro cro-item">
     <p class="eyebrow">Do this month · ${i + 1} of ${top.length}</p>
-    <h2>${esc(it.title)} <span class="pill">${MODE[it.mode]}</span></h2>
+    <h2>${fit(it.title, LIMIT.title)} <span class="pill">${MODE[it.mode]}</span></h2>
     <div class="cro-item-grid">
-      <div><h3>What we saw</h3><p>${esc(it.observation)}</p><h3>The change</h3><p>${esc(it.change)}</p><h3>Why it matters</h3><p>${esc(it.why)}</p>
-        ${it.we_can_do_it ? `<p class="cro-wcd">${esc(it.we_can_do_it)}</p>` : ""}</div>
+      <div><h3>What we saw</h3><p>${fit(it.observation, LIMIT.observation)}</p><h3>The change</h3><p>${fit(it.change, LIMIT.change)}</p><h3>Why it matters</h3><p>${fit(it.why, LIMIT.why)}</p>
+        ${it.we_can_do_it ? `<p class="cro-wcd">${fit(it.we_can_do_it, LIMIT.offer)}</p>` : ""}</div>
       ${cropHtml(itemCrop(it, a.evidence), d, i + 1)}
     </div>
   </section>`));
   if (rest.length) {
-    const col = (h: Horizon, label: string) => `<div><h3>${label}</h3><ol>${rest.filter((r) => r.horizon === h).map((r) => `<li>${esc(r.title)}</li>`).join("") || `<li class="muted">Nothing here yet</li>`}</ol></div>`;
+    const col = (h: Horizon, label: string) => {
+      const xs = rest.filter((r) => r.horizon === h), more = xs.length - LIMIT.roadmapPerColumn;
+      const lis = xs.slice(0, LIMIT.roadmapPerColumn).map((r) => `<li>${fit(r.title, LIMIT.roadmapTitle)}</li>`).join("") || `<li class="muted">Nothing here yet</li>`;
+      return `<div><h3>${label}</h3><ol>${lis}</ol>${more > 0 ? `<p class="muted">+${more} more</p>` : ""}</div>`;
+    };
     slides.push(`<section class="slide cro"><h2>Your 90-day roadmap</h2><div class="cro-cols">${col(30, "Also this month")}${col(60, "Days 31–60")}${col(90, "Days 61–90")}</div></section>`);
   }
   if (a.tracking_plan.length) slides.push(`<section class="slide cro"><h2>What to measure</h2>
     <p class="blurb">So every change is proven with real calls, forms and bookings.</p>
-    <table class="cro-table">${a.tracking_plan.map((t) => `<tr><td><strong>${esc(t.event)}</strong></td><td>${esc(t.why)}</td></tr>`).join("")}</table></section>`);
+    <table class="cro-table">${a.tracking_plan.slice(0, LIMIT.tracking).map((t) => `<tr><td><strong>${fit(t.event, LIMIT.event)}</strong></td><td>${fit(t.why, LIMIT.eventWhy)}</td></tr>`).join("")}</table></section>`);
   if (a.scenario_inputs) {
     const s = a.scenario_inputs, r = scenarioRange(s);
     slides.push(`<section class="slide cro"><h2>What it could be worth</h2>
@@ -83,7 +107,7 @@ export function renderCroSlides(d: CroReportData): string[] {
       <p class="muted">${SCENARIO_LABEL}. Not a guarantee.</p></section>`);
   }
   const offers = d.items.map((i) => i.we_can_do_it).filter(Boolean);
-  if (offers.length) slides.push(`<section class="slide cro"><h2>We can do this for you</h2><ul class="cro-list">${offers.slice(0, 10).map((x) => `<li>${esc(x)}</li>`).join("")}</ul></section>`);
+  if (offers.length) slides.push(`<section class="slide cro"><h2>We can do this for you</h2><ul class="cro-list">${offers.slice(0, LIMIT.offers).map((x) => `<li>${fit(x, LIMIT.offerList)}</li>`).join("")}</ul></section>`);
   return slides;
 }
 
@@ -94,7 +118,7 @@ export function croCss(d: CroReportData): string {
 export function croDocSection(d: CroReportData): string {
   const m = effective(d.audit);
   return `<h2>Conversion roadmap</h2>${m ? `<p>${esc(BIZ_MODELS[m.model].label)}. Main goal: ${esc(m.primary_conversion)}.</p>` : ""}
-<ol>${d.items.map((i) => `<li><b>${esc(i.title)}</b> (${MODE[i.mode]}, ${i.horizon} days)<br/>${esc(i.observation)}<br/><i>Change: ${esc(i.change)}</i></li>`).join("")}</ol>
+${d.items.length ? `<ol>${d.items.map((i) => `<li><b>${esc(i.title)}</b> (${MODE[i.mode]}, ${i.horizon} days)<br/>${esc(i.observation)}<br/><i>Change: ${esc(i.change)}</i></li>`).join("")}</ol>` : ""}
 ${d.audit.tracking_plan.length ? `<h3>What to measure</h3><ul>${d.audit.tracking_plan.map((t) => `<li>${esc(t.event)}: ${esc(t.why)}</li>`).join("")}</ul>` : ""}`;
 }
 
@@ -112,4 +136,5 @@ const CRO_CSS = `
 .cro-cols { display:grid; grid-template-columns:repeat(3,1fr); gap:32px; font-size:19px; line-height:1.5; }
 .cro-table { border-collapse:collapse; font-size:19px; } .cro-table td { padding:10px 18px 10px 0; border-bottom:1px solid var(--line); vertical-align:top; }
 .small { font-size:15px; }
+.cro h2 .pill { background:var(--brand); }
 `;
