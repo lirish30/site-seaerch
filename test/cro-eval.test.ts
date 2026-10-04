@@ -26,9 +26,12 @@ const fake = (m: string): CroCaller => async ({ stage }) => {
 describe("cro-eval", () => {
   it("computes per-model metrics and never leaks the model into the blind HTML", async () => {
     const r = await runEval([{ name: "a.json", fx }, { name: "b.json", fx }], fake, { seed: 7, date: "2026-10-04" });
-    expect(r.metrics[H].pages).toMatchObject({ calls: 2, items: 2, dropped: 2, quoted: 2 });
+    // Fabricated quotes are dropped by the validator and must not score as verbatim; genuine ones do.
+    expect(r.metrics[H].pages).toMatchObject({ calls: 2, items: 2, dropped: 2, quoted: 0 });
     expect(r.metrics[S].pages).toMatchObject({ calls: 2, items: 2, dropped: 0, quoted: 2 });
-    expect(r.metrics[H].synthesize).toMatchObject({ items: 4, dropped: 2, quoted: 2 });
+    expect(r.metrics[H].synthesize).toMatchObject({ items: 4, dropped: 2, quoted: 0 });
+    expect(r.metrics[S].synthesize).toMatchObject({ items: 4, dropped: 0, quoted: 2 });
+    expect(r.md).toContain("| claude-haiku-4-5 | pages | 2 | 0% | 0 | 100% | 0% |");
     expect(r.verdicts).toEqual({ model: false, pages: true, synthesize: true });
     expect(r.md).toContain("Business-model agreement: 2/2");
     expect(r.md).toContain('set CRO_MODELS.pages = "claude-sonnet-5-5"');
@@ -74,5 +77,30 @@ describe("cro-eval", () => {
     expect(() => parseFixture({ business: {} }, "x.json")).toThrow(/not an eval fixture/);
     expect(parseFixture(fx, "ok.json")).toBe(fx);
     expect(esc(`<a href="x">&'</a>`)).toBe("&lt;a href=&quot;x&quot;&gt;&amp;&#39;&lt;/a&gt;");
+  });
+
+  it("puts the model the key names in the column it names, and numbers each key entry like the HTML", async () => {
+    // Each fake emits a title unique to its model, so the HTML shows which model wrote each column.
+    const marked = (m: string): CroCaller => async (req) => {
+      if (req.stage !== "synthesize") return fake(m)(req);
+      const tag = m === H ? "MARK-ALPHA" : "MARK-BETA";
+      return { costUsd: 0.01, model: m, input: { positioning: { says_now: "a", should_say: "b" }, recommendations: [rec({ title: tag, observation: "No quote here" })] } };
+    };
+    const files = Array.from({ length: 12 }, (_, i) => ({ name: `s${i}.json`, fx }));
+    const r = await runEval(files, marked, { seed: 99, date: "d" });
+    const sections = r.html.split("<section>").slice(1);
+    expect(sections).toHaveLength(12);
+    const sides = new Set<string>();
+    files.forEach(({ name }, i) => {
+      const k = r.key.sites[name];
+      expect(k.n).toBe(i + 1);
+      expect(sections[i]).toContain(`Site ${k.n}:`);
+      const [colA, colB] = sections[i].split("<h3>B</h3>");
+      const tagOf = (m: string) => (m === H ? "MARK-ALPHA" : "MARK-BETA");
+      expect(colA).toContain(tagOf(k.A)); expect(colA).not.toContain(tagOf(k.B));
+      expect(colB).toContain(tagOf(k.B)); expect(colB).not.toContain(tagOf(k.A));
+      sides.add(k.A);
+    });
+    expect(sides.size).toBe(2); // both orders occur, so the check above isn't vacuous
   });
 });

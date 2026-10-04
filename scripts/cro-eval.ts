@@ -2,7 +2,7 @@
 // Spends real money (~$2-3 for six sites). Fixtures hold prospect data and stay git-ignored.
 import { anthropicCroCaller, type CroCaller } from "../src/worker/cro/ai";
 import { inferBusinessModel, reviewPage, synthesizeRoadmap } from "../src/worker/cro/stages";
-import { validateRecommendations, validateReview } from "../src/worker/cro/validate";
+import { quotedPhrases, validateRecommendations, validateReview } from "../src/worker/cro/validate";
 import type { CroModelId } from "../src/worker/cro/config";
 import type { Business } from "../src/worker/types";
 import type { BusinessModel, CroPageRef, Evidence, PageReview, Recommendation } from "../src/worker/cro/types";
@@ -17,7 +17,6 @@ type SiteOut = { model: BusinessModel | null; recs: Recommendation[] };
 export const MODELS: [CroModelId, CroModelId] = ["claude-haiku-4-5", "claude-sonnet-5-5"];
 const STAGES: Stage[] = ["model", "pages", "synthesize"];
 const GATE_POINTS = 10;
-const QUOTED = /["“][^"”]{4,}["”]/;
 
 const blank = (): M => ({ calls: 0, schemaFails: 0, errors: 0, items: 0, dropped: 0, quoted: 0, costUsd: 0 });
 const pct = (a: number, b: number) => (b ? Math.round((a / b) * 100) : 0);
@@ -49,7 +48,7 @@ const errMsg = (e: unknown) => String((e as Error)?.message ?? e).slice(0, 200);
 
 export interface EvalResult {
   md: string; html: string;
-  key: { seed: number; sites: Record<string, { A: CroModelId; B: CroModelId }> };
+  key: { seed: number; sites: Record<string, { n: number; A: CroModelId; B: CroModelId }> };
   metrics: Record<CroModelId, Record<Stage, M>>;
   verdicts: Record<Stage, boolean>;
   failures: string[];
@@ -93,7 +92,7 @@ export async function runEval(fixtures: NamedFixture[], makeCaller: (m: CroModel
           S.pages.costUsd += r.costUsd;
           if (!r.value) { S.pages.schemaFails++; continue; }
           const v = validateReview(r.value, ids, [p.text, ...facts]);
-          S.pages.items += r.value.issues.length; S.pages.dropped += v.dropped.length; S.pages.quoted += r.value.issues.filter((i) => i.quote).length;
+          S.pages.items += r.value.issues.length; S.pages.dropped += v.dropped.length; S.pages.quoted += v.review.issues.filter((i) => i.quote).length; // kept issues only, so every counted quote passed quoteFound
           reviews.push(v.review);
         } catch (e) { fail("pages", p.ref.url, e); }
       }
@@ -106,7 +105,7 @@ export async function runEval(fixtures: NamedFixture[], makeCaller: (m: CroModel
         // Like production: the drop share is measured against what the model returned, before any cap.
         const v = validateRecommendations(s.value.recommendations, ids, [...fx.pages.map((p) => p.text), ...facts]);
         S.synthesize.items += s.value.recommendations.length; S.synthesize.dropped += v.dropped.length;
-        S.synthesize.quoted += s.value.recommendations.filter((r) => QUOTED.test(r.observation)).length;
+        S.synthesize.quoted += v.kept.filter((r) => quotedPhrases(r.observation).length).length; // kept recs only: every quoted phrase passed quoteFound
         out[name][m] = { model: bm, recs: v.kept };
       } catch (e) { fail("synthesize", "roadmap", e); out[name][m] = { model: bm, recs: [] }; }
     }
@@ -148,7 +147,7 @@ export async function runEval(fixtures: NamedFixture[], makeCaller: (m: CroModel
   const col = (r?: SiteOut) => (r?.recs ?? []).slice(0, 10)
     .map((x, i) => `<li><b>${i + 1}. ${esc(x.title)}</b><br>${esc(x.observation)}<br><i>${esc(x.change)}</i></li>`).join("");
   const sections = fixtures.map(({ name, fx }, n) => {
-    sites[name] = rnd() < 0.5 ? { A: S, B: H } : { A: H, B: S };
+    sites[name] = { n: n + 1, ...(rnd() < 0.5 ? { A: S, B: H } : { A: H, B: S }) };
     return `<section><h2>Site ${n + 1}: ${esc(fx.business?.name ?? "")}</h2><div class="g"><div><h3>A</h3><ol>${col(out[name][sites[name].A])}</ol></div><div><h3>B</h3><ol>${col(out[name][sites[name].B])}</ol></div></div></section>`;
   });
   const html = `<!doctype html><meta charset="utf-8"><title>CRO blind read</title><style>body{font:14px system-ui;margin:24px}section{margin-bottom:40px}.g{display:grid;grid-template-columns:1fr 1fr;gap:24px}li{margin-bottom:10px}</style>\n${sections.join("")}`;

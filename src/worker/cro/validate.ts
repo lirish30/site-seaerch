@@ -16,7 +16,7 @@ export function quoteFound(quote: string, texts: string[]): boolean {
   return q.length > 0 && texts.some((t) => normalize(t).includes(q));
 }
 
-const quotedPhrases = (s: string) => [...s.matchAll(/["“]([^"”]{4,})["”]/g)].map((m) => m[1]);
+export const quotedPhrases = (s: string) => [...s.matchAll(/["“]([^"”]{4,})["”]/g)].map((m) => m[1]);
 
 function evidenceProblem(evidenceIds: string[], ids: Set<string>): string | null {
   if (!evidenceIds.length) return "no evidence cited";
