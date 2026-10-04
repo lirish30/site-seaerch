@@ -27,3 +27,14 @@ export async function contactsFor(db: D1Database, businessIds: string[]): Promis
   }
   return out;
 }
+
+/** Returns the existing contact with this value, or adds it (used to make a chosen POC's email draftable). */
+export async function ensureContact(db: D1Database, businessId: string, c: ContactInput): Promise<Contact> {
+  const existing = await db.prepare(`SELECT * FROM contacts WHERE business_id = ? AND type = ? AND lower(value) = lower(?)`)
+    .bind(businessId, c.type, c.value).first<Contact>();
+  if (existing) return existing;
+  const id = crypto.randomUUID();
+  await db.prepare(`INSERT INTO contacts (id, business_id, type, value, source_url, person_name, role, confidence) VALUES (?,?,?,?,?,?,?,?)`)
+    .bind(id, businessId, c.type, c.value, c.source_url, c.person_name, c.role, c.confidence).run();
+  return (await db.prepare(`SELECT * FROM contacts WHERE id = ?`).bind(id).first<Contact>())!;
+}

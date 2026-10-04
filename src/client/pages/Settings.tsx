@@ -7,7 +7,12 @@ const FIELDS: [string, string, "input" | "textarea"][] = [
   ["your_name", "Your name", "input"], ["business_name", "Business name", "input"], ["contact_email", "Contact email (used in crawler user-agent)", "input"],
   ["services_blurb", "What you offer", "textarea"], ["signature", "Signature", "textarea"],
   ["physical_address", "Physical mailing address (required by CAN-SPAM)", "input"], ["opt_out_line", "Opt-out line", "input"],
-  ["tone_notes", "Voice / tone notes for drafts", "textarea"],
+];
+
+const VOICE: [string, string, [string, string][]][] = [
+  ["tone_preset", "Tone", [["friendly_local", "Friendly local"], ["consultative", "Consultative expert"], ["direct", "Direct & short"], ["formal", "Formal"]]],
+  ["email_length", "Length", [["short", "Short (≈120 words)"], ["medium", "Medium (≈180 words)"], ["long", "Long (≈250 words)"]]],
+  ["cta_style", "Ask them to…", [["mini_audit", "Receive their free audit report"], ["call", "Book a 10-minute call"], ["reply", "Reply yes/no"], ["proposal", "Receive a proposal with prices"]]],
 ];
 
 export default function Settings() {
@@ -44,6 +49,20 @@ export default function Settings() {
               : <textarea id={k} value={String(s[k] ?? "")} onChange={(e) => set(k, e.target.value)} />}
           </div>
         ))}
+        <h2 style={{ marginTop: 24 }}>Email voice</h2>
+        <p className="muted small">Applies to every draft. You can still change the tone for a single email on the lead page.</p>
+        <div className="voice-grid">
+          {VOICE.map(([k, label, opts]) => (
+            <div key={k}>
+              <label htmlFor={k}>{label}</label>
+              <select id={k} value={String(s[k] ?? opts[0][0])} onChange={(e) => set(k, e.target.value)}>
+                {opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
+            </div>
+          ))}
+        </div>
+        <label htmlFor="tone_notes">Voice notes (phrases you use, things to avoid)</label>
+        <textarea id="tone_notes" value={String(s.tone_notes ?? "")} onChange={(e) => set("tone_notes", e.target.value)} />
         <label htmlFor="limit">Monthly spend limit (USD)</label>
         <input id="limit" type="number" min={0} value={String(s.monthly_spend_limit_usd ?? "")} onChange={(e) => set("monthly_spend_limit_usd", e.target.value)} />
         <p className="row"><button className="primary" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</button>{saved && <span className="muted">Saved</span>}{err && <span className="error">{err}</span>}</p>

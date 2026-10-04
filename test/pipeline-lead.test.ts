@@ -8,6 +8,7 @@ import { upsertBusiness } from "../src/worker/db/businesses";
 import { latestAudit } from "../src/worker/db/audits";
 import { latestDraft } from "../src/worker/db/drafts";
 import { listContacts } from "../src/worker/db/contacts";
+import { createPerson } from "../src/worker/db/people";
 import type { Listing } from "../src/worker/types";
 
 const step: StepLike = { do: (_n, fn) => fn(), sleep: async () => {} };
@@ -142,9 +143,26 @@ describe("runLead", () => {
     let lastUser = "";
     const d = deps({ claude: async (p) => { lastUser = p.user; return { subject: "S2", body: "B2", to_contact_id: null, recipient_reason: "r" }; } });
     await runLead(d, step, { businessId: b.id, searchId: s.id });
-    const dr = await regenerateDraft(d, b.id, "shorter");
+    const dr = await regenerateDraft(d, b.id, { steeringNote: "shorter" });
     expect(lastUser).toContain("shorter");
     expect(dr.steering_note).toBe("shorter");
+  });
+
+  it("regenerateDraft focuses on chosen findings and addresses the point of contact", async () => {
+    const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 5 });
+    const b = await upsertBusiness(env.DB, listing({ placeId: "L5b" }), s.id);
+    let lastUser = "";
+    const d = deps({ claude: async (p) => { lastUser = p.user; return { subject: "S", body: "B", to_contact_id: null, recipient_reason: "r" }; } });
+    await runLead(d, step, { businessId: b.id, searchId: s.id, forceDraft: true });
+    const a = (await latestAudit(env.DB, b.id))!;
+    await createPerson(env.DB, b.id, { name: "Ann Lee", role: "Owner", email: "ann@ace.com", is_poc: true });
+    const dr = await regenerateDraft(d, b.id, { focus: [a.findings.length - 1] });
+    expect(lastUser).toContain("Lead with these issues");
+    expect(lastUser).toContain(a.findings.at(-1)!.evidence);
+    expect(lastUser).toContain("Address the email to: Ann Lee (Owner)");
+    const to = (await listContacts(env.DB, b.id)).find((c) => c.id === dr.to_contact_id)!;
+    expect(to.value).toBe("ann@ace.com");
+    expect(dr.recipient_reason).toBe("Your chosen point of contact");
   });
 
   it("pagespeed step failing after retries → partial audit, draft still runs", async () => {

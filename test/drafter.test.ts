@@ -6,6 +6,7 @@ const settings: Settings = {
   your_name: "Logan Irish", business_name: "Irish Web", contact_email: "l@x.com", services_blurb: "I build and care for small-business sites.",
   signature: "Logan Irish\nIrish Web", physical_address: "123 Main St, Boise, ID 83702",
   opt_out_line: "Reply 'no thanks' and I won't follow up.", tone_notes: "Plain, friendly, no hype.", monthly_spend_limit_usd: 25,
+  tone_preset: "friendly_local", email_length: "short", cta_style: "mini_audit",
 };
 const business = { id: "b1", name: "Ace Plumbing", category: "Plumber", address: "Boise, ID", website_url: "https://ace.com" } as Business;
 const contacts: Contact[] = [
@@ -34,6 +35,36 @@ describe("buildPrompt", () => {
     expect(p.system).toMatch(/120 words/);
     expect(p.system).toMatch(/LCP/);
   });
+  it("is structured as a mini proposal with one call to action from settings", () => {
+    const p = buildPrompt(input);
+    expect(p.system).toMatch(/mini proposal/);
+    expect(p.system).toContain("free website audit report");
+    expect(buildPrompt({ ...input, settings: { ...settings, cta_style: "call" } }).system).toContain("10-minute call");
+  });
+
+  it("applies the account tone and length, and a per-draft tone override", () => {
+    expect(buildPrompt(input).system).toContain("Warm, plain-spoken neighbour");
+    expect(buildPrompt({ ...input, settings: { ...settings, email_length: "long" } }).system).toMatch(/under 250 words/);
+    const p = buildPrompt({ ...input, tone: "formal" });
+    expect(p.system).toContain("Professional and polished");
+    expect(p.system).not.toContain("Warm, plain-spoken");
+  });
+
+  it("leads with chosen issues (with their fixes) instead of the top three", () => {
+    const focus = [{ ...input.findings[3], recommendation: "Reserve space for images" }];
+    const p = buildPrompt({ ...input, focus });
+    expect(p.user).toContain("Lead with these issues (the sender chose them):");
+    expect(p.user).toContain("jumps around while it loads (fix: Reserve space for images)");
+    expect(p.user).not.toContain("Scores 34/100");
+  });
+
+  it("adds niche goal, value proposition and the point of contact", () => {
+    const p = buildPrompt({ ...input, niche: "trades", valueProposition: "Emergency plumbing in Boise", poc: { name: "Ann Lee", role: "Owner" } });
+    expect(p.user).toContain("Industry: Home services / trades; their website's job is quote requests and phone calls");
+    expect(p.user).toContain("What their site says they do: Emergency plumbing in Boise");
+    expect(p.user).toContain("Address the email to: Ann Lee (Owner)");
+  });
+
   it("includes steering note when given", () => {
     expect(buildPrompt({ ...input, steeringNote: "mention I'm local" }).user).toContain("mention I'm local");
   });
@@ -44,6 +75,13 @@ describe("generateDraft", () => {
     const d = await generateDraft(input, async () => ({ subject: "Quick note about ace.com", body: body(), to_contact_id: "c1", recipient_reason: "info inbox" }));
     expect(d.to_contact_id).toBe("c1");
     expect(d.subject).toBe("Quick note about ace.com");
+  });
+
+  it("the chosen point of contact overrides the model's recipient", async () => {
+    const ann: Contact = { ...contacts[0], id: "c2", value: "ann@ace.com", person_name: "Ann Lee" };
+    const d = await generateDraft({ ...input, contacts: [...contacts, ann] },
+      async () => ({ subject: "s", body: body(), to_contact_id: "c1", recipient_reason: "x" }), "c2");
+    expect([d.to_contact_id, d.recipient_reason]).toEqual(["c2", "Your chosen point of contact"]);
   });
 
   it("rejects hallucinated contact id and falls back to recipient ranking", async () => {

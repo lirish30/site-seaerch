@@ -110,5 +110,8 @@ export type DraftInsert = Omit<Draft, "id" | "created_at" | "edited">;
 export interface Settings {
   your_name: string; business_name: string; contact_email: string; services_blurb: string;
   signature: string; physical_address: string; opt_out_line: string; tone_notes: string;
-  monthly_spend_limit_usd: number;
+  monthly_spend_limit_usd: number; tone_preset: TonePreset; email_length: EmailLength; cta_style: CtaStyle;
 }
+export type TonePreset = "friendly_local" | "consultative" | "direct" | "formal";
+export type EmailLength = "short" | "medium" | "long";
+export type CtaStyle = "mini_audit" | "call" | "reply" | "proposal";

@@ -7,13 +7,15 @@ import { CategoryBars, FindingsList, Screenshots } from "../components/AuditPane
 import PeoplePanel from "../components/PeoplePanel";
 import { NICHE_LABEL, OFFER_LABEL, STATUSES, type Activity, type Audit, type Business, type Contact, type LeadStatus, type Person } from "../types";
 
-interface Draft { id: string; subject: string; body: string; recipient_reason: string; edited: boolean; }
+interface Draft { id: string; subject: string; body: string; recipient_reason: string; edited: boolean; created_at: string; steering_note: string | null; }
 interface Data { business: Business; audit: Audit | null; contacts: Contact[]; draft: Draft | null; toContact: Contact | null; people: Person[]; activity: Activity[]; }
 
 const LINK_LABEL: Record<string, string> = {
   contact: "Contact page", careers: "Careers / jobs", menu: "Menu", services: "Services", about: "About", team: "Team",
   booking: "Booking", pricing: "Pricing", locations: "Locations", portfolio: "Portfolio", testimonials: "Reviews", blog: "Blog", shop: "Shop",
 };
+const TONE_OPTIONS: [string, string][] = [["", "Default tone (from Settings)"], ["friendly_local", "Friendly local"], ["consultative", "Consultative expert"], ["direct", "Direct & short"], ["formal", "Formal"]];
+
 const ACTIVITY_LABEL: Record<string, string> = {
   status: "Status", archived: "Archived", restored: "Restored", website: "Website changed", reaudit: "Re-audit",
   score_flagged: "Score flagged", export: "Exported", draft: "Draft",
@@ -28,6 +30,9 @@ export default function LeadDetail() {
   const [steer, setSteer] = useState(""); const [busy, setBusy] = useState(""); const [msg, setMsg] = useState("");
   const [notes, setNotes] = useState("");
   const [editingUrl, setEditingUrl] = useState<string | null>(null);
+  const [focus, setFocus] = useState<Set<string>>(new Set());
+  const [tone, setTone] = useState("");
+  const [versions, setVersions] = useState<Draft[] | null>(null);
   // Serialises saves and lets other actions wait for in-flight ones.
   const pending = useRef<Promise<unknown>>(Promise.resolve());
   const savedDraft = useRef({ subject: "", body: "" });
@@ -40,6 +45,10 @@ export default function LeadDetail() {
     setD(x); setSubject(savedDraft.current.subject); setBody(savedDraft.current.body); setNotes(savedNotes.current);
   }
   useEffect(() => { load().catch((e) => setMsg((e as Error).message)); }, [id]);
+  useEffect(() => {
+    if (tab !== "email") return;
+    api.get<Draft[]>(`/leads/${id}/drafts`).then(setVersions).catch(() => setVersions([]));
+  }, [tab, id, d?.draft?.id]);
   if (!d) return <p>{msg || "Loading…"}</p>;
   const b = d.business;
   const a = d.audit;
@@ -83,9 +92,15 @@ export default function LeadDetail() {
   async function copyAndMark() { if (await copy() && await setStatus("contacted")) setMsg("Copied and marked contacted"); }
   async function regenerate() {
     await flush(); setBusy("regen"); setMsg("");
-    try { await api.post(`/leads/${id}/regenerate`, { steeringNote: steer }); setSteer(""); await load(); }
-    catch (e) { fail(e); } finally { setBusy(""); }
+    // Finding keys are "code:index" into the audit's findings.
+    const focusIdx = [...focus].map((k) => Number(k.split(":").pop())).filter(Number.isInteger);
+    try {
+      await api.post(`/leads/${id}/regenerate`, { steeringNote: steer, focus: focusIdx, tone: tone || null });
+      setSteer(""); await load(); setMsg(focusIdx.length ? `New draft focused on ${focusIdx.length} chosen issue(s).` : "New draft written.");
+    } catch (e) { fail(e); } finally { setBusy(""); }
   }
+  function loadVersion(v: Draft) { setSubject(v.subject); setBody(v.body); setMsg("Loaded an earlier version into the editor. Click outside the editor to save it."); }
+  const toggleFocus = (k: string) => setFocus((p) => { const n = new Set(p); if (n.has(k)) n.delete(k); else if (n.size < 5) n.add(k); return n; });
   async function reaudit(reason?: string) {
     await flush();
     try { await api.post(`/leads/${id}/reaudit`, reason ? { reason } : {}); setMsg("Re-audit started. Refresh in a minute or two."); await load(); }
@@ -186,24 +201,47 @@ export default function LeadDetail() {
           ) : <div className="card"><p className="muted">Audit in progress…</p></div>)}
 
           {tab === "email" && (
-            <div className="card">
-              {d.draft ? <>
-                <p><strong>To:</strong> {d.toContact?.value ?? "—"} <span className="muted">({d.draft.recipient_reason})</span></p>
-                <label htmlFor="subj">Subject</label>
-                <input id="subj" value={subject} onChange={(e) => setSubject(e.target.value)} onBlur={saveDraft} />
-                <label htmlFor="body">Body</label>
-                <textarea id="body" style={{ minHeight: 320 }} value={body} onChange={(e) => setBody(e.target.value)} onBlur={saveDraft} />
-                <p className="muted">{body.trim().split(/\s+/).length} words</p>
-                <p className="row">
-                  <button onClick={copy}>Copy email</button>
-                  {mailto && <a href={mailto} onClick={saveDraft}><button>Open in mail app</button></a>}
-                  <button className="primary" onClick={copyAndMark}>Copy & mark contacted</button>
+            <div className="card email-grid">
+              <div>
+                {d.draft ? <>
+                  <p><strong>To:</strong> {d.toContact?.value ?? "—"} <span className="muted">({d.draft.recipient_reason})</span></p>
+                  <label htmlFor="subj">Subject</label>
+                  <input id="subj" value={subject} onChange={(e) => setSubject(e.target.value)} onBlur={saveDraft} />
+                  <label htmlFor="body">Body</label>
+                  <textarea id="body" style={{ minHeight: 360 }} value={body} onChange={(e) => setBody(e.target.value)} onBlur={saveDraft} />
+                  <p className="muted small">{body.trim().split(/\s+/).length} words</p>
+                  <p className="row">
+                    <button onClick={copy}>Copy email</button>
+                    {mailto && <a href={mailto} onClick={saveDraft}><button>Open in mail app</button></a>}
+                    <button className="primary" onClick={copyAndMark}>Copy & mark contacted</button>
+                  </p>
+                </> : <p className="muted">No draft yet{a && a.score < 25 ? " (low priority lead)" : ""}.</p>}
+                {versions && versions.length > 1 && <>
+                  <h3>Earlier versions</h3>
+                  <ul className="versions">{versions.map((v) => (
+                    <li key={v.id} className={v.id === d.draft?.id ? "current" : ""}>
+                      <span>{new Date(v.created_at).toLocaleString()} · {v.subject}{v.steering_note && <span className="muted"> · “{v.steering_note}”</span>}</span>
+                      {v.id !== d.draft?.id && <button className="link-btn" onClick={() => loadVersion(v)}>Use</button>}
+                    </li>
+                  ))}</ul>
+                </>}
+              </div>
+              <div>
+                <h3>Rewrite this email</h3>
+                <label htmlFor="tone">Tone for this email</label>
+                <select id="tone" value={tone} onChange={(e) => setTone(e.target.value)}>
+                  {TONE_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+                <label htmlFor="steer">Extra instruction (optional)</label>
+                <input id="steer" placeholder="shorter / mention I'm local / offer a discount" value={steer} onChange={(e) => setSteer(e.target.value)} />
+                {a && <>
+                  <label>Issues to lead with <span className="muted small">(pick up to 5; none = the most important)</span></label>
+                  <div className="picker-box"><FindingsList findings={a.findings} selectable selected={focus} onToggle={toggleFocus} /></div>
+                </>}
+                <p className="row" style={{ marginTop: 12 }}>
+                  <button className="primary" onClick={regenerate} disabled={busy === "regen"}>{busy === "regen" ? "Writing…" : d.draft ? "Regenerate email" : "Generate email"}</button>
+                  {focus.size > 0 && <button className="link-btn" onClick={() => setFocus(new Set())}>Clear {focus.size} selected</button>}
                 </p>
-              </> : <p className="muted">No draft yet{a && a.score < 25 ? " (low priority lead)" : ""}.</p>}
-              <label htmlFor="steer">Regenerate with a note (optional)</label>
-              <div className="row">
-                <input id="steer" style={{ flex: 1 }} placeholder="shorter / mention I'm local" value={steer} onChange={(e) => setSteer(e.target.value)} />
-                <button onClick={regenerate} disabled={busy === "regen"}>{busy === "regen" ? "Writing…" : d.draft ? "Regenerate" : "Generate draft"}</button>
               </div>
             </div>
           )}

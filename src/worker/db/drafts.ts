@@ -22,3 +22,8 @@ export async function latestDraft(db: D1Database, businessId: string): Promise<D
 export async function updateDraftBody(db: D1Database, id: string, u: { subject: string; body: string }) {
   await db.prepare(`UPDATE drafts SET subject = ?, body = ?, edited = 1 WHERE id = ?`).bind(u.subject, u.body, id).run();
 }
+
+export async function listDrafts(db: D1Database, businessId: string, limit = 20): Promise<Draft[]> {
+  return (await db.prepare(`SELECT * FROM drafts WHERE business_id = ? ORDER BY created_at DESC LIMIT ?`)
+    .bind(businessId, limit).all<Row>()).results.map(fromRow);
+}

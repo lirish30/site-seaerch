@@ -7,7 +7,7 @@ import { listPeople, createPerson, updatePerson, deletePerson } from "../db/peop
 import { listActivity, logActivity } from "../db/activity";
 import { latestAudit, latestAuditsFor } from "../db/audits";
 import { listContacts, contactsFor } from "../db/contacts";
-import { latestDraft, updateDraftBody } from "../db/drafts";
+import { latestDraft, updateDraftBody, listDrafts } from "../db/drafts";
 import { pickRecipient } from "../recipient";
 import { regenerateDraft } from "../pipeline/lead";
 import { depsFromEnv } from "../workflows";
@@ -135,15 +135,26 @@ leadRoutes.patch("/:id/draft", async (c) => {
   return c.json({ ok: true });
 });
 
+const Regenerate = z.object({
+  steeringNote: z.string().max(1000).optional(),
+  focus: z.array(z.number().int().min(0).max(200)).max(10).optional(),
+  tone: z.enum(["friendly_local", "consultative", "direct", "formal"]).nullable().optional(),
+});
 leadRoutes.post("/:id/regenerate", async (c) => {
   if (await mailingSettingsMissing(c.env.DB)) return c.json({ error: MISSING_MAILING_SETTINGS }, 400);
-  const { steeringNote } = await c.req.json<{ steeringNote?: string }>().catch(() => ({ steeringNote: undefined }));
+  const p = Regenerate.safeParse(await c.req.json().catch(() => ({})));
+  if (!p.success) return c.json({ error: "invalid" }, 400);
+  const id = c.req.param("id");
   try {
-    return c.json(await regenerateDraft(depsFromEnv(c.env), c.req.param("id"), steeringNote?.trim() || null));
+    const d = await regenerateDraft(depsFromEnv(c.env), id, { steeringNote: p.data.steeringNote?.trim() || null, focus: p.data.focus, tone: p.data.tone });
+    await logActivity(c.env.DB, id, "draft", p.data.focus?.length ? `Regenerated around ${p.data.focus.length} chosen issue(s)` : "Regenerated");
+    return c.json(d);
   } catch (e) {
     return c.json({ error: (e as Error).message }, 400);
   }
 });
+
+leadRoutes.get("/:id/drafts", async (c) => c.json(await listDrafts(c.env.DB, c.req.param("id"))));
 
 leadRoutes.post("/:id/reaudit", async (c) => {
   const id = c.req.param("id");

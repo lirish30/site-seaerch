@@ -4,7 +4,8 @@ import { runPageSpeed, RateLimitedError } from "../pagespeed";
 import { score } from "../scoring/scorer";
 import { generateDraft, type ClaudeCaller } from "../drafter/draft";
 import { getBusiness } from "../db/businesses";
-import { replaceContacts, listContacts } from "../db/contacts";
+import { replaceContacts, listContacts, ensureContact } from "../db/contacts";
+import { pocFor } from "../db/people";
 import { insertAudit, latestAudit } from "../db/audits";
 import { insertDraft } from "../db/drafts";
 import { getSettings } from "../db/settings";
@@ -14,7 +15,9 @@ import { PRICES } from "../cost";
 import type { Renderer } from "../render/render";
 import { reviewSite, type ReviewCaller } from "../audit/review";
 import { isSocialOnlyUrl } from "../crawler/extract";
-import type { AiReview, Draft, SiteStatus } from "../types";
+import type { AiReview, Draft, SiteStatus, TonePreset } from "../types";
+
+export interface DraftOptions { steeringNote?: string | null; focus?: number[]; tone?: TonePreset | null; }
 
 export interface StepLike {
   do<T>(name: string, fn: () => Promise<T>): Promise<T>;
@@ -31,20 +34,30 @@ export interface LeadDeps {
 const b64 = (bytes: ArrayBuffer | Uint8Array) => Buffer.from(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)).toString("base64");
 const withScheme = (u: string) => (/^https?:\/\//i.test(u) ? u : `https://${u}`);
 
-async function draftFor(deps: LeadDeps, businessId: string, steeringNote: string | null): Promise<Draft> {
-  const [business, audit, contacts, settings] = await Promise.all([
-    getBusiness(deps.db, businessId), latestAudit(deps.db, businessId), listContacts(deps.db, businessId), getSettings(deps.db),
+async function draftFor(deps: LeadDeps, businessId: string, o: DraftOptions = {}): Promise<Draft> {
+  const [business, audit, settings, poc] = await Promise.all([
+    getBusiness(deps.db, businessId), latestAudit(deps.db, businessId), getSettings(deps.db), pocFor(deps.db, businessId),
   ]);
   if (!business || !audit) throw new Error("Cannot draft: business or audit missing");
-  const d = await generateDraft({ settings, business, findings: audit.findings, offer: audit.offer, contacts, steeringNote }, deps.claude);
+  // A point of contact with an email becomes a draftable contact so the draft can be addressed to them.
+  const pocContact = poc?.email
+    ? await ensureContact(deps.db, businessId, { type: "email", value: poc.email, source_url: null, person_name: poc.name, role: poc.role, confidence: 1 })
+    : null;
+  const contacts = await listContacts(deps.db, businessId);
+  const focus = (o.focus ?? []).map((i) => audit.findings[i]).filter(Boolean);
+  const steeringNote = o.steeringNote ?? null;
+  const d = await generateDraft({
+    settings, business, findings: audit.findings, offer: audit.offer, contacts, steeringNote, focus, tone: o.tone ?? null,
+    niche: audit.niche, valueProposition: audit.ai_review?.value_proposition ?? null, poc: poc ? { name: poc.name, role: poc.role } : null,
+  }, deps.claude, pocContact?.id ?? null);
   await recordUsage(deps.db, "claude", 1, PRICES.claudePerDraft);
   return insertDraft(deps.db, { business_id: businessId, audit_id: audit.id, offer: audit.offer, steering_note: steeringNote, ...d });
 }
 
 const measurable = (s: SiteStatus) => s === "ok" || s === "blocked";
 
-export function regenerateDraft(deps: LeadDeps, businessId: string, steeringNote: string | null) {
-  return draftFor(deps, businessId, steeringNote);
+export function regenerateDraft(deps: LeadDeps, businessId: string, o: DraftOptions = {}) {
+  return draftFor(deps, businessId, o);
 }
 
 export async function runLead(
@@ -155,7 +168,7 @@ export async function runLead(
 
   const draftId = await step.do("draft", async () => {
     if (audit.lowPriority && !p.forceDraft) return null;
-    return (await draftFor(deps, p.businessId, p.steeringNote ?? null)).id;
+    return (await draftFor(deps, p.businessId, { steeringNote: p.steeringNote ?? null })).id;
   });
 
   if (p.searchId) await step.do("progress", () => incrementProcessed(deps.db, p.searchId!).then(() => true));
