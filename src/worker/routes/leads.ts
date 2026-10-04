@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { Env } from "../env";
 import type { Business, LeadStatus } from "../types";
 import { getBusiness, listAllBusinesses, updateLead, domainOf, setArchived, deleteBusiness } from "../db/businesses";
-import { listPeople, createPerson, updatePerson, deletePerson } from "../db/people";
+import { listPeople, createPerson, updatePerson, deletePerson, pocsFor } from "../db/people";
 import { listActivity, logActivity } from "../db/activity";
 import { latestAudit, latestAuditsFor } from "../db/audits";
 import { listContacts, contactsFor } from "../db/contacts";
@@ -24,14 +24,15 @@ const STATUSES = ["new", "reviewed", "contacted", "replied", "won", "lost", "ski
 
 export async function leadRows(db: D1Database, businesses: Business[]) {
   const ids = businesses.map((b) => b.id);
-  const [audits, contactMap] = await Promise.all([latestAuditsFor(db, ids), contactsFor(db, ids)]);
+  const [audits, contactMap, pocs] = await Promise.all([latestAuditsFor(db, ids), contactsFor(db, ids), pocsFor(db, ids)]);
   return businesses.map((b) => {
     const audit = audits.get(b.id) ?? null;
     const best = pickRecipient(contactMap.get(b.id) ?? [], domainOf(b.website_url));
     return {
       business: b, score: audit?.score ?? null, health: audit?.health_score ?? null, niche: audit?.niche ?? null,
       topFinding: audit?.findings[0]?.evidence ?? null,
-      offer: audit?.offer ?? null, bestContact: best.contact?.value ?? null, hasEmail: !!best.emailContact,
+      offer: audit?.offer ?? null, bestContact: best.contact?.value ?? null, hasEmail: !!best.emailContact || !!pocs.get(b.id)?.email,
+      poc: pocs.get(b.id) ? { name: pocs.get(b.id)!.name, email: pocs.get(b.id)!.email } : null,
       partial: audit?.partial ?? false,
     };
   });

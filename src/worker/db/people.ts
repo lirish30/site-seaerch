@@ -1,4 +1,5 @@
 import type { Person, PersonInput } from "../types";
+import { chunks } from "./chunks";
 
 type Row = Omit<Person, "is_poc"> & { is_poc: number };
 const fromRow = (r: Row): Person => ({ ...r, is_poc: r.is_poc === 1 });
@@ -48,4 +49,15 @@ export async function deletePerson(db: D1Database, businessId: string, id: strin
 export async function pocFor(db: D1Database, businessId: string): Promise<Person | null> {
   const r = await db.prepare(`SELECT * FROM people WHERE business_id = ? AND is_poc = 1 LIMIT 1`).bind(businessId).first<Row>();
   return r ? fromRow(r) : null;
+}
+
+/** Points of contact for many leads at once, keyed by business id. */
+export async function pocsFor(db: D1Database, businessIds: string[]): Promise<Map<string, Person>> {
+  const out = new Map<string, Person>();
+  for (const ids of chunks([...new Set(businessIds)])) {
+    const rows = (await db.prepare(`SELECT * FROM people WHERE is_poc = 1 AND business_id IN (${ids.map(() => "?").join(",")})`)
+      .bind(...ids).all<Row>()).results;
+    for (const r of rows) out.set(r.business_id, fromRow(r));
+  }
+  return out;
 }

@@ -206,6 +206,8 @@ describe("routes", () => {
     await api(`/api/leads/${b.id}/people/${bob.id}`, { method: "PATCH", body: JSON.stringify({ is_poc: true }) });
     const people = (await (await api(`/api/leads/${b.id}`)).json<any>()).people;
     expect(people.map((p: any) => [p.name, p.is_poc])).toEqual([["Bob", true], ["Ann Lee", false]]);
+    const [row] = await leadRows(env.DB, [(await getBusiness(env.DB, b.id))!]);
+    expect(row.poc).toEqual({ name: "Bob", email: null });
     expect((await api(`/api/leads/${b.id}/people/${ann.id}`, { method: "DELETE" })).status).toBe(200);
     expect((await api(`/api/leads/other/people/${bob.id}`, { method: "DELETE" })).status).toBe(404);
   });
