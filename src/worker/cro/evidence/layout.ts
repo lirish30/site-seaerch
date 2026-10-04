@@ -2,6 +2,10 @@ import type { CapturedPage, EvidenceDraft, PageSnapshot } from "../types";
 
 export const base = (p: CapturedPage) => ({ page: p.url, pageKind: p.kind });
 const list = (xs: string[], n = 8) => xs.slice(0, n).map((x) => `"${x}"`).join(", ");
+/** A page that rendered almost nothing (blocked, JS-only or error shell): absence facts about it would be false. */
+export const isShell = (s: PageSnapshot | null | undefined): boolean =>
+  !!s && s.text.trim().length < 200 && !s.ctas.length && !s.nav.length && !s.h1.length;
+
 const HIGH_INTENT = /financ|pricing|price|book|appointment|insurance|quote|estimate|menu|order|shop|reserv/i;
 
 export function ctaEvidence(p: CapturedPage): EvidenceDraft[] {
@@ -9,9 +13,10 @@ export function ctaEvidence(p: CapturedPage): EvidenceDraft[] {
   const views: [PageSnapshot | null, "desktop" | "mobile"][] = [[p.desktop, "desktop"], [p.mobile, "mobile"]];
   for (const [s, device] of views) {
     if (!s) continue;
+    const shell = isShell(s);
     const above = s.ctas.filter((c) => c.aboveFold);
     const where = device === "mobile" ? "On a phone" : "On desktop";
-    if (!above.length) out.push({ ...base(p), family: "cta", device, fact: `${where}, no action button is visible before scrolling` });
+    if (!above.length) { if (!shell) out.push({ ...base(p), family: "cta", device, fact: `${where}, no action button is visible before scrolling` }); }
     else if (above.length >= 3) out.push({ ...base(p), family: "cta", device, data: { count: above.length },
       crop: { ...above[0].box, device, pageIndex: p.index }, fact: `${where}, ${above.length} competing buttons show before scrolling: ${list(above.map((c) => c.text), 5)}` });
     for (const c of s.ctas.filter((c) => c.contrast !== null && c.contrast < 3).slice(0, 2))
@@ -23,7 +28,7 @@ export function ctaEvidence(p: CapturedPage): EvidenceDraft[] {
         fact: `${tiny.length} button${tiny.length > 1 ? "s" : ""} on mobile ${tiny.length > 1 ? "are" : "is"} smaller than a thumb-sized 44px (e.g. "${tiny[0].text}", ${tiny[0].box.h}px tall)` });
     }
   }
-  if (p.index === 0 && p.desktop) {
+  if (p.index === 0 && p.desktop && !isShell(p.desktop)) {
     const head = p.desktop.ctas.filter((c) => c.inHeader);
     out.push(head.length
       ? { ...base(p), family: "cta", device: "desktop", crop: { ...head[0].box, device: "desktop", pageIndex: p.index }, fact: `Desktop header button: "${head[0].text}"` }
@@ -34,14 +39,14 @@ export function ctaEvidence(p: CapturedPage): EvidenceDraft[] {
 }
 
 export function navEvidence(p: CapturedPage): EvidenceDraft[] {
-  if (p.index !== 0 || !p.desktop) return [];
+  if (p.index !== 0 || !p.desktop || isShell(p.desktop)) return [];
   const nav = p.desktop.nav;
   if (!nav.length) return [{ ...base(p), family: "nav", device: "desktop", fact: "No navigation menu found on desktop" }];
   const out: EvidenceDraft[] = [{ ...base(p), family: "nav", device: "desktop", data: { count: nav.length },
     fact: `Main menu has ${nav.length} top-level items: ${nav.map((n) => n.text).join(", ")}` }];
   for (const parent of nav) for (const child of parent.children)
     if (HIGH_INTENT.test(child.text)) out.push({ ...base(p), family: "nav", device: "desktop", fact: `"${child.text}" is nested under "${parent.text}" in the menu` });
-  if (p.mobile) out.push({ ...base(p), family: "nav", device: "mobile",
+  if (p.mobile && !isShell(p.mobile)) out.push({ ...base(p), family: "nav", device: "mobile",
     fact: p.mobile.stickyHeader ? "Header stays visible on mobile while scrolling" : "Header does not stay visible on mobile while scrolling" });
   return out;
 }
@@ -56,6 +61,7 @@ export function contactEvidence(p: CapturedPage): EvidenceDraft[] {
     else if (m.headerPhoneText) out.push({ ...base(p), family: "contact", device: "mobile", fact: `Phone number in the mobile header is plain text, not tappable: "${m.headerPhoneText}"` });
   }
   const s = p.desktop;
+  if (isShell(s) || isShell(m)) return out;
   if (s && !s.telLinks.length && !(m?.telLinks.length)) out.push({ ...base(p), family: "contact", device: "both", fact: "No tap-to-call phone link on this page" });
   if (s && p.kind === "contact" && !s.forms.length && !s.mailtoCount) out.push({ ...base(p), family: "contact", device: "both", fact: "Contact page has no form and no email link" });
   return out;

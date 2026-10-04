@@ -1,9 +1,10 @@
 import type { Business } from "../../types";
 import type { CapturedPage, EvidenceDraft } from "../types";
 import { detectMartech } from "../martech";
-import { base } from "./layout";
+import { base, isShell } from "./layout";
 
 const digits = (s: string) => s.replace(/\D/g, "").slice(-10);
+const MIN_LISTING_TEXT = 20;
 const PHONE = /(\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/g;
 
 export function martechEvidence(pages: CapturedPage[]): EvidenceDraft[] {
@@ -15,6 +16,8 @@ export function martechEvidence(pages: CapturedPage[]): EvidenceDraft[] {
     globals: pages.flatMap((p) => (p.desktop ?? p.mobile)?.globals ?? []),
   });
   const names = [...new Set(found.map((f) => f.name))];
+  // Nothing found on pages that barely rendered is not evidence of no tracking.
+  if (!names.length && pages.every((p) => [p.desktop, p.mobile].every((s) => !s || isShell(s)))) return [];
   const analytics = found.some((f) => f.kind === "analytics" || f.kind === "tag_manager");
   const callTracking = found.some((f) => f.kind === "call_tracking");
   const fact = !names.length ? "No analytics, conversion or call tracking detected"
@@ -23,10 +26,11 @@ export function martechEvidence(pages: CapturedPage[]): EvidenceDraft[] {
 }
 
 export function listingEvidence(pages: CapturedPage[], business: Business): EvidenceDraft[] {
-  const home = pages[0];
+  const home = pages.find((p) => p.index === 0);
   if (!home) return [];
   const snaps = pages.filter((p) => p.index === 0 || p.kind === "contact").flatMap((p) => [p.desktop, p.mobile]).filter((s) => !!s);
   const text = snaps.map((s) => s!.text).join(" ");
+  if (text.trim().length < MIN_LISTING_TEXT) return [];
   const out: EvidenceDraft[] = [];
   if (business.phone) {
     const sitePhones = [...new Set([...snaps.flatMap((s) => s!.telLinks.map((t) => digits(t.href))), ...(text.match(PHONE) ?? []).map(digits)])].filter((d) => d.length === 10);
@@ -52,6 +56,10 @@ export function healthEvidence(p: CapturedPage): EvidenceDraft[] {
   if (p.consoleErrors.length) add(`${p.consoleErrors.length} script error${p.consoleErrors.length > 1 ? "s" : ""} while loading (e.g. "${p.consoleErrors[0]}")`);
   if (p.failedRequests.length >= 3) add(`${p.failedRequests.length} files failed to load`);
   if (p.mobile?.overflowX) add("Page scrolls sideways on a phone", "mobile");
+  const shells = [p.desktop, p.mobile].filter((s) => !!s);
+  if (shells.length && shells.every(isShell)) add("The page shows very little content when loaded in a browser", p.desktop && p.mobile ? "both" : p.desktop ? "desktop" : "mobile");
+  else if (p.desktop && isShell(p.desktop)) add("The page shows very little content when loaded in a browser on desktop", "desktop");
+  else if (p.mobile && isShell(p.mobile)) add("The page shows very little content when loaded in a browser on a phone", "mobile");
   if (p.mobile && p.mobile.smallTextPct > 0.2) add(`${Math.round(p.mobile.smallTextPct * 100)}% of text on mobile is smaller than 12px`, "mobile");
   return out;
 }

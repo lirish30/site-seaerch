@@ -128,4 +128,34 @@ describe("buildEvidence", () => {
     expect(f).toContain('Main button "Go" leads to not a url with no form');
   });
 
+  it("listing: no facts when the home page failed or its text is empty", () => {
+    const services = page({ index: 1, kind: "services", url: "https://ace.com/services" });
+    const failedHome = buildEvidence([page({ ok: false, desktop: null, mobile: null }), services], business);
+    expect(failedHome.filter((e) => e.family === "listing")).toEqual([]);
+    const emptyText = buildEvidence([page({ desktop: snapshot({ text: "" }), mobile: snapshot({ text: "" }) })], business);
+    expect(emptyText.filter((e) => e.family === "listing")).toEqual([]);
+  });
+
+  it("near-empty shell pages yield no absence facts but do yield a health fact", () => {
+    const shell = () => snapshot({ h1: [], heroText: "", text: "", title: "" });
+    const ev = buildEvidence([page({ desktop: shell(), mobile: shell() })], business);
+    const f = ev.map((e) => e.fact);
+    expect(f.some((x) => /^(No |On a phone, no|On desktop, no|Header does not)/.test(x))).toBe(false);
+    expect(f.some((x) => x.includes("is not in the headline"))).toBe(false);
+    expect(f).toContain("The page shows very little content when loaded in a browser");
+    expect(ev.find((e) => e.fact.startsWith("The page shows very little"))!.device).toBe("both");
+    // a real page with the same empty arrays but real text still gets the absence facts
+    const real = facts([page({ desktop: snapshot({ h1: [], text: "x".repeat(400) }) })]);
+    expect(real).toContain("No H1 headline on this page");
+  });
+
+  it("copy: 'Contact us' is not business-speak and 'we are available' is not a generic phrase", () => {
+    const text = "Contact us today. About us. Call us. Email us. Join us. Visit us. We are available around the clock. You can reach you your team.";
+    const f = facts([page({ desktop: snapshot({ text }) })]);
+    expect(f.some((x) => x.startsWith("Copy talks about the business"))).toBe(false);
+    expect(f.some((x) => x.startsWith("Generic phrases used"))).toBe(false);
+    const f2 = facts([page({ desktop: snapshot({ text: "A one-stop shop that is second to none. Contact us." }) })]);
+    expect(f2).toContain('Generic phrases used: "one-stop shop", "second to none"');
+  });
+
 });

@@ -1,5 +1,5 @@
 import type { CapturedPage, EvidenceDraft } from "../types";
-import { base } from "./layout";
+import { base, isShell } from "./layout";
 
 const pathOf = (u: string) => { try { return new URL(u).pathname; } catch { return u; } };
 
@@ -28,7 +28,7 @@ export function flowEvidence(p: CapturedPage): EvidenceDraft[] {
 
 export function trustEvidence(p: CapturedPage): EvidenceDraft[] {
   const s = p.desktop;
-  if (!s || !(p.index === 0 || p.kind === "testimonials")) return [];
+  if (!s || isShell(s) || !(p.index === 0 || p.kind === "testimonials")) return [];
   const t = s.trust;
   const out: EvidenceDraft[] = [];
   const add = (fact: string) => out.push({ ...base(p), family: "trust", device: "desktop", fact });
