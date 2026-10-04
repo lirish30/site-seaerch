@@ -63,12 +63,21 @@ export async function addCroCost(db: D1Database, id: string, usd: number, stage:
   ).bind(usd, model, stage, model, id).run();
 }
 
+// An audit that completed once (completed_at is kept across rebuilds) keeps its last good roadmap when a later run fails:
+// it goes back to done and the failure is noted in `error`. A run that never finished is failed, so Retry shows.
+const FAIL_SET = `status = CASE WHEN completed_at IS NOT NULL THEN 'done' ELSE 'failed' END,
+  step = CASE WHEN completed_at IS NOT NULL THEN 'done' ELSE step END, error = ?`;
+
+export async function failCroAudit(db: D1Database, id: string, message: string) {
+  await db.prepare(`UPDATE cro_audits SET ${FAIL_SET} WHERE id = ?`).bind(message, id).run();
+}
+
 /** The lead's in-flight audit, if any. Runs stuck past the limit (a dead workflow) are failed so they stop blocking new runs.
  *  Measured from started_at, which rebuilds and retries reset. */
 export async function runningCroAudit(db: D1Database, businessId: string, now: Date): Promise<CroAudit | null> {
   const cutoff = new Date(now.getTime() - CRO_LIMITS.staleRunningMs).toISOString();
-  await db.prepare(`UPDATE cro_audits SET status = 'failed', error = 'Timed out' WHERE business_id = ? AND status = 'running' AND started_at < ?`)
-    .bind(businessId, cutoff).run();
+  await db.prepare(`UPDATE cro_audits SET ${FAIL_SET} WHERE business_id = ? AND status = 'running' AND started_at < ?`)
+    .bind("Timed out", businessId, cutoff).run();
   const r = await db.prepare(`SELECT * FROM cro_audits WHERE business_id = ? AND status = 'running' ORDER BY created_at DESC LIMIT 1`)
     .bind(businessId).first<Record<string, unknown>>();
   return r ? auditFromRow(r) : null;

@@ -276,6 +276,21 @@ describe("CRO routes", () => {
     expect((await getCroAudit(env.DB, a.id))!.status).toBe("failed");
   });
 
+  it("a rebuild or retry that can't start leaves an audit that had a roadmap usable, with the failure noted", async () => {
+    const { a } = await doneAudit();
+    await updateCroAudit(env.DB, a.id, { completed_at: "2026-10-01T00:00:00.000Z" });
+    (env.CRO_AUDIT_WORKFLOW as any).create = async () => { throw new Error("workflow down"); };
+    expect((await api(`/api/cro-audits/${a.id}/rebuild`, { method: "POST" })).status).toBe(502);
+    expect(await getCroAudit(env.DB, a.id)).toMatchObject({ status: "done", step: "done", error: "Couldn't start the audit workflow", completed_at: "2026-10-01T00:00:00.000Z" });
+    const r = await api(`/api/leads/${a.business_id}/cro-audit`).then((x) => x.json<any>());
+    expect(r.audit.status).toBe("done");
+    expect(r.items).toHaveLength(1);
+    // A later rebuild that does start clears the note.
+    (env.CRO_AUDIT_WORKFLOW as any).create = async (o: any) => { created.push(o); return { id: o.id }; };
+    expect((await api(`/api/cro-audits/${a.id}/rebuild`, { method: "POST" })).status).toBe(202);
+    expect(await getCroAudit(env.DB, a.id)).toMatchObject({ status: "running", error: null, completed_at: "2026-10-01T00:00:00.000Z" });
+  });
+
   it("serves screenshots and the eval fixture", async () => {
     const { a } = await doneAudit();
     expect((await api(`/api/cro-audits/${a.id}/shot/0/desktop`)).status).toBe(404);

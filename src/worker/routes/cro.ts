@@ -6,7 +6,7 @@ import { getBusiness } from "../db/businesses";
 import { isSocialOnlyUrl } from "../crawler/extract";
 import { checkSpend, PRICES } from "../cost";
 import { logActivity } from "../db/activity";
-import { createCroAudit, getCroAudit, latestCroAudit, listCroAudits, listCroItems, runningCroAudit, updateCroAudit, updateCroItem, type CroItemPatch } from "../db/cro";
+import { createCroAudit, failCroAudit, getCroAudit, latestCroAudit, listCroAudits, listCroItems, runningCroAudit, updateCroAudit, updateCroItem, type CroItemPatch } from "../db/cro";
 import { shotKey, textKey } from "../cro/pipeline";
 import { scenarioFor } from "../cro/scenario";
 import { BIZ_MODEL_KEYS, type BusinessModel, type CroAudit, type CroFrom, type CroStep } from "../cro/types";
@@ -29,7 +29,7 @@ type Ctx = Context<{ Bindings: Env }>;
 /** Starts the workflow. If that fails the audit is failed straight away, so the lead isn't blocked until the stale-run timeout. */
 async function launch(c: Ctx, auditId: string, from?: CroFrom) {
   try { await start(c.env, auditId, from); return null; } catch {
-    await updateCroAudit(c.env.DB, auditId, { status: "failed", error: "Couldn't start the audit workflow" });
+    await failCroAudit(c.env.DB, auditId, "Couldn't start the audit workflow");
     return c.json({ error: "Couldn't start the audit workflow" }, 502);
   }
 }
@@ -37,7 +37,7 @@ async function launch(c: Ctx, auditId: string, from?: CroFrom) {
 /** Flips a not-running audit to running in a single statement, so two simultaneous requests can't both start it. */
 async function claim(db: D1Database, auditId: string, from: CroFrom): Promise<boolean> {
   const r = await db.prepare(
-    `UPDATE cro_audits SET status = 'running', error = NULL, step = ?, started_at = ?, completed_at = NULL WHERE id = ? AND status <> 'running'`,
+    `UPDATE cro_audits SET status = 'running', error = NULL, step = ?, started_at = ? WHERE id = ? AND status <> 'running'`,
   ).bind(from, new Date().toISOString(), auditId).run();
   return (r.meta?.changes ?? 0) > 0;
 }

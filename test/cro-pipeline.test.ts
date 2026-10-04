@@ -5,6 +5,7 @@ import type { CroCaller, StageRequest } from "../src/worker/cro/ai";
 import type { PageCapture } from "../src/worker/cro/types";
 import type { StepLike } from "../src/worker/pipeline/lead";
 import { createCroAudit, getCroAudit, listCroItems, updateCroAudit } from "../src/worker/db/cro";
+import { croReportFor } from "../src/worker/report/cro";
 import { seedBusiness, seedLeadAudit, snapshot, model, rec } from "./fixtures/cro";
 
 const step: StepLike = { do: (_n, fn) => fn(), sleep: async () => {} };
@@ -133,6 +134,29 @@ describe("runCroAudit", () => {
     await updateCroAudit(env.DB, a.id, { scenario_inputs: own, model_overrides: { traffic_tier: "low" } });
     await runCroAudit(deps().d, step, { auditId: a.id, from: "synthesize" });
     expect((await getCroAudit(env.DB, a.id))!.scenario_inputs).toEqual(own);
+  });
+  it("keeps the last good roadmap usable when a rebuild or retry fails afterwards", async () => {
+    const { b, a } = await start();
+    await runCroAudit(deps().d, step, { auditId: a.id });
+    const before = (await getCroAudit(env.DB, a.id))!;
+    const itemsBefore = (await listCroItems(env.DB, a.id)).map((i) => i.title);
+    const down: CroCaller = async () => { throw new Error("Claude is down"); };
+    await runCroWithErrorHandling(deps({ ai: down }).d, step, { auditId: a.id, from: "synthesize" });
+    const after = (await getCroAudit(env.DB, a.id))!;
+    expect(after).toMatchObject({ status: "done", step: "done", error: "Claude is down", completed_at: before.completed_at });
+    expect((await listCroItems(env.DB, a.id)).map((i) => i.title)).toEqual(itemsBefore);
+    expect((await croReportFor(env, b.id))!.audit.id).toBe(a.id);
+    // The next successful rebuild clears the note.
+    await runCroWithErrorHandling(deps().d, step, { auditId: a.id, from: "synthesize" });
+    expect(await getCroAudit(env.DB, a.id)).toMatchObject({ status: "done", error: null });
+  });
+
+  it("still fails a first run that never produced a roadmap", async () => {
+    const { b, a } = await start();
+    const down: CroCaller = async () => { throw new Error("Claude is down"); };
+    await runCroWithErrorHandling(deps({ ai: down }).d, step, { auditId: a.id });
+    expect(await getCroAudit(env.DB, a.id)).toMatchObject({ status: "failed", step: "model", error: "Claude is down", completed_at: null });
+    expect(await croReportFor(env, b.id)).toBeNull();
   });
   it("handles a desktop-only capture (no mobile snapshot or images)", async () => {
     const { a } = await start();

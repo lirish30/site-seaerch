@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { describe, it, expect } from "vitest";
 import { createCroAudit, getCroAudit, latestCroAudit, listCroAudits, updateCroAudit, addCroCost, runningCroAudit,
-  replaceCroItems, listCroItems, updateCroItem, croItemsForBusiness } from "../src/worker/db/cro";
+  replaceCroItems, failCroAudit, listCroItems, updateCroItem, croItemsForBusiness } from "../src/worker/db/cro";
 import { deleteBusiness } from "../src/worker/db/businesses";
 import { seedBusiness, model, ev, ranked } from "./fixtures/cro";
 
@@ -46,6 +46,25 @@ describe("cro db", () => {
     const later = new Date(Date.now() + 31 * 60 * 1000);
     expect(await runningCroAudit(env.DB, b.id, later)).toBeNull();
     expect((await getCroAudit(env.DB, a.id))!).toMatchObject({ status: "failed", error: "Timed out" });
+  });
+
+  it("a stale rebuild of an audit that already had a roadmap goes back to done, with the failure noted", async () => {
+    const b = await seedBusiness();
+    const a = await createCroAudit(env.DB, b.id);
+    await updateCroAudit(env.DB, a.id, { status: "running", step: "synthesize", completed_at: "2026-10-01T00:00:00.000Z" });
+    expect(await runningCroAudit(env.DB, b.id, new Date(Date.now() + 31 * 60 * 1000))).toBeNull();
+    expect(await getCroAudit(env.DB, a.id)).toMatchObject({ status: "done", step: "done", error: "Timed out", completed_at: "2026-10-01T00:00:00.000Z" });
+  });
+
+  it("failCroAudit fails a first run but restores an audit that had finished before", async () => {
+    const b = await seedBusiness();
+    const first = await createCroAudit(env.DB, b.id), rebuilt = await createCroAudit(env.DB, b.id);
+    await updateCroAudit(env.DB, first.id, { status: "running", step: "pages" });
+    await updateCroAudit(env.DB, rebuilt.id, { status: "running", step: "pages", completed_at: "2026-10-01T00:00:00.000Z" });
+    await failCroAudit(env.DB, first.id, "boom");
+    await failCroAudit(env.DB, rebuilt.id, "boom");
+    expect(await getCroAudit(env.DB, first.id)).toMatchObject({ status: "failed", step: "pages", error: "boom" });
+    expect(await getCroAudit(env.DB, rebuilt.id)).toMatchObject({ status: "done", step: "done", error: "boom" });
   });
 
   it("an old audit restarted for a rebuild is not treated as stale", async () => {

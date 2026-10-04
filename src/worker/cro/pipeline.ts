@@ -3,7 +3,7 @@ import { getBusiness } from "../db/businesses";
 import { latestAudit } from "../db/audits";
 import { recordUsage } from "../db/usage";
 import { PRICES } from "../cost";
-import { addCroCost, getCroAudit, replaceCroItems, updateCroAudit } from "../db/cro";
+import { addCroCost, failCroAudit, getCroAudit, replaceCroItems, updateCroAudit } from "../db/cro";
 import { selectPages } from "./pages";
 import type { CroBrowser } from "./capture";
 import type { CroCaller } from "./ai";
@@ -183,6 +183,6 @@ export async function runCroWithErrorHandling(deps: CroDeps, step: StepLike, p: 
     await runCroAudit(deps, step, p);
   } catch (e) {
     const message = String((e as Error)?.message ?? e).slice(0, 500);
-    await step.do("record-error", () => updateCroAudit(deps.db, p.auditId, { status: "failed", error: message }).then(() => true));
+    await step.do("record-error", () => failCroAudit(deps.db, p.auditId, message).then(() => true));
   }
 }

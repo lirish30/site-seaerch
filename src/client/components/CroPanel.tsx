@@ -162,6 +162,12 @@ export default function CroPanel({ leadId, onError }: { leadId: string; onError:
           <button onClick={run} disabled={!!busy} title="Starts a fresh scan; roughly $0.15–0.40">{busy === "run" ? "Starting…" : "Run again"}</button>
         </span>
       </div>
+      {a.error && (
+        <div className="row">
+          <p className="error small">The last update didn't finish, so this is the previous version of the roadmap. {a.error}</p>
+          <button onClick={() => act("rebuild", () => api.post(`/cro-audits/${a.id}/rebuild`), a.id)} disabled={!!busy}>{busy === "rebuild" ? "Trying again…" : "Try again"}</button>
+        </div>
+      )}
       {a.warning && <p className="warn">⚠ {a.warning}</p>}
       {a.partial && <p className="muted small">⚠ Some pages couldn't be loaded; the roadmap covers the rest.</p>}
 
