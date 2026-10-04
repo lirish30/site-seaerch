@@ -16,10 +16,10 @@ export type Renderer = (url: string) => Promise<RenderResult | null>;
 const DESKTOP = { width: 1280, height: 1800 };
 const MOBILE = { width: 390, height: 1500, isMobile: true, hasTouch: true, deviceScaleFactor: 1 };
 const NAV_TIMEOUT_MS = 25_000;
-const MOBILE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
+export const MOBILE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
 
 // A firewall/challenge page is our crawler being refused, not a problem with the prospect's site.
-const BLOCK_PROBE = `(() => {
+export const BLOCK_PROBE = `(() => {
   const t = (document.title + " " + (document.body ? document.body.innerText : "")).slice(0, 2000);
   return /you have been blocked|access denied|attention required|just a moment|verify you are (a )?human|checking your browser|are you a robot|request unsuccessful|incapsula|ddos protection/i.test(t);
 })()`;
