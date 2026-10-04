@@ -1,18 +1,33 @@
-import type { Audit, AuditInsert } from "../types";
+import type { Audit, AuditInsert, Finding } from "../types";
 import { chunks } from "./chunks";
 
-type Row = Omit<Audit, "findings" | "partial" | "mobile_friendly" | "https" | "has_title" | "has_meta_description" | "has_contact_form"> & {
-  findings: string; partial: number; mobile_friendly: number | null; https: number | null;
+type JsonCols = "findings" | "category_scores" | "ai_review" | "screenshots" | "site_links";
+type Row = Omit<Audit, JsonCols | "partial" | "mobile_friendly" | "https" | "has_title" | "has_meta_description" | "has_contact_form"> & {
+  findings: string; category_scores: string | null; ai_review: string | null; screenshots: string | null; site_links: string | null;
+  partial: number; mobile_friendly: number | null; https: number | null;
   has_title: number | null; has_meta_description: number | null; has_contact_form: number | null;
 };
 const b = (v: number | null) => (v === null ? null : v === 1);
 const n = (v: boolean | null) => (v === null ? null : v ? 1 : 0);
+const json = <T,>(s: string | null, fallback: T): T => { try { return s ? JSON.parse(s) : fallback; } catch { return fallback; } };
+
+// v1 findings carried {group: speed|stale|basics, severity: high|medium|low} and no recommendation.
+const V1_CATEGORY: Record<string, Finding["category"]> = { speed: "speed", stale: "content", basics: "technical", site: "site" };
+const V1_SEVERITY: Record<string, Finding["severity"]> = { high: "critical", medium: "important", low: "nice" };
+function normalizeFinding(f: any): Finding {
+  if (f.category) return f as Finding;
+  const category = f.code === "not_mobile_friendly" ? "mobile" : f.code === "no_contact_form" ? "cro" : V1_CATEGORY[f.group] ?? "technical";
+  return { code: f.code, category, severity: V1_SEVERITY[f.severity] ?? "nice", points: f.points ?? 0,
+    evidence: f.evidence ?? "", recommendation: "", source: "rule" };
+}
 
 function fromRow(r: Row): Audit {
   return {
-    ...r, findings: JSON.parse(r.findings), partial: r.partial === 1, mobile_friendly: b(r.mobile_friendly),
+    ...r, findings: json<any[]>(r.findings, []).map(normalizeFinding), partial: r.partial === 1, mobile_friendly: b(r.mobile_friendly),
     https: b(r.https), has_title: b(r.has_title), has_meta_description: b(r.has_meta_description),
-    has_contact_form: b(r.has_contact_form),
+    has_contact_form: b(r.has_contact_form), health_score: r.health_score ?? null, niche: r.niche ?? null,
+    category_scores: json(r.category_scores, {}), ai_review: json(r.ai_review, null),
+    screenshots: { desktop: null, mobile: null, ...json(r.screenshots, {}) }, site_links: json(r.site_links, {}),
   };
 }
 
@@ -21,12 +36,14 @@ export async function insertAudit(db: D1Database, a: AuditInsert): Promise<Audit
   await db.prepare(
     `INSERT INTO audits (id, business_id, created_at, site_status, partial, pagespeed_mobile, lcp_ms, cls,
      mobile_friendly, https, has_title, has_meta_description, has_contact_form, copyright_year,
-     latest_content_date, broken_link_count, score, offer, findings, raw_r2_key)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+     latest_content_date, broken_link_count, score, offer, findings, raw_r2_key,
+     health_score, niche, category_scores, ai_review, screenshots, site_links)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
   ).bind(id, a.business_id, new Date().toISOString(), a.site_status, a.partial ? 1 : 0, a.pagespeed_mobile,
     a.lcp_ms, a.cls, n(a.mobile_friendly), n(a.https), n(a.has_title), n(a.has_meta_description),
     n(a.has_contact_form), a.copyright_year, a.latest_content_date, a.broken_link_count, a.score, a.offer,
-    JSON.stringify(a.findings), a.raw_r2_key).run();
+    JSON.stringify(a.findings), a.raw_r2_key, a.health_score, a.niche, JSON.stringify(a.category_scores),
+    a.ai_review ? JSON.stringify(a.ai_review) : null, JSON.stringify(a.screenshots), JSON.stringify(a.site_links)).run();
   return (await db.prepare(`SELECT * FROM audits WHERE id = ?`).bind(id).first<Row>().then((r) => fromRow(r!)));
 }
 

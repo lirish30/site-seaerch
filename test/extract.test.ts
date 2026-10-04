@@ -78,22 +78,47 @@ describe("extractPage", () => {
   });
 });
 
+const A = (url: string, text = "") => ({ url, text });
+
 describe("pickCrawlTargets", () => {
-  it("prioritises contact, about/team, blog/news/events; caps count; dedupes", () => {
+  it("one page per kind in priority order (contact, services, menu, about, team, careers...); caps count; dedupes", () => {
     const links = [
-      "https://a.com/services", "https://a.com/contact", "https://a.com/contact#form", "https://a.com/about",
-      "https://a.com/our-team", "https://a.com/blog", "https://a.com/events", "https://a.com/news",
+      A("https://a.com/blog"), A("https://a.com/contact"), A("https://a.com/contact"), A("https://a.com/about"),
+      A("https://a.com/our-team"), A("https://a.com/services"), A("https://a.com/events"), A("https://a.com/jobs"),
     ];
     expect(pickCrawlTargets(links, "https://a.com/", 5)).toEqual([
-      "https://a.com/contact", "https://a.com/about", "https://a.com/our-team", "https://a.com/blog", "https://a.com/news",
+      "https://a.com/contact", "https://a.com/services", "https://a.com/about", "https://a.com/our-team", "https://a.com/jobs",
     ]);
+  });
+
+  it("uses anchor text when the path is opaque", () => {
+    expect(pickCrawlTargets([A("https://a.com/page-12", "Our Menu"), A("https://a.com/p?id=3", "Get in touch")], "https://a.com/", 5))
+      .toEqual(["https://a.com/p?id=3", "https://a.com/page-12"]);
   });
 });
 
 describe("pickCrawlTargets robustness", () => {
   it("same host only, resolves relative links, skips garbage", () => {
-    expect(pickCrawlTargets(["https://evil.com/contact", "/contact", "http://[bad", "https://www.a.com/about"], "https://a.com/", 3))
+    expect(pickCrawlTargets([A("https://evil.com/contact"), A("/contact"), A("http://[bad"), A("https://www.a.com/about")], "https://a.com/", 3))
       .toEqual(["https://a.com/contact", "https://www.a.com/about"]);
+  });
+});
+
+describe("extractPage structure", () => {
+  const html = `<html><head><title>T</title><meta property="og:title" content="x">
+    <script type="application/ld+json">{"@context":"https://schema.org","@type":"Restaurant"}</script></head><body>
+    <header><nav><a href="/">Home</a><a href="/menu">Menu</a><a href="/contact">Contact</a></nav></header>
+    <h1>Best tacos</h1><a class="btn" href="/order">Order online</a>
+    <div class="hs-form-frame"></div><iframe src="https://calendly.com/x"></iframe>
+    <p>What our customers say: ★★★★★</p><img src="a.jpg"><img src="b.jpg" alt="b">
+    <a href="https://boards.greenhouse.io/acme/jobs">Careers</a>
+    <footer>© 2026</footer></body></html>`;
+  const f = extractPage(html, "https://a.com/");
+  it("detects nav, footer, H1, CTA, social proof, embeds, schema, OG, alt text, ATS careers", () => {
+    expect(f).toMatchObject({ hasNav: true, navItemCount: 3, hasFooter: true, hasH1: true, hasCta: true, hasSocialProof: true,
+      hasBooking: true, hasEmbeddedForm: true, hasOpenGraph: true, schemaTypes: ["Restaurant"], imageCount: 2, imagesMissingAlt: 1 });
+    expect(f.externalCareers).toEqual(["https://boards.greenhouse.io/acme/jobs"]);
+    expect(f.anchors[0]).toEqual({ url: "https://a.com/", text: "Home" });
   });
 });
 

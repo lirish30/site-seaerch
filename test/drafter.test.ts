@@ -14,10 +14,10 @@ const contacts: Contact[] = [
 const input: DraftInput = {
   settings, business, contacts, offer: "performance", steeringNote: null,
   findings: [
-    { code: "slow_mobile", group: "speed", severity: "high", points: 25, evidence: "Scores 34/100 on Google's mobile speed test" },
-    { code: "slow_lcp", group: "speed", severity: "medium", points: 10, evidence: "Main content takes about 8.4 seconds to appear on a phone" },
-    { code: "old_copyright", group: "stale", severity: "medium", points: 10, evidence: "The footer still says © 2019" },
-    { code: "layout_shift", group: "speed", severity: "low", points: 5, evidence: "The page jumps around while it loads" },
+    { code: "slow_mobile", category: "speed", severity: "critical", points: 25, evidence: "Scores 34/100 on Google's mobile speed test", recommendation: "", source: "rule" },
+    { code: "slow_lcp", category: "speed", severity: "important", points: 10, evidence: "Main content takes about 8.4 seconds to appear on a phone", recommendation: "", source: "rule" },
+    { code: "old_copyright", category: "content", severity: "important", points: 10, evidence: "The footer still says © 2019", recommendation: "", source: "rule" },
+    { code: "layout_shift", category: "speed", severity: "nice", points: 5, evidence: "The page jumps around while it loads", recommendation: "", source: "rule" },
   ],
 };
 const body = (extra = "") => `Hi Ace team,\n\nYour site takes about 8 seconds to load on a phone.${extra}\n\nLogan Irish\nIrish Web\n123 Main St, Boise, ID 83702\nReply 'no thanks' and I won't follow up.`;

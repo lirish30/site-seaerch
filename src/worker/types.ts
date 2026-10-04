@@ -1,19 +1,43 @@
 export type LeadStatus = "new" | "reviewed" | "contacted" | "replied" | "won" | "lost" | "skip";
 export type SiteStatus = "ok" | "no_website" | "unreachable" | "parked" | "blocked";
-export type Offer = "new_site" | "performance" | "care_plan" | "seo_basics";
-export type FindingGroup = "speed" | "stale" | "basics";
+export type Offer = "new_site" | "performance" | "care_plan" | "seo_basics" | "conversion";
+export type AuditCategory = "design" | "content" | "cro" | "mobile" | "speed" | "technical";
+export type Severity = "critical" | "important" | "nice";
 export type FindingCode =
-  | "slow_mobile" | "meh_mobile" | "slow_lcp" | "layout_shift" | "not_mobile_friendly"
-  | "old_copyright" | "stale_content" | "past_events" | "broken_links"
-  | "no_https" | "no_title_or_meta" | "no_contact_form"
-  | "no_website" | "site_unreachable" | "site_parked";
+  | "slow_mobile" | "meh_mobile" | "slow_lcp" | "layout_shift" | "not_mobile_friendly" | "no_viewport"
+  | "mobile_overflow" | "small_text_mobile"
+  | "old_copyright" | "stale_content" | "past_events" | "thin_homepage" | "missing_niche_page"
+  | "no_contact_path" | "no_cta" | "no_phone_visible" | "no_social_proof" | "no_nav" | "no_footer"
+  | "broken_links" | "no_https" | "no_title_or_meta" | "no_h1" | "no_schema" | "no_open_graph" | "images_missing_alt"
+  | "no_website" | "site_unreachable" | "site_parked"
+  | `ai_${string}`;
 
 export interface Finding {
   code: FindingCode;
-  group: FindingGroup | "site";
-  severity: "high" | "medium" | "low";
+  category: AuditCategory | "site";
+  severity: Severity;
+  /** Points deducted from the category score (rule findings) or 0 for AI observations already reflected in its score. */
   points: number;
   evidence: string;
+  recommendation: string;
+  source: "rule" | "ai";
+}
+
+/** Kinds of page a business site may link to; used for niche checks and lead links. */
+export type PageKind =
+  | "contact" | "about" | "services" | "menu" | "pricing" | "careers" | "team" | "blog" | "events"
+  | "locations" | "booking" | "portfolio" | "testimonials" | "faq" | "shop";
+
+export type CategoryScores = Partial<Record<AuditCategory, number>>;
+
+export interface AiReview {
+  niche: string;
+  value_proposition: string;
+  scores: { design: number; content: number; cro: number; mobile: number };
+  summaries: { design: string; content: string; cro: string; mobile: string };
+  strengths: string[];
+  niche_checklist: { item: string; present: boolean }[];
+  findings: { category: AuditCategory; severity: Severity; title: string; evidence: string; recommendation: string }[];
 }
 
 export interface Listing {
@@ -47,7 +71,13 @@ export interface Audit {
   pagespeed_mobile: number | null; lcp_ms: number | null; cls: number | null; mobile_friendly: boolean | null;
   https: boolean | null; has_title: boolean | null; has_meta_description: boolean | null;
   has_contact_form: boolean | null; copyright_year: number | null; latest_content_date: string | null;
-  broken_link_count: number | null; score: number; offer: Offer; findings: Finding[]; raw_r2_key: string | null;
+  broken_link_count: number | null;
+  /** Opportunity score (0-100, higher = better lead). Kept in `score` so existing sorting keeps working. */
+  score: number; offer: Offer; findings: Finding[]; raw_r2_key: string | null;
+  /** Site Health (0-100, higher = better site); null when nothing could be measured. */
+  health_score: number | null; niche: string | null; category_scores: CategoryScores;
+  ai_review: AiReview | null; screenshots: { desktop: string | null; mobile: string | null };
+  site_links: Partial<Record<PageKind, string>>;
 }
 export type AuditInsert = Omit<Audit, "id" | "created_at">;
 

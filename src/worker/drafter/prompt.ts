@@ -9,6 +9,7 @@ const OFFER_TEXT: Record<Offer, string> = {
   performance: "a speed and mobile fix for their existing site",
   care_plan: "ongoing website care: keeping content, links and updates current",
   seo_basics: "fixing the basics so Google and visitors trust the site (security, titles, contact options)",
+  conversion: "a conversion-focused refresh: clearer calls to action, easier contact and booking, and trust signals that turn visitors into customers",
 };
 
 export function buildPrompt(i: DraftInput) {

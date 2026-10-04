@@ -93,10 +93,12 @@ describe("db", () => {
       business_id: b.id, site_status: "ok", partial: false, pagespeed_mobile: 40, lcp_ms: 5000, cls: 0.1,
       mobile_friendly: true, https: true, has_title: true, has_meta_description: false, has_contact_form: true,
       copyright_year: 2019, latest_content_date: null, broken_link_count: 0, score: 41, offer: "performance",
-      findings: [{ code: "slow_mobile", group: "speed", severity: "high", points: 25, evidence: "x" }], raw_r2_key: null,
+      // v1-shaped finding, as stored by audits written before audit v2.
+      findings: [{ code: "slow_mobile", group: "speed", severity: "high", points: 25, evidence: "x" } as any], raw_r2_key: null, health_score: null, niche: null, category_scores: {}, ai_review: null, screenshots: { desktop: null, mobile: null }, site_links: {},
     });
     const a = await latestAudit(env.DB, b.id);
     expect(a!.findings[0].code).toBe("slow_mobile");
+    expect(a!.findings[0]).toMatchObject({ category: "speed", severity: "critical", source: "rule" });
     expect(a!.partial).toBe(false);
   });
 

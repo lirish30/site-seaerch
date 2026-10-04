@@ -20,7 +20,8 @@ export async function leadRows(db: D1Database, businesses: Business[]) {
     const audit = audits.get(b.id) ?? null;
     const best = pickRecipient(contactMap.get(b.id) ?? [], domainOf(b.website_url));
     return {
-      business: b, score: audit?.score ?? null, topFinding: audit?.findings[0]?.evidence ?? null,
+      business: b, score: audit?.score ?? null, health: audit?.health_score ?? null, niche: audit?.niche ?? null,
+      topFinding: audit?.findings[0]?.evidence ?? null,
       offer: audit?.offer ?? null, bestContact: best.contact?.value ?? null, hasEmail: !!best.emailContact,
       partial: audit?.partial ?? false,
     };
@@ -51,6 +52,15 @@ leadRoutes.get("/:id", async (c) => {
   const [audit, contacts, draft] = await Promise.all([latestAudit(c.env.DB, id), listContacts(c.env.DB, id), latestDraft(c.env.DB, id)]);
   const toContact = draft?.to_contact_id ? contacts.find((x) => x.id === draft.to_contact_id) ?? null : null;
   return c.json({ business, audit, contacts, draft, toContact });
+});
+
+// Screenshots live in the private R2 bucket; serve the latest audit's copy behind the app's auth.
+leadRoutes.get("/:id/screenshot/:which{desktop|mobile}", async (c) => {
+  const audit = await latestAudit(c.env.DB, c.req.param("id"));
+  const key = audit?.screenshots[c.req.param("which") as "desktop" | "mobile"];
+  const obj = key ? await c.env.RAW.get(key) : null;
+  if (!obj) return c.json({ error: "not found" }, 404);
+  return new Response(obj.body, { headers: { "content-type": "image/jpeg", "cache-control": "private, max-age=86400" } });
 });
 
 const PatchLead = z.object({ leadStatus: z.enum(STATUSES).optional(), notes: z.string().max(5000).optional() });
