@@ -9,6 +9,9 @@ export function defaultScenario(m: BusinessModel): ScenarioInputs {
     dealValue: Math.round((m.deal_value_band.low + m.deal_value_band.high) / 2) };
 }
 
+/** What to store after a roadmap build: the user's own saved numbers, else the default for the model now in force. */
+export const scenarioFor = (saved: ScenarioInputs | null, m: BusinessModel): ScenarioInputs => (saved?.edited ? saved : defaultScenario(m));
+
 /** Added monthly leads and revenue, from half the conversion lift (low) to all of it (high). */
 export function scenarioRange(i: ScenarioInputs): { leads: [number, number]; revenue: [number, number] } {
   // Rounded to cents of a lead so 0.03 - 0.02 doesn't come out as 0.00999…

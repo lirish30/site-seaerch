@@ -11,7 +11,7 @@ import { buildEvidence } from "./evidence";
 import { inferBusinessModel, reviewPage, synthesizeRoadmap } from "./stages";
 import { applyModeRules, factQuotes, hasTrackingGap, needsRetry, validateRecommendations, validateReview } from "./validate";
 import { rankRecommendations } from "./pxl";
-import { defaultScenario } from "./scenario";
+import { scenarioFor } from "./scenario";
 import { CRO_LIMITS } from "./config";
 import type { BusinessModel, CapturedPage, CroFrom, CroPage, CroPageRef, CroStage, Device, PageReview } from "./types";
 
@@ -166,7 +166,7 @@ export async function runCroAudit(deps: CroDeps, step: StepLike, p: CroParams) {
     const n = ranked.length;
     await updateCroAudit(deps.db, id, {
       strengths: out.strengths.slice(0, MAX_STRENGTHS), positioning: out.positioning, tracking_plan: out.tracking_plan,
-      scenario_inputs: audit.scenario_inputs ?? defaultScenario(model),
+      scenario_inputs: scenarioFor(audit.scenario_inputs, model),
       // Never pad with generic advice: say so plainly instead.
       warning: n < CRO_LIMITS.minItems
         ? `Only ${n} recommendation${n === 1 ? "" : "s"} had solid evidence behind ${n === 1 ? "it" : "them"}. The site may be hard to read automatically; check it by hand before presenting.`

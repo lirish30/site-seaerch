@@ -102,7 +102,8 @@ export type Horizon = 30 | 60 | 90;
 export interface RankedItem extends Recommendation { rank: number; horizon: Horizon; pxl_score: number }
 export interface CroItem extends RankedItem { id: string; cro_audit_id: string; included: boolean; edited: boolean; created_at: string }
 
-export interface ScenarioInputs { visitors: number; currentRate: number; targetRate: number; closeRate: number; dealValue: number }
+// `edited` marks numbers the user saved themselves; until then the scenario follows the assumptions (job value, traffic, model).
+export interface ScenarioInputs { visitors: number; currentRate: number; targetRate: number; closeRate: number; dealValue: number; edited?: true }
 
 export interface CroAudit {
   id: string; business_id: string; status: CroStatus; step: CroStep; error: string | null; warning: string | null;

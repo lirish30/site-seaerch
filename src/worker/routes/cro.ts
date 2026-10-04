@@ -8,6 +8,7 @@ import { checkSpend, PRICES } from "../cost";
 import { logActivity } from "../db/activity";
 import { createCroAudit, getCroAudit, latestCroAudit, listCroAudits, listCroItems, runningCroAudit, updateCroAudit, updateCroItem, type CroItemPatch } from "../db/cro";
 import { shotKey, textKey } from "../cro/pipeline";
+import { scenarioFor } from "../cro/scenario";
 import { BIZ_MODEL_KEYS, type BusinessModel, type CroAudit, type CroFrom, type CroStep } from "../cro/types";
 
 export const croRoutes = new Hono<{ Bindings: Env }>();
@@ -121,9 +122,13 @@ croRoutes.patch("/cro-audits/:id/assumptions", async (c) => {
   if (o.deal_value_band) overrides.deal_value_band = { low: o.deal_value_band.low, high: o.deal_value_band.high, rationale: "Set by you", evidence_ids: [] };
   if (o.sales_cycle) overrides.sales_cycle = { label: o.sales_cycle, rationale: "Set by you" };
   const s = p.data.scenario;
+  // Unless the user saved their own scenario, job value, traffic and model edits carry through to it straight away.
+  const moves = !!(o.model || o.traffic_tier || o.deal_value_band);
+  const followed = !s && moves && a.scenario_inputs && a.business_model ? scenarioFor(a.scenario_inputs, { ...a.business_model, ...overrides }) : null;
   await updateCroAudit(c.env.DB, a.id, {
     model_overrides: overrides,
-    ...(s ? { scenario_inputs: { visitors: s.visitors, currentRate: s.currentRate, targetRate: s.targetRate, closeRate: s.closeRate, dealValue: s.dealValue } } : {}),
+    ...(s ? { scenario_inputs: { visitors: s.visitors, currentRate: s.currentRate, targetRate: s.targetRate, closeRate: s.closeRate, dealValue: s.dealValue, edited: true } }
+      : followed ? { scenario_inputs: followed } : {}),
   });
   return c.json(await getCroAudit(c.env.DB, a.id));
 });

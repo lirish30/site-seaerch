@@ -120,6 +120,20 @@ describe("runCroAudit", () => {
     expect([ai.count("model"), ai.count("pages"), ai.count("synthesize")]).toEqual([0, 0, 1]);
     expect((await listCroItems(env.DB, a.id)).find((i) => i.area === "header_nav")!.mode).toBe("test");
   });
+  it("rebuilds the scenario from the effective model, unless the user saved their own", async () => {
+    const { a } = await start();
+    await runCroAudit(deps().d, step, { auditId: a.id });
+    expect((await getCroAudit(env.DB, a.id))!.scenario_inputs).toMatchObject({ visitors: 500, dealValue: 900 });
+    await updateCroAudit(env.DB, a.id, { model_overrides: { traffic_tier: "high", deal_value_band: { low: 5000, high: 10000, rationale: "Set by you", evidence_ids: [] } } });
+    await runCroAudit(deps().d, step, { auditId: a.id, from: "synthesize" });
+    const r = (await getCroAudit(env.DB, a.id))!;
+    expect(r.scenario_inputs).toMatchObject({ visitors: 8000, dealValue: 7500 });
+    expect(r.scenario_inputs!.edited).toBeUndefined();
+    const own = { visitors: 900, currentRate: 0.02, targetRate: 0.04, closeRate: 0.5, dealValue: 1200, edited: true as const };
+    await updateCroAudit(env.DB, a.id, { scenario_inputs: own, model_overrides: { traffic_tier: "low" } });
+    await runCroAudit(deps().d, step, { auditId: a.id, from: "synthesize" });
+    expect((await getCroAudit(env.DB, a.id))!.scenario_inputs).toEqual(own);
+  });
   it("handles a desktop-only capture (no mobile snapshot or images)", async () => {
     const { a } = await start();
     const { d } = deps({ pages: { "https://ace.com/": { mobile: null, mobileJpeg: null, mobileTopJpeg: null } } });

@@ -1,7 +1,7 @@
 import { useId, useState } from "react";
 import {
   BIZ_MODELS, BIZ_MODEL_KEYS, SCENARIO_LABEL, assumptionsToForm, effectiveModel, money, parseAssumptionsForm, parseScenarioForm, rebuildVisible, scenarioRange, scenarioToForm,
-  type AssumptionOverrides, type AssumptionsForm, type BizModelKey, type CroAudit, type ScenarioForm, type ScenarioInputs,
+  type AssumptionOverrides, type AssumptionsForm, type BizModelKey, type CroAudit, type ScenarioField, type ScenarioForm, type ScenarioInputs,
 } from "../cro";
 
 const TIERS = ["low", "medium", "high"] as const;
@@ -44,7 +44,7 @@ export function CroSnapshot({ audit, busy, rebuildOwed, onRebuild }: { audit: Cr
   );
 }
 
-const SCENARIO_FIELDS: readonly (readonly [keyof ScenarioInputs, string, boolean])[] = [
+const SCENARIO_FIELDS: readonly (readonly [ScenarioField, string, boolean])[] = [
   ["visitors", "Visitors a month", false], ["currentRate", "Converting today (%)", true], ["targetRate", "After the changes (%)", true],
   ["closeRate", "Leads that buy (%)", true], ["dealValue", "Average job ($)", false],
 ];
@@ -59,7 +59,7 @@ export function CroScenario({ audit, busy, onSave }: { audit: CroAudit; busy: bo
   const [note, setNote] = useState("");
   if (!f) return null;
   const parsed = parseScenarioForm(f);
-  const edit = (k: keyof ScenarioInputs, v: string) => { setF({ ...f, [k]: v }); setNote(""); };
+  const edit = (k: ScenarioField, v: string) => { setF({ ...f, [k]: v }); setNote(""); };
   const save = async () => { if (parsed.ok) setNote((await onSave(parsed.value)) ? "Saved." : ""); };
   return (
     <section className="card" aria-label="What it could be worth">

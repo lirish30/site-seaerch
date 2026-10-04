@@ -148,6 +148,9 @@ export default function CroPanel({ leadId, onError }: { leadId: string; onError:
       onPatch={(p) => patch(it, p)} onMove={(d) => void move(it, d)} onEvidence={openEvidence} />
   );
   const roadmap = HORIZONS.map(([h, label]) => [h, label, split.columns[h]] as const);
+  // Keyed on the numbers (not the saved flag) so an assumptions edit that moves them refreshes the form, but the user's own Save doesn't remount it.
+  const sc = a.scenario_inputs;
+  const scenarioKey = sc ? [sc.visitors, sc.currentRate, sc.targetRate, sc.closeRate, sc.dealValue].join("-") : "";
   const evidenceShown = evidence ? a.evidence.filter((e) => evidence === "all" || evidence.includes(e.id)) : [];
 
   return (
@@ -194,7 +197,7 @@ export default function CroPanel({ leadId, onError }: { leadId: string; onError:
       {a.tracking_plan.length > 0 && <section className="card"><h3>What to measure</h3>
         <table><tbody>{a.tracking_plan.map((t, i) => <tr key={i}><td><strong>{t.event}</strong></td><td>{t.why}</td></tr>)}</tbody></table></section>}
 
-      <CroScenario key={`s-${a.id}-${a.completed_at}`} audit={a} busy={busy === "scenario"}
+      <CroScenario key={`s-${a.id}-${a.completed_at}-${scenarioKey}`} audit={a} busy={busy === "scenario"}
         onSave={(s: ScenarioInputs) => act("scenario", () => api.patch(`/cro-audits/${a.id}/assumptions`, { scenario: s }), a.id)} />
 
       {evidence && (

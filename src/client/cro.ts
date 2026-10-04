@@ -59,7 +59,8 @@ export type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
 const MAX_AMOUNT = 1e9;
 const num = (s: string) => (s.trim() === "" ? NaN : Number(s));
 
-export type ScenarioForm = Record<keyof ScenarioInputs, string>;
+export type ScenarioField = Exclude<keyof ScenarioInputs, "edited">;
+export type ScenarioForm = Record<ScenarioField, string>;
 const pct = (v: number) => String(Math.round(v * 1000) / 10);
 export const scenarioToForm = (s: ScenarioInputs): ScenarioForm => ({
   visitors: String(s.visitors), currentRate: pct(s.currentRate), targetRate: pct(s.targetRate), closeRate: pct(s.closeRate), dealValue: String(s.dealValue),

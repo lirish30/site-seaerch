@@ -3,6 +3,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
 import { saveSettings } from "../src/worker/db/settings";
 import { createCroAudit, getCroAudit, latestCroAudit, listCroItems, replaceCroItems, updateCroAudit } from "../src/worker/db/cro";
 import { shotKey, textKey } from "../src/worker/cro/pipeline";
+import { defaultScenario } from "../src/worker/cro/scenario";
 import { seedBusiness, model, ranked, ev } from "./fixtures/cro";
 import type { PageReview } from "../src/worker/cro/types";
 
@@ -152,6 +153,29 @@ describe("CRO routes", () => {
     r = await api(`/api/cro-audits/${a.id}/rebuild`, { method: "POST" });
     expect(await r.json()).toEqual({ ok: true, from: "pages" });
     expect(created.map((c) => c.params)).toEqual([{ auditId: a.id, from: "synthesize" }, { auditId: a.id, from: "pages" }]);
+  });
+
+  it("keeps the revenue scenario in step with job value, traffic and model edits until the user saves their own scenario", async () => {
+    const { a } = await doneAudit();
+    const patch = (body: unknown) => api(`/api/cro-audits/${a.id}/assumptions`, { method: "PATCH", body: JSON.stringify(body) }).then((r) => r.json<any>());
+    await updateCroAudit(env.DB, a.id, { scenario_inputs: defaultScenario(model()) });
+    let r = await patch({ overrides: { deal_value_band: { low: 5000, high: 10000 }, traffic_tier: "high", model: "appointment" } });
+    expect(r.scenario_inputs).toEqual({ ...defaultScenario({ ...model(), deal_value_band: { low: 5000, high: 10000, rationale: "", evidence_ids: [] }, traffic_tier: "high", model: "appointment" }) });
+    expect(r.scenario_inputs).toMatchObject({ dealValue: 7500, visitors: 8000 });
+    expect(r.scenario_inputs.edited).toBeUndefined();
+    r = await patch({ overrides: { sales_cycle: "1 week" } });
+    expect(r.scenario_inputs).toMatchObject({ dealValue: 7500, visitors: 8000 });
+    // The user's own numbers win from then on, and a later job-value edit no longer touches them.
+    r = await patch({ scenario: { visitors: 900, currentRate: 0.02, targetRate: 0.04, closeRate: 0.5, dealValue: 1200 } });
+    expect(r.scenario_inputs).toEqual({ visitors: 900, currentRate: 0.02, targetRate: 0.04, closeRate: 0.5, dealValue: 1200, edited: true });
+    r = await patch({ overrides: { deal_value_band: { low: 100, high: 300 }, traffic_tier: "low" } });
+    expect(r.scenario_inputs).toEqual({ visitors: 900, currentRate: 0.02, targetRate: 0.04, closeRate: 0.5, dealValue: 1200, edited: true });
+  });
+
+  it("leaves a missing scenario alone when assumptions change before the first roadmap", async () => {
+    const { a } = await doneAudit();
+    const r = await api(`/api/cro-audits/${a.id}/assumptions`, { method: "PATCH", body: JSON.stringify({ overrides: { traffic_tier: "high" } }) }).then((x) => x.json<any>());
+    expect(r.scenario_inputs).toBeNull();
   });
 
   it("rejects nonsense assumptions without changing anything, and refuses edits while the audit is running", async () => {
