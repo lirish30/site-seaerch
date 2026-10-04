@@ -1,19 +1,19 @@
 import { useId, useState } from "react";
 import {
-  BIZ_MODELS, BIZ_MODEL_KEYS, SCENARIO_LABEL, assumptionsToForm, effectiveModel, money, parseAssumptionsForm, parseScenarioForm, scenarioRange, scenarioToForm,
+  BIZ_MODELS, BIZ_MODEL_KEYS, SCENARIO_LABEL, assumptionsToForm, effectiveModel, money, parseAssumptionsForm, parseScenarioForm, rebuildVisible, scenarioRange, scenarioToForm,
   type AssumptionOverrides, type AssumptionsForm, type BizModelKey, type CroAudit, type ScenarioForm, type ScenarioInputs,
 } from "../cro";
 
 const TIERS = ["low", "medium", "high"] as const;
 
-export function CroSnapshot({ audit, busy, onRebuild }: { audit: CroAudit; busy: boolean; onRebuild: (overrides: AssumptionOverrides) => void }) {
+export function CroSnapshot({ audit, busy, rebuildOwed, onRebuild }: { audit: CroAudit; busy: boolean; rebuildOwed: boolean; onRebuild: (overrides: AssumptionOverrides) => void }) {
   const m = effectiveModel(audit);
   const [f, setF] = useState<AssumptionsForm | null>(m ? assumptionsToForm(m) : null);
   const [error, setError] = useState("");
   const jobId = useId(), errId = useId();
   if (!m || !f) return null;
   const parsed = parseAssumptionsForm(f, m);
-  const changed = parsed.ok ? Object.keys(parsed.value).length > 0 : true;
+  const changed = rebuildVisible(parsed, rebuildOwed);
   const set = (p: Partial<AssumptionsForm>) => { setF({ ...f, ...p }); setError(""); };
   const rebuild = () => { if (parsed.ok) onRebuild(parsed.value); else setError(parsed.error); };
   return (

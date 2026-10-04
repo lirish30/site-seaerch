@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError } from "../api";
 import { pollDelay } from "../poll";
 import {
-  EVIDENCE_FAMILY_LABEL, STEP_LABEL, neighborOf, splitRoadmap, stepIndex,
+  EVIDENCE_FAMILY_LABEL, STEP_LABEL, neighborOf, rebuildNeedsPatch, splitRoadmap, stepIndex,
   type AssumptionOverrides, type CroAudit, type CroHistoryRow, type CroItem, type CroResponse, type Horizon, type ScenarioInputs,
 } from "../cro";
 import CroItemCard, { type CroItemPatch } from "./CroItemCard";
@@ -19,6 +19,7 @@ export default function CroPanel({ leadId, onError }: { leadId: string; onError:
   const [busy, setBusy] = useState("");
   const [moving, setMoving] = useState(false);
   const [evidence, setEvidence] = useState<string[] | "all" | null>(null); // evidence ids to show, or "all"
+  const [rebuildOwed, setRebuildOwed] = useState<string | null>(null); // audit id whose edits are saved but whose rebuild was refused
   const [tick, setTick] = useState(0);
   const [lagging, setLagging] = useState(false);
   const failures = useRef(0);
@@ -35,7 +36,7 @@ export default function CroPanel({ leadId, onError }: { leadId: string; onError:
   }
 
   useEffect(() => {
-    setData(null); setHistory([]); setEvidence(null); setLagging(false); failures.current = 0;
+    setData(null); setHistory([]); setEvidence(null); setRebuildOwed(null); setLagging(false); failures.current = 0;
     load().catch((e) => onError(messageOf(e)));
     return () => { seq.current++; };
   }, [leadId]);
@@ -80,7 +81,7 @@ export default function CroPanel({ leadId, onError }: { leadId: string; onError:
       : [{ id: cur.id, status: cur.status, created_at: cur.created_at, completed_at: cur.completed_at, item_count: data.items.length }, ...history];
     return (
       <label className="row small cro-pick">Audit
-        <select className="auto" value={cur.id} onChange={(e) => load(e.target.value).catch((x) => onError(messageOf(x)))}>
+        <select className="auto" value={cur.id} onChange={(e) => { setRebuildOwed(null); load(e.target.value).catch((x) => onError(messageOf(x))); }}>
           {rows.map((h) => <option key={h.id} value={h.id}>{new Date(h.created_at).toLocaleString()} · {h.status}{h.status === "done" ? ` · ${h.item_count} items` : ""}</option>)}
         </select>
       </label>
@@ -161,9 +162,11 @@ export default function CroPanel({ leadId, onError }: { leadId: string; onError:
       {a.warning && <p className="warn">⚠ {a.warning}</p>}
       {a.partial && <p className="muted small">⚠ Some pages couldn't be loaded; the roadmap covers the rest.</p>}
 
-      <CroSnapshot key={`${a.id}-${a.completed_at}`} audit={a} busy={busy === "rebuild"} onRebuild={(overrides: AssumptionOverrides) => act("rebuild", async () => {
-        if (Object.keys(overrides).length) await api.patch(`/cro-audits/${a.id}/assumptions`, { overrides });
+      <CroSnapshot key={`${a.id}-${a.completed_at}`} audit={a} busy={busy === "rebuild"} rebuildOwed={rebuildOwed === a.id} onRebuild={(overrides: AssumptionOverrides) => act("rebuild", async () => {
+        if (rebuildNeedsPatch(overrides)) await api.patch(`/cro-audits/${a.id}/assumptions`, { overrides });
+        setRebuildOwed(a.id); // saved; a rebuild is owed until the server accepts it (a 402/409 leaves the button up for a retry)
         await api.post(`/cro-audits/${a.id}/rebuild`);
+        setRebuildOwed(null);
       }, a.id)} />
 
       {a.strengths.length > 0 && <section className="card"><h3>What already works</h3><ul>{a.strengths.map((s, i) => <li key={i}>{s}</li>)}</ul></section>}

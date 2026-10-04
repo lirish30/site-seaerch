@@ -107,3 +107,11 @@ export function parseAssumptionsForm(f: AssumptionsForm, current: BusinessModel)
   if (cycle !== current.sales_cycle.label) o.sales_cycle = cycle;
   return { ok: true, value: o };
 }
+
+/** Whether "Rebuild roadmap" shows: the form differs from the saved assumptions (or is invalid, so the problem can be reported),
+ *  or an earlier attempt saved edits but the rebuild was refused (402/409), so the roadmap is still built from the old ones. */
+export const rebuildVisible = (parsed: Parsed<AssumptionOverrides>, rebuildOwed: boolean): boolean =>
+  rebuildOwed || !parsed.ok || Object.keys(parsed.value).length > 0;
+
+/** A rebuild-only retry has nothing new to save, so it skips the assumptions PATCH. */
+export const rebuildNeedsPatch = (o: AssumptionOverrides): boolean => Object.keys(o).length > 0;

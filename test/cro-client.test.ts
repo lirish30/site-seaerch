@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   effectiveModel, stepIndex, STEP_LABEL, MODE_LABEL, EVIDENCE_FAMILY_LABEL,
-  splitRoadmap, neighborOf, parseScenarioForm, scenarioToForm, parseAssumptionsForm,
+  splitRoadmap, neighborOf, parseScenarioForm, scenarioToForm, parseAssumptionsForm, rebuildVisible, rebuildNeedsPatch,
 } from "../src/client/cro";
 import type { CroItem } from "../src/client/cro";
 import { model, ranked } from "./fixtures/cro";
@@ -94,5 +94,26 @@ describe("parseAssumptionsForm", () => {
     expect(parseAssumptionsForm({ ...same, low: "2000", high: "100" }, m).ok).toBe(false);
     expect(parseAssumptionsForm({ ...same, low: "x" }, m).ok).toBe(false);
     expect(parseAssumptionsForm({ ...same, high: "-1" }, m).ok).toBe(false);
+  });
+});
+
+describe("rebuild button decision", () => {
+  const m = model();
+  const same = { model: m.model, primary: m.primary_conversion, tier: m.traffic_tier, low: String(m.deal_value_band.low), high: String(m.deal_value_band.high), cycle: m.sales_cycle.label };
+  it("shows when the form differs from the saved assumptions", () => {
+    expect(rebuildVisible(parseAssumptionsForm({ ...same, tier: "high" }, m), false)).toBe(true);
+  });
+  it("shows when the form is invalid, so the problem can be reported", () => {
+    expect(rebuildVisible(parseAssumptionsForm({ ...same, primary: "" }, m), false)).toBe(true);
+  });
+  it("hides when nothing changed and no rebuild is owed", () => {
+    expect(rebuildVisible(parseAssumptionsForm(same, m), false)).toBe(false);
+  });
+  it("stays visible when edits were saved but the rebuild was refused (nothing differs any more)", () => {
+    expect(rebuildVisible(parseAssumptionsForm(same, m), true)).toBe(true);
+  });
+  it("only saves assumptions first when there is something to save", () => {
+    expect(rebuildNeedsPatch({})).toBe(false);
+    expect(rebuildNeedsPatch({ traffic_tier: "high" })).toBe(true);
   });
 });
