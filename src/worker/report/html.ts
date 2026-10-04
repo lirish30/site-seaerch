@@ -1,14 +1,14 @@
 import type { Audit, AuditCategory, Business, Finding, Settings } from "../types";
 import { NICHES } from "../audit/rubrics";
+import { esc } from "./esc";
+import { renderCroSlides, croCss, croDocSection, type CroReportData } from "./cro";
 
 /** Everything the client-facing audit deck needs. Screenshots are inlined as data URIs so the HTML is self-contained. */
 export interface ReportData {
   business: Business; audit: Audit; settings: Settings; now: Date;
   desktopJpegB64: string | null; mobileJpegB64: string | null;
+  cro?: CroReportData | null;
 }
-
-const esc = (s: string | number | null | undefined) =>
-  String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 const CAT_LABEL: Record<AuditCategory | "site", string> = {
   design: "Design & UX", content: "Content", cro: "Conversion", mobile: "Mobile", speed: "Speed", technical: "Technical & SEO", site: "Website",
@@ -124,6 +124,8 @@ export function renderReport(d: ReportData): string {
     </section>`);
   }
 
+  if (d.cro) slides.push(...renderCroSlides(d.cro));
+
   // 6. Proposal + next steps
   const [offerTitle, offerText] = OFFER[a.offer] ?? OFFER.care_plan;
   const plan = findings.filter((f) => f.severity !== "nice" && f.recommendation).slice(0, 6);
@@ -140,7 +142,7 @@ export function renderReport(d: ReportData): string {
   </section>`);
 
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>${esc(b.name)}: website audit</title><style>${CSS}</style></head><body>${slides.join("\n")}</body></html>`;
+<title>${esc(b.name)}: website audit</title><style>${CSS}${d.cro ? croCss(d.cro) : ""}</style></head><body>${slides.join("\n")}</body></html>`;
 }
 
 // Bright, colorful deck styling. Tokens up top so a brand system can re-skin it.
@@ -234,6 +236,7 @@ ${a.ai_review?.value_proposition ? `<p><i>What visitors take away: “${esc(a.ai
 ${a.ai_review?.strengths.length ? `<h2>What's working</h2><ul>${a.ai_review.strengths.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
 <h2>Everything we found</h2>${ORDER.map(section).join("")}
 ${a.ai_review?.niche_checklist.length ? `<h2>What a ${esc(niche?.label.toLowerCase() ?? "business")} website needs</h2><ul>${a.ai_review.niche_checklist.map((x) => `<li>${x.present ? "✓" : "✗"} ${esc(x.item)}</li>`).join("")}</ul>` : ""}
+${d.cro ? croDocSection(d.cro) : ""}
 <h2>Recommended next step: ${esc(offerTitle)}</h2><p>${esc(offerText)}</p>
 ${email ? `<h2>Outreach email draft</h2><p><b>Subject:</b> ${esc(email.subject)}</p><p>${esc(email.body).replace(/\n/g, "<br/>")}</p>` : ""}
 </body></html>`;
