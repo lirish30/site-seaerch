@@ -213,6 +213,7 @@ leadRoutes.patch("/:id/draft", async (c) => {
 const Regenerate = z.object({
   steeringNote: z.string().max(1000).optional(),
   focus: z.array(z.number().int().min(0).max(200)).max(10).optional(),
+  croFocus: z.array(z.string().min(1).max(64)).max(10).optional(),
   tone: z.enum(["friendly_local", "consultative", "direct", "formal"]).nullable().optional(),
 });
 leadRoutes.post("/:id/regenerate", async (c) => {
@@ -221,8 +222,9 @@ leadRoutes.post("/:id/regenerate", async (c) => {
   if (!p.success) return c.json({ error: "invalid" }, 400);
   const id = c.req.param("id");
   try {
-    const d = await regenerateDraft(depsFromEnv(c.env), id, { steeringNote: p.data.steeringNote?.trim() || null, focus: p.data.focus, tone: p.data.tone });
-    await logActivity(c.env.DB, id, "draft", p.data.focus?.length ? `Regenerated around ${p.data.focus.length} chosen issue(s)` : "Regenerated");
+    const d = await regenerateDraft(depsFromEnv(c.env), id, { steeringNote: p.data.steeringNote?.trim() || null, focus: p.data.focus, croFocus: p.data.croFocus, tone: p.data.tone });
+    const picked = (p.data.focus?.length ?? 0) + (p.data.croFocus?.length ?? 0);
+    await logActivity(c.env.DB, id, "draft", picked ? `Regenerated around ${picked} chosen issue(s)` : "Regenerated");
     return c.json(d);
   } catch (e) {
     return c.json({ error: (e as Error).message }, 400);

@@ -15,9 +15,11 @@ import { PRICES } from "../cost";
 import type { Renderer } from "../render/render";
 import { reviewSite, type ReviewCaller } from "../audit/review";
 import { isSocialOnlyUrl } from "../crawler/extract";
-import type { AiReview, Draft, SiteStatus, TonePreset } from "../types";
+import { croItemsForBusiness } from "../db/cro";
+import type { CroItem } from "../cro/types";
+import type { AiReview, Draft, Finding, Offer, SiteStatus, TonePreset } from "../types";
 
-export interface DraftOptions { steeringNote?: string | null; focus?: number[]; tone?: TonePreset | null; }
+export interface DraftOptions { steeringNote?: string | null; focus?: number[]; tone?: TonePreset | null; croFocus?: string[] }
 
 export interface StepLike {
   do<T>(name: string, fn: () => Promise<T>): Promise<T>;
@@ -34,6 +36,10 @@ export interface LeadDeps {
 const b64 = (bytes: ArrayBuffer | Uint8Array) => Buffer.from(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)).toString("base64");
 const withScheme = (u: string) => (/^https?:\/\//i.test(u) ? u : `https://${u}`);
 
+/** A CRO opportunity as a prompt finding: the observation is the evidence, the change is the fix. */
+const croFinding = (i: CroItem): Finding => ({ code: `cro:${i.id}` as Finding["code"], category: "cro", severity: "important", points: 0,
+  evidence: i.observation, recommendation: i.change, source: "ai" });
+
 async function draftFor(deps: LeadDeps, businessId: string, o: DraftOptions = {}): Promise<Draft> {
   const [business, audit, settings, poc] = await Promise.all([
     getBusiness(deps.db, businessId), latestAudit(deps.db, businessId), getSettings(deps.db), pocFor(deps.db, businessId),
@@ -44,14 +50,18 @@ async function draftFor(deps: LeadDeps, businessId: string, o: DraftOptions = {}
     ? await ensureContact(deps.db, businessId, { type: "email", value: poc.email, source_url: null, person_name: poc.name, role: poc.role, confidence: 1 })
     : null;
   const contacts = await listContacts(deps.db, businessId);
-  const focus = (o.focus ?? []).map((i) => audit.findings[i]).filter(Boolean);
+  // croItemsForBusiness scopes ids to this lead's own audits, so another lead's item id is silently dropped.
+  const croItems = o.croFocus?.length ? (await croItemsForBusiness(deps.db, businessId, o.croFocus)).filter((i) => i.included) : [];
+  const focus = [...(o.focus ?? []).map((i) => audit.findings[i]).filter(Boolean), ...croItems.map(croFinding)];
+  // Mostly-CRO picks make this a conversion pitch.
+  const offer: Offer = croItems.length * 2 > focus.length ? "conversion" : audit.offer;
   const steeringNote = o.steeringNote ?? null;
   const d = await generateDraft({
-    settings, business, findings: audit.findings, offer: audit.offer, contacts, steeringNote, focus, tone: o.tone ?? null,
+    settings, business, findings: audit.findings, offer, contacts, steeringNote, focus, tone: o.tone ?? null,
     niche: audit.niche, valueProposition: audit.ai_review?.value_proposition ?? null, poc: poc ? { name: poc.name, role: poc.role } : null,
   }, deps.claude, pocContact?.id ?? null);
   await recordUsage(deps.db, "claude", 1, PRICES.claudePerDraft);
-  return insertDraft(deps.db, { business_id: businessId, audit_id: audit.id, offer: audit.offer, steering_note: steeringNote, ...d });
+  return insertDraft(deps.db, { business_id: businessId, audit_id: audit.id, offer, steering_note: steeringNote, ...d });
 }
 
 const measurable = (s: SiteStatus) => s === "ok" || s === "blocked";
