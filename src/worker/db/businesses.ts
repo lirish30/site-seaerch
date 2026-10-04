@@ -51,20 +51,41 @@ export async function upsertBusiness(db: D1Database, l: Listing, searchId: strin
 
 export async function listBusinessesForSearch(db: D1Database, searchId: string, o: { hideSkipped: boolean }) {
   const sql = `SELECT b.* FROM businesses b JOIN search_results sr ON sr.business_id = b.id
-    WHERE sr.search_id = ? ${o.hideSkipped ? "AND b.lead_status != 'skip'" : ""}`;
+    WHERE sr.search_id = ? AND b.archived_at IS NULL ${o.hideSkipped ? "AND b.lead_status != 'skip'" : ""}`;
   return (await db.prepare(sql).bind(searchId).all<Business>()).results;
 }
 
-export async function listAllBusinesses(db: D1Database, o: { status?: LeadStatus; limit?: number; offset?: number }) {
+export async function listAllBusinesses(db: D1Database, o: { status?: LeadStatus; limit?: number; offset?: number; archived?: boolean }) {
   const page = `ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`;
   const lim = o.limit ?? -1, off = o.offset ?? 0;
+  const arch = o.archived ? "archived_at IS NOT NULL" : "archived_at IS NULL";
   const stmt = o.status
-    ? db.prepare(`SELECT * FROM businesses WHERE lead_status = ? ${page}`).bind(o.status, lim, off)
-    : db.prepare(`SELECT * FROM businesses ${page}`).bind(lim, off);
+    ? db.prepare(`SELECT * FROM businesses WHERE lead_status = ? AND ${arch} ${page}`).bind(o.status, lim, off)
+    : db.prepare(`SELECT * FROM businesses WHERE ${arch} ${page}`).bind(lim, off);
   return (await stmt.all<Business>()).results;
 }
 
-export async function updateLead(db: D1Database, id: string, u: { leadStatus?: LeadStatus; notes?: string }) {
+export async function setArchived(db: D1Database, id: string, archived: boolean) {
+  await db.prepare(`UPDATE businesses SET archived_at = ? WHERE id = ?`).bind(archived ? new Date().toISOString() : null, id).run();
+  return (await getBusiness(db, id))!;
+}
+
+/** Permanently removes a lead and everything recorded about it. Raw crawl files in R2 are left to expire. */
+export async function deleteBusiness(db: D1Database, id: string) {
+  await db.batch(["search_results", "audits", "contacts", "drafts", "people", "activity"].map((t) =>
+    db.prepare(`DELETE FROM ${t} WHERE business_id = ?`).bind(id)).concat(db.prepare(`DELETE FROM businesses WHERE id = ?`).bind(id)));
+}
+
+export async function updateLead(db: D1Database, id: string, u: {
+  leadStatus?: LeadStatus; notes?: string; followUpAt?: string | null; dealValue?: number | null; websiteUrl?: string | null;
+}) {
+  if (u.followUpAt !== undefined) await db.prepare(`UPDATE businesses SET follow_up_at = ? WHERE id = ?`).bind(u.followUpAt, id).run();
+  if (u.dealValue !== undefined) await db.prepare(`UPDATE businesses SET deal_value = ? WHERE id = ?`).bind(u.dealValue, id).run();
+  if (u.websiteUrl !== undefined) {
+    const raw = domainOf(u.websiteUrl);
+    const domain = raw && !isSocialOnlyUrl(`https://${raw}/`) ? raw : null;
+    await db.prepare(`UPDATE businesses SET website_url = ?, domain = ? WHERE id = ?`).bind(u.websiteUrl, domain, id).run();
+  }
   if (u.leadStatus) {
     const contactedAt = u.leadStatus === "contacted" ? new Date().toISOString() : null;
     await db.prepare(`UPDATE businesses SET lead_status = ?, contacted_at = COALESCE(?, contacted_at) WHERE id = ?`)

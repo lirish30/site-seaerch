@@ -63,8 +63,20 @@ export interface Business {
   address: string | null; phone: string | null; website_url: string | null; maps_url: string | null;
   rating: number | null; review_count: number | null; first_seen_search_id: string | null;
   lead_status: LeadStatus; notes: string | null; contacted_at: string | null; last_error: string | null;
-  created_at: string;
+  created_at: string; archived_at: string | null; follow_up_at: string | null; deal_value: number | null;
 }
+
+export interface PersonInput {
+  name: string; role?: string | null; email?: string | null; phone?: string | null; linkedin?: string | null;
+  source?: "manual" | "site"; is_poc?: boolean;
+}
+export interface Person {
+  id: string; business_id: string; name: string; role: string | null; email: string | null; phone: string | null;
+  linkedin: string | null; source: "manual" | "site"; is_poc: boolean; created_at: string;
+}
+
+export type ActivityKind = "status" | "archived" | "restored" | "website" | "reaudit" | "score_flagged" | "export" | "draft";
+export interface Activity { id: string; business_id: string; kind: ActivityKind; detail: string | null; created_at: string; }
 
 export interface Audit {
   id: string; business_id: string; created_at: string; site_status: SiteStatus; partial: boolean;

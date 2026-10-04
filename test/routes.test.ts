@@ -170,4 +170,66 @@ describe("routes", () => {
     expect(r.settings.your_name).toBe("Logan");
     expect(Array.isArray(r.usage)).toBe(true);
   });
+
+  it("archive hides a lead from All Leads and search results; restore brings it back; both are logged", async () => {
+    const { s, b } = await seedLead();
+    const ids = async (q = "") => (await (await api(`/api/leads?limit=500${q}`)).json<any[]>()).map((r) => r.business.id);
+    expect(await ids()).toContain(b.id);
+    expect((await (await api(`/api/leads/${b.id}/archive`, { method: "POST", body: JSON.stringify({ archived: true }) })).json<any>()).archived_at).not.toBeNull();
+    expect(await ids()).not.toContain(b.id);
+    expect(await ids("&archived=1")).toContain(b.id);
+    expect((await (await api(`/api/searches/${s.id}`)).json<any>()).leads.map((r: any) => r.business.id)).not.toContain(b.id);
+    await api(`/api/leads/${b.id}/archive`, { method: "POST", body: JSON.stringify({ archived: false }) });
+    expect(await ids()).toContain(b.id);
+    const detail = await (await api(`/api/leads/${b.id}`)).json<any>();
+    expect(detail.activity.map((a: any) => a.kind)).toEqual(["restored", "archived"]);
+  });
+
+  it("delete removes the lead and its audit, contacts, draft, people and activity", async () => {
+    const { b } = await seedLead();
+    await api(`/api/leads/${b.id}/people`, { method: "POST", body: JSON.stringify({ name: "Ann Lee" }) });
+    expect((await api(`/api/leads/${b.id}`, { method: "DELETE" })).status).toBe(200);
+    expect((await api(`/api/leads/${b.id}`)).status).toBe(404);
+    for (const t of ["audits", "contacts", "drafts", "people", "activity", "search_results"])
+      expect(await env.DB.prepare(`SELECT COUNT(*) AS n FROM ${t} WHERE business_id = ?`).bind(b.id).first<number>("n")).toBe(0);
+    expect((await api(`/api/leads/${b.id}`, { method: "DELETE" })).status).toBe(404);
+  });
+
+  it("people CRUD keeps a single point of contact", async () => {
+    const { b } = await seedLead();
+    const add = async (body: object) => api(`/api/leads/${b.id}/people`, { method: "POST", body: JSON.stringify(body) });
+    expect((await add({ name: "" })).status).toBe(400);
+    expect((await add({ name: "X", email: "not-an-email" })).status).toBe(400);
+    const ann = await (await add({ name: "Ann Lee", role: "Owner", email: "ann@ace.com", is_poc: true })).json<any>();
+    const bob = await (await add({ name: "Bob", email: "", source: "site" })).json<any>();
+    expect(bob.email).toBeNull();
+    await api(`/api/leads/${b.id}/people/${bob.id}`, { method: "PATCH", body: JSON.stringify({ is_poc: true }) });
+    const people = (await (await api(`/api/leads/${b.id}`)).json<any>()).people;
+    expect(people.map((p: any) => [p.name, p.is_poc])).toEqual([["Bob", true], ["Ann Lee", false]]);
+    expect((await api(`/api/leads/${b.id}/people/${ann.id}`, { method: "DELETE" })).status).toBe(200);
+    expect((await api(`/api/leads/other/people/${bob.id}`, { method: "DELETE" })).status).toBe(404);
+  });
+
+  it("patch sets follow-up, deal value and website (logged); rejects bad values", async () => {
+    const { b } = await seedLead();
+    const patch = (body: object) => api(`/api/leads/${b.id}`, { method: "PATCH", body: JSON.stringify(body) });
+    const r = await (await patch({ followUpAt: "2026-11-01", dealValue: 2500, websiteUrl: "acenew.com" })).json<any>();
+    expect([r.follow_up_at, r.deal_value, r.website_url, r.domain]).toEqual(["2026-11-01", 2500, "acenew.com", "acenew.com"]);
+    expect((await patch({ followUpAt: "next week" })).status).toBe(400);
+    expect((await patch({ websiteUrl: "not a url" })).status).toBe(400);
+    expect((await (await patch({ followUpAt: null, dealValue: null })).json<any>()).follow_up_at).toBeNull();
+    const kinds = (await (await api(`/api/leads/${b.id}`)).json<any>()).activity.map((a: any) => a.kind);
+    expect(kinds).toContain("website");
+  });
+
+  it("re-audit with a reason is logged as a flagged score", async () => {
+    const { b } = await seedLead();
+    const orig = env.LEAD_WORKFLOW.create;
+    (env.LEAD_WORKFLOW as any).create = async () => ({ id: "x" });
+    try {
+      expect((await api(`/api/leads/${b.id}/reaudit`, { method: "POST", body: JSON.stringify({ reason: "Site loads fine for me" }) })).status).toBe(202);
+    } finally { (env.LEAD_WORKFLOW as any).create = orig; }
+    const a = (await (await api(`/api/leads/${b.id}`)).json<any>()).activity[0];
+    expect([a.kind, a.detail]).toEqual(["score_flagged", "Site loads fine for me"]);
+  });
 });
