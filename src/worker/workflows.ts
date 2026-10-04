@@ -8,6 +8,9 @@ import { setBusinessError } from "./db/businesses";
 import { incrementProcessed } from "./db/searches";
 import { runSearch } from "./pipeline/search";
 import { BrightDataListingSource } from "./listings/brightdata";
+import { runCroWithErrorHandling, type CroDeps, type CroParams } from "./cro/pipeline";
+import { anthropicCroCaller } from "./cro/ai";
+import { puppeteerCroBrowser } from "./cro/capture";
 
 const RETRY = { retries: { limit: 3, delay: "10 seconds" as const, backoff: "exponential" as const }, timeout: "5 minutes" as const };
 // Bright Data's Maps scraper fails in bursts (HTTP 502 maps_ajax_failed), so the listing fetch backs off longer: ~15 min of retries.
@@ -75,5 +78,16 @@ export class SearchWorkflow extends WorkflowEntrypoint<Env, SearchParams> {
       db: env.DB, source,
       startLead: (p) => startLeadIdempotent(env.LEAD_WORKFLOW, p),
     }, adaptStep(step), event.payload.searchId);
+  }
+}
+
+export function croDepsFromEnv(env: Env): CroDeps {
+  return { db: env.DB, raw: env.RAW, browser: env.BROWSER ? puppeteerCroBrowser(env.BROWSER) : undefined,
+    ai: anthropicCroCaller(env.ANTHROPIC_API_KEY), now: () => new Date() };
+}
+
+export class CroAuditWorkflow extends WorkflowEntrypoint<Env, CroParams> {
+  async run(event: WorkflowEvent<CroParams>, step: WorkflowStep) {
+    return runCroWithErrorHandling(croDepsFromEnv(this.env), adaptStep(step), event.payload);
   }
 }

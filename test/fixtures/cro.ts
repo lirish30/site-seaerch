@@ -1,6 +1,8 @@
 import { env } from "cloudflare:test";
 import { createSearch } from "../../src/worker/db/searches";
 import { upsertBusiness } from "../../src/worker/db/businesses";
+import { insertAudit } from "../../src/worker/db/audits";
+import type { Offer, PageKind } from "../../src/worker/types";
 import type { BusinessModel, Evidence, PageSnapshot, RankedItem, Recommendation } from "../../src/worker/cro/types";
 
 export async function seedBusiness(o: { websiteUrl?: string | null; name?: string } = {}) {
@@ -43,3 +45,10 @@ export const rec = (o: Partial<Recommendation> = {}): Recommendation => ({
 });
 
 export const ranked = (o: Partial<RankedItem> = {}): RankedItem => ({ ...rec(o), rank: 1, horizon: 30, pxl_score: 4, ...o });
+
+export function seedLeadAudit(businessId: string, siteLinks: Partial<Record<PageKind, string>> = {}, offer: Offer = "seo_basics") {
+  return insertAudit(env.DB, { business_id: businessId, site_status: "ok", partial: false, pagespeed_mobile: 60, lcp_ms: null, cls: null, mobile_friendly: true,
+    https: true, has_title: true, has_meta_description: true, has_contact_form: true, copyright_year: null, latest_content_date: null, broken_link_count: 0,
+    score: 40, offer, findings: [{ code: "no_https", category: "technical", severity: "critical", points: 15, evidence: "Not secure", recommendation: "Add HTTPS", source: "rule" }],
+    raw_r2_key: null, health_score: 60, niche: "trades", category_scores: {}, ai_review: null, screenshots: { desktop: null, mobile: null }, site_links: siteLinks });
+}

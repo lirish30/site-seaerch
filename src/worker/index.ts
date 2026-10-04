@@ -17,4 +17,4 @@ app.route("/api/settings", settingsRoutes);
 app.route("/api/google", googleRoutes);
 
 export default app;
-export { LeadWorkflow, SearchWorkflow } from "./workflows";
+export { LeadWorkflow, SearchWorkflow, CroAuditWorkflow } from "./workflows";
