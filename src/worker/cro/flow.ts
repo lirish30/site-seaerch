@@ -8,7 +8,8 @@ export const BOOKING_VENDORS: [string, RegExp][] = [
   ["Fresha", /(^|\.)fresha\.com$/], ["NexHealth", /(^|\.)nexhealth\.com$/], ["DoorDash", /(^|\.)doordash\.com$/],
   ["Setmore", /(^|\.)setmore\.com$/], ["SimplyBook", /(^|\.)simplybook\.me$/],
 ];
-const ACTION = /book|schedule|appointment|quote|estimate|order|reserve|buy|shop|get started|sign up|enroll|request|consult|apply|contact|call/i;
+// Whole words only: "Facebook" must not read as "book".
+const ACTION = /\b(?:book(?:ing)?|schedul(?:e|ing)|appointments?|quotes?|estimates?|order(?:s|ing)?|reserv(?:e|ation)s?|buy|shop|get started|sign up|enroll(?:ment)?|requests?|consult(?:ation)?s?|apply|contact|call)\b/i;
 const bareHost = (h: string) => h.toLowerCase().replace(/^www\./, "");
 
 export function vendorOf(url: string): string | null {
@@ -22,6 +23,13 @@ export function vendorOf(url: string): string | null {
 export function pickPrimaryCta(s: PageSnapshot): CtaEl | null {
   const actions = s.ctas.filter((c) => c.aboveFold && ACTION.test(c.text));
   return actions.find((c) => c.inHeader) ?? actions[0] ?? null;
+}
+
+/** A bare "#" or a javascript: link opens a pop-up; "#section" just scrolls the page (no pop-up, nothing to follow). */
+export function inPageAction(href: string): "modal" | "anchor" | null {
+  const h = href.trim();
+  if (h === "#" || /^javascript:/i.test(h)) return "modal";
+  return h.startsWith("#") ? "anchor" : null;
 }
 
 /** Absolute URL to visit for the flow probe, or null when it must not be followed (phone, email, script, anchor, unknown domain). */

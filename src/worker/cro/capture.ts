@@ -1,7 +1,7 @@
 import puppeteer from "@cloudflare/puppeteer";
 import { BLOCK_PROBE, MOBILE_UA } from "../render/render";
 import { AXE_RUN, FLOW_PROBE, PROBE_SCRIPT } from "./probe";
-import { followable, loadFailed, pickPrimaryCta, vendorOf } from "./flow";
+import { followable, inPageAction, loadFailed, pickPrimaryCta, vendorOf } from "./flow";
 import { CRO_DESKTOP, CRO_LIMITS, CRO_MOBILE } from "./config";
 import type { AxeSummary, FlowResult, PageCapture, PageSnapshot } from "./types";
 
@@ -31,7 +31,9 @@ async function runAxe(page: Page): Promise<AxeSummary> {
 async function probeFlow(browser: Browser, s: PageSnapshot, base: string): Promise<FlowResult | null> {
   const cta = pickPrimaryCta(s);
   if (!cta || !cta.href || /^(tel:|mailto:|sms:)/i.test(cta.href)) return null;
-  if (/^(#|javascript:)/i.test(cta.href.trim()))
+  const inPage = inPageAction(cta.href);
+  if (inPage === "anchor") return null;
+  if (inPage === "modal")
     return { ctaText: cta.text, href: cta.href, finalUrl: base, offDomain: false, vendor: null, formFields: null, opensModal: true };
   const target = followable(cta.href, base);
   if (!target) {

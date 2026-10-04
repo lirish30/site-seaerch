@@ -3,7 +3,7 @@ import { BIZ_MODELS, modelsText } from "../src/worker/cro/models";
 import { CATALOG, catalogById, catalogFits, catalogText } from "../src/worker/cro/catalog";
 import { BIZ_MODEL_KEYS, REC_AREAS } from "../src/worker/cro/types";
 import { selectPages } from "../src/worker/cro/pages";
-import { followable, loadFailed, pickPrimaryCta, vendorOf } from "../src/worker/cro/flow";
+import { followable, inPageAction, loadFailed, pickPrimaryCta, vendorOf } from "../src/worker/cro/flow";
 import { detectMartech } from "../src/worker/cro/martech";
 import { PROBE_SCRIPT, FLOW_PROBE, AXE_RUN } from "../src/worker/cro/probe";
 import { snapshot, box } from "./fixtures/cro";
@@ -73,6 +73,24 @@ describe("flow helpers", () => {
     expect(pickPrimaryCta(snapshot({ ctas: [cta("Learn more"), cta("Book Now")] }))!.text).toBe("Book Now");
     expect(pickPrimaryCta(snapshot({ ctas: [cta("Learn more")] }))).toBeNull();
     expect(pickPrimaryCta(snapshot({ ctas: [cta("Book Now", { aboveFold: false })] }))).toBeNull();
+  });
+
+  it("matches action words only as whole words", () => {
+    const cta = (text: string, o = {}) => ({ text, href: "/x", box: box(), aboveFold: true, inHeader: false, contrast: 5, fontPx: 16, ...o });
+    const pick = (t: string) => pickPrimaryCta(snapshot({ ctas: [cta(t, { inHeader: true })] }))?.text ?? null;
+    expect(pick("Facebook")).toBeNull();
+    expect(pick("Bookmark us")).toBeNull();
+    expect(pick("Book now")).toBe("Book now");
+    expect(pick("Call now")).toBe("Call now");
+    expect(pick("Get a Quote")).toBe("Get a Quote");
+  });
+
+  it("treats only a bare # or javascript: link as a pop-up; an in-page anchor is neither", () => {
+    expect(inPageAction("#")).toBe("modal");
+    expect(inPageAction(" javascript:void(0) ")).toBe("modal");
+    expect(inPageAction("#contact")).toBe("anchor");
+    expect(inPageAction("/contact")).toBeNull();
+    expect(inPageAction("https://ace.com/#top")).toBeNull();
   });
 });
 
