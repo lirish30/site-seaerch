@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { BIZ_MODELS, modelsText } from "../src/worker/cro/models";
 import { CATALOG, catalogById, catalogFits, catalogText } from "../src/worker/cro/catalog";
 import { BIZ_MODEL_KEYS, REC_AREAS } from "../src/worker/cro/types";
+import { selectPages } from "../src/worker/cro/pages";
 
 describe("business models and catalog", () => {
   it("covers every model with a close rate in (0, 1]", () => {
@@ -26,5 +27,22 @@ describe("business models and catalog", () => {
     expect(catalogById("guest_checkout")!.area).toBe("forms");
     expect(catalogText("walk_in")).toContain("html_menu");
     expect(catalogText("lead_gen_phone")).not.toContain("html_menu");
+  });
+});
+
+describe("selectPages", () => {
+  it("puts home first, then pages in conversion priority, deduped, same-site only, capped", () => {
+    const pages = selectPages("https://ace.com", {
+      about: "https://ace.com/about/", contact: "https://www.ace.com/contact", blog: "https://ace.com/blog",
+      services: "https://ace.com/services#top", booking: "https://book.vagaro.com/ace", careers: "https://ace.com/jobs",
+      portfolio: "https://ace.com/about", pricing: "https://ace.com/pricing", faq: "https://ace.com/faq", team: "https://ace.com/team",
+    });
+    expect(pages.map((p) => p.kind)).toEqual(["home", "contact", "services", "pricing", "about", "team", "faq"]);
+    expect(pages[0].url).toBe("https://ace.com/");
+    expect(pages).toHaveLength(7);
+  });
+
+  it("works with no links and adds a scheme when missing", () => {
+    expect(selectPages("ace.com", {})).toEqual([{ url: "https://ace.com/", kind: "home" }]);
   });
 });
