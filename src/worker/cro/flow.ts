@@ -34,3 +34,6 @@ export function followable(href: string | null, base: string): string | null {
     return vendorOf(u.toString()) ? u.toString() : null;
   } catch { return null; }
 }
+
+/** True when a navigation produced no usable page: no response at all, or an HTTP error status. */
+export const loadFailed = (status: number | null | undefined): boolean => status == null || status >= 400;

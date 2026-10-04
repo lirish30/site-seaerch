@@ -3,7 +3,7 @@ import { BIZ_MODELS, modelsText } from "../src/worker/cro/models";
 import { CATALOG, catalogById, catalogFits, catalogText } from "../src/worker/cro/catalog";
 import { BIZ_MODEL_KEYS, REC_AREAS } from "../src/worker/cro/types";
 import { selectPages } from "../src/worker/cro/pages";
-import { followable, pickPrimaryCta, vendorOf } from "../src/worker/cro/flow";
+import { followable, loadFailed, pickPrimaryCta, vendorOf } from "../src/worker/cro/flow";
 import { detectMartech } from "../src/worker/cro/martech";
 import { PROBE_SCRIPT, FLOW_PROBE, AXE_RUN } from "../src/worker/cro/probe";
 import { snapshot, box } from "./fixtures/cro";
@@ -73,6 +73,13 @@ describe("flow helpers", () => {
     expect(pickPrimaryCta(snapshot({ ctas: [cta("Learn more"), cta("Book Now")] }))!.text).toBe("Book Now");
     expect(pickPrimaryCta(snapshot({ ctas: [cta("Learn more")] }))).toBeNull();
     expect(pickPrimaryCta(snapshot({ ctas: [cta("Book Now", { aboveFold: false })] }))).toBeNull();
+  });
+});
+
+describe("loadFailed", () => {
+  it("treats a missing response or an HTTP error as a failed load", () => {
+    for (const bad of [undefined, null, 400, 403, 404, 500, 503]) expect(loadFailed(bad)).toBe(true);
+    for (const ok of [200, 204, 301, 304]) expect(loadFailed(ok)).toBe(false);
   });
 });
 

@@ -1,7 +1,7 @@
 import puppeteer from "@cloudflare/puppeteer";
 import { BLOCK_PROBE, MOBILE_UA } from "../render/render";
 import { AXE_RUN, FLOW_PROBE, PROBE_SCRIPT } from "./probe";
-import { followable, pickPrimaryCta, vendorOf } from "./flow";
+import { followable, loadFailed, pickPrimaryCta, vendorOf } from "./flow";
 import { CRO_DESKTOP, CRO_LIMITS, CRO_MOBILE } from "./config";
 import type { AxeSummary, FlowResult, PageCapture, PageSnapshot } from "./types";
 
@@ -41,7 +41,9 @@ async function probeFlow(browser: Browser, s: PageSnapshot, base: string): Promi
   const tab = await browser.newPage();
   try {
     await tab.setViewport(CRO_DESKTOP);
-    await tab.goto(target, { waitUntil: "networkidle2", timeout: CRO_LIMITS.flowTimeoutMs });
+    const resp = await tab.goto(target, { waitUntil: "networkidle2", timeout: CRO_LIMITS.flowTimeoutMs });
+    // A failed or bot-blocked destination is not evidence: a challenge page would read as "0 form fields".
+    if (loadFailed(resp?.status()) || await tab.evaluate(BLOCK_PROBE)) return null;
     const finalUrl = tab.url();
     const r = await tab.evaluate(FLOW_PROBE) as { fields: number; iframes: string[] };
     const vendor = vendorOf(finalUrl) ?? r.iframes.map(vendorOf).find(Boolean) ?? null;
@@ -62,20 +64,27 @@ export function puppeteerCroBrowser(binding: Fetcher): CroBrowser {
       page.on("request", (r) => { try { hosts.add(new URL(r.url()).hostname); } catch { /* data: urls */ } });
 
       await page.setViewport(CRO_DESKTOP);
-      await page.goto(url, { waitUntil: "networkidle2", timeout: CRO_LIMITS.navTimeoutMs });
+      const resp = await page.goto(url, { waitUntil: "networkidle2", timeout: CRO_LIMITS.navTimeoutMs });
       const finalUrl = page.url();
+      if (loadFailed(resp?.status())) return failed(finalUrl);
       if (await page.evaluate(BLOCK_PROBE)) return failed(finalUrl);
       const desktop = await page.evaluate(PROBE_SCRIPT) as PageSnapshot;
       const [desktopJpeg, desktopTopJpeg] = await shots(page, CRO_DESKTOP.width, CRO_LIMITS.desktopTopHeight);
       const axe = await runAxe(page).catch(() => null);
       const flow = o.runFlow ? await probeFlow(browser, desktop, finalUrl).catch(() => null) : null;
 
-      await page.setUserAgent(MOBILE_UA);
-      await page.setViewport(CRO_MOBILE);
-      await page.goto(finalUrl, { waitUntil: "networkidle2", timeout: CRO_LIMITS.navTimeoutMs });
-      const mobileBlocked = await page.evaluate(BLOCK_PROBE) as boolean;
-      const mobile = mobileBlocked ? null : await page.evaluate(PROBE_SCRIPT) as PageSnapshot;
-      const [mobileJpeg, mobileTopJpeg] = mobile ? await shots(page, CRO_MOBILE.width, CRO_LIMITS.mobileTopHeight) : [null, null];
+      // The mobile leg is best-effort: if it fails or is blocked, keep everything captured on desktop.
+      let mobile: PageSnapshot | null = null, mobileJpeg: Uint8Array | null = null, mobileTopJpeg: Uint8Array | null = null;
+      try {
+        await page.setUserAgent(MOBILE_UA);
+        await page.setViewport(CRO_MOBILE);
+        const mresp = await page.goto(finalUrl, { waitUntil: "networkidle2", timeout: CRO_LIMITS.navTimeoutMs });
+        if (!loadFailed(mresp?.status()) && !(await page.evaluate(BLOCK_PROBE) as boolean)) {
+          const snap = await page.evaluate(PROBE_SCRIPT) as PageSnapshot;
+          [mobileJpeg, mobileTopJpeg] = await shots(page, CRO_MOBILE.width, CRO_LIMITS.mobileTopHeight);
+          mobile = snap;
+        }
+      } catch { mobile = null; mobileJpeg = null; mobileTopJpeg = null; }
       return { ok: true, finalUrl, desktop, mobile, desktopJpeg, mobileJpeg, desktopTopJpeg, mobileTopJpeg, axe,
         consoleErrors: consoleErrors.slice(0, 20), failedRequests: failedRequests.slice(0, 20), requestHosts: [...hosts].slice(0, 100), flow };
     } finally {
