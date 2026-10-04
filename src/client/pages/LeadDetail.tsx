@@ -5,6 +5,8 @@ import { safeHttpUrl } from "../links";
 import HealthGauge from "../components/HealthGauge";
 import { CategoryBars, FindingsList, Screenshots } from "../components/AuditPanel";
 import PeoplePanel from "../components/PeoplePanel";
+import CroPanel from "../components/CroPanel";
+import type { CroItem, CroResponse } from "../cro";
 import { NICHE_LABEL, OFFER_LABEL, STATUSES, type Activity, type Audit, type Business, type Contact, type LeadStatus, type Person } from "../types";
 
 interface Draft { id: string; subject: string; body: string; recipient_reason: string; edited: boolean; created_at: string; steering_note: string | null; }
@@ -18,19 +20,21 @@ const TONE_OPTIONS: [string, string][] = [["", "Default tone (from Settings)"], 
 
 const ACTIVITY_LABEL: Record<string, string> = {
   status: "Status", archived: "Archived", restored: "Restored", website: "Website changed", reaudit: "Re-audit",
-  score_flagged: "Score flagged", export: "Exported", draft: "Draft",
+  score_flagged: "Score flagged", export: "Exported", draft: "Draft", cro_audit: "CRO audit",
 };
 
 export default function LeadDetail() {
   const { id } = useParams();
   const nav = useNavigate();
   const [d, setD] = useState<Data | null>(null);
-  const [tab, setTab] = useState<"audit" | "email">("audit");
+  const [tab, setTab] = useState<"audit" | "cro" | "email">("audit");
   const [subject, setSubject] = useState(""); const [body, setBody] = useState("");
   const [steer, setSteer] = useState(""); const [busy, setBusy] = useState(""); const [msg, setMsg] = useState("");
   const [notes, setNotes] = useState("");
   const [editingUrl, setEditingUrl] = useState<string | null>(null);
   const [focus, setFocus] = useState<Set<string>>(new Set());
+  const [croItems, setCroItems] = useState<CroItem[]>([]);
+  const [croFocus, setCroFocus] = useState<Set<string>>(new Set());
   const [tone, setTone] = useState("");
   const [versions, setVersions] = useState<Draft[] | null>(null);
   const [attachPdf, setAttachPdf] = useState(true);
@@ -50,6 +54,11 @@ export default function LeadDetail() {
   useEffect(() => {
     if (tab !== "email") return;
     api.get<Draft[]>(`/leads/${id}/drafts`).then(setVersions).catch(() => setVersions([]));
+    api.get<CroResponse>(`/leads/${id}/cro-audit`).then((r) => {
+      const usable = r.audit?.status === "done" ? r.items.filter((i) => i.included) : [];
+      setCroItems(usable);
+      setCroFocus((p) => new Set([...p].filter((k) => usable.some((i) => i.id === k)))); // drop picks from an older audit
+    }).catch(() => { setCroItems([]); setCroFocus(new Set()); });
   }, [tab, id, d?.draft?.id]);
   if (!d) return <p>{msg || "Loading…"}</p>;
   const b = d.business;
@@ -97,8 +106,9 @@ export default function LeadDetail() {
     // Finding keys are "code:index" into the audit's findings.
     const focusIdx = [...focus].map((k) => Number(k.split(":").pop())).filter(Number.isInteger);
     try {
-      await api.post(`/leads/${id}/regenerate`, { steeringNote: steer, focus: focusIdx, tone: tone || null });
-      setSteer(""); await load(); setMsg(focusIdx.length ? `New draft focused on ${focusIdx.length} chosen issue(s).` : "New draft written.");
+      await api.post(`/leads/${id}/regenerate`, { steeringNote: steer, focus: focusIdx, croFocus: [...croFocus], tone: tone || null });
+      const picked = focusIdx.length + croFocus.size;
+      setSteer(""); await load(); setMsg(picked ? `New draft focused on ${picked} chosen issue(s).` : "New draft written.");
     } catch (e) { fail(e); } finally { setBusy(""); }
   }
   async function exportTo(kind: "gmail" | "drive") {
@@ -181,6 +191,7 @@ export default function LeadDetail() {
         <div className="lead-main">
           <div className="tabs" role="tablist">
             <button role="tab" aria-selected={tab === "audit"} className={tab === "audit" ? "on" : ""} onClick={() => setTab("audit")}>Website audit</button>
+            <button role="tab" aria-selected={tab === "cro"} className={tab === "cro" ? "on" : ""} onClick={() => setTab("cro")}>CRO audit</button>
             <button role="tab" aria-selected={tab === "email"} className={tab === "email" ? "on" : ""} onClick={() => setTab("email")}>Email draft</button>
           </div>
 
@@ -214,6 +225,8 @@ export default function LeadDetail() {
               <p className="muted small">Audited {new Date(a.created_at).toLocaleString()}{a.pagespeed_mobile !== null && ` · Google mobile speed ${a.pagespeed_mobile}/100`}</p>
             </div>
           ) : <div className="card"><p className="muted">Audit in progress…</p></div>)}
+
+          {tab === "cro" && <CroPanel leadId={b.id} onError={setMsg} />}
 
           {tab === "email" && (
             <div className="card email-grid">
@@ -253,9 +266,16 @@ export default function LeadDetail() {
                   <label>Issues to lead with <span className="muted small">(pick up to 5; none = the most important)</span></label>
                   <div className="picker-box"><FindingsList findings={a.findings} selectable selected={focus} onToggle={toggleFocus} /></div>
                 </>}
+                {croItems.length > 0 && <>
+                  <label>CRO opportunities <span className="muted small">(from the CRO audit; pick up to 5)</span></label>
+                  <div className="picker-box">{croItems.map((i) => (
+                    <label key={i.id} className="row small check"><input type="checkbox" checked={croFocus.has(i.id)} disabled={!croFocus.has(i.id) && croFocus.size >= 5}
+                      onChange={() => setCroFocus((s) => { const n = new Set(s); if (n.has(i.id)) n.delete(i.id); else if (n.size < 5) n.add(i.id); return n; })} />{i.title}</label>
+                  ))}</div>
+                </>}
                 <p className="row" style={{ marginTop: 12 }}>
                   <button className="primary" onClick={regenerate} disabled={busy === "regen"}>{busy === "regen" ? "Writing…" : d.draft ? "Regenerate email" : "Generate email"}</button>
-                  {focus.size > 0 && <button className="link-btn" onClick={() => setFocus(new Set())}>Clear {focus.size} selected</button>}
+                  {focus.size + croFocus.size > 0 && <button className="link-btn" onClick={() => { setFocus(new Set()); setCroFocus(new Set()); }}>Clear {focus.size + croFocus.size} selected</button>}
                 </p>
               </div>
             </div>
