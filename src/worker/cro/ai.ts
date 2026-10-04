@@ -15,6 +15,11 @@ export function costOf(model: CroModelId, u: Usage): number {
     + u.output_tokens * p.out) / 1e6;
 }
 
+/** A call that will fail the same way again (a refusal, a 4xx), so Workflows should not retry and re-bill it. Kept free of
+ *  Workers imports because the eval script runs in Node; workflows.ts turns it into a NonRetryableError. */
+export class CroFatalError extends Error {}
+const retryable = (status: unknown) => typeof status !== "number" || status >= 500 || status === 408 || status === 409 || status === 429;
+
 type MessagesClient = { messages: { create: (p: any) => Promise<any> } };
 
 export function anthropicCroCaller(apiKey: string, models: Record<CroStage, CroModelId> = CRO_MODELS, client: MessagesClient = new Anthropic({ apiKey })): CroCaller {
@@ -29,8 +34,8 @@ export function anthropicCroCaller(apiKey: string, models: Record<CroStage, CroM
       tool_choice: haiku ? { type: "tool", name: tool.name } : { type: "auto" },
       ...(haiku ? {} : { output_config: { effort: "medium" } }),
       messages: [{ role: "user", content }],
-    });
-    if (msg.stop_reason === "refusal") throw new Error("Claude declined to review this site");
+    }).catch((e) => { throw retryable((e as { status?: unknown })?.status) ? e : new CroFatalError(String((e as Error)?.message ?? e)); });
+    if (msg.stop_reason === "refusal") throw new CroFatalError("Claude declined to review this site");
     const block = msg.content.find((b: { type: string }) => b.type === "tool_use");
     return { input: block?.input ?? null, costUsd: costOf(model, msg.usage), model };
   };

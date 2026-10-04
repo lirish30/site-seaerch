@@ -1,4 +1,5 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
+import { NonRetryableError } from "cloudflare:workflows";
 import type { Env } from "./env";
 import { runLead, type LeadDeps, type StepLike } from "./pipeline/lead";
 import { anthropicCaller } from "./drafter/draft";
@@ -9,12 +10,16 @@ import { incrementProcessed } from "./db/searches";
 import { runSearch } from "./pipeline/search";
 import { BrightDataListingSource } from "./listings/brightdata";
 import { runCroWithErrorHandling, type CroDeps, type CroParams } from "./cro/pipeline";
-import { anthropicCroCaller } from "./cro/ai";
+import { CroFatalError, anthropicCroCaller } from "./cro/ai";
 import { puppeteerCroBrowser } from "./cro/capture";
 
 const RETRY = { retries: { limit: 3, delay: "10 seconds" as const, backoff: "exponential" as const }, timeout: "5 minutes" as const };
 // Bright Data's Maps scraper fails in bursts (HTTP 502 maps_ajax_failed), so the listing fetch backs off longer: ~15 min of retries.
 const LISTING_RETRY = { retries: { limit: 5, delay: "30 seconds" as const, backoff: "exponential" as const }, timeout: "5 minutes" as const };
+
+// The CRO AI steps run up to four sequential long calls (the roadmap) or one big call per page, so they get longer than the default.
+const AI_RETRY = { ...RETRY, timeout: "10 minutes" as const };
+const AI_STEP = /^(model|synthesize|page-\d+)$/;
 
 export function depsFromEnv(env: Env): LeadDeps {
   return {
@@ -27,7 +32,9 @@ export function depsFromEnv(env: Env): LeadDeps {
 
 export function adaptStep(step: WorkflowStep): StepLike {
   return {
-    do: (name, fn) => step.do(name, name === "fetch-listings" ? LISTING_RETRY : RETRY, fn as any) as any,
+    // A refusal or 4xx fails the step at once instead of being retried (and paid for) three more times.
+    do: (name, fn) => step.do(name, name === "fetch-listings" ? LISTING_RETRY : AI_STEP.test(name) ? AI_RETRY : RETRY,
+      (async () => { try { return await fn(); } catch (e) { throw e instanceof CroFatalError ? new NonRetryableError(e.message) : e; } }) as any) as any,
     sleep: (name, ms) => step.sleep(name, ms),
   };
 }

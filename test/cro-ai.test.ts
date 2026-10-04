@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { anthropicCroCaller, callStage, costOf, type CroCaller, type StageRequest } from "../src/worker/cro/ai";
+import { CroFatalError, anthropicCroCaller, callStage, costOf, type CroCaller, type StageRequest } from "../src/worker/cro/ai";
 import { inferBusinessModel, reviewPage, synthesizeRoadmap } from "../src/worker/cro/stages";
 import { BusinessModelSchema, SYSTEM_MODEL, SYSTEM_PAGE, SYSTEM_SYNTH, ledger } from "../src/worker/cro/prompts";
 import type { Business } from "../src/worker/types";
@@ -138,5 +138,15 @@ describe("anthropicCroCaller", () => {
 
   it("throws on refusal", async () => {
     await expect(anthropicCroCaller("k", undefined, fakeClient("refusal").client)(req)).rejects.toThrow("declined");
+  });
+
+  it("marks a refusal and a deterministic 4xx as fatal (never retried), but leaves 5xx, 429 and network errors retryable", async () => {
+    const failing = (e: unknown) => anthropicCroCaller("k", undefined, { messages: { create: async () => { throw e; } } })(req);
+    const apiError = (status: number) => Object.assign(new Error(`HTTP ${status}`), { status });
+    await expect(anthropicCroCaller("k", undefined, fakeClient("refusal").client)(req)).rejects.toBeInstanceOf(CroFatalError);
+    for (const status of [400, 401, 402, 403, 404, 413, 422]) await expect(failing(apiError(status))).rejects.toBeInstanceOf(CroFatalError);
+    for (const status of [408, 409, 429, 500, 502, 529]) await expect(failing(apiError(status))).rejects.not.toBeInstanceOf(CroFatalError);
+    await expect(failing(new TypeError("fetch failed"))).rejects.not.toBeInstanceOf(CroFatalError);
+    await expect(failing(apiError(400))).rejects.toThrow("HTTP 400");
   });
 });

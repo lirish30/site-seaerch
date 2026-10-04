@@ -123,11 +123,12 @@ export async function runCroAudit(deps: CroDeps, step: StepLike, p: CroParams) {
   const quoted = factQuotes(evidence.map((e) => e.fact));
   const retryReasons = (dropped: { title: string; reason: string }[]) => dropped.map((d) => `"${d.title}": ${d.reason}`);
 
-  let reviews = audit.page_reviews;
+  let reviews = audit.page_reviews, skipped = 0;
   if (runs("pages")) {
     await step.do("mark-pages", () => updateCroAudit(deps.db, id, { step: "pages" }).then(() => true));
     const siteWide = evidence.filter((e) => e.family === "martech" || e.family === "listing");
-    const results = await Promise.all(okRefs.map((ref) => step.do(`page-${ref.index}`, async () => {
+    // allSettled: one page that keeps failing is skipped instead of sinking (and re-billing) the pages that finished.
+    const results = await Promise.allSettled(okRefs.map((ref) => step.do(`page-${ref.index}`, async () => {
       const pageEv = [...evidence.filter((e) => e.page === ref.url && e.family !== "martech" && e.family !== "listing"), ...siteWide];
       const input = { business, model, page: ref, evidence: pageEv, shots: await topShots(ref) };
       const texts = [await text(deps.raw, textKey(id, ref.index)), ...quoted];
@@ -142,8 +143,14 @@ export async function runCroAudit(deps: CroDeps, step: StepLike, p: CroParams) {
       }
       return v.review;
     })));
-    reviews = results.filter((r): r is PageReview => !!r);
-    await step.do("save-pages", () => updateCroAudit(deps.db, id, { page_reviews: reviews, reviewed_as: model.model }).then(() => true));
+    reviews = results.flatMap((r) => (r.status === "fulfilled" && r.value ? [r.value] : []));
+    if (!reviews.length) {
+      const first = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+      throw first ? first.reason : new Error("Couldn't review any of the pages");
+    }
+    skipped = okRefs.length - reviews.length;
+    await step.do("save-pages", () => updateCroAudit(deps.db, id, { page_reviews: reviews, reviewed_as: model.model,
+      partial: refs.some((r) => !r.ok) || skipped > 0 }).then(() => true));
   }
 
   const written = await step.do("synthesize", async () => {
@@ -168,9 +175,10 @@ export async function runCroAudit(deps: CroDeps, step: StepLike, p: CroParams) {
       strengths: out.strengths.slice(0, MAX_STRENGTHS), positioning: out.positioning, tracking_plan: out.tracking_plan,
       scenario_inputs: scenarioFor(audit.scenario_inputs, model),
       // Never pad with generic advice: say so plainly instead.
-      warning: n < CRO_LIMITS.minItems
-        ? `Only ${n} recommendation${n === 1 ? "" : "s"} had solid evidence behind ${n === 1 ? "it" : "them"}. The site may be hard to read automatically; check it by hand before presenting.`
-        : null,
+      warning: [
+        n < CRO_LIMITS.minItems ? `Only ${n} recommendation${n === 1 ? "" : "s"} had solid evidence behind ${n === 1 ? "it" : "them"}. The site may be hard to read automatically; check it by hand before presenting.` : null,
+        skipped ? `${skipped} of ${okRefs.length} pages couldn't be reviewed, so the roadmap covers the rest.` : null,
+      ].filter(Boolean).join(" ") || null,
       status: "done", step: "done", error: null, completed_at: deps.now().toISOString(),
     });
     return n;

@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { NonRetryableError } from "cloudflare:workflows";
+import { CroFatalError } from "../src/worker/cro/ai";
 import { adaptStep, startLeadIdempotent } from "../src/worker/workflows";
 
 const P = { businessId: "b1", searchId: "s1" };
@@ -32,5 +34,21 @@ describe("adaptStep retry config", () => {
     expect(listing.retries.backoff).toBe("exponential");
     expect(other.retries.limit).toBe(3);
     expect(other.retries.delay).toBe("10 seconds");
+  });
+  it("gives the AI steps (business model, each page, the roadmap) a 10 minute timeout and leaves the rest at 5", async () => {
+    for (const name of ["model", "page-0", "page-6", "synthesize"]) expect((await configFor(name)).timeout).toBe("10 minutes");
+    for (const name of ["capture-0", "evidence", "pagespeed", "review", "fetch-listings"]) expect((await configFor(name)).timeout).toBe("5 minutes");
+    expect((await configFor("synthesize")).retries.limit).toBe(3);
+  });
+
+  it("turns a fatal AI error into a NonRetryableError so Workflows fails the step straight away; other errors keep retrying", async () => {
+    const step = { do: async (_n: string, _c: any, fn: any) => fn(), sleep: async () => {} };
+    const run = (e: Error) => adaptStep(step as any).do("synthesize", async () => { throw e; });
+    const fatal = await run(new CroFatalError("Claude declined to review this site")).catch((e) => e);
+    expect(fatal).toBeInstanceOf(NonRetryableError);
+    expect(fatal.message).toBe("Claude declined to review this site");
+    const transient = await run(new Error("HTTP 529")).catch((e) => e);
+    expect(transient).not.toBeInstanceOf(NonRetryableError);
+    expect(transient.message).toBe("HTTP 529");
   });
 });

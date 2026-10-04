@@ -198,6 +198,33 @@ describe("runCroAudit", () => {
     expect((await listCroItems(env.DB, a.id)).map((i) => i.title).sort()).toEqual(["Add phone to header", "Keep the header button", "Show reviews"]);
   });
 
+  it("skips a page whose review keeps failing, marks the audit partial and says so; the other pages still build the roadmap", async () => {
+    const { a } = await start({ contact: "https://ace.com/contact" });
+    const ai: CroCaller = async (r) => {
+      if (r.stage === "pages" && JSON.stringify(r.content).includes("https://ace.com/contact")) throw new Error("HTTP 529");
+      return { input: r.stage === "model" ? model() : r.stage === "pages" ? review : roadmap(), costUsd: 0.01, model: "claude-haiku-4-5" };
+    };
+    await runCroWithErrorHandling(deps({ ai }).d, step, { auditId: a.id });
+    const r = (await getCroAudit(env.DB, a.id))!;
+    expect(r).toMatchObject({ status: "done", partial: true });
+    expect(r.page_reviews).toHaveLength(1);
+    expect(r.warning).toBe("1 of 2 pages couldn't be reviewed, so the roadmap covers the rest.");
+    expect(await listCroItems(env.DB, a.id)).toHaveLength(3);
+  });
+
+  it("fails the pages stage with the first error when no page could be reviewed", async () => {
+    const { a } = await start({ contact: "https://ace.com/contact" });
+    const ai: CroCaller = async (r) => { if (r.stage === "pages") throw new Error("HTTP 529"); return { input: model(), costUsd: 0.01, model: "claude-haiku-4-5" }; };
+    await runCroWithErrorHandling(deps({ ai }).d, step, { auditId: a.id });
+    expect(await getCroAudit(env.DB, a.id)).toMatchObject({ status: "failed", step: "pages", error: "HTTP 529" });
+  });
+
+  it("fails the pages stage when every review comes back unusable", async () => {
+    const { a } = await start();
+    await runCroWithErrorHandling(deps({ ai: fakeAi({ page: { nope: 1 } }).ai }).d, step, { auditId: a.id });
+    expect(await getCroAudit(env.DB, a.id)).toMatchObject({ status: "failed", step: "pages", error: "Couldn't review any of the pages" });
+  });
+
   it("caps strengths at 6 and restarts the stale-run clock", async () => {
     const { a } = await start();
     await updateCroAudit(env.DB, a.id, { started_at: "2020-01-01T00:00:00.000Z", status: "failed", error: "Timed out" });
