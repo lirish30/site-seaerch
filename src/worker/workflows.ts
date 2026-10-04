@@ -8,6 +8,8 @@ import { runSearch } from "./pipeline/search";
 import { BrightDataListingSource } from "./listings/brightdata";
 
 const RETRY = { retries: { limit: 3, delay: "10 seconds" as const, backoff: "exponential" as const }, timeout: "5 minutes" as const };
+// Bright Data's Maps scraper fails in bursts (HTTP 502 maps_ajax_failed), so the listing fetch backs off longer: ~15 min of retries.
+const LISTING_RETRY = { retries: { limit: 5, delay: "30 seconds" as const, backoff: "exponential" as const }, timeout: "5 minutes" as const };
 
 export function depsFromEnv(env: Env): LeadDeps {
   return {
@@ -18,7 +20,7 @@ export function depsFromEnv(env: Env): LeadDeps {
 
 export function adaptStep(step: WorkflowStep): StepLike {
   return {
-    do: (name, fn) => step.do(name, RETRY, fn as any) as any,
+    do: (name, fn) => step.do(name, name === "fetch-listings" ? LISTING_RETRY : RETRY, fn as any) as any,
     sleep: (name, ms) => step.sleep(name, ms),
   };
 }

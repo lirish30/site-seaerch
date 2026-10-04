@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildPrompt, generateDraft, wordCount, type DraftInput } from "../src/worker/drafter/draft";
+import { anthropicCaller, buildPrompt, generateDraft, wordCount, type DraftInput } from "../src/worker/drafter/draft";
 import type { Business, Contact, Settings } from "../src/worker/types";
 
 const settings: Settings = {
@@ -77,5 +77,25 @@ describe("generateDraft", () => {
 
   it("wordCount counts words", () => {
     expect(wordCount("a b  c\n d")).toBe(4);
+  });
+});
+
+describe("anthropicCaller request", () => {
+  it("does not force tool_choice (claude-sonnet-5-5 rejects type tool/any)", async () => {
+    let sent: any = null;
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (_url: any, init: any) => {
+      sent = JSON.parse(init.body);
+      return new Response(JSON.stringify({
+        id: "msg_1", type: "message", role: "assistant", model: sent.model, stop_reason: "tool_use",
+        content: [{ type: "tool_use", id: "t1", name: "write_email", input: { subject: "s", body: "b", to_contact_id: null, recipient_reason: "r" } }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    try {
+      const out = await anthropicCaller("sk-test")({ system: "sys", user: "usr" });
+      expect(out).toMatchObject({ subject: "s" });
+      expect(sent.tool_choice?.type ?? "auto").toBe("auto");
+    } finally { globalThis.fetch = orig; }
   });
 });

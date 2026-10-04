@@ -65,11 +65,19 @@ export class BrightDataListingSource implements ListingSource {
         body: JSON.stringify({ zone: this.o.zone, url, format: "raw" }),
       });
       requests++;
-      if (!res.ok) {
-        const msg = `Bright Data HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`;
-        throw res.status === 429 || res.status >= 500 ? new RetryableError(msg) : new Error(msg);
+      const body = await res.text();
+      // Bright Data reports an upstream (Google Maps) failure as HTTP 200 with an empty body and the real
+      // status in x-brd-status-code, so res.ok alone is not enough.
+      const status = Number(res.headers.get("x-brd-status-code")) || res.status;
+      if (!res.ok || status >= 400) {
+        const code = res.headers.get("x-brd-error-code");
+        const msg = `Bright Data HTTP ${status}${code ? ` (${code})` : ""}: ${body.slice(0, 200) || res.headers.get("x-brd-error") || "no body"}`;
+        throw status === 429 || status >= 500 ? new RetryableError(msg) : new Error(msg);
       }
-      const items = itemsOf(await res.json());
+      if (!body.trim()) throw new RetryableError("Bright Data returned an empty response");
+      let json: unknown;
+      try { json = JSON.parse(body); } catch { throw new RetryableError(`Bright Data returned non-JSON: ${body.slice(0, 200)}`); }
+      const items = itemsOf(json);
       if (!items.length) break;
       let added = 0;
       for (const it of items) {

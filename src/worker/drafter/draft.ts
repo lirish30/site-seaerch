@@ -34,8 +34,11 @@ export function anthropicCaller(apiKey: string): ClaudeCaller {
   const client = new Anthropic({ apiKey });
   return async ({ system, user }) => {
     const msg = await client.messages.create({
-      model: DRAFT_MODEL, max_tokens: 800, system,
-      tools: [TOOL], tool_choice: { type: "tool", name: TOOL.name },
+      // claude-sonnet-5-5 rejects tool_choice type "tool"/"any", so ask for the tool in the
+      // prompt instead; a missing tool_use block falls through to generateDraft's retry.
+      model: DRAFT_MODEL, max_tokens: 800,
+      system: `${system}\n\nRespond only by calling the ${TOOL.name} tool.`,
+      tools: [TOOL], tool_choice: { type: "auto" },
       messages: [{ role: "user", content: user }],
     });
     const block = msg.content.find((b) => b.type === "tool_use");
