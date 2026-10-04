@@ -1,3 +1,4 @@
+import { CRO_LIMITS } from "./config";
 import type { Crop, Evidence } from "./types";
 
 const SHOT_WIDTH = { desktop: 1440, mobile: 390 } as const;
@@ -31,6 +32,7 @@ export function cropView(c: Pick<Crop, "x" | "y" | "w" | "h" | "device">, displa
 
 export function itemCrop(item: { evidence_ids: string[] }, evidence: Evidence[]): Crop | null {
   const byId = new Map(evidence.map((e) => [e.id, e]));
-  for (const id of item.evidence_ids) { const c = byId.get(id)?.crop; if (c) return c; }
+  // Full-page shots are clipped at shotMaxHeight, so an element that starts below it has nothing to show.
+  for (const id of item.evidence_ids) { const c = byId.get(id)?.crop; if (c && num(c.y) < CRO_LIMITS.shotMaxHeight) return c; }
   return null;
 }

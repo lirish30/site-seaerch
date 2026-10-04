@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { describe, it, expect } from "vitest";
 import { cropView, itemCrop } from "../src/worker/cro/crop";
+import { CRO_LIMITS } from "../src/worker/cro/config";
 import { clip, splitItems } from "../src/worker/report/cro";
 import type { RankedItem } from "../src/worker/cro/types";
 import { reportFor } from "../src/worker/report/data";
@@ -35,6 +36,13 @@ describe("crop helpers", () => {
   it("finds the first cited evidence with a screenshot location", () => {
     expect(itemCrop({ evidence_ids: ["E2", "E1"] }, [ev("E1", { crop }), ev("E2")])).toEqual(crop);
     expect(itemCrop({ evidence_ids: ["E2"] }, [ev("E2")])).toBeNull();
+  });
+  it("skips a crop below the clipped full-page shot (it would show a blank box) and falls through to the next one", () => {
+    const below = { ...crop, y: CRO_LIMITS.shotMaxHeight };
+    const lastVisible = { ...crop, y: CRO_LIMITS.shotMaxHeight - 1 };
+    expect(itemCrop({ evidence_ids: ["E1"] }, [ev("E1", { crop: below })])).toBeNull();
+    expect(itemCrop({ evidence_ids: ["E1", "E2"] }, [ev("E1", { crop: { ...crop, y: 9000 } }), ev("E2", { crop })])).toEqual(crop);
+    expect(itemCrop({ evidence_ids: ["E1"] }, [ev("E1", { crop: lastVisible })])).toEqual(lastVisible);
   });
 });
 
