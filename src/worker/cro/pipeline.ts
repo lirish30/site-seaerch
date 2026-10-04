@@ -9,7 +9,7 @@ import type { CroBrowser } from "./capture";
 import type { CroCaller } from "./ai";
 import { buildEvidence } from "./evidence";
 import { inferBusinessModel, reviewPage, synthesizeRoadmap } from "./stages";
-import { applyModeRules, hasTrackingGap, needsRetry, validateRecommendations, validateReview } from "./validate";
+import { applyModeRules, factQuotes, hasTrackingGap, needsRetry, validateRecommendations, validateReview } from "./validate";
 import { rankRecommendations } from "./pxl";
 import { defaultScenario } from "./scenario";
 import { CRO_LIMITS } from "./config";
@@ -119,7 +119,8 @@ export async function runCroAudit(deps: CroDeps, step: StepLike, p: CroParams) {
   const model: BusinessModel = { ...inferred, ...audit.model_overrides };
 
   const ids = new Set(evidence.map((e) => e.id));
-  const facts = evidence.map((e) => e.fact);
+  // Quotes are checked against the page text plus phrases a fact quotes (placeholders and labels aren't in the page text); never whole facts.
+  const quoted = factQuotes(evidence.map((e) => e.fact));
   const retryReasons = (dropped: { title: string; reason: string }[]) => dropped.map((d) => `"${d.title}": ${d.reason}`);
 
   let reviews = audit.page_reviews;
@@ -129,7 +130,7 @@ export async function runCroAudit(deps: CroDeps, step: StepLike, p: CroParams) {
     const results = await Promise.all(okRefs.map((ref) => step.do(`page-${ref.index}`, async () => {
       const pageEv = [...evidence.filter((e) => e.page === ref.url && e.family !== "martech" && e.family !== "listing"), ...siteWide];
       const input = { business, model, page: ref, evidence: pageEv, shots: await topShots(ref) };
-      const texts = [await text(deps.raw, textKey(id, ref.index)), ...facts];
+      const texts = [await text(deps.raw, textKey(id, ref.index)), ...quoted];
       const r = await reviewPage(input, deps.ai);
       await spend(deps, id, "pages", r);
       if (!r.value) return null;
@@ -147,7 +148,7 @@ export async function runCroAudit(deps: CroDeps, step: StepLike, p: CroParams) {
 
   const written = await step.do("synthesize", async () => {
     await updateCroAudit(deps.db, id, { step: "synthesize" });
-    const texts = [...await Promise.all(okRefs.map((r) => text(deps.raw, textKey(id, r.index)))), ...facts];
+    const texts = [...await Promise.all(okRefs.map((r) => text(deps.raw, textKey(id, r.index)))), ...quoted];
     const input = { business, model, reviews, evidence };
     const r = await synthesizeRoadmap(input, deps.ai);
     await spend(deps, id, "synthesize", r);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { applyModeRules, hasTrackingGap, needsRetry, quoteFound, validateRecommendations, validateReview } from "../src/worker/cro/validate";
+import { applyModeRules, factQuotes, hasTrackingGap, needsRetry, quoteFound, validateRecommendations, validateReview } from "../src/worker/cro/validate";
 import { pxlScore, rankRecommendations } from "../src/worker/cro/pxl";
 import { defaultScenario, scenarioRange, SCENARIO_LABEL } from "../src/worker/cro/scenario";
 import type { PageReview } from "../src/worker/cro/types";
@@ -108,5 +108,12 @@ describe("scenario", () => {
     expect(scenarioRange(i)).toEqual({ leads: [3, 5], revenue: [900, 1800] });
     expect(scenarioRange({ ...i, targetRate: 0.01 })).toEqual({ leads: [0, 0], revenue: [0, 0] });
     expect(SCENARIO_LABEL).toBe("Illustrative, based on the assumptions shown");
+  });
+});
+
+describe("factQuotes", () => {
+  it("keeps only the phrases a fact quotes, never the wording the code wrote around them", () => {
+    expect(factQuotes(['Desktop header button: "Get a Quote"', "No guarantee or warranty wording found", 'Generic phrases used: "welcome to our website", "quality service"']))
+      .toEqual(["Get a Quote", "welcome to our website", "quality service"]);
   });
 });

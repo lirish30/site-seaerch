@@ -18,6 +18,9 @@ export function quoteFound(quote: string, texts: string[]): boolean {
 
 export const quotedPhrases = (s: string) => [...s.matchAll(/["“]([^"”]{4,})["”]/g)].map((m) => m[1]);
 
+/** The site wording a ledger fact quotes. Quote checks use these, not whole facts: the words around them were written by our code. */
+export const factQuotes = (facts: string[]) => facts.flatMap(quotedPhrases);
+
 function evidenceProblem(evidenceIds: string[], ids: Set<string>): string | null {
   if (!evidenceIds.length) return "no evidence cited";
   const bad = evidenceIds.filter((id) => !ids.has(id));

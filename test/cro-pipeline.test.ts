@@ -136,6 +136,30 @@ describe("runCroAudit", () => {
     expect(await getCroAudit(env.DB, a.id)).toMatchObject({ status: "failed", step: "pages", error: "Claude declined to review this site" });
   });
 
+  it("accepts a quote of wording inside a fact (a button label) but not wording the code wrote into a fact", async () => {
+    const { a } = await start();
+    const codeFact = "No guarantee or warranty wording found";
+    const cta = { text: "Get a Quote", href: "/q", box: { x: 0, y: 0, w: 120, h: 40 }, aboveFold: true, inHeader: true, contrast: 5, fontPx: 16 };
+    const idOf = async (match: string) => (await getCroAudit(env.DB, a.id))!.evidence.find((e) => e.fact.includes(match))!.id;
+    const ai: CroCaller = async (r) => {
+      if (r.stage === "model") return { input: model(), costUsd: 0, model: "claude-haiku-4-5" };
+      const [btn, guar] = [await idOf("Desktop header button"), await idOf(codeFact)];
+      if (r.stage === "pages") return { costUsd: 0, model: "claude-haiku-4-5", input: { ...review, issues: [
+        { observation: "Button is clear", principle: "p", evidence_ids: [btn], quote: "Get a Quote" },
+        { observation: "No promise made", principle: "p", evidence_ids: [guar], quote: codeFact }] } };
+      return { costUsd: 0, model: "claude-haiku-4-5", input: roadmap([
+        rec({ title: "Keep the header button", observation: `The header button says "Get a Quote"`, evidence_ids: [btn] }),
+        rec({ title: "Add a guarantee", observation: `Your site says "${codeFact}"`, evidence_ids: [guar] }),
+        rec({ title: "Show reviews", observation: "No review widget", evidence_ids: [btn] }),
+        rec({ title: "Add phone to header", observation: "No phone in the header", evidence_ids: [btn] })]) };
+    };
+    const { d } = deps({ ai, pages: { "https://ace.com/": { desktop: snapshot({ ctas: [cta] }) } } });
+    await runCroAudit(d, step, { auditId: a.id });
+    const r = (await getCroAudit(env.DB, a.id))!;
+    expect(r.page_reviews[0].issues.map((i) => i.quote)).toEqual(["Get a Quote"]);
+    expect((await listCroItems(env.DB, a.id)).map((i) => i.title).sort()).toEqual(["Add phone to header", "Keep the header button", "Show reviews"]);
+  });
+
   it("caps strengths at 6 and restarts the stale-run clock", async () => {
     const { a } = await start();
     await updateCroAudit(env.DB, a.id, { started_at: "2020-01-01T00:00:00.000Z", status: "failed", error: "Timed out" });

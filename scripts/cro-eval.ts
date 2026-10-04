@@ -2,7 +2,7 @@
 // Spends real money (~$2-3 for six sites). Fixtures hold prospect data and stay git-ignored.
 import { anthropicCroCaller, type CroCaller } from "../src/worker/cro/ai";
 import { inferBusinessModel, reviewPage, synthesizeRoadmap } from "../src/worker/cro/stages";
-import { quotedPhrases, validateRecommendations, validateReview } from "../src/worker/cro/validate";
+import { factQuotes, quotedPhrases, validateRecommendations, validateReview } from "../src/worker/cro/validate";
 import type { CroModelId } from "../src/worker/cro/config";
 import type { Business } from "../src/worker/types";
 import type { BusinessModel, CroPageRef, Evidence, PageReview, Recommendation } from "../src/worker/cro/types";
@@ -63,7 +63,7 @@ export async function runEval(fixtures: NamedFixture[], makeCaller: (m: CroModel
 
   for (const { name, fx } of fixtures) {
     const ids = new Set(fx.evidence.map((e) => e.id));
-    const facts = fx.evidence.map((e) => e.fact);
+    const quoted = factQuotes(fx.evidence.map((e) => e.fact)); // mirrors the pipeline: quoted phrases inside facts, never whole facts
     const siteWide = fx.evidence.filter((e) => e.family === "martech" || e.family === "listing");
     out[name] = {};
     for (const m of MODELS) {
@@ -91,7 +91,7 @@ export async function runEval(fixtures: NamedFixture[], makeCaller: (m: CroModel
           const r = await reviewPage({ business: fx.business, model: bm, page: p.ref, evidence: pageEv, shots: p.shots }, call);
           S.pages.costUsd += r.costUsd;
           if (!r.value) { S.pages.schemaFails++; continue; }
-          const v = validateReview(r.value, ids, [p.text, ...facts]);
+          const v = validateReview(r.value, ids, [p.text, ...quoted]);
           S.pages.items += r.value.issues.length; S.pages.dropped += v.dropped.length; S.pages.quoted += v.review.issues.filter((i) => i.quote).length; // kept issues only, so every counted quote passed quoteFound
           reviews.push(v.review);
         } catch (e) { fail("pages", p.ref.url, e); }
@@ -103,7 +103,7 @@ export async function runEval(fixtures: NamedFixture[], makeCaller: (m: CroModel
         S.synthesize.costUsd += s.costUsd;
         if (!s.value) { S.synthesize.schemaFails++; out[name][m] = { model: bm, recs: [] }; continue; }
         // Like production: the drop share is measured against what the model returned, before any cap.
-        const v = validateRecommendations(s.value.recommendations, ids, [...fx.pages.map((p) => p.text), ...facts]);
+        const v = validateRecommendations(s.value.recommendations, ids, [...fx.pages.map((p) => p.text), ...quoted]);
         S.synthesize.items += s.value.recommendations.length; S.synthesize.dropped += v.dropped.length;
         S.synthesize.quoted += v.kept.filter((r) => quotedPhrases(r.observation).length).length; // kept recs only: every quoted phrase passed quoteFound
         out[name][m] = { model: bm, recs: v.kept };

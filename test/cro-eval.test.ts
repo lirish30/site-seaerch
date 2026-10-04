@@ -43,6 +43,20 @@ describe("cro-eval", () => {
     for (const s of Object.values(r.key.sites)) expect([s.A, s.B].sort()).toEqual([H, S].sort());
   });
 
+  it("does not take wording the code wrote into a fact as a verbatim quote from the site", async () => {
+    const codeFact = "No guarantee or warranty wording found";
+    const fx2: Fixture = { ...fx, evidence: [ev("E1", { fact: codeFact }), ev("E2", { fact: 'Form field label: "Your full name"' })], pages: [{ ...fx.pages[0], text: "Call us for fast plumbing repairs" }] };
+    const call = (quote: string): CroCaller => async ({ stage }) => ({ costUsd: 0, model: "m", input: stage === "model" ? model()
+      : stage === "pages" ? { five_second_read: { thinks_business_does: "x", would_do_next: "y" }, strengths: [], issues: [{ observation: "o", quote, principle: "p", evidence_ids: ["E1"] }] }
+      : { positioning: { says_now: "a", should_say: "b" }, recommendations: [rec({ observation: `Says "${quote}"`, evidence_ids: ["E1"] })] } });
+    const bad = await runEval([{ name: "a.json", fx: fx2 }], () => call(codeFact), { seed: 1, date: "2026-10-04" });
+    expect(bad.metrics[H].pages).toMatchObject({ items: 1, dropped: 1, quoted: 0 });
+    expect(bad.metrics[H].synthesize).toMatchObject({ items: 1, dropped: 1, quoted: 0 });
+    const good = await runEval([{ name: "a.json", fx: fx2 }], () => call("Your full name"), { seed: 1, date: "2026-10-04" });
+    expect(good.metrics[H].pages).toMatchObject({ dropped: 0, quoted: 1 });
+    expect(good.metrics[H].synthesize).toMatchObject({ dropped: 0, quoted: 1 });
+  });
+
   it("is reproducible from the seed, and the seed is in the key", async () => {
     const files = Array.from({ length: 8 }, (_, i) => ({ name: `s${i}.json`, fx }));
     const a = await runEval(files, fake, { seed: 42, date: "d" });
