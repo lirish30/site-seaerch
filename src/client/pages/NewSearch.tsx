@@ -89,6 +89,9 @@ export default function NewSearch() {
                 value={RESULT_PRESETS.includes(maxResults) ? "" : maxResults}
                 onChange={(e) => { const n = Number(e.target.value); if (n >= 1) setMax(Math.min(200, n)); }} />
             </div>
+            {est && <p className="muted small" style={{ margin: "6px 0 0" }}>
+              {maxResults} results ≈ ${est.estUsd.toFixed(2)} per type (about ${(est.estUsd / maxResults).toFixed(3)} a lead for the browser check, AI review and draft)
+            </p>}
           </div>
         </div>
 

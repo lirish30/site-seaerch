@@ -232,4 +232,31 @@ describe("routes", () => {
     const a = (await (await api(`/api/leads/${b.id}`)).json<any>()).activity[0];
     expect([a.kind, a.detail]).toEqual(["score_flagged", "Site loads fine for me"]);
   });
+
+  it("report.html renders the deck with escaped content; 404 without an audit", async () => {
+    const { b } = await seedLead();
+    await env.DB.prepare(`UPDATE businesses SET name = ? WHERE id = ?`).bind("Ace <script>alert(1)</script>", b.id).run();
+    const r = await api(`/api/leads/${b.id}/report.html`);
+    expect(r.status).toBe(200);
+    const html = await r.text();
+    expect(html).toContain("Website audit &amp; proposal");
+    expect(html).toContain("Ace &lt;script&gt;");
+    expect(html).not.toContain("<script>alert(1)</script>");
+    expect(html).toContain("Not secure");
+    expect((await api(`/api/leads/nope/report.html`)).status).toBe(404);
+  });
+
+  it("google: status reports unconfigured; exports need a connection; callback is public but rejects bad state", async () => {
+    const st = await (await api("/api/google/status")).json<any>();
+    expect(st).toEqual({ configured: false, connected: false, email: null });
+    expect((await api("/api/google/connect")).status).toBe(501);
+    const { b } = await seedLead();
+    const g = await api(`/api/leads/${b.id}/gmail-draft`, { method: "POST", body: "{}" });
+    expect(g.status).toBe(400);
+    expect((await g.json<any>()).error).toMatch(/Connect your Google account/);
+    expect((await api(`/api/leads/${b.id}/drive`, { method: "POST", body: "{}" })).status).toBe(400);
+    const cb = await SELF.fetch("https://x/api/google/callback?code=c&state=bad", { redirect: "manual" });
+    expect(cb.status).toBe(302);
+    expect(cb.headers.get("location")).toBe("/settings?google=failed");
+  });
 });

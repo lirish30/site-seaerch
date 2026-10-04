@@ -28,7 +28,7 @@ export async function passwordMatches(given: string, actual: string) {
   return a === b;
 }
 
-const PUBLIC = new Set(["/api/health", "/api/login"]);
+const PUBLIC = new Set(["/api/health", "/api/login", "/api/google/callback"]);
 
 export const requireAuth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   if (PUBLIC.has(c.req.path)) return next();

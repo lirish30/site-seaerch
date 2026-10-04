@@ -188,3 +188,8 @@ ul.plain { list-style:none; padding:0; margin:0; } ul.plain li { padding:4px 0; 
 .versions { list-style:none; margin:0; padding:0; font-size:13px; }
 .versions li { display:flex; justify-content:space-between; gap:8px; padding:6px 0; border-bottom:1px solid var(--line); }
 .versions li.current { font-weight:600; }
+
+.side-stack { display:flex; flex-direction:column; gap:16px; }
+.export-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; } .export-grid button, .export-grid a { width:100%; } .export-grid a button { width:100%; }
+label.check { display:flex; gap:8px; align-items:center; font-weight:500; font-size:13px; } label.check input { width:auto; }
+code { font-size:12px; background:var(--hover); padding:1px 4px; border-radius:4px; }

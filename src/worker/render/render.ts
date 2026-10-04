@@ -65,3 +65,15 @@ export function browserRenderer(binding: Fetcher): Renderer {
     }
   };
 }
+
+/** Prints self-contained HTML (the audit deck) to a 16:9 PDF in a real browser. */
+export async function htmlToPdf(binding: Fetcher, html: string): Promise<Uint8Array> {
+  const browser = await puppeteer.launch(binding);
+  try {
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: "load" });
+    return await page.pdf({ width: "1280px", height: "720px", printBackground: true, preferCSSPageSize: true }) as Uint8Array;
+  } finally {
+    await browser.close();
+  }
+}

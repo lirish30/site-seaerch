@@ -12,4 +12,7 @@ export interface Env {
   BRIGHTDATA_SERP_ZONE: string;
   PAGESPEED_API_KEY: string;
   ANTHROPIC_API_KEY: string;
+  /** Optional: Google OAuth client for Gmail drafts and Drive export. */
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
 }

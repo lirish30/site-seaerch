@@ -19,6 +19,13 @@ export default function Settings() {
   const [s, setS] = useState<S | null>(null);
   const [usage, setUsage] = useState<{ service: string; units: number; est_cost_usd: number }[]>([]);
   const [saved, setSaved] = useState(false); const [err, setErr] = useState(""); const [saving, setSaving] = useState(false);
+  const [google, setGoogle] = useState<{ configured: boolean; connected: boolean; email: string | null } | null>(null);
+  const googleResult = new URLSearchParams(location.search).get("google");
+  useEffect(() => { api.get<typeof google>("/google/status").then(setGoogle).catch(() => setGoogle(null)); }, []);
+  async function disconnectGoogle() {
+    if (!window.confirm("Disconnect Google? Exports to Gmail and Drive will stop until you reconnect.")) return;
+    await api.post("/google/disconnect"); setGoogle(await api.get("/google/status"));
+  }
   useEffect(() => {
     let cancelled = false;
     api.get<{ settings: S; usage: typeof usage }>("/settings")
@@ -67,12 +74,24 @@ export default function Settings() {
         <input id="limit" type="number" min={0} value={String(s.monthly_spend_limit_usd ?? "")} onChange={(e) => set("monthly_spend_limit_usd", e.target.value)} />
         <p className="row"><button className="primary" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</button>{saved && <span className="muted">Saved</span>}{err && <span className="error">{err}</span>}</p>
       </div>
+      <div className="side-stack">
+      <div className="card">
+        <h2>Google</h2>
+        <p className="muted small">Create Gmail drafts (never sent) and save audit reports to Google Drive.</p>
+        {googleResult === "connected" && <p className="ok">Google connected.</p>}
+        {googleResult === "failed" && <p className="error">Couldn't connect Google. Try again.</p>}
+        {!google ? <p className="muted">Checking…</p>
+          : !google.configured ? <p className="muted small">Not set up yet: add <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code> secrets (see README).</p>
+          : google.connected ? <p className="row">Connected as <strong>{google.email ?? "your account"}</strong><button className="link-btn danger" onClick={disconnectGoogle}>Disconnect</button></p>
+          : <a href="/api/google/connect"><button className="primary">Connect Google</button></a>}
+      </div>
       <div className="card">
         <h2>This month</h2>
         <table><tbody>
           {usage.map((u) => <tr key={u.service}><td>{u.service}</td><td>{u.units} calls</td><td>${u.est_cost_usd.toFixed(2)}</td></tr>)}
           <tr><td><strong>Total</strong></td><td /><td><strong>${total.toFixed(2)}</strong> of ${(parseSpendLimit(s.monthly_spend_limit_usd) ?? 0).toFixed(2)}</td></tr>
         </tbody></table>
+      </div>
       </div>
     </div>
   );

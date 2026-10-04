@@ -5,6 +5,7 @@ import { authRoutes } from "./routes/auth";
 import { searchRoutes } from "./routes/searches";
 import { leadRoutes } from "./routes/leads";
 import { settingsRoutes } from "./routes/settings";
+import { googleRoutes } from "./routes/google";
 
 const app = new Hono<{ Bindings: Env }>();
 app.use("/api/*", requireAuth);
@@ -13,6 +14,7 @@ app.route("/api", authRoutes);
 app.route("/api/searches", searchRoutes);
 app.route("/api/leads", leadRoutes);
 app.route("/api/settings", settingsRoutes);
+app.route("/api/google", googleRoutes);
 
 export default app;
 export { LeadWorkflow, SearchWorkflow } from "./workflows";

@@ -12,6 +12,13 @@ import { pickRecipient } from "../recipient";
 import { regenerateDraft } from "../pipeline/lead";
 import { depsFromEnv } from "../workflows";
 import { mailingSettingsMissing, MISSING_MAILING_SETTINGS } from "./compliance";
+import { reportFor, reportFileName } from "../report/data";
+import { htmlToPdf } from "../render/render";
+import { renderDoc } from "../report/html";
+import { googleAccess, GoogleNotConnected } from "./google";
+import { buildMime, createGmailDraft, ensureFolder, uploadFile } from "../google/api";
+import { setGoogleFolder } from "../db/google";
+import { pocFor } from "../db/people";
 
 const STATUSES = ["new", "reviewed", "contacted", "replied", "won", "lost", "skip"] as const;
 
@@ -66,6 +73,73 @@ leadRoutes.get("/:id/screenshot/:which{desktop|mobile}", async (c) => {
   if (!obj) return c.json({ error: "not found" }, 404);
   return new Response(obj.body, { headers: { "content-type": "image/jpeg", "cache-control": "private, max-age=86400" } });
 });
+
+// Client-facing audit deck: HTML to view/print, PDF to download (needs Browser Rendering).
+leadRoutes.get("/:id/report.html", async (c) => {
+  const r = await reportFor(c.env, c.req.param("id"));
+  if (!r) return c.json({ error: "No audit yet" }, 404);
+  return c.html(r.html);
+});
+leadRoutes.get("/:id/report.pdf", async (c) => {
+  if (!c.env.BROWSER) return c.json({ error: "PDF export needs the Browser Rendering binding" }, 501);
+  const id = c.req.param("id");
+  const r = await reportFor(c.env, id);
+  if (!r) return c.json({ error: "No audit yet" }, 404);
+  const pdf = await htmlToPdf(c.env.BROWSER, r.html);
+  await logActivity(c.env.DB, id, "export", "Downloaded audit PDF");
+  return new Response(new Uint8Array(pdf), { headers: { "content-type": "application/pdf",
+    "content-disposition": `attachment; filename="${reportFileName(r.data.business.name, "pdf")}"` } });
+});
+
+// Exports to the connected Google account. Gmail gets a draft only; nothing is ever sent.
+async function exportGuard(c: any, fn: () => Promise<Response>) {
+  try { return await fn(); }
+  catch (e) {
+    if (e instanceof GoogleNotConnected) return c.json({ error: e.message }, 400);
+    return c.json({ error: (e as Error).message }, 502);
+  }
+}
+
+leadRoutes.post("/:id/gmail-draft", (c) => exportGuard(c, async () => {
+  const id = c.req.param("id");
+  const { attachReport } = await c.req.json<{ attachReport?: boolean }>().catch(() => ({ attachReport: false }));
+  const draft = await latestDraft(c.env.DB, id);
+  if (!draft) return c.json({ error: "Write a draft first" }, 400);
+  const { token } = await googleAccess(c.env, new URL(c.req.url).origin);
+  const contacts = await listContacts(c.env.DB, id);
+  const poc = await pocFor(c.env.DB, id);
+  const to = contacts.find((x) => x.id === draft.to_contact_id)?.value ?? poc?.email ?? null;
+  let attachment: { name: string; bytes: Uint8Array } | undefined;
+  if (attachReport) {
+    if (!c.env.BROWSER) return c.json({ error: "Attaching the PDF needs the Browser Rendering binding" }, 501);
+    const r = await reportFor(c.env, id);
+    if (r) attachment = { name: reportFileName(r.data.business.name, "pdf"), bytes: await htmlToPdf(c.env.BROWSER, r.html) };
+  }
+  const g = await createGmailDraft(fetch, token, buildMime({ to, subject: draft.subject, body: draft.body, attachment }));
+  await logActivity(c.env.DB, id, "export", `Gmail draft${attachment ? " with audit PDF" : ""}${to ? ` to ${to}` : ""}`);
+  return c.json({ ok: true, url: g.url });
+}));
+
+leadRoutes.post("/:id/drive", (c) => exportGuard(c, async () => {
+  const id = c.req.param("id");
+  const r = await reportFor(c.env, id);
+  if (!r) return c.json({ error: "No audit yet" }, 404);
+  const { token, row } = await googleAccess(c.env, new URL(c.req.url).origin);
+  const folder = await ensureFolder(fetch, token, row.folder_id, "Site Search reports");
+  if (folder !== row.folder_id) await setGoogleFolder(c.env.DB, folder);
+  const name = r.data.business.name;
+  const draft = await latestDraft(c.env.DB, id);
+  const doc = await uploadFile(fetch, token, { name: `${name} – website audit & proposal`, parents: [folder], mimeType: "application/vnd.google-apps.document" },
+    { type: "text/html", bytes: renderDoc(r.data, draft ? { subject: draft.subject, body: draft.body } : null) });
+  let pdfUrl: string | null = null;
+  if (c.env.BROWSER) {
+    const pdf = await uploadFile(fetch, token, { name: reportFileName(name, "pdf"), parents: [folder] },
+      { type: "application/pdf", bytes: await htmlToPdf(c.env.BROWSER, r.html) });
+    pdfUrl = pdf.webViewLink;
+  }
+  await logActivity(c.env.DB, id, "export", "Saved audit to Google Drive");
+  return c.json({ ok: true, docUrl: doc.webViewLink, pdfUrl });
+}));
 
 const nullableUrl = z.string().trim().max(500).nullable().transform((v) => v || null)
   .refine((v) => v === null || /^(https?:\/\/)?[^\s/]+\.[^\s]+$/i.test(v), "invalid url");

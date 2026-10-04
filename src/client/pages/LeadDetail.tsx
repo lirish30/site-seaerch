@@ -33,6 +33,8 @@ export default function LeadDetail() {
   const [focus, setFocus] = useState<Set<string>>(new Set());
   const [tone, setTone] = useState("");
   const [versions, setVersions] = useState<Draft[] | null>(null);
+  const [attachPdf, setAttachPdf] = useState(true);
+  const [exportLink, setExportLink] = useState<{ label: string; url: string }[]>([]);
   // Serialises saves and lets other actions wait for in-flight ones.
   const pending = useRef<Promise<unknown>>(Promise.resolve());
   const savedDraft = useRef({ subject: "", body: "" });
@@ -97,6 +99,19 @@ export default function LeadDetail() {
     try {
       await api.post(`/leads/${id}/regenerate`, { steeringNote: steer, focus: focusIdx, tone: tone || null });
       setSteer(""); await load(); setMsg(focusIdx.length ? `New draft focused on ${focusIdx.length} chosen issue(s).` : "New draft written.");
+    } catch (e) { fail(e); } finally { setBusy(""); }
+  }
+  async function exportTo(kind: "gmail" | "drive") {
+    await saveDraft(); await flush(); setBusy(kind); setMsg(""); setExportLink([]);
+    try {
+      if (kind === "gmail") {
+        const r = await api.post<{ url: string }>(`/leads/${id}/gmail-draft`, { attachReport: attachPdf });
+        setExportLink([{ label: "Open Gmail draft", url: r.url }]); setMsg("Saved to your Gmail drafts. It hasn't been sent.");
+      } else {
+        const r = await api.post<{ docUrl: string; pdfUrl: string | null }>(`/leads/${id}/drive`);
+        setExportLink([{ label: "Google Doc", url: r.docUrl }, ...(r.pdfUrl ? [{ label: "PDF in Drive", url: r.pdfUrl }] : [])]); setMsg("Saved to Google Drive.");
+      }
+      await load();
     } catch (e) { fail(e); } finally { setBusy(""); }
   }
   function loadVersion(v: Draft) { setSubject(v.subject); setBody(v.body); setMsg("Loaded an earlier version into the editor. Click outside the editor to save it."); }
@@ -248,6 +263,18 @@ export default function LeadDetail() {
         </div>
 
         <aside className="lead-side">
+          {a && <div className="card export">
+            <h3>Export & share</h3>
+            <div className="export-grid">
+              <a href={`/api/leads/${b.id}/report.html`} target="_blank" rel="noreferrer"><button>View report</button></a>
+              <a href={`/api/leads/${b.id}/report.pdf`}><button>Download PDF</button></a>
+              <button onClick={() => exportTo("gmail")} disabled={!d.draft || busy === "gmail"} title={d.draft ? "" : "Write a draft first"}>{busy === "gmail" ? "Saving…" : "Gmail draft"}</button>
+              <button onClick={() => exportTo("drive")} disabled={busy === "drive"}>{busy === "drive" ? "Saving…" : "Save to Drive"}</button>
+            </div>
+            <label className="check"><input type="checkbox" checked={attachPdf} onChange={(e) => setAttachPdf(e.target.checked)} /> Attach the audit PDF to the Gmail draft</label>
+            {exportLink.length > 0 && <p className="row">{exportLink.map((l) => <a key={l.url} href={l.url} target="_blank" rel="noreferrer">{l.label} ↗</a>)}</p>}
+            <p className="muted small">Nothing is ever sent from here. Gmail gets a draft for you to review.</p>
+          </div>}
           <div className="card">
             <h3>Pipeline</h3>
             <label htmlFor="status">Status</label>
