@@ -2,7 +2,7 @@ export type LeadStatus = "new" | "reviewed" | "contacted" | "replied" | "won" | 
 export interface Business { id: string; name: string; category: string | null; address: string | null; phone: string | null;
   website_url: string | null; maps_url: string | null; lead_status: LeadStatus; notes: string | null; contacted_at: string | null; last_error: string | null;
   rating: number | null; review_count: number | null; archived_at: string | null; follow_up_at: string | null; deal_value: number | null; created_at: string;
-  scan_stage: ScanStage; }
+  scan_stage: ScanStage; tags: string[]; }
 /** 'quick' = crawled and scored only; 'full' = also screenshots, PageSpeed, AI review and a draft. */
 export type ScanStage = "quick" | "full";
 export interface LeadRow { business: Business; score: number | null; health: number | null; niche: string | null; topFinding: string | null; offer: string | null;
@@ -83,3 +83,8 @@ export interface ImportCommitResult {
   leads: { index: number; id: string; name: string; outcome: "created" | "linked" | "existing" }[];
   warnings?: string[];
 }
+
+/** POST /api/leads/bulk. There is no delete action. */
+export type BulkAction = "status" | "archive" | "restore" | "tag" | "untag";
+export interface BulkResult { updated: number; skipped: number; undoToken: string | null; }
+export interface SavedFilter { id: string; name: string; query: string; created_at: string; }

@@ -2,7 +2,8 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../env";
 import type { Business, LeadStatus } from "../types";
-import { getBusiness, listAllBusinesses, listQuickStageBusinesses, updateLead, domainOf, setArchived, deleteBusiness } from "../db/businesses";
+import { getBusiness, listAllBusinesses, listQuickStageBusinesses, updateLead, domainOf, setArchived, deleteBusiness, applyBulk, undoBulk, normalizeTag } from "../db/businesses";
+import { createFilter, deleteFilter, FilterLimit, FilterNameTaken, listFilters } from "../db/filters";
 import { listPeople, createPerson, updatePerson, deletePerson, pocsFor } from "../db/people";
 import { listActivity, logActivity } from "../db/activity";
 import { latestAudit, latestAuditsFor, listAudits } from "../db/audits";
@@ -70,7 +71,10 @@ leadRoutes.get("/", async (c) => {
   const limit = intParam(c.req.query("limit"), DEFAULT_LIMIT, 1, MAX_LIMIT);
   const offset = intParam(c.req.query("offset"), 0, 0, Number.MAX_SAFE_INTEGER);
   const archived = c.req.query("archived") === "1";
-  return c.json(await leadRows(c.env.DB, await listAllBusinesses(c.env.DB, { status, limit, offset, archived })));
+  const rawTag = c.req.query("tag");
+  const tag = rawTag === undefined || rawTag === "" ? undefined : normalizeTag(rawTag);
+  if (tag === null) return c.json({ error: "bad tag" }, 400);
+  return c.json(await leadRows(c.env.DB, await listAllBusinesses(c.env.DB, { status, limit, offset, archived, tag })));
 });
 
 // Quick-scanned leads worth a full scan, best first. Registered before /:id so "promising" is not read as an id.
@@ -83,6 +87,52 @@ leadRoutes.get("/promising", async (c) => {
   const hidden = await suppressedLeadIds(c.env.DB, quick);
   return c.json(rankPromising(await leadRows(c.env.DB, quick.filter((b) => !hidden.has(b.id))), { minFit }));
 });
+
+// Batch triage. There is deliberately no bulk delete. Registered (with /filters) before /:id so these paths are not read as ids.
+const BulkBody = z.object({
+  ids: z.array(z.string().min(1).max(100)).min(1).max(200),
+  action: z.enum(["status", "archive", "restore", "tag", "untag"]),
+  status: z.enum(STATUSES).optional(),
+  tag: z.string().max(200).optional(),
+});
+leadRoutes.post("/bulk", async (c) => {
+  const p = BulkBody.safeParse(await c.req.json().catch(() => null));
+  if (!p.success) return c.json({ error: "invalid" }, 400);
+  const { ids, action, status } = p.data;
+  if (action === "status") {
+    if (!status) return c.json({ error: "status is required" }, 400);
+    return c.json(await applyBulk(c.env.DB, ids, { action, status }));
+  }
+  if (action === "tag" || action === "untag") {
+    const tag = normalizeTag(p.data.tag ?? "");
+    if (!tag) return c.json({ error: "A tag is 1-32 letters, numbers, spaces, - or _" }, 400);
+    return c.json(await applyBulk(c.env.DB, ids, { action, tag }));
+  }
+  return c.json(await applyBulk(c.env.DB, ids, { action }));
+});
+
+leadRoutes.post("/bulk/undo", async (c) => {
+  const p = z.object({ undoToken: z.string().min(1).max(100) }).safeParse(await c.req.json().catch(() => null));
+  if (!p.success) return c.json({ error: "invalid" }, 400);
+  const restored = await undoBulk(c.env.DB, p.data.undoToken);
+  return restored === null ? c.json({ error: "Nothing to undo: it was already undone or took longer than 10 minutes." }, 404) : c.json({ restored });
+});
+
+// Saved list filters: `query` is the leads page's serialized filter state, opaque to the server.
+const FilterBody = z.object({ name: z.string().trim().min(1).max(60), query: z.string().max(2000) });
+leadRoutes.get("/filters", async (c) => c.json(await listFilters(c.env.DB)));
+leadRoutes.post("/filters", async (c) => {
+  const p = FilterBody.safeParse(await c.req.json().catch(() => null));
+  if (!p.success) return c.json({ error: "A name of 1-60 characters is required." }, 400);
+  try { return c.json(await createFilter(c.env.DB, p.data), 201); }
+  catch (e) {
+    if (e instanceof FilterNameTaken) return c.json({ error: "A saved filter with that name already exists." }, 409);
+    if (e instanceof FilterLimit) return c.json({ error: "You can keep up to 50 saved filters. Delete one first." }, 400);
+    throw e;
+  }
+});
+leadRoutes.delete("/filters/:id", async (c) =>
+  (await deleteFilter(c.env.DB, c.req.param("id"))) ? c.json({ ok: true }) : c.json({ error: "not found" }, 404));
 
 leadRoutes.get("/:id", async (c) => {
   const id = c.req.param("id");

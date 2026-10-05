@@ -9,7 +9,7 @@ const row = (o: Partial<Omit<LeadRow, "business">> & { status?: string } = {}): 
   const flat = { rating: 4, reviewCount: 10, ...rest }; // business row mirrors the flat fields, as leadRows builds them
   return { business: { id: `b${n++}`, name: "N", category: null, address: null, phone: null, website_url: null, maps_url: null,
     lead_status: (status ?? "new") as any, notes: null, contacted_at: null, last_error: null, rating: flat.rating, review_count: flat.reviewCount,
-    archived_at: null, follow_up_at: null, deal_value: null, created_at: "2026-10-03T00:00:00.000Z", scan_stage: "full" },
+    archived_at: null, follow_up_at: null, deal_value: null, created_at: "2026-10-03T00:00:00.000Z", scan_stage: "full", tags: [] },
   score: 50, health: null, niche: null, poc: null, topFinding: null, offer: "care_plan", bestContact: null, hasEmail: false, partial: false, platform: "wix", fit: NO_FIT, scan_stage: "full", ...flat };
 };
 const f = (o: Partial<LeadFilters> = {}): LeadFilters => ({ ...defaultFilters, ...o });

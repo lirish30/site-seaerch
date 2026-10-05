@@ -8,7 +8,7 @@ const biz = (id: string, name: string, website: string | null, o: Partial<Busine
   id, place_id: null, domain: website ? new URL(website.startsWith("http") ? website : `https://${website}`).hostname.replace(/^www\./, "") : null,
   name, category: null, address: null, phone: null, website_url: website, maps_url: null, rating: null, review_count: null,
   first_seen_search_id: null, lead_status: "new", notes: null, contacted_at: null, last_error: null, created_at: "2026-01-01",
-  archived_at: null, follow_up_at: null, deal_value: null, scan_stage: "full", ...o,
+  archived_at: null, follow_up_at: null, deal_value: null, scan_stage: "full", tags: [], ...o,
 });
 const row = (name: string, url: string | null, o: Partial<ImportRow> = {}): ImportRow => ({ name, url, source: "Referral", ...o });
 
