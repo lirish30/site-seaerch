@@ -22,6 +22,7 @@ import { activeReportFor, createReport, otherActiveCount, revokeReports, type Re
 import { pickRecipient } from "../recipient";
 import { regenerateDraft } from "../pipeline/lead";
 import { depsFromEnv } from "../workflows";
+import { checkSpend, PER_LEAD_COST } from "../cost";
 import { mailingSettingsMissing, MISSING_MAILING_SETTINGS } from "./compliance";
 import { reportFor, reportFileName } from "../report/data";
 import { htmlToPdf } from "../render/render";
@@ -355,6 +356,8 @@ leadRoutes.post("/:id/reaudit", async (c) => {
   if (!(await getBusiness(c.env.DB, id))) return c.json({ error: "not found" }, 404);
   if (await mailingSettingsMissing(c.env.DB)) return c.json({ error: MISSING_MAILING_SETTINGS }, 400);
   const { reason } = await c.req.json<{ reason?: string }>().catch(() => ({ reason: undefined }));
+  const spend = await checkSpend(c.env.DB, PER_LEAD_COST);
+  if (!spend.ok) return c.json({ error: "spend limit", ...spend }, 402);
   await c.env.LEAD_WORKFLOW.create({ id: `reaudit-${id}-${Date.now()}`, params: { businessId: id, searchId: null, forceDraft: true } });
   await logActivity(c.env.DB, id, reason?.trim() ? "score_flagged" : "reaudit", reason?.trim().slice(0, 500) || null);
   return c.json({ ok: true }, 202);
@@ -366,6 +369,8 @@ leadRoutes.post("/:id/full-scan", async (c) => {
   const id = c.req.param("id");
   if (!(await getBusiness(c.env.DB, id))) return c.json({ error: "not found" }, 404);
   if (await mailingSettingsMissing(c.env.DB)) return c.json({ error: MISSING_MAILING_SETTINGS }, 400);
+  const spend = await checkSpend(c.env.DB, PER_LEAD_COST);
+  if (!spend.ok) return c.json({ error: "spend limit", ...spend }, 402);
   try {
     await c.env.LEAD_WORKFLOW.create({ id: `fullscan-${id}-${Date.now()}`, params: { businessId: id, searchId: null, forceDraft: false, stage: "full" } });
   } catch (e) {

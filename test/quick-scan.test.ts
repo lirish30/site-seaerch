@@ -1,5 +1,5 @@
 import { env, SELF } from "cloudflare:test";
-import { describe, it, expect, beforeAll, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
 import { runLead, type LeadDeps, type StepLike } from "../src/worker/pipeline/lead";
 import { runSearch } from "../src/worker/pipeline/search";
 import { startLeadIdempotent } from "../src/worker/workflows";
@@ -11,6 +11,7 @@ import { latestDraft } from "../src/worker/db/drafts";
 import { createFitProfile } from "../src/worker/db/fit";
 import { addSuppression, isSuppressed, suppressedLeadIds } from "../src/worker/db/suppression";
 import { saveSettings } from "../src/worker/db/settings";
+import { recordUsage } from "../src/worker/db/usage";
 import { rankPromising } from "../src/worker/scoring/promising";
 import { FakeListingSource } from "../src/worker/listings/fake";
 import type { Listing } from "../src/worker/types";
@@ -351,6 +352,62 @@ describe("POST /api/leads/:id/full-scan", () => {
       expect(r.status).toBe(502);
       expect(await r.json()).toEqual({ error: "workflow unavailable" });
     } finally { (env.LEAD_WORKFLOW as any).create = orig; }
+  });
+});
+
+describe("per-lead paid scans respect the monthly spend limit", () => {
+  const created: any[] = [];
+  let orig: typeof env.LEAD_WORKFLOW.create;
+  beforeEach(async () => {
+    created.length = 0;
+    orig = env.LEAD_WORKFLOW.create;
+    (env.LEAD_WORKFLOW as any).create = async (o: any) => { created.push(o); return { id: o.id }; };
+    await env.DB.prepare(`DELETE FROM usage`).run();
+    await saveSettings(env.DB, { monthly_spend_limit_usd: 25 });
+  });
+  afterEach(async () => {
+    (env.LEAD_WORKFLOW as any).create = orig;
+    await env.DB.prepare(`DELETE FROM usage`).run();
+    await saveSettings(env.DB, { monthly_spend_limit_usd: 25 });
+  });
+  const activityCount = async (id: string) => (await env.DB.prepare(`SELECT COUNT(*) AS n FROM activity WHERE business_id = ?`).bind(id).first<{ n: number }>())!.n;
+
+  for (const [name, path] of [["full-scan", "full-scan"], ["reaudit", "reaudit"]] as const) {
+    it(`POST /:id/${name} answers 402 with the spend-limit body at the cap, starts no workflow and logs no activity`, async () => {
+      const b = await seedQuick({ name: `SPEND-${name}` });
+      const before = await activityCount(b.id);
+      await recordUsage(env.DB, "claude", 1, 24.99); // 24.99 + PER_LEAD_COST (~0.0455) is over 25
+      const r = await api(`/api/leads/${b.id}/${path}`, { method: "POST", body: JSON.stringify({}) });
+      expect(r.status).toBe(402);
+      const body = await r.json<any>();
+      expect(body).toMatchObject({ error: "spend limit", ok: false, limit: 25 });
+      expect(body.spent).toBeCloseTo(24.99);
+      expect(created).toHaveLength(0);
+      expect(await activityCount(b.id)).toBe(before);
+    });
+
+    it(`POST /:id/${name} still answers 202 under the cap`, async () => {
+      const b = await seedQuick({ name: `UNDER-${name}` });
+      await recordUsage(env.DB, "claude", 1, 24);
+      const r = await api(`/api/leads/${b.id}/${path}`, { method: "POST", body: JSON.stringify({}) });
+      expect(r.status).toBe(202);
+      expect(created).toHaveLength(1);
+    });
+
+    it(`POST /:id/${name} for an unknown lead 404s before any spend check, even over the cap`, async () => {
+      await recordUsage(env.DB, "claude", 1, 100);
+      expect((await api(`/api/leads/nope/${path}`, { method: "POST", body: JSON.stringify({}) })).status).toBe(404);
+      expect(created).toHaveLength(0);
+    });
+  }
+
+  it("the mailing-settings guard still answers 400 before the spend check", async () => {
+    const b = await seedQuick({ name: "SPEND-guard" });
+    await recordUsage(env.DB, "claude", 1, 100);
+    await saveSettings(env.DB, { physical_address: "" });
+    try {
+      for (const path of ["full-scan", "reaudit"]) expect((await api(`/api/leads/${b.id}/${path}`, { method: "POST", body: JSON.stringify({}) })).status).toBe(400);
+    } finally { await saveSettings(env.DB, { physical_address: "1 Main St, Boise, ID" }); }
   });
 });
 

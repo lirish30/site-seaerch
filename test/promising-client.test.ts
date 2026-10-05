@@ -28,6 +28,9 @@ describe("promising helpers", () => {
     expect(fullScanErrorText(new ApiError(502, "workflow unavailable"))).toBe("workflow unavailable");
     expect(fullScanErrorText(new Error("network"))).toBe("Couldn't start the full scan.");
   });
+  it("words a spend-limit 402 readably instead of showing the raw API error", () => {
+    expect(fullScanErrorText(new ApiError(402, "spend limit"))).toBe("Monthly spend limit reached \u2014 raise it in Settings or wait until next month.");
+  });
   it("names each button and says what a full scan adds", () => {
     expect(fullScanLabel("Ace")).toBe("Run full scan for Ace");
     expect(FULL_SCAN_ADDS).toMatch(/screenshots.*pagespeed.*review.*draft/i);

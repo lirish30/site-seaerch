@@ -1,4 +1,5 @@
 import { ApiError } from "./api";
+import { isSpendLimit, SPEND_LIMIT_REACHED } from "./spend";
 
 /** What a full scan adds on top of the quick scan the Promising queue was built from. */
 export const FULL_SCAN_ADDS = "Screenshots, a Google PageSpeed test, an AI design and conversion review, and an email draft.";
@@ -16,8 +17,9 @@ export function parseMinFit(text: string): MinFit {
 
 export const promisingPath = (minFit: number | null) => (minFit === null ? "/leads/promising" : `/leads/promising?minFit=${minFit}`);
 
-/** Inline text for a failed "Run full scan": the API's own message, or a generic fallback. */
+/** Inline text for a failed "Run full scan": the spend-limit wording for a 402, else the API's own message, or a generic fallback. */
 export function fullScanErrorText(x: unknown): string {
+  if (isSpendLimit(x)) return SPEND_LIMIT_REACHED;
   return x instanceof ApiError ? x.message : "Couldn't start the full scan.";
 }
 

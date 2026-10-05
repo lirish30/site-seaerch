@@ -12,6 +12,7 @@ import PeoplePanel from "../components/PeoplePanel";
 import CroPanel from "../components/CroPanel";
 import { shareState } from "../reportView";
 import { REASONS, reasonLabel, suppressedMessage } from "../suppressionView";
+import { isSpendLimit, SPEND_LIMIT_REACHED } from "../spend";
 import type { CroItem, CroResponse } from "../cro";
 import { NICHE_LABEL, OFFER_LABEL, STATUSES, type Activity, type Audit, type AuditChanges, type BestOffer, type Business, type Contact, type FitResult, type LeadStatus, type LeadSuppression, type Person, type SuppressionReason } from "../types";
 
@@ -160,7 +161,7 @@ export default function LeadDetail() {
   async function reaudit(reason?: string) {
     await flush();
     try { await api.post(`/leads/${id}/reaudit`, reason ? { reason } : {}); setMsg("Re-audit started. Refresh in a minute or two."); await load(); }
-    catch (e) { fail(e); }
+    catch (e) { if (isSpendLimit(e)) setMsg(SPEND_LIMIT_REACHED); else fail(e); }
   }
   async function flagScore() {
     const reason = window.prompt("What looks wrong? (e.g. \"the site loads fine\", \"they do have a contact form\"). We'll note it and re-audit.");
