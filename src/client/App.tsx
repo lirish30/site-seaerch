@@ -9,6 +9,7 @@ import Report from "./pages/Report";
 import Radar from "./pages/Radar";
 import Promising from "./pages/Promising";
 import Import from "./pages/Import";
+import Today from "./pages/Today";
 
 export default function App() {
   return (
@@ -20,6 +21,7 @@ export default function App() {
           <nav className="nav">
             <strong>Site Search</strong>
             <NavLink to="/" end>New search</NavLink>
+            <NavLink to="/today">Today</NavLink>
             <NavLink to="/leads">All leads</NavLink>
             <NavLink to="/promising">Promising</NavLink>
             <NavLink to="/import">Import</NavLink>
@@ -30,6 +32,7 @@ export default function App() {
             <Routes>
               <Route path="/" element={<NewSearch />} />
               <Route path="/searches/:id" element={<SearchDetail />} />
+              <Route path="/today" element={<Today />} />
               <Route path="/leads" element={<AllLeads />} />
               <Route path="/leads/:id" element={<LeadDetail />} />
               <Route path="/promising" element={<Promising />} />

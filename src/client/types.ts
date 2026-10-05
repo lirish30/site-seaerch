@@ -90,3 +90,7 @@ export interface BulkResult { updated: number; skipped: number; undoToken: strin
 /** POST /api/leads/bulk/undo: `skipped` leads were edited since the bulk change and were left alone. */
 export interface UndoResult { restored: number; skipped: number; }
 export interface SavedFilter { id: string; name: string; query: string; created_at: string; }
+
+export type TodayKind = "follow_up_due" | "draft_unsent" | "stalled_deal" | "promising_quick_scan";
+/** One thing to do today (GET /api/today). `id` is `${kind}:${businessId}`; `due` is set for follow-ups only. */
+export interface TodayItem { id: string; kind: TodayKind; businessId: string; businessName: string; reason: string; due: string | null; priority: number; }
