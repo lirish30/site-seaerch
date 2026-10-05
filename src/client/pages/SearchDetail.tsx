@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { pollDelay, searchFinished } from "../poll";
 import type { LeadRow, Search } from "../types";
@@ -48,6 +48,7 @@ export default function SearchDetail() {
       <h2>{search.business_type} in {search.location}</h2>
       {notice && <div className="notice" role="status"><span>⚠ {notice}</span><button aria-label="Dismiss notice" onClick={() => setNotice(undefined)}>✕</button></div>}
       {refreshErr && <p className="error">{refreshErr}</p>}
+      {search.quick_scan === 1 && <p className="muted">Quick scan: these leads were crawled and scored only. Run a full scan on the good ones from <Link to="/promising">Promising</Link>.</p>}
       {search.status === "failed"
         ? <p className="error">Search failed: {search.error}</p>
         : <SearchProgress search={search} />}

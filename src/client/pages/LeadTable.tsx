@@ -96,6 +96,7 @@ export default function LeadTable({ rows }: { rows: LeadRow[] }) {
                 <td className="cell-name">
                   <Link to={`/leads/${r.business.id}`} title={r.business.name}>{r.business.name}</Link>
                   {r.business.last_error && <span className="warn-ico" title={r.business.last_error}>⚠</span>}
+                  {r.scan_stage === "quick" && <span className="badge quick-scan" title="Crawled and scored only. Run a full scan from the Promising page for screenshots, PageSpeed, AI review and a draft.">Quick scan</span>}
                   <div className="sub" title={r.business.website_url ?? ""}>{host(r.business.website_url) || "no website"}{r.platform && r.platform !== "other" ? ` · ${r.platform}` : ""}</div>
                 </td>
                 <td><MiniGauge score={r.health} /></td>

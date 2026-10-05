@@ -323,3 +323,7 @@ td.empty { text-align:center; padding:24px; }
 .supp-list li { display:flex; gap:12px; align-items:center; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--line); } .supp-main { min-width:0; overflow-wrap:anywhere; }
 .suppressed-banner { display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap; margin:12px 0 0; padding:10px 14px; border:1px solid var(--bad); border-radius:var(--radius); background:color-mix(in srgb, var(--bad) 8%, var(--card)); font-weight:600; }
 .lead-actions select { width:auto; }
+
+/* Quick scan badge and Promising queue */
+.badge.quick-scan { margin-left:6px; border-color:var(--accent); color:var(--link); font-size:11px; padding:0 6px; cursor:help; vertical-align:middle; }
+table.promising td:last-child { min-width:190px; }
