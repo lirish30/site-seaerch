@@ -109,6 +109,40 @@ describe("POST /api/import/preview", () => {
   });
 });
 
+const INTERNAL = ["http://127.0.0.1:8787/", "169.254.169.254", "http://localhost", "printer.local", "https://user:pw@acme.com", "https://acme.com:8443", "ftp://acme.com", "httpx://a.com"];
+
+describe("internal and non-http addresses", () => {
+  it("preview marks them invalid with a reason, and accepts httpbin.org", async () => {
+    const text = "name,website\n" + INTERNAL.map((u, i) => `Int ${i},${u.includes(",") ? `"${u}"` : u}`).join("\n") + "\nInt Ok,httpbin.org";
+    const { rows } = await (await api("/api/import/preview", { text, source: "x" })).json<any>();
+    expect(rows.slice(0, INTERNAL.length).map((r: any) => r.kind)).toEqual(INTERNAL.map(() => "invalid"));
+    for (const r of rows.slice(0, INTERNAL.length)) expect(r.reason.length).toBeGreaterThan(10);
+    expect(rows[INTERNAL.length]).toMatchObject({ kind: "new", row: { url: "https://httpbin.org" } });
+  });
+  it("a single internal url is invalid", async () => {
+    const { rows } = await (await api("/api/import/preview", { url: "http://127.0.0.1:8787/", name: "Local", source: "x" })).json<any>();
+    expect(rows[0].kind).toBe("invalid");
+  });
+  it("commit refuses them even when the client says create: no business written, no workflow started", async () => {
+    const before = await counts();
+    const wf = okWorkflow();
+    const res = await withWorkflow(wf.create, () => api("/api/import/commit", { source: "x",
+      rows: INTERNAL.map((u, i) => ({ row: { name: `Int Commit ${i}`, url: u, source: "x" }, action: "create" })) }));
+    expect(res.status).toBe(200);
+    const body = await res.json<any>();
+    expect(body).toMatchObject({ created: 0, auditsQueued: 0, searchId: null });
+    expect(body.failures).toHaveLength(INTERNAL.length);
+    expect(await counts()).toEqual(before);
+    expect(wf.made).toHaveLength(0);
+  });
+  it("commit stores a scheme-less address as https://", async () => {
+    const wf = okWorkflow();
+    await withWorkflow(wf.create, () => api("/api/import/commit", { source: "x", rows: [{ row: { name: "Cm Scheme", url: "HTTP://Cm-scheme.com/a" }, action: "create" }] }));
+    const b = await env.DB.prepare(`SELECT website_url, domain FROM businesses WHERE name = 'Cm Scheme'`).first<any>();
+    expect(b).toEqual({ website_url: "http://Cm-scheme.com/a", domain: "cm-scheme.com" });
+  });
+});
+
 describe("POST /api/import/commit", () => {
   const R = (name: string, url: string | null, source = "Referral") => ({ name, url, source });
 

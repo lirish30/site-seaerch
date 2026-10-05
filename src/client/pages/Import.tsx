@@ -154,6 +154,7 @@ export default function Import() {
             <h4>Not imported (suppressed)</h4>
             <ul className="plain">{result.refused.map((x) => <li key={x.index}>Row {x.index + 1}, {x.name}: {x.reason}</li>)}</ul>
           </>}
+          {(result.warnings?.length ?? 0) > 0 && <ul className="plain warn-text">{result.warnings!.map((w) => <li key={w}>{w}</li>)}</ul>}
           {result.failures.length > 0 && <>
             <h4>Problems</h4>
             <ul className="plain error" role="alert">{result.failures.map((x, i) => <li key={i}>Row {x.index + 1}, {x.name}: {x.error}</li>)}</ul>

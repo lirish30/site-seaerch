@@ -81,4 +81,5 @@ export interface ImportCommitResult {
   refused: { index: number; name: string; reason: string }[];
   failures: { index: number; name: string; error: string; kind: "row" | "audit" }[];
   leads: { index: number; id: string; name: string; outcome: "created" | "linked" | "existing" }[];
+  warnings?: string[];
 }
