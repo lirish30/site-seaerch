@@ -40,6 +40,9 @@ export default function SearchDetail() {
     return () => { cancelled = true; clearTimeout(timer); };
   }, [id]);
 
+  // One-off refresh after a bulk change or undo. Separate from the poll above so it never starts a second timer.
+  const refresh = async () => { const d = await api.get<{ search: Search; leads: LeadRow[] }>(`/searches/${id}`); setData(d); };
+
   if (notFound) return <p className="error">Search not found.</p>;
   if (!data) return refreshErr ? <p className="error">{refreshErr}</p> : <p>Loading…</p>;
   const { search, leads } = data;
@@ -52,7 +55,7 @@ export default function SearchDetail() {
       {search.status === "failed"
         ? <p className="error">Search failed: {search.error}</p>
         : <SearchProgress search={search} />}
-      <LeadTable rows={leads} />
+      <LeadTable rows={leads} bulk={{ onChanged: refresh }} />
     </div>
   );
 }

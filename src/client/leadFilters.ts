@@ -19,3 +19,7 @@ export const applyLeadFilters = (rows: LeadRow[], f: LeadFilters): LeadRow[] => 
     && (f.offer === "any" || r.offer === f.offer)
     && (f.platform === "any" || (f.platform === NOT_CRAWLED ? r.platform === null : r.platform === f.platform)));
 };
+
+/** Everything the table filters on that the page can save and restore (sorting and paging are not part of a saved view). */
+export interface TableFilters { q: string; niche: string; f: LeadFilters; }
+export const defaultTableFilters: TableFilters = { q: "", niche: "", f: defaultFilters };
