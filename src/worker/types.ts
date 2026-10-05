@@ -73,6 +73,16 @@ export interface Service {
   is_specialty: boolean; active: boolean; sort: number;
 }
 
+/** A kind of client the user wants for a service. Only the criteria that are set count toward fit. */
+export interface FitProfile {
+  id: string; name: string; service_key: string; industries: string[]; geos: string[]; platforms: Platform[];
+  min_reviews: number | null; min_rating: number | null; active: boolean;
+}
+/** Best profile's score. `fit` is null when no active profile defines a criterion. Never depends on site health. */
+export interface FitResult {
+  fit: number | null; profile: { id: string; name: string; service_key: string } | null; matched: string[]; missing: string[];
+}
+
 export interface Radar {
   id: string; location: string; business_type: string; radius_km: number; max_results: number;
   interval_days: number; enabled: 0 | 1; next_run_at: string; last_run_at: string | null;

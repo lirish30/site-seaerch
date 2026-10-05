@@ -4,7 +4,7 @@ export interface Business { id: string; name: string; category: string | null; a
   rating: number | null; review_count: number | null; archived_at: string | null; follow_up_at: string | null; deal_value: number | null; created_at: string; }
 export interface LeadRow { business: Business; score: number | null; health: number | null; niche: string | null; topFinding: string | null; offer: string | null;
   bestContact: string | null; hasEmail: boolean; partial: boolean; poc: { name: string; email: string | null } | null;
-  platform: string | null; rating: number | null; reviewCount: number | null; }
+  platform: string | null; rating: number | null; reviewCount: number | null; fit?: FitResult; }
 
 export type AuditCategory = "design" | "content" | "cro" | "mobile" | "speed" | "technical";
 export type Severity = "critical" | "important" | "nice";
@@ -50,3 +50,11 @@ export interface Service {
 }
 /** What GET /api/leads/:id returns as `best_offer`; `because` findings carry the per-request `stale` flag. */
 export interface BestOffer { service: Service; because: Finding[]; legacyOffer: string | null; }
+
+export type Platform = "wix" | "squarespace" | "godaddy" | "wordpress" | "weebly" | "shopify" | "webflow" | "other";
+export interface FitProfile {
+  id: string; name: string; service_key: string; industries: string[]; geos: string[]; platforms: Platform[];
+  min_reviews: number | null; min_rating: number | null; active: boolean;
+}
+/** `fit` on each lead list row and on GET /api/leads/:id; null when no active profile defines a criterion. */
+export interface FitResult { fit: number | null; profile: { id: string; name: string; service_key: string } | null; matched: string[]; missing: string[]; }

@@ -9,6 +9,8 @@ import { latestAudit, latestAuditsFor, listAudits } from "../db/audits";
 import { diffFindings, type AuditChanges } from "../audit/diff";
 import { isStale, urgencyOf } from "../audit/provenance";
 import { listServices } from "../db/services";
+import { listFitProfiles } from "../db/fit";
+import { scoreFit } from "../scoring/fit";
 import { bestOffer } from "../services/best-offer";
 import { listContacts, contactsFor } from "../db/contacts";
 import { latestDraft, updateDraftBody, listDrafts } from "../db/drafts";
@@ -29,7 +31,7 @@ const STATUSES = ["new", "reviewed", "contacted", "replied", "won", "lost", "ski
 
 export async function leadRows(db: D1Database, businesses: Business[]) {
   const ids = businesses.map((b) => b.id);
-  const [audits, contactMap, pocs] = await Promise.all([latestAuditsFor(db, ids), contactsFor(db, ids), pocsFor(db, ids)]);
+  const [audits, contactMap, pocs, profiles] = await Promise.all([latestAuditsFor(db, ids), contactsFor(db, ids), pocsFor(db, ids), listFitProfiles(db, { activeOnly: true })]);
   return businesses.map((b) => {
     const audit = audits.get(b.id) ?? null;
     const best = pickRecipient(contactMap.get(b.id) ?? [], domainOf(b.website_url));
@@ -39,6 +41,7 @@ export async function leadRows(db: D1Database, businesses: Business[]) {
       offer: audit?.offer ?? null, bestContact: best.contact?.value ?? null, hasEmail: !!best.emailContact || !!pocs.get(b.id)?.email,
       poc: pocs.get(b.id) ? { name: pocs.get(b.id)!.name, email: pocs.get(b.id)!.email } : null,
       partial: audit?.partial ?? false, platform: audit?.platform ?? null, rating: b.rating, reviewCount: b.review_count,
+      fit: scoreFit(b, audit, profiles),
     };
   });
 }
@@ -65,8 +68,8 @@ leadRoutes.get("/:id", async (c) => {
   let business = await getBusiness(c.env.DB, id);
   if (!business) return c.json({ error: "not found" }, 404);
   if (business.lead_status === "new") business = await updateLead(c.env.DB, id, { leadStatus: "reviewed" });
-  const [recent, contacts, draft, people, activity] = await Promise.all([listAudits(c.env.DB, id, 2), listContacts(c.env.DB, id),
-    latestDraft(c.env.DB, id), listPeople(c.env.DB, id), listActivity(c.env.DB, id)]);
+  const [recent, contacts, draft, people, activity, profiles] = await Promise.all([listAudits(c.env.DB, id, 2), listContacts(c.env.DB, id),
+    latestDraft(c.env.DB, id), listPeople(c.env.DB, id), listActivity(c.env.DB, id), listFitProfiles(c.env.DB, { activeOnly: true })]);
   const [audit = null, previous] = recent;
   let changes: AuditChanges | null = null;
   if (audit && previous) {
@@ -79,7 +82,8 @@ leadRoutes.get("/:id", async (c) => {
   const shown = audit && { ...audit, findings: audit.findings.map((f) => ({ ...f, stale: isStale(f, audit.created_at, now) })) };
   // Matched on the stale-flagged findings so `because` carries each finding's `stale` for the evidence badge.
   const best_offer = shown ? bestOffer(shown.findings, await listServices(c.env.DB, { activeOnly: true }), shown.offer) : null;
-  return c.json({ business, audit: shown, contacts, draft, toContact, people, activity, changes, urgency: audit ? urgencyOf(audit.findings) : 0, best_offer });
+  return c.json({ business, audit: shown, contacts, draft, toContact, people, activity, changes, urgency: audit ? urgencyOf(audit.findings) : 0, best_offer,
+    fit: scoreFit(business, audit, profiles) });
 });
 
 // Screenshots live in the private R2 bucket; serve the latest audit's copy behind the app's auth.
