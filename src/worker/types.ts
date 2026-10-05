@@ -24,6 +24,9 @@ export interface Finding {
   evidence: string;
   recommendation: string;
   source: "rule" | "ai";
+  /** ISO time the finding was observed. Optional: audits stored before provenance have none. */
+  observed_at?: string;
+  confidence?: "high" | "medium" | "low";
 }
 
 /** Kinds of page a business site may link to; used for niche checks and lead links. */

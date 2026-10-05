@@ -14,6 +14,7 @@ import { incrementProcessed } from "../db/searches";
 import { recordUsage } from "../db/usage";
 import { PRICES } from "../cost";
 import type { Renderer } from "../render/render";
+import { withProvenance } from "../audit/provenance";
 import { reviewSite, type ReviewCaller } from "../audit/review";
 import { isSocialOnlyUrl } from "../crawler/extract";
 import { croItemsForBusiness } from "../db/cro";
@@ -182,7 +183,7 @@ export async function runLead(
       latest_content_date: f?.latestContentDate ?? null, broken_link_count: f?.brokenLinkCount ?? null,
       platform: f?.platform ?? null, // null = not crawled; "other" = crawled but unrecognised
       seo_score: ps?.seoScore ?? null, accessibility_score: ps?.accessibilityScore ?? null,
-      score: s.score, offer: s.offer, findings: s.findings, raw_r2_key: crawl.rawKey,
+      score: s.score, offer: s.offer, findings: withProvenance(s.findings, deps.now().toISOString()), raw_r2_key: crawl.rawKey,
       health_score: s.health, niche: s.niche, category_scores: s.categoryScores, ai_review: review,
       screenshots: { desktop: rendered?.desktop ?? null, mobile: rendered?.mobile ?? null }, site_links: crawl.links ?? {},
       // A note for the owner only: not a finding, never scored, and not passed to the drafter or the report.
