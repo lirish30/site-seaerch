@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api";
-import { bulkSummary, normalizeTag, UNDO_VISIBLE_MS, type BulkRequest } from "../bulkView";
-import { STATUSES, type BulkResult, type LeadStatus } from "../types";
+import { bulkSummary, normalizeTag, undoSummary, UNDO_VISIBLE_MS, type BulkRequest } from "../bulkView";
+import { STATUSES, type BulkResult, type LeadStatus, type UndoResult } from "../types";
 
 // A 4xx carries a message written for the user; anything else (a 5xx, a dropped connection) gets the caller's plain wording.
 const friendly = (e: unknown, fallback: string) => (e instanceof ApiError && e.status < 500 && e.message ? e.message : fallback);
@@ -50,9 +50,9 @@ export default function BulkBar({ selected, archivedView = false, onClear, onDon
     if (!token || busy) return;
     setBusy(true); setErr("");
     try {
-      const r = await api.post<{ restored: number }>("/leads/bulk/undo", { undoToken: token });
+      const r = await api.post<UndoResult>("/leads/bulk/undo", { undoToken: token });
       if (!alive.current) return;
-      setNote({ text: `Undone: restored ${r.restored} lead${r.restored === 1 ? "" : "s"}.`, token: null });
+      setNote({ text: undoSummary(r), token: null });
       await refresh();
     } catch (e) {
       if (alive.current) { setNote(null); setErr(friendly(e, "Couldn't undo that. Try again.")); }

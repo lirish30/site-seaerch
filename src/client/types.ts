@@ -87,4 +87,6 @@ export interface ImportCommitResult {
 /** POST /api/leads/bulk. There is no delete action. */
 export type BulkAction = "status" | "archive" | "restore" | "tag" | "untag";
 export interface BulkResult { updated: number; skipped: number; undoToken: string | null; }
+/** POST /api/leads/bulk/undo: `skipped` leads were edited since the bulk change and were left alone. */
+export interface UndoResult { restored: number; skipped: number; }
 export interface SavedFilter { id: string; name: string; query: string; created_at: string; }

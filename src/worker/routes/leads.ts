@@ -114,8 +114,8 @@ leadRoutes.post("/bulk", async (c) => {
 leadRoutes.post("/bulk/undo", async (c) => {
   const p = z.object({ undoToken: z.string().min(1).max(100) }).safeParse(await c.req.json().catch(() => null));
   if (!p.success) return c.json({ error: "invalid" }, 400);
-  const restored = await undoBulk(c.env.DB, p.data.undoToken);
-  return restored === null ? c.json({ error: "Nothing to undo: it was already undone or took longer than 10 minutes." }, 404) : c.json({ restored });
+  const result = await undoBulk(c.env.DB, p.data.undoToken);
+  return result === null ? c.json({ error: "Nothing to undo: it was already undone or took longer than 10 minutes." }, 404) : c.json(result);
 });
 
 // Saved list filters: `query` is the leads page's serialized filter state, opaque to the server.

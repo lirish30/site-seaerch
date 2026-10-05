@@ -47,3 +47,9 @@ export function bulkSummary(req: BulkRequest, r: BulkResult): string {
   }[req.action];
   return `${verb} ${plural(r.updated)}.${skipped}`;
 }
+
+/** The sentence shown after Undo; `skipped` leads were edited since the bulk change, so the server left them as they are. */
+export function undoSummary(r: { restored: number; skipped: number }): string {
+  const left = r.skipped ? ` ${plural(r.skipped)} had been edited since, so ${r.skipped === 1 ? "it was" : "they were"} left as ${r.skipped === 1 ? "it is" : "they are"}.` : "";
+  return `Undone: restored ${plural(r.restored)}.${left}`;
+}

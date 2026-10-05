@@ -109,12 +109,12 @@ export async function setScanStage(db: D1Database, id: string, stage: ScanStage)
   await db.prepare(`UPDATE businesses SET scan_stage = ? WHERE id = ?`).bind(stage, id).run();
 }
 
-const archiveStmt = (db: D1Database, id: string, archived: boolean) =>
-  db.prepare(`UPDATE businesses SET archived_at = ? WHERE id = ?`).bind(archived ? new Date().toISOString() : null, id);
+const archiveStmt = (db: D1Database, id: string, archived: boolean, at = new Date().toISOString()) =>
+  db.prepare(`UPDATE businesses SET archived_at = ? WHERE id = ?`).bind(archived ? at : null, id);
 // Moving to "contacted" stamps contacted_at; any other status leaves it alone.
-const statusStmt = (db: D1Database, id: string, status: LeadStatus) =>
+const statusStmt = (db: D1Database, id: string, status: LeadStatus, at = new Date().toISOString()) =>
   db.prepare(`UPDATE businesses SET lead_status = ?, contacted_at = COALESCE(?, contacted_at) WHERE id = ?`)
-    .bind(status, status === "contacted" ? new Date().toISOString() : null, id);
+    .bind(status, status === "contacted" ? at : null, id);
 
 export async function setArchived(db: D1Database, id: string, archived: boolean) {
   await archiveStmt(db, id, archived).run();
@@ -150,9 +150,15 @@ export type BulkOp =
   | { action: "status"; status: LeadStatus }
   | { action: "archive" | "restore" }
   | { action: "tag" | "untag"; tag: string };
-/** What a bulk action overwrites, kept so it can be undone. */
-interface BulkSnapshot { id: string; lead_status: LeadStatus; contacted_at: string | null; archived_at: string | null; tags: string[] }
-const snapshotOf = (b: Business): BulkSnapshot => ({ id: b.id, lead_status: b.lead_status, contacted_at: b.contacted_at, archived_at: b.archived_at, tags: b.tags });
+/**
+ * What a bulk action wrote to one lead: the value it replaced and the value it left, for ONLY the columns that action touches
+ * (status: lead_status + contacted_at; archive/restore: archived_at; tag/untag: tags). Undo puts `before` back only while the
+ * lead still holds `after`, so an edit made since (a status change, opening a "new" lead, a tag edit) is never overwritten.
+ */
+type BulkSnapshot =
+  | { id: string; kind: "status"; before: { lead_status: LeadStatus; contacted_at: string | null }; after: { lead_status: LeadStatus; contacted_at: string | null } }
+  | { id: string; kind: "archived"; before: { archived_at: string | null }; after: { archived_at: string | null } }
+  | { id: string; kind: "tags"; before: { tags: string[] }; after: { tags: string[] } };
 
 export const UNDO_WINDOW_MS = 10 * 60_000;
 // D1 allows 100 bound variables per statement.
@@ -167,21 +173,32 @@ async function businessesByIds(db: D1Database, ids: string[]): Promise<Map<strin
   return found;
 }
 
-/** The change `op` makes to one lead and the activity detail for it, or null when the lead is already as asked (or cannot take the tag). */
-function bulkChange(db: D1Database, b: Business, op: BulkOp): { stmt: D1PreparedStatement; detail: string } | null {
+/** The change `op` makes to one lead, with its activity detail and snapshot; null when the lead is already as asked (or cannot take the tag). */
+function bulkChange(db: D1Database, b: Business, op: BulkOp, at: string): { stmt: D1PreparedStatement; detail: string; snap: BulkSnapshot } | null {
+  const tagStmt = (tags: string[]) => db.prepare(`UPDATE businesses SET tags = ? WHERE id = ?`).bind(JSON.stringify(tags), b.id);
   switch (op.action) {
-    case "status":
-      return b.lead_status === op.status ? null : { stmt: statusStmt(db, b.id, op.status), detail: `status → ${op.status} (bulk)` };
+    case "status": {
+      if (b.lead_status === op.status) return null;
+      const contacted_at = op.status === "contacted" ? at : b.contacted_at;
+      return { stmt: statusStmt(db, b.id, op.status, at), detail: `status → ${op.status} (bulk)`,
+        snap: { id: b.id, kind: "status", before: { lead_status: b.lead_status, contacted_at: b.contacted_at }, after: { lead_status: op.status, contacted_at } } };
+    }
     case "archive":
-      return b.archived_at ? null : { stmt: archiveStmt(db, b.id, true), detail: "archive (bulk)" };
+      return b.archived_at ? null : { stmt: archiveStmt(db, b.id, true, at), detail: "archive (bulk)",
+        snap: { id: b.id, kind: "archived", before: { archived_at: null }, after: { archived_at: at } } };
     case "restore":
-      return b.archived_at ? { stmt: archiveStmt(db, b.id, false), detail: "restore (bulk)" } : null;
-    case "tag":
+      return b.archived_at ? { stmt: archiveStmt(db, b.id, false), detail: "restore (bulk)",
+        snap: { id: b.id, kind: "archived", before: { archived_at: b.archived_at }, after: { archived_at: null } } } : null;
+    case "tag": {
       if (b.tags.includes(op.tag) || b.tags.length >= MAX_TAGS) return null;
-      return { stmt: db.prepare(`UPDATE businesses SET tags = ? WHERE id = ?`).bind(JSON.stringify([...b.tags, op.tag]), b.id), detail: `tag "${op.tag}" (bulk)` };
-    case "untag":
+      const tags = [...b.tags, op.tag];
+      return { stmt: tagStmt(tags), detail: `tag "${op.tag}" (bulk)`, snap: { id: b.id, kind: "tags", before: { tags: b.tags }, after: { tags } } };
+    }
+    case "untag": {
       if (!b.tags.includes(op.tag)) return null;
-      return { stmt: db.prepare(`UPDATE businesses SET tags = ? WHERE id = ?`).bind(JSON.stringify(b.tags.filter((t) => t !== op.tag)), b.id), detail: `untag "${op.tag}" (bulk)` };
+      const tags = b.tags.filter((t) => t !== op.tag);
+      return { stmt: tagStmt(tags), detail: `untag "${op.tag}" (bulk)`, snap: { id: b.id, kind: "tags", before: { tags: b.tags }, after: { tags } } };
+    }
   }
 }
 
@@ -197,9 +214,9 @@ export async function applyBulk(db: D1Database, ids: string[], op: BulkOp): Prom
   const stmts: D1PreparedStatement[] = [];
   const snapshot: BulkSnapshot[] = [];
   for (const b of found.values()) {
-    const change = bulkChange(db, b, op);
+    const change = bulkChange(db, b, op, now.toISOString());
     if (!change) continue;
-    snapshot.push(snapshotOf(b));
+    snapshot.push(change.snap);
     stmts.push(change.stmt, activityStmt(db, b.id, "bulk", change.detail));
   }
   const skipped = found.size - snapshot.length;
@@ -210,24 +227,48 @@ export async function applyBulk(db: D1Database, ids: string[], op: BulkOp): Prom
   return { updated: snapshot.length, skipped, undoToken };
 }
 
-/** Puts back what a bulk action overwrote. Null when the token is unknown, already used or older than 10 minutes. */
-export async function undoBulk(db: D1Database, token: string): Promise<number | null> {
+/** True while the lead still holds exactly what the bulk action wrote to the columns it touched. */
+function stillAsBulkLeftIt(b: Business, s: BulkSnapshot): boolean {
+  switch (s.kind) {
+    case "status": return b.lead_status === s.after.lead_status && b.contacted_at === s.after.contacted_at;
+    case "archived": return b.archived_at === s.after.archived_at;
+    case "tags": return JSON.stringify(b.tags) === JSON.stringify(s.after.tags);
+  }
+}
+
+/** The guarded restore: the WHERE repeats the check so a write landing between the read and the batch still cannot be clobbered. */
+function restoreStmt(db: D1Database, s: BulkSnapshot): D1PreparedStatement {
+  switch (s.kind) {
+    case "status":
+      return db.prepare(`UPDATE businesses SET lead_status = ?, contacted_at = ? WHERE id = ? AND lead_status = ? AND contacted_at IS ?`)
+        .bind(s.before.lead_status, s.before.contacted_at, s.id, s.after.lead_status, s.after.contacted_at);
+    case "archived":
+      return db.prepare(`UPDATE businesses SET archived_at = ? WHERE id = ? AND archived_at IS ?`).bind(s.before.archived_at, s.id, s.after.archived_at);
+    case "tags":
+      return db.prepare(`UPDATE businesses SET tags = ? WHERE id = ? AND tags = ?`).bind(JSON.stringify(s.before.tags), s.id, JSON.stringify(s.after.tags));
+  }
+}
+
+/**
+ * Puts back what a bulk action wrote, column by column, and only on leads still as the action left them; a lead edited since is
+ * counted in `skipped` and left alone (a lead deleted since is ignored). Null when the token is unknown, already used or older than 10 minutes.
+ */
+export async function undoBulk(db: D1Database, token: string): Promise<{ restored: number; skipped: number } | null> {
   // Deleting is the claim, so two undos racing for one token cannot both restore.
   const row = await db.prepare(`DELETE FROM bulk_undo WHERE token = ? RETURNING snapshot, created_at`).bind(token).first<{ snapshot: string; created_at: string }>();
   if (!row || Date.parse(row.created_at) < Date.now() - UNDO_WINDOW_MS) return null;
   const snapshot = JSON.parse(row.snapshot) as BulkSnapshot[];
-  const still = await businessesByIds(db, snapshot.map((s) => s.id));
+  const current = await businessesByIds(db, snapshot.map((s) => s.id));
   const stmts: D1PreparedStatement[] = [];
+  let skipped = 0;
   for (const s of snapshot) {
-    if (!still.has(s.id)) continue;
-    stmts.push(
-      db.prepare(`UPDATE businesses SET lead_status = ?, contacted_at = ?, archived_at = ?, tags = ? WHERE id = ?`)
-        .bind(s.lead_status, s.contacted_at, s.archived_at, JSON.stringify(s.tags), s.id),
-      activityStmt(db, s.id, "bulk", "undo"),
-    );
+    const b = current.get(s.id);
+    if (!b) continue;
+    if (!stillAsBulkLeftIt(b, s)) { skipped++; continue; }
+    stmts.push(restoreStmt(db, s), activityStmt(db, s.id, "bulk", "undo"));
   }
   if (stmts.length) await db.batch(stmts);
-  return stmts.length / 2;
+  return { restored: stmts.length / 2, skipped };
 }
 
 export async function setBusinessError(db: D1Database, id: string, msg: string | null) {

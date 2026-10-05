@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allSelected, bulkSummary, normalizeTag, pruneSelection, someSelected, toggleId, togglePage } from "../src/client/bulkView";
+import { allSelected, bulkSummary, normalizeTag, pruneSelection, someSelected, toggleId, togglePage, undoSummary } from "../src/client/bulkView";
 import { defaultView, parseView, serializeView, type LeadView } from "../src/client/savedFilters";
 import { defaultFilters } from "../src/client/leadFilters";
 import { normalizeTag as serverNormalizeTag } from "../src/worker/db/businesses";
@@ -44,6 +44,15 @@ describe("bulkSummary", () => {
   });
   it("says so when nothing changed", () => {
     expect(bulkSummary({ action: "archive" }, { updated: 0, skipped: 2, undoToken: null })).toMatch(/^Nothing changed\. 2 leads/);
+  });
+});
+
+describe("undoSummary", () => {
+  it("states what was restored, and says so when some leads were left alone", () => {
+    expect(undoSummary({ restored: 3, skipped: 0 })).toBe("Undone: restored 3 leads.");
+    expect(undoSummary({ restored: 1, skipped: 0 })).toBe("Undone: restored 1 lead.");
+    expect(undoSummary({ restored: 3, skipped: 2 })).toBe("Undone: restored 3 leads. 2 leads had been edited since, so they were left as they are.");
+    expect(undoSummary({ restored: 0, skipped: 1 })).toBe("Undone: restored 0 leads. 1 lead had been edited since, so it was left as it is.");
   });
 });
 

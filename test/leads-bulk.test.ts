@@ -1,7 +1,7 @@
 import { env, SELF } from "cloudflare:test";
 import { describe, it, expect, beforeAll } from "vitest";
 import { createSearch } from "../src/worker/db/searches";
-import { upsertBusiness, getBusiness, listAllBusinesses, listBusinessesForSearch, loadMatchPool, normalizeTag } from "../src/worker/db/businesses";
+import { upsertBusiness, getBusiness, updateLead, listAllBusinesses, listBusinessesForSearch, loadMatchPool, normalizeTag } from "../src/worker/db/businesses";
 import { listActivity } from "../src/worker/db/activity";
 
 let cookie = "";
@@ -197,7 +197,7 @@ describe("undo", () => {
     for (const id of ids) expect((await getBusiness(env.DB, id))!.archived_at).toBeTruthy();
     const r = await post("/api/leads/bulk/undo", { undoToken });
     expect(r.status).toBe(200);
-    expect(await r.json()).toEqual({ restored: 3 });
+    expect(await r.json()).toEqual({ restored: 3, skipped: 0 });
     const prior = ["replied", "new", "lost"];
     for (const [i, id] of ids.entries()) {
       const b = (await getBusiness(env.DB, id))!;
@@ -227,7 +227,7 @@ describe("undo", () => {
   it("snapshots only leads that changed", async () => {
     const [a, b] = await Promise.all([lead("A", { status: "won" }), lead("B", { status: "new" })]);
     const { undoToken } = await (await bulk({ ids: [a, b], action: "status", status: "won" })).json<any>();
-    expect(await (await post("/api/leads/bulk/undo", { undoToken })).json()).toEqual({ restored: 1 });
+    expect(await (await post("/api/leads/bulk/undo", { undoToken })).json()).toEqual({ restored: 1, skipped: 0 });
     expect((await getBusiness(env.DB, a))!.lead_status).toBe("won");
     expect((await getBusiness(env.DB, b))!.lead_status).toBe("new");
   });
@@ -260,11 +260,68 @@ describe("undo", () => {
     const ids = await leads(2);
     const { undoToken } = await (await bulk({ ids, action: "archive" })).json<any>();
     await env.DB.prepare(`DELETE FROM businesses WHERE id = ?`).bind(ids[0]).run();
-    expect(await (await post("/api/leads/bulk/undo", { undoToken })).json()).toEqual({ restored: 1 });
+    expect(await (await post("/api/leads/bulk/undo", { undoToken })).json()).toEqual({ restored: 1, skipped: 0 });
   });
 
   it("400s without a token", async () => {
     expect((await post("/api/leads/bulk/undo", {})).status).toBe(400);
+  });
+});
+
+describe("undo only touches what the bulk action wrote, and only if it is still as the action left it", () => {
+  const undo = async (token: string) => (await post("/api/leads/bulk/undo", { undoToken: token })).json<any>();
+
+  it("a bulk tag undone after a manual status change reverts the tag and leaves the status alone", async () => {
+    const [a, b] = await Promise.all([lead("A", { status: "new" }), lead("B", { status: "new" })]);
+    const { undoToken } = await (await bulk({ ids: [a, b], action: "tag", tag: "hot" })).json<any>();
+    await updateLead(env.DB, a, { leadStatus: "won" });
+    expect(await undo(undoToken)).toEqual({ restored: 2, skipped: 0 });
+    expect(await getBusiness(env.DB, a)).toMatchObject({ lead_status: "won", tags: [] });
+    expect((await getBusiness(env.DB, b))!.tags).toEqual([]);
+  });
+
+  it("a bulk archive undone after the lead was opened (new -> reviewed) restores archived_at but keeps reviewed", async () => {
+    const [a] = await leads(1);
+    const { undoToken } = await (await bulk({ ids: [a], action: "archive" })).json<any>();
+    expect((await api(`/api/leads/${a}`)).status).toBe(200);
+    expect((await getBusiness(env.DB, a))!.lead_status).toBe("reviewed");
+    expect(await undo(undoToken)).toEqual({ restored: 1, skipped: 0 });
+    expect(await getBusiness(env.DB, a)).toMatchObject({ archived_at: null, lead_status: "reviewed" });
+  });
+
+  it("a bulk status change undone after a manual tag edit restores the status and keeps the tags", async () => {
+    const a = await lead("A", { status: "new", tags: [] });
+    const { undoToken } = await (await bulk({ ids: [a], action: "status", status: "contacted" })).json<any>();
+    await env.DB.prepare(`UPDATE businesses SET tags = ? WHERE id = ?`).bind(JSON.stringify(["manual"]), a).run();
+    expect(await undo(undoToken)).toEqual({ restored: 1, skipped: 0 });
+    expect(await getBusiness(env.DB, a)).toMatchObject({ lead_status: "new", contacted_at: null, tags: ["manual"] });
+  });
+
+  it("a lead whose status was changed again since the bulk change is skipped, not clobbered", async () => {
+    const [a, b] = await Promise.all([lead("A", { status: "new" }), lead("B", { status: "new" })]);
+    const { undoToken } = await (await bulk({ ids: [a, b], action: "status", status: "contacted" })).json<any>();
+    await updateLead(env.DB, a, { leadStatus: "replied" });
+    expect(await undo(undoToken)).toEqual({ restored: 1, skipped: 1 });
+    expect((await getBusiness(env.DB, a))!.lead_status).toBe("replied");
+    expect((await getBusiness(env.DB, b))!.lead_status).toBe("new");
+    // Only the restored lead gets an undo row.
+    expect((await bulkActivity(a)).map((x) => x.detail)).toEqual(["status → contacted (bulk)"]);
+    expect((await bulkActivity(b)).map((x) => x.detail).sort()).toEqual(["status → contacted (bulk)", "undo"]);
+  });
+
+  it("a bulk archive is skipped when the lead was restored by hand in the meantime", async () => {
+    const [a] = await leads(1);
+    const { undoToken } = await (await bulk({ ids: [a], action: "archive" })).json<any>();
+    await env.DB.prepare(`UPDATE businesses SET archived_at = NULL WHERE id = ?`).bind(a).run();
+    expect(await undo(undoToken)).toEqual({ restored: 0, skipped: 1 });
+  });
+
+  it("a tag edit made since leaves that lead's tags alone and counts it as skipped", async () => {
+    const a = await lead("A", { tags: [] });
+    const { undoToken } = await (await bulk({ ids: [a], action: "tag", tag: "hot" })).json<any>();
+    await env.DB.prepare(`UPDATE businesses SET tags = ? WHERE id = ?`).bind(JSON.stringify(["hot", "later"]), a).run();
+    expect(await undo(undoToken)).toEqual({ restored: 0, skipped: 1 });
+    expect((await getBusiness(env.DB, a))!.tags).toEqual(["hot", "later"]);
   });
 });
 
