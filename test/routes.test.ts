@@ -163,6 +163,17 @@ describe("routes", () => {
     expect(old.audit.findings.map((f: any) => [f.code, f.stale])).toEqual([["old", true], ["fresh", false], ["legacy", true]]);
   });
 
+  it("lead detail carries the best first offer with its supporting findings, null with no audit", async () => {
+    const { b } = await seedLead();
+    const r = await (await api(`/api/leads/${b.id}`)).json<any>();
+    expect(r.best_offer.service.key).toBe("hosting-maintenance");
+    expect(r.best_offer.because.map((f: any) => f.code)).toEqual(["no_https"]);
+    expect(r.best_offer.because[0].stale).toBe(false);
+    const s = await createSearch(env.DB, { location: "Boise", businessType: "plumber", radiusKm: 10, maxResults: 5 });
+    const bare = await upsertBusiness(env.DB, { placeId: crypto.randomUUID(), name: "Bare2", category: null, address: null, phone: null, websiteUrl: null, mapsUrl: null, rating: null, reviewCount: null }, s.id);
+    expect((await (await api(`/api/leads/${bare.id}`)).json<any>()).best_offer).toBeNull();
+  });
+
   it("lead detail urgency is 0 with no audit", async () => {
     const s = await createSearch(env.DB, { location: "Boise", businessType: "plumber", radiusKm: 10, maxResults: 5 });
     const b = await upsertBusiness(env.DB, { placeId: crypto.randomUUID(), name: "Bare", category: null, address: null, phone: null, websiteUrl: null, mapsUrl: null, rating: null, reviewCount: null }, s.id);

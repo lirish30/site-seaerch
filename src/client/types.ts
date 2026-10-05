@@ -48,3 +48,5 @@ export interface Service {
   first_engagement: string | null; finding_codes: string[]; finding_categories: AuditCategory[];
   is_specialty: boolean; active: boolean; sort: number;
 }
+/** What GET /api/leads/:id returns as `best_offer`; `because` findings carry the per-request `stale` flag. */
+export interface BestOffer { service: Service; because: Finding[]; legacyOffer: string | null; }

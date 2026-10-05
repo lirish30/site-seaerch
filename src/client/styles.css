@@ -300,3 +300,9 @@ td.empty { text-align:center; padding:24px; }
 .services label.check { display:flex; gap:6px; align-items:center; margin:0; font-weight:400; white-space:nowrap; }
 .services input[type=checkbox] { width:auto; padding:0; }
 @media (max-width: 640px) { .svc-head { flex-wrap:wrap; } .svc-head details { flex-basis:100%; } }
+
+/* Best first offer */
+.best-offer { border:1px solid var(--accent); border-radius:var(--radius); background:color-mix(in srgb, var(--accent) 6%, var(--card)); padding:4px 16px 12px; margin:16px 0; }
+.best-offer-kicker { color:var(--accent); font-weight:700; text-transform:uppercase; letter-spacing:.05em; margin:12px 0 0; }
+.best-offer h3 { margin:2px 0 6px; } .best-offer h4 { margin:12px 0 2px; font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+.best-offer ul:not(.top-issues) { margin:0; padding-left:20px; }

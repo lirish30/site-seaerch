@@ -8,6 +8,8 @@ import { listActivity, logActivity } from "../db/activity";
 import { latestAudit, latestAuditsFor, listAudits } from "../db/audits";
 import { diffFindings, type AuditChanges } from "../audit/diff";
 import { isStale, urgencyOf } from "../audit/provenance";
+import { listServices } from "../db/services";
+import { bestOffer } from "../services/best-offer";
 import { listContacts, contactsFor } from "../db/contacts";
 import { latestDraft, updateDraftBody, listDrafts } from "../db/drafts";
 import { activeReportFor, createReport, otherActiveCount, revokeReports, type ReportRow } from "../db/reports";
@@ -75,7 +77,9 @@ leadRoutes.get("/:id", async (c) => {
   // `stale` is derived per request (it depends on now), so it rides on the response, never on the stored finding.
   const now = new Date();
   const shown = audit && { ...audit, findings: audit.findings.map((f) => ({ ...f, stale: isStale(f, audit.created_at, now) })) };
-  return c.json({ business, audit: shown, contacts, draft, toContact, people, activity, changes, urgency: audit ? urgencyOf(audit.findings) : 0 });
+  // Matched on the stale-flagged findings so `because` carries each finding's `stale` for the evidence badge.
+  const best_offer = shown ? bestOffer(shown.findings, await listServices(c.env.DB, { activeOnly: true }), shown.offer) : null;
+  return c.json({ business, audit: shown, contacts, draft, toContact, people, activity, changes, urgency: audit ? urgencyOf(audit.findings) : 0, best_offer });
 });
 
 // Screenshots live in the private R2 bucket; serve the latest audit's copy behind the app's auth.

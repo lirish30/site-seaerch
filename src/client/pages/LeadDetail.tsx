@@ -5,16 +5,17 @@ import { safeHttpUrl } from "../links";
 import HealthGauge from "../components/HealthGauge";
 import { CategoryBars, FindingsList, Screenshots } from "../components/AuditPanel";
 import EvidenceBadge from "../components/EvidenceBadge";
+import BestOfferCard from "../components/BestOfferCard";
 import { topFindings } from "../evidenceView";
 import PeoplePanel from "../components/PeoplePanel";
 import CroPanel from "../components/CroPanel";
 import { shareState } from "../reportView";
 import type { CroItem, CroResponse } from "../cro";
-import { NICHE_LABEL, OFFER_LABEL, STATUSES, type Activity, type Audit, type AuditChanges, type Business, type Contact, type LeadStatus, type Person } from "../types";
+import { NICHE_LABEL, OFFER_LABEL, STATUSES, type Activity, type Audit, type AuditChanges, type BestOffer, type Business, type Contact, type LeadStatus, type Person } from "../types";
 
 interface Draft { id: string; subject: string; body: string; recipient_reason: string; edited: boolean; created_at: string; steering_note: string | null; }
 interface ShareReport { token: string; url: string; expiresAt: string; }
-interface Data { business: Business; audit: Audit | null; contacts: Contact[]; draft: Draft | null; toContact: Contact | null; people: Person[]; activity: Activity[]; changes: AuditChanges | null; urgency: number; }
+interface Data { business: Business; audit: Audit | null; contacts: Contact[]; draft: Draft | null; toContact: Contact | null; people: Person[]; activity: Activity[]; changes: AuditChanges | null; urgency: number; best_offer: BestOffer | null; }
 
 const LINK_LABEL: Record<string, string> = {
   contact: "Contact page", careers: "Careers / jobs", menu: "Menu", services: "Services", about: "About", team: "Team",
@@ -260,6 +261,7 @@ export default function LeadDetail() {
                 </div>
               </div>
               {a.mail_warning && <div className="notice" role="status"><span>⚠ {a.mail_warning}</span></div>}
+              {d.best_offer && <BestOfferCard offer={d.best_offer} auditCreatedAt={a.created_at} />}
               <Screenshots leadId={b.id} audit={a} />
               {a.ai_review && a.ai_review.strengths.length > 0 && <>
                 <h3>What's working</h3>
