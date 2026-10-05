@@ -265,6 +265,7 @@ describe("GET /api/leads/promising", () => {
 
   it("with no active fit profile every fit is null and no lead is excluded; they order by score", async () => {
     // The seeded profiles are always present, so "no fit" means every profile switched off.
+    const prior = (await env.DB.prepare(`SELECT id, active FROM fit_profiles`).all<{ id: string; active: number }>()).results;
     await env.DB.prepare(`UPDATE fit_profiles SET active = 0`).run();
     try {
       await seedQuick({ name: "PQ-nofit-low", score: 12 });
@@ -274,7 +275,7 @@ describe("GET /api/leads/promising", () => {
       expect(rows.every((r) => r.fit.fit === null)).toBe(true);
       expect(rows.map((r) => r.business.name)).toEqual(["PQ-nofit-high", "PQ-nofit-low", "PQ-nofit-noaudit"]);
       expect(await names("?minFit=90")).toEqual(["PQ-nofit-high", "PQ-nofit-low", "PQ-nofit-noaudit"]); // null fit is never filtered out
-    } finally { await env.DB.prepare(`UPDATE fit_profiles SET active = 1`).run(); }
+    } finally { for (const p of prior) await env.DB.prepare(`UPDATE fit_profiles SET active = ? WHERE id = ?`).bind(p.active, p.id).run(); }
   });
 
   it("is not shadowed by /:id", async () => {
@@ -353,9 +354,67 @@ describe("POST /api/leads/:id/full-scan", () => {
   });
 });
 
-describe("an unchanged radar search stays on the full stage", () => {
-  it("runSearch gives a search created without quickScan the 'full' stage", async () => {
+describe("radar-style search flags", () => {
+  it("a new_only search created without quickScan stores new_only 1 and quick_scan 0", async () => {
     const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 5 }, { newOnly: true });
     expect([s.new_only, s.quick_scan]).toEqual([1, 0]);
+  });
+});
+
+describe("a quick search never downgrades a lead that is already full", () => {
+  const step: StepLike = { do: (_n, fn) => fn(), sleep: async () => {} };
+  const audit = (businessId: string, o: { partial?: boolean; score?: number } = {}) => insertAudit(env.DB, {
+    business_id: businessId, site_status: "ok", partial: o.partial ?? false, pagespeed_mobile: 80, lcp_ms: null, cls: null, mobile_friendly: null,
+    https: true, has_title: true, has_meta_description: true, has_contact_form: true, copyright_year: null, latest_content_date: null, broken_link_count: 0,
+    platform: null, seo_score: null, accessibility_score: null, score: o.score ?? 33, offer: "seo_basics", findings: [], raw_r2_key: null, mail_warning: null,
+    health_score: null, niche: null, category_scores: {}, ai_review: null, screenshots: { desktop: "shots/x.jpg", mobile: null }, site_links: {} });
+  async function seed(placeId: string, stage: "quick" | "full", status: "new" | "reviewed" = "reviewed") {
+    const s0 = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 50 });
+    const b = await upsertBusiness(env.DB, L(placeId), s0.id);
+    await env.DB.prepare(`UPDATE businesses SET scan_stage = ?, lead_status = ? WHERE id = ?`).bind(stage, status, b.id).run();
+    return b;
+  }
+  async function run(listings: Listing[], o: { quickScan: boolean; newOnly?: boolean }) {
+    const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 50 }, o);
+    const started: { businessId: string; stage: string }[] = [];
+    await runSearch({ db: env.DB, source: new FakeListingSource(listings), startLead: async (p) => { started.push(p); } }, step, s.id);
+    return { started, after: (await getSearch(env.DB, s.id))! };
+  }
+
+  it("(a) starts no workflow for a full lead, leaves its stage and latest audit alone, and still finishes with correct counts", async () => {
+    const full = await seed("QS-FULL", "full");
+    const a = await audit(full.id, { score: 41 });
+    const r = await run([L("QS-FULL")], { quickScan: true });
+    expect(r.started).toEqual([]);
+    expect(r.after).toMatchObject({ quick_scan: 1, status: "done", found_count: 1, processed_count: 1 });
+    expect((await getBusiness(env.DB, full.id))!.scan_stage).toBe("full");
+    expect((await latestAudit(env.DB, full.id))!.id).toBe(a.id);
+  });
+
+  it("(a) also holds for a full lead whose status is still 'new', and a mix counts every lead once", async () => {
+    const full = await seed("QS-FULL-NEW", "full", "new");
+    await audit(full.id);
+    const quick = await seed("QS-MIX-QUICK", "quick");
+    const r = await run([L("QS-FULL-NEW"), L("QS-MIX-QUICK"), L("QS-MIX-FRESH")], { quickScan: true });
+    const fresh = (await env.DB.prepare(`SELECT id FROM businesses WHERE place_id = 'QS-MIX-FRESH'`).first<{ id: string }>())!.id;
+    expect(r.started.map((p) => p.businessId).sort()).toEqual([quick.id, fresh].sort());
+    expect(r.started.every((p) => p.stage === "quick")).toBe(true);
+    expect(r.after).toMatchObject({ status: "done", found_count: 3, processed_count: 1 }); // the full lead counts as processed
+    expect((await getBusiness(env.DB, full.id))!.scan_stage).toBe("full");
+  });
+
+  it("(b) a quick search still starts a quick-stage lead and a brand-new one", async () => {
+    const quick = await seed("QS-B-QUICK", "quick");
+    const r = await run([L("QS-B-QUICK"), L("QS-B-NEW")], { quickScan: true });
+    const fresh = (await env.DB.prepare(`SELECT id FROM businesses WHERE place_id = 'QS-B-NEW'`).first<{ id: string }>())!.id;
+    expect(r.started.map((p) => p.businessId).sort()).toEqual([quick.id, fresh].sort());
+    expect(r.after).toMatchObject({ found_count: 2, processed_count: 0 });
+  });
+
+  it("(c) a non-quick search re-runs a full lead exactly as before, with the full stage", async () => {
+    const full = await seed("QS-C-FULL", "full");
+    const r = await run([L("QS-C-FULL")], { quickScan: false });
+    expect(r.started).toEqual([{ businessId: full.id, searchId: expect.any(String), stage: "full" }]);
+    expect(r.after).toMatchObject({ found_count: 1, processed_count: 0 });
   });
 });

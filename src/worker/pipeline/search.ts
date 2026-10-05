@@ -22,7 +22,11 @@ export interface SearchDeps {
 // already has an audit and draft for is never re-paid. Any audit row counts, even a partial or unreachable one.
 // The exception is a lead whose last run FAILED (last_error is set when a lead workflow gives up, e.g. the draft step
 // after the audit was saved, and cleared when the next run starts): it never completed, so it is worth retrying.
-async function shouldStartLead(db: D1Database, b: Business, newOnly: boolean): Promise<boolean> {
+// A quick-scan search never touches a lead that already had its full scan: re-running it as quick would replace its
+// full audit (screenshots, PageSpeed, AI review) as the latest one and put it back in the Promising queue.
+// scan_stage defaults to 'full' for every new row, so "already full" means 'full' AND an audit exists; an unaudited lead is new work.
+async function shouldStartLead(db: D1Database, b: Business, newOnly: boolean, quick: boolean): Promise<boolean> {
+  if (quick && b.scan_stage === "full" && (await latestAudit(db, b.id))) return false;
   const open = b.lead_status === "new" || (b.lead_status === "reviewed" && !(await latestDraft(db, b.id))?.edited);
   return open && (!newOnly || !!b.last_error || !(await latestAudit(db, b.id)));
 }
@@ -66,7 +70,7 @@ export async function runSearch(deps: SearchDeps, step: StepLike, searchId: stri
         if (hit) { suppressed.add(l.placeId ? `p:${l.placeId}` : `d:${hit.value}`); continue; }
         const b = await upsertBusiness(deps.db, l, searchId);
         if (ids.has(b.id) || notStarted.has(b.id)) continue;
-        if (await shouldStartLead(deps.db, b, search.new_only === 1)) ids.add(b.id); else notStarted.add(b.id);
+        if (await shouldStartLead(deps.db, b, search.new_only === 1, search.quick_scan === 1)) ids.add(b.id); else notStarted.add(b.id);
       }
       await setFoundCount(deps.db, searchId, ids.size + notStarted.size + suppressed.size);
       // Absolute set (no leads started yet) so a step retry cannot double-count.
