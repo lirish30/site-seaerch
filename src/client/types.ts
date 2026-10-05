@@ -8,7 +8,9 @@ export interface LeadRow { business: Business; score: number | null; health: num
 
 export type AuditCategory = "design" | "content" | "cro" | "mobile" | "speed" | "technical";
 export type Severity = "critical" | "important" | "nice";
-export interface Finding { code: string; category: AuditCategory | "site"; severity: Severity; points: number; evidence: string; recommendation: string; source: "rule" | "ai"; }
+export interface Finding { code: string; category: AuditCategory | "site"; severity: Severity; points: number; evidence: string; recommendation: string; source: "rule" | "ai";
+  observed_at?: string; confidence?: "high" | "medium" | "low"; stale?: boolean; }
+export interface AuditChanges { since: string; added: Finding[]; resolved: Finding[]; unchangedCount: number; }
 export interface AiReview {
   niche: string; value_proposition: string; scores: Record<"design" | "content" | "cro" | "mobile", number>;
   summaries: Record<"design" | "content" | "cro" | "mobile", string>; strengths: string[]; niche_checklist: { item: string; present: boolean }[];

@@ -11,3 +11,6 @@ export function diffFindings(prev: Finding[], next: Finding[]): { added: Finding
     unchanged: next.filter((f) => before.has(findingKey(f))),
   };
 }
+
+/** The "since last audit" block on the lead detail payload. */
+export type AuditChanges = { since: string; added: Finding[]; resolved: Finding[]; unchangedCount: number };

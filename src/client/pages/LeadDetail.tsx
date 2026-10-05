@@ -4,15 +4,17 @@ import { api } from "../api";
 import { safeHttpUrl } from "../links";
 import HealthGauge from "../components/HealthGauge";
 import { CategoryBars, FindingsList, Screenshots } from "../components/AuditPanel";
+import EvidenceBadge from "../components/EvidenceBadge";
+import { topFindings } from "../evidenceView";
 import PeoplePanel from "../components/PeoplePanel";
 import CroPanel from "../components/CroPanel";
 import { shareState } from "../reportView";
 import type { CroItem, CroResponse } from "../cro";
-import { NICHE_LABEL, OFFER_LABEL, STATUSES, type Activity, type Audit, type Business, type Contact, type LeadStatus, type Person } from "../types";
+import { NICHE_LABEL, OFFER_LABEL, STATUSES, type Activity, type Audit, type AuditChanges, type Business, type Contact, type LeadStatus, type Person } from "../types";
 
 interface Draft { id: string; subject: string; body: string; recipient_reason: string; edited: boolean; created_at: string; steering_note: string | null; }
 interface ShareReport { token: string; url: string; expiresAt: string; }
-interface Data { business: Business; audit: Audit | null; contacts: Contact[]; draft: Draft | null; toContact: Contact | null; people: Person[]; activity: Activity[]; }
+interface Data { business: Business; audit: Audit | null; contacts: Contact[]; draft: Draft | null; toContact: Contact | null; people: Person[]; activity: Activity[]; changes: AuditChanges | null; urgency: number; }
 
 const LINK_LABEL: Record<string, string> = {
   contact: "Contact page", careers: "Careers / jobs", menu: "Menu", services: "Services", about: "About", team: "Team",
@@ -24,6 +26,19 @@ const ACTIVITY_LABEL: Record<string, string> = {
   status: "Status", archived: "Archived", restored: "Restored", website: "Website changed", reaudit: "Re-audit",
   score_flagged: "Score flagged", export: "Exported", draft: "Draft", cro_audit: "CRO audit",
 };
+
+function ChangesBlock({ changes }: { changes: AuditChanges }) {
+  const list = (items: Audit["findings"]) => <ul>{items.map((f, i) => <li key={`${f.code}:${i}`}>{f.evidence}</li>)}</ul>;
+  return (
+    <section className="changes" aria-label="Changes since last audit">
+      <h3>Changes since last audit <span className="muted small">(vs. {new Date(changes.since).toLocaleDateString()})</span></h3>
+      {changes.added.length > 0 && <div className="changes-added"><h4>New issues ({changes.added.length})</h4>{list(changes.added)}</div>}
+      {changes.resolved.length > 0 && <div className="changes-resolved"><h4>Resolved ({changes.resolved.length})</h4>{list(changes.resolved)}</div>}
+      {changes.added.length === 0 && changes.resolved.length === 0 && <p className="muted">No change in findings.</p>}
+      <p className="muted small">{changes.unchangedCount} unchanged</p>
+    </section>
+  );
+}
 
 export default function LeadDetail() {
   const { id } = useParams();
@@ -231,6 +246,7 @@ export default function LeadDetail() {
                 <div className="audit-summary">
                   <div className="row">
                     <span className="stat"><strong>{a.score}</strong> opportunity</span>
+                    <span className="stat" title="How much time pressure the findings add up to. Separate from site health and opportunity."><strong>{d.urgency}</strong> urgency</span>
                     {a.niche && <span className="tag niche">{NICHE_LABEL[a.niche] ?? a.niche}</span>}
                     <span className="tag offer">Pitch: {OFFER_LABEL[a.offer] ?? a.offer}</span>
                     {a.partial && <span className="tag" title="Google's speed test didn't run">partial audit</span>}
@@ -253,6 +269,19 @@ export default function LeadDetail() {
                 <h3>What a {NICHE_LABEL[a.ai_review.niche]?.toLowerCase() ?? "business"} site needs</h3>
                 <ul className="checklist">{a.ai_review.niche_checklist.map((c) => <li key={c.item} className={c.present ? "yes" : "no"}>{c.present ? "✓" : "✗"} {c.item}</li>)}</ul>
               </>}
+              {d.changes && <ChangesBlock changes={d.changes} />}
+              <h3>Top issues</h3>
+              <ul className="top-issues">
+                {topFindings(a.findings).map((f, i) => (
+                  <li key={`${f.code}:${i}`} className={`finding sev-${f.severity}`}>
+                    <div>
+                      <p className="finding-evidence"><span className={`sev-dot sev-${f.severity}`} />{f.evidence}</p>
+                      {f.recommendation && <p className="finding-fix">→ {f.recommendation}</p>}
+                      <EvidenceBadge finding={f} auditCreatedAt={a.created_at} stale={!!f.stale} />
+                    </div>
+                  </li>
+                ))}
+              </ul>
               <h3>All issues</h3>
               <FindingsList findings={a.findings} />
               <p className="muted small">Audited {new Date(a.created_at).toLocaleString()}{a.pagespeed_mobile !== null && ` · Google mobile speed ${a.pagespeed_mobile}/100`}</p>

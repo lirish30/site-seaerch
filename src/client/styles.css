@@ -280,3 +280,13 @@ td.empty { text-align:center; padding:24px; }
   :root { --bg:#fff; --fg:#000; --muted:#57534e; --line:#d6d3d1; --card:#fff; --link:#1d4ed8; --accent-soft:#dbeafe; --hover:#f5f5f4; }
   body { background:#fff; color:#000; } .report { max-width:none; padding:0; } .report .card { background:none; border:0; padding:0; }
 }
+/* Evidence badges, top issues and audit changes */
+.evidence { display:flex; flex-wrap:wrap; gap:6px 8px; align-items:center; margin-top:4px; }
+.tag.conf-high { background:color-mix(in srgb, var(--good) 15%, transparent); color:var(--good); }
+.tag.conf-medium { background:color-mix(in srgb, var(--fair) 18%, transparent); color:var(--fair); }
+.tag.conf-low { background:color-mix(in srgb, var(--poor) 15%, transparent); color:var(--poor); }
+.stale-note { color:var(--warn); font-weight:600; }
+.top-issues { list-style:none; margin:0; padding:0; }
+.changes { border:1px solid var(--line); border-radius:var(--radius); padding:4px 14px 8px; margin:16px 0; }
+.changes h4 { margin:8px 0 2px; font-size:13px; } .changes ul { margin:0; padding-left:20px; }
+.changes-added h4 { color:var(--bad); } .changes-resolved h4 { color:var(--ok); }

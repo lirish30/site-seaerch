@@ -1,12 +1,13 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../env";
-import type { Business, Finding, LeadStatus } from "../types";
+import type { Business, LeadStatus } from "../types";
 import { getBusiness, listAllBusinesses, updateLead, domainOf, setArchived, deleteBusiness } from "../db/businesses";
 import { listPeople, createPerson, updatePerson, deletePerson, pocsFor } from "../db/people";
 import { listActivity, logActivity } from "../db/activity";
 import { latestAudit, latestAuditsFor, listAudits } from "../db/audits";
-import { diffFindings } from "../audit/diff";
+import { diffFindings, type AuditChanges } from "../audit/diff";
+import { isStale, urgencyOf } from "../audit/provenance";
 import { listContacts, contactsFor } from "../db/contacts";
 import { latestDraft, updateDraftBody, listDrafts } from "../db/drafts";
 import { activeReportFor, createReport, otherActiveCount, revokeReports, type ReportRow } from "../db/reports";
@@ -65,13 +66,16 @@ leadRoutes.get("/:id", async (c) => {
   const [recent, contacts, draft, people, activity] = await Promise.all([listAudits(c.env.DB, id, 2), listContacts(c.env.DB, id),
     latestDraft(c.env.DB, id), listPeople(c.env.DB, id), listActivity(c.env.DB, id)]);
   const [audit = null, previous] = recent;
-  let changes: { since: string; added: Finding[]; resolved: Finding[]; unchangedCount: number } | null = null;
+  let changes: AuditChanges | null = null;
   if (audit && previous) {
     const d = diffFindings(previous.findings, audit.findings);
     changes = { since: previous.created_at, added: d.added, resolved: d.resolved, unchangedCount: d.unchanged.length };
   }
   const toContact = draft?.to_contact_id ? contacts.find((x) => x.id === draft.to_contact_id) ?? null : null;
-  return c.json({ business, audit, contacts, draft, toContact, people, activity, changes });
+  // `stale` is derived per request (it depends on now), so it rides on the response, never on the stored finding.
+  const now = new Date();
+  const shown = audit && { ...audit, findings: audit.findings.map((f) => ({ ...f, stale: isStale(f, audit.created_at, now) })) };
+  return c.json({ business, audit: shown, contacts, draft, toContact, people, activity, changes, urgency: audit ? urgencyOf(audit.findings) : 0 });
 });
 
 // Screenshots live in the private R2 bucket; serve the latest audit's copy behind the app's auth.

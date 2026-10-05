@@ -147,6 +147,30 @@ describe("routes", () => {
     expect(changes.unchangedCount).toBe(1);
   });
 
+  it("lead detail flags stale findings per finding and returns urgency", async () => {
+    const day = 86_400_000, ago = (n: number) => new Date(Date.now() - n * day).toISOString();
+    const fnd = (code: string, severity: string, observed_at?: string) =>
+      ({ code, category: "technical", severity, points: 5, evidence: code, recommendation: "", source: "rule", ...(observed_at ? { observed_at } : {}) });
+    const { b } = await seedLead();
+    await env.DB.prepare(`UPDATE audits SET findings = ? WHERE business_id = ?`)
+      .bind(JSON.stringify([fnd("old", "critical", ago(45)), fnd("fresh", "important", ago(1)), fnd("legacy", "nice")]), b.id).run();
+    const r = await (await api(`/api/leads/${b.id}`)).json<any>();
+    expect(r.audit.findings.map((f: any) => [f.code, f.stale])).toEqual([["old", true], ["fresh", false], ["legacy", false]]);
+    expect(r.urgency).toBe(30 + 12 + 3);
+    // A legacy finding has no observed_at, so it is as old as its audit, not as old as now.
+    await env.DB.prepare(`UPDATE audits SET created_at = ? WHERE business_id = ?`).bind(ago(45), b.id).run();
+    const old = await (await api(`/api/leads/${b.id}`)).json<any>();
+    expect(old.audit.findings.map((f: any) => [f.code, f.stale])).toEqual([["old", true], ["fresh", false], ["legacy", true]]);
+  });
+
+  it("lead detail urgency is 0 with no audit", async () => {
+    const s = await createSearch(env.DB, { location: "Boise", businessType: "plumber", radiusKm: 10, maxResults: 5 });
+    const b = await upsertBusiness(env.DB, { placeId: crypto.randomUUID(), name: "Bare", category: null, address: null, phone: null, websiteUrl: null, mapsUrl: null, rating: null, reviewCount: null }, s.id);
+    const r = await (await api(`/api/leads/${b.id}`)).json<any>();
+    expect(r.audit).toBeNull();
+    expect(r.urgency).toBe(0);
+  });
+
   it("leadRows batches audits/contacts correctly for ~150 businesses (latest audit wins)", async () => {
     const s = await createSearch(env.DB, { location: "Bulk", businessType: "bulk", radiusKm: 1, maxResults: 200 });
     const ids: string[] = [];
