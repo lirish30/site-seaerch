@@ -18,11 +18,12 @@ beforeAll(async () => {
   cookie = r.headers.get("set-cookie")!.split(";")[0];
 });
 
-async function seedLead() {
+async function seedLead(o: { platform?: "wix" | null; rating?: number | null; reviewCount?: number | null } = {}) {
   const s = await createSearch(env.DB, { location: "Boise", businessType: "plumber", radiusKm: 10, maxResults: 5 });
-  const b = await upsertBusiness(env.DB, { placeId: crypto.randomUUID(), name: "Ace", category: null, address: null, phone: null, websiteUrl: "https://ace.com", mapsUrl: null, rating: null, reviewCount: null }, s.id);
+  const b = await upsertBusiness(env.DB, { placeId: crypto.randomUUID(), name: "Ace", category: null, address: null, phone: null, websiteUrl: "https://ace.com", mapsUrl: null, rating: o.rating ?? null, reviewCount: o.reviewCount ?? null }, s.id);
   const a = await insertAudit(env.DB, { business_id: b.id, site_status: "ok", partial: true, pagespeed_mobile: null, lcp_ms: null, cls: null, mobile_friendly: null,
     https: false, has_title: true, has_meta_description: true, has_contact_form: false, copyright_year: null, latest_content_date: null, broken_link_count: 0,
+    platform: o.platform ?? null, seo_score: null, accessibility_score: null, mail_warning: null,
     score: 15, offer: "seo_basics", findings: [{ code: "no_https", category: "technical", severity: "critical", points: 15, evidence: "Not secure", recommendation: "", source: "rule" }], raw_r2_key: null, health_score: null, niche: null, category_scores: {}, ai_review: null, screenshots: { desktop: null, mobile: null }, site_links: {} });
   const [c] = await replaceContacts(env.DB, b.id, [{ type: "email", value: "info@ace.com", source_url: null, person_name: null, role: null, confidence: 0.7 }]);
   await insertDraft(env.DB, { business_id: b.id, audit_id: a.id, to_contact_id: c.id, recipient_reason: "r", subject: "S", body: "B", offer: "seo_basics", steering_note: null });
@@ -45,6 +46,14 @@ describe("routes", () => {
   it("validates new search input", async () => {
     expect((await api("/api/searches", { method: "POST", body: JSON.stringify({ location: "", businessType: "x" }) })).status).toBe(400);
     expect((await api("/api/searches", { method: "POST", body: JSON.stringify({ location: "Boise", businessType: "x", maxResults: 500 }) })).status).toBe(400);
+  });
+
+  it("a manual search is not new-only", async () => {
+    const r = await api("/api/searches", { method: "POST", body: JSON.stringify({ location: "Boise", businessType: "plumber", maxResults: 10 }) });
+    expect(r.status).toBe(201);
+    const { id, new_only } = await r.json<any>();
+    expect(new_only).toBe(0);
+    expect(await env.DB.prepare(`SELECT new_only FROM searches WHERE id = ?`).bind(id).first()).toEqual({ new_only: 0 });
   });
 
   it("blocks search over spend limit with 402", async () => {
@@ -81,6 +90,27 @@ describe("routes", () => {
     expect(r.leads[0].bestContact).toBe("info@ace.com");
     expect(r.leads[0].hasEmail).toBe(true);
     expect(r.leads[0].partial).toBe(true);
+  });
+
+  it("lead rows expose platform, rating and reviewCount (null when absent)", async () => {
+    const { s, b } = await seedLead({ platform: "wix", rating: 3.8, reviewCount: 12 });
+    const detail = await (await api(`/api/searches/${s.id}`)).json<any>();
+    expect(detail.leads[0]).toMatchObject({ platform: "wix", rating: 3.8, reviewCount: 12 });
+    const all = (await (await api(`/api/leads?limit=500`)).json<any[]>()).find((r) => r.business.id === b.id);
+    expect(all).toMatchObject({ platform: "wix", rating: 3.8, reviewCount: 12 });
+    const bare = await seedLead();
+    const bareRow = (await (await api(`/api/searches/${bare.s.id}`)).json<any>()).leads[0];
+    expect(bareRow).toMatchObject({ platform: null, rating: null, reviewCount: null });
+    const bareAll = (await (await api(`/api/leads?limit=500`)).json<any[]>()).find((r) => r.business.id === bare.b.id);
+    expect(bareAll).toMatchObject({ platform: null, rating: null, reviewCount: null });
+  });
+
+  it("lead rows for a business with no audit keep rating/reviewCount and null platform/score", async () => {
+    const s = await createSearch(env.DB, { location: "Boise", businessType: "noaudit", radiusKm: 10, maxResults: 5 });
+    const b = await upsertBusiness(env.DB, { placeId: crypto.randomUUID(), name: "NoAudit", category: null, address: null, phone: null, websiteUrl: null, mapsUrl: null, rating: 4.2, reviewCount: 7 }, s.id);
+    const want = { platform: null, score: null, offer: null, rating: 4.2, reviewCount: 7 };
+    expect((await (await api(`/api/searches/${s.id}`)).json<any>()).leads[0]).toMatchObject(want);
+    expect((await (await api(`/api/leads?limit=500`)).json<any[]>()).find((r) => r.business.id === b.id)).toMatchObject(want);
   });
 
   it("opening a lead marks it reviewed and returns draft + recipient", async () => {
@@ -164,6 +194,28 @@ describe("routes", () => {
     }
   });
 
+  it("validates logo_url: https or empty only", async () => {
+    const put = (logo_url: string) => api("/api/settings", { method: "PUT", body: JSON.stringify({ logo_url }) });
+    expect((await put("https://example.com/logo.png")).status).toBe(200);
+    expect((await (await api("/api/settings")).json<any>()).settings.logo_url).toBe("https://example.com/logo.png");
+    for (const bad of ["http://example.com/l.png", "javascript:alert(1)", "data:image/png;base64,AAAA", "ftp://x.com/a", "example.com/l.png", "https://", "https://exa mple.com/a", `https://example.com/${"a".repeat(500)}`]) {
+      expect((await put(bad)).status, bad).toBe(400);
+    }
+    const bad = await put("http://example.com/l.png");
+    expect(await bad.json()).toEqual({ error: "invalid", fields: ["logo_url"] });
+    expect((await put("  https://example.com/trimmed.png  ")).status).toBe(200);
+    expect((await (await api("/api/settings")).json<any>()).settings.logo_url).toBe("https://example.com/trimmed.png");
+    const other = await api("/api/settings", { method: "PUT", body: JSON.stringify({ your_name: 5 }) });
+    expect(other.status).toBe(400);
+    expect((await other.json<any>()).fields).toEqual(["your_name"]);
+    // A non-object body has no field path: report an empty list, never the string "undefined".
+    const nonObject = await api("/api/settings", { method: "PUT", body: JSON.stringify([1]) });
+    expect(nonObject.status).toBe(400);
+    expect((await nonObject.json<any>()).fields).toEqual([]);
+    expect((await put("")).status).toBe(200);
+    expect((await (await api("/api/settings")).json<any>()).settings.logo_url).toBe("");
+  });
+
   it("settings round trip with usage", async () => {
     await api("/api/settings", { method: "PUT", body: JSON.stringify({ your_name: "Logan" }) });
     const r = await (await api("/api/settings")).json<any>();
@@ -185,12 +237,13 @@ describe("routes", () => {
     expect(detail.activity.map((a: any) => a.kind)).toEqual(["restored", "archived"]);
   });
 
-  it("delete removes the lead and its audit, contacts, draft, people and activity", async () => {
+  it("delete removes the lead and its audit, contacts, draft, people, activity and report links", async () => {
     const { b } = await seedLead();
     await api(`/api/leads/${b.id}/people`, { method: "POST", body: JSON.stringify({ name: "Ann Lee" }) });
+    expect((await api(`/api/leads/${b.id}/report`, { method: "POST" })).status).toBe(201);
     expect((await api(`/api/leads/${b.id}`, { method: "DELETE" })).status).toBe(200);
     expect((await api(`/api/leads/${b.id}`)).status).toBe(404);
-    for (const t of ["audits", "contacts", "drafts", "people", "activity", "search_results"])
+    for (const t of ["audits", "contacts", "drafts", "people", "activity", "search_results", "audit_reports"])
       expect(await env.DB.prepare(`SELECT COUNT(*) AS n FROM ${t} WHERE business_id = ?`).bind(b.id).first<number>("n")).toBe(0);
     expect((await api(`/api/leads/${b.id}`, { method: "DELETE" })).status).toBe(404);
   });

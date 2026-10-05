@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { anthropicCaller, buildPrompt, generateDraft, wordCount, type DraftInput } from "../src/worker/drafter/draft";
 import type { Business, Contact, Settings } from "../src/worker/types";
 
@@ -6,7 +6,7 @@ const settings: Settings = {
   your_name: "Logan Irish", business_name: "Irish Web", contact_email: "l@x.com", services_blurb: "I build and care for small-business sites.",
   signature: "Logan Irish\nIrish Web", physical_address: "123 Main St, Boise, ID 83702",
   opt_out_line: "Reply 'no thanks' and I won't follow up.", tone_notes: "Plain, friendly, no hype.", monthly_spend_limit_usd: 25,
-  tone_preset: "friendly_local", email_length: "short", cta_style: "mini_audit",
+  tone_preset: "friendly_local", email_length: "short", cta_style: "mini_audit", logo_url: "",
 };
 const business = { id: "b1", name: "Ace Plumbing", category: "Plumber", address: "Boise, ID", website_url: "https://ace.com" } as Business;
 const contacts: Contact[] = [
@@ -135,5 +135,20 @@ describe("anthropicCaller request", () => {
       expect(out).toMatchObject({ subject: "s" });
       expect(sent.tool_choice?.type ?? "auto").toBe("auto");
     } finally { globalThis.fetch = orig; }
+  });
+});
+
+describe("anthropicCaller", () => {
+  it("does not force tool use, which the draft model rejects", async () => {
+    const create = vi.fn(async () => ({ content: [{ type: "tool_use", input: { subject: "s" } }] }));
+    vi.doMock("@anthropic-ai/sdk", () => ({ default: class { messages = { create }; } }));
+    vi.resetModules();
+    const { anthropicCaller: caller } = await import("../src/worker/drafter/draft");
+    const out = await caller("k")({ system: "sys", user: "usr" });
+    const req = (create.mock.calls[0] as unknown as [any])[0];
+    expect(req.tool_choice).toEqual({ type: "auto" });
+    expect(req.system).toContain("write_email");
+    expect(out).toEqual({ subject: "s" });
+    vi.doUnmock("@anthropic-ai/sdk");
   });
 });

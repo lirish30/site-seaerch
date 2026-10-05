@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { MiniGauge } from "../components/HealthGauge";
 import { NICHE_LABEL, OFFER_LABEL, type LeadRow } from "../types";
+import { applyLeadFilters, defaultFilters, type LeadFilters, NOT_CRAWLED, OFFERS, platformOptions } from "../leadFilters";
 
 type Key = "name" | "health" | "score" | "niche" | "status" | "follow";
 const PAGE = 50;
@@ -20,27 +21,25 @@ function value(r: LeadRow, k: Key): string | number {
 
 export default function LeadTable({ rows }: { rows: LeadRow[] }) {
   const [sort, setSort] = useState<{ k: Key; dir: 1 | -1 }>({ k: "score", dir: -1 });
-  const [hideSkipped, setHideSkipped] = useState(true);
-  const [minScore, setMinScore] = useState(0);
-  const [emailOnly, setEmailOnly] = useState(false);
+  const [f, setF] = useState<LeadFilters>(defaultFilters);
   const [q, setQ] = useState("");
   const [niche, setNiche] = useState("");
   const [page, setPage] = useState(0);
+  const set = (p: Partial<LeadFilters>) => { setF((x) => ({ ...x, ...p })); setPage(0); };
+  const num = (v: string) => (v === "" ? null : Number(v));
 
   const niches = useMemo(() => [...new Set(rows.map((r) => r.niche).filter((x): x is string => !!x))].sort(), [rows]);
+  const platforms = useMemo(() => platformOptions(rows), [rows]);
   const view = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return rows
-      .filter((r) => !hideSkipped || r.business.lead_status !== "skip")
-      .filter((r) => (r.score ?? 0) >= minScore)
-      .filter((r) => !emailOnly || r.hasEmail)
+    return applyLeadFilters(rows, f)
       .filter((r) => !niche || r.niche === niche)
       .filter((r) => !needle || `${r.business.name} ${r.business.website_url ?? ""} ${r.business.address ?? ""}`.toLowerCase().includes(needle))
       .sort((a, b) => {
         const x = value(a, sort.k), y = value(b, sort.k);
         return (x < y ? -1 : x > y ? 1 : 0) * sort.dir || a.business.name.localeCompare(b.business.name);
       });
-  }, [rows, sort, hideSkipped, minScore, emailOnly, q, niche]);
+  }, [rows, sort, f, q, niche]);
   const pages = Math.max(1, Math.ceil(view.length / PAGE));
   const shown = view.slice(Math.min(page, pages - 1) * PAGE, Math.min(page, pages - 1) * PAGE + PAGE);
 
@@ -59,9 +58,17 @@ export default function LeadTable({ rows }: { rows: LeadRow[] }) {
         <select value={niche} onChange={(e) => reset(setNiche)(e.target.value)} aria-label="Industry">
           <option value="">All industries</option>{niches.map((n) => <option key={n} value={n}>{NICHE_LABEL[n] ?? n}</option>)}
         </select>
-        <label className="check"><input type="checkbox" checked={hideSkipped} onChange={(e) => reset(setHideSkipped)(e.target.checked)} /> Hide skipped</label>
-        <label className="check"><input type="checkbox" checked={emailOnly} onChange={(e) => reset(setEmailOnly)(e.target.checked)} /> Has email</label>
-        <label className="check">Min opportunity <input type="number" min={0} max={100} className="num" value={minScore} onChange={(e) => reset(setMinScore)(Number(e.target.value))} /></label>
+        <select value={f.offer} onChange={(e) => set({ offer: e.target.value as LeadFilters["offer"] })} aria-label="Offer">
+          <option value="any">Any offer</option>{OFFERS.map((o) => <option key={o} value={o}>{OFFER_LABEL[o] ?? o}</option>)}
+        </select>
+        <select value={f.platform} onChange={(e) => set({ platform: e.target.value })} aria-label="Platform">
+          <option value="any">Any platform</option>{platforms.map((p) => <option key={p} value={p}>{p}</option>)}<option value={NOT_CRAWLED}>not crawled</option>
+        </select>
+        <label className="check"><input type="checkbox" checked={f.hideSkipped} onChange={(e) => set({ hideSkipped: e.target.checked })} /> Hide skipped</label>
+        <label className="check"><input type="checkbox" checked={f.emailOnly} onChange={(e) => set({ emailOnly: e.target.checked })} /> Has email</label>
+        <label className="check">Min opportunity <input type="number" min={0} max={100} className="num" value={f.minScore} onChange={(e) => set({ minScore: Number(e.target.value) })} /></label>
+        <label className="check">Min reviews <input type="number" min={0} className="num" value={f.minReviews ?? ""} onChange={(e) => set({ minReviews: num(e.target.value) })} /></label>
+        <label className="check">Max rating <input type="number" min={0} max={5} step={0.1} className="num" value={f.maxRating ?? ""} onChange={(e) => set({ maxRating: num(e.target.value) })} /></label>
         <span className="muted small">{view.length} of {rows.length}</span>
       </div>
       <div className="table-wrap">
@@ -85,7 +92,7 @@ export default function LeadTable({ rows }: { rows: LeadRow[] }) {
                 <td className="cell-name">
                   <Link to={`/leads/${r.business.id}`} title={r.business.name}>{r.business.name}</Link>
                   {r.business.last_error && <span className="warn-ico" title={r.business.last_error}>⚠</span>}
-                  <div className="sub" title={r.business.website_url ?? ""}>{host(r.business.website_url) || "no website"}</div>
+                  <div className="sub" title={r.business.website_url ?? ""}>{host(r.business.website_url) || "no website"}{r.platform && r.platform !== "other" ? ` · ${r.platform}` : ""}</div>
                 </td>
                 <td><MiniGauge score={r.health} /></td>
                 <td><span className={`opp ${r.score === null ? "" : r.score >= 60 ? "hot" : r.score >= 25 ? "warm" : "cool"}`}>{r.score ?? "…"}</span>

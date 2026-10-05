@@ -1,5 +1,6 @@
-import type { AiReview, AuditCategory, CategoryScores, Finding, FindingCode, Offer, PageKind, SiteStatus } from "../types";
+import type { AiReview, AuditCategory, CategoryScores, Finding, FindingCode, Offer, PageKind, Platform, SiteStatus } from "../types";
 import { AI_BLEND, CATEGORY_WEIGHTS, DEDUCTIONS as D, SITE_STATUS_SCORE, THRESHOLDS as T, severityFor } from "./config";
+import { labelsFor } from "./labels";
 import { NICHES, guessNiche, type NicheKey } from "../audit/rubrics";
 
 export interface CrawlFacts {
@@ -10,8 +11,23 @@ export interface CrawlFacts {
   hasSocialProof: boolean; hasBooking: boolean; hasOpenGraph: boolean; schemaTypes: string[];
   homeWordCount: number; imagesMissingAltPct: number; phoneVisible: boolean;
   pageKinds: PageKind[]; rendered: boolean;
+  platform: Platform;
+  // Homepage facts read from the DOM (visible words; content images, and those with no alt attribute at all).
+  h1Count: number; wordCount: number; imageCount: number; imagesMissingAlt: number;
+  hasPhone: boolean; hasTelLink: boolean; hasLocalBusinessSchema: boolean; mixedContentCount: number;
+  datedBuildMarkers: string[];
+  // Static HTML only (no usable browser render): when true, "X is absent" findings are suppressed because the page may fill X in with JavaScript.
+  isLikelyJsRendered: boolean;
+  // null = could not determine, which never produces a finding.
+  hasRobotsTxt: boolean | null; hasSitemap: boolean | null; httpRedirectsToHttps: boolean | null;
 }
-export interface PageSpeedFacts { performanceScore: number; lcpMs: number; cls: number; mobileFriendly: boolean; }
+export interface PageSpeedFacts {
+  performanceScore: number; lcpMs: number; cls: number; mobileFriendly: boolean;
+  // null = Lighthouse didn't return that category (never a real 0).
+  seoScore: number | null; accessibilityScore: number | null; seoIssueIds: string[]; accessibilityIssueIds: string[];
+}
+/** Mail records of a domain the site lists an email at; null = could not determine. */
+export interface MailDnsFacts { hasMx: boolean | null; hasSpf: boolean | null; }
 /** Measured in a real 390px-wide browser: the ground truth for "works on a phone". */
 export interface MobileFacts { overflowX: boolean; smallTextPct: number; }
 export interface BusinessSignals { category: string | null; rating: number | null; reviewCount: number | null; }
@@ -19,6 +35,7 @@ export interface BusinessSignals { category: string | null; rating: number | nul
 export interface ScoreInput {
   siteStatus: SiteStatus; crawl: CrawlFacts | null; pagespeed: PageSpeedFacts | null; now: Date;
   mobile?: MobileFacts | null; review?: AiReview | null; business?: BusinessSignals;
+  mailDns?: MailDnsFacts | null;
 }
 export interface ScoreResult {
   /** Opportunity (0-100, higher = better lead). */
@@ -53,6 +70,15 @@ const RECOMMEND: Partial<Record<FindingCode, string>> = {
   no_schema: "Add LocalBusiness structured data so Google shows rich details.",
   no_open_graph: "Add social sharing tags so links look good when shared.",
   images_missing_alt: "Add descriptive alt text to images for accessibility and SEO.",
+  no_click_to_call: "Make the phone number a tap-to-call link so mobile visitors can ring with one tap.",
+  no_local_schema: "Add LocalBusiness structured data (name, address, hours) so Google can show the business details.",
+  dated_build: "Rebuild the outdated parts with modern, responsive markup.",
+  low_seo_score: "Fix the search issues Google's own check flagged (titles, link text, crawlable links).",
+  low_accessibility: "Fix contrast, labels and other accessibility issues so every visitor can read and use the site.",
+  no_sitemap: "Add a sitemap so Google can find every page.",
+  mixed_content: "Load every image, script and stylesheet over https so browsers don't block or flag them.",
+  no_https_redirect: "Redirect the plain http address to the secure https site.",
+  no_email_auth: "Add SPF (and DMARC) records for the business email domain so messages reach inboxes.",
 };
 
 const CATEGORY_OF: Partial<Record<FindingCode, AuditCategory>> = {
@@ -62,6 +88,9 @@ const CATEGORY_OF: Partial<Record<FindingCode, AuditCategory>> = {
   no_contact_path: "cro", no_cta: "cro", no_phone_visible: "cro", no_social_proof: "cro", no_nav: "cro", no_footer: "cro",
   broken_links: "technical", no_https: "technical", no_title_or_meta: "technical", no_h1: "technical", no_schema: "technical",
   no_open_graph: "technical", images_missing_alt: "technical",
+  no_click_to_call: "cro", no_local_schema: "technical", dated_build: "content",
+  low_seo_score: "technical", low_accessibility: "technical", no_sitemap: "technical", mixed_content: "technical",
+  no_https_redirect: "technical", no_email_auth: "technical",
 };
 
 function rule(code: keyof typeof D, evidence: string): Finding {
@@ -81,7 +110,7 @@ const clamp = (n: number) => Math.max(0, Math.min(100, Math.round(n)));
 const blend = (rule: number, ai: number | undefined, w: number) => (ai === undefined ? rule : rule * (1 - w) + ai * w);
 
 export function score(input: ScoreInput): ScoreResult {
-  const { siteStatus, crawl, pagespeed: ps, now, mobile = null, review = null, business } = input;
+  const { siteStatus, crawl, pagespeed: ps, now, mobile = null, review = null, business, mailDns } = input;
   const niche: NicheKey = review && review.niche in NICHES ? review.niche : guessNiche(business?.category ?? null);
 
   if (siteStatus === "no_website" || siteStatus === "parked" || siteStatus === "unreachable") {
@@ -98,6 +127,10 @@ export function score(input: ScoreInput): ScoreResult {
 
   const out: Finding[] = [];
   const cats: CategoryScores = {};
+  // We only read static HTML when no browser render was usable, so a JS-built page can hide anything: absence claims are suppressed for it.
+  const js = !!crawl?.isLikelyJsRendered;
+  // Presence-based: the images really are in the HTML, so JS rendering doesn't undo it.
+  const missingAlt = !!crawl && crawl.imagesMissingAltPct > T.missingAltPct;
   const deduct = (c: AuditCategory) => out.filter((f) => f.category === c && f.source === "rule").reduce((s, f) => s + f.points, 0);
 
   // Speed: PageSpeed is a measurement of load time only, so it is capped at 10% of Health.
@@ -109,6 +142,26 @@ export function score(input: ScoreInput): ScoreResult {
     if (ps.lcpMs > T.slowLcpMs) out.push(rule("slow_lcp", `Main content takes about ${secs(ps.lcpMs)} seconds to appear on a phone`));
     if (ps.cls > T.layoutShiftCls) out.push(rule("layout_shift", "The page jumps around while it loads"));
     cats.speed = clamp(ps.performanceScore - deduct("speed"));
+
+    // Lighthouse SEO / accessibility: listed under technical. The scorer owns all prospect-facing wording (labels.ts).
+    if (ps.seoScore !== null && ps.seoScore < T.seoLowBelow) {
+      // Drop ids that would repeat another claim or describe something that isn't the business's site:
+      // image-alt (accessibility's), title/summary (the crawler's no_title_or_meta), is-crawlable on a bot-challenge page.
+      const drop = new Set(["image-alt"]);
+      if (siteStatus === "blocked") drop.add("is-crawlable");
+      if (crawl && (!crawl.hasTitle || !crawl.hasMetaDescription)) { drop.add("document-title"); drop.add("meta-description"); }
+      const issues = labelsFor(ps.seoIssueIds.filter((id) => !drop.has(id)), 3);
+      out.push(rule("low_seo_score", issues.length
+        ? `Google's own check flagged things that can hold the site back in search: ${issues.join(", ")}`
+        : `Google's own check scored the homepage's search-friendliness at ${ps.seoScore}/100`));
+    }
+    if (ps.accessibilityScore !== null && ps.accessibilityScore < T.a11yLowBelow) {
+      // images_missing_alt already says it, so image-alt is not repeated.
+      const issues = labelsFor(ps.accessibilityIssueIds.filter((id) => !(missingAlt && id === "image-alt")), 2);
+      out.push(rule("low_accessibility", issues.length
+        ? `Parts of the site are hard to read or use for some visitors (${issues.join(", ")})`
+        : "Parts of the site are hard to read or use for some visitors"));
+    }
   }
 
   // Mobile: prefer a real 390px render; fall back to the viewport tag and Lighthouse's checks.
@@ -130,7 +183,9 @@ export function score(input: ScoreInput): ScoreResult {
       out.push(rule("old_copyright", `The footer still says © ${crawl.copyrightYear}`));
     if (crawl.pastEventDates.length > 0)
       out.push(rule("past_events", `Lists events that already happened (e.g. ${crawl.pastEventDates[0]})`));
-    if (crawl.homeWordCount < T.thinHomepageWords)
+    if (crawl.datedBuildMarkers.length >= 1)
+      out.push(rule("dated_build", `The site is built with outdated techniques (${crawl.datedBuildMarkers.slice(0, 2).join(", ")})`));
+    if (crawl.homeWordCount < T.thinHomepageWords && !js)
       out.push(rule("thin_homepage", `The homepage has only about ${crawl.homeWordCount} words, so it says little about the business`));
     for (const p of NICHES[niche].pages) {
       if (!crawl.pageKinds.includes(p.kind)) out.push(rule("missing_niche_page", `No ${p.kind} page. ${p.why}`));
@@ -142,6 +197,8 @@ export function score(input: ScoreInput): ScoreResult {
     if (!contactPath) out.push(rule("no_contact_path", "There's no contact form, booking link, or email address anywhere on the site"));
     if (!crawl.hasCta) out.push(rule("no_cta", "No clear button telling visitors what to do next (call, book, get a quote)"));
     if (!crawl.phoneVisible) out.push(rule("no_phone_visible", "No phone number on the homepage"));
+    else if (crawl.hasPhone && !crawl.hasTelLink && !js)
+      out.push(rule("no_click_to_call", "Their phone number isn't set up as a tap-to-call link, so on many phones visitors have to copy and paste it"));
     if (!crawl.hasSocialProof) out.push(rule("no_social_proof", "No reviews or testimonials on the site"));
     if (!crawl.hasNav) out.push(rule("no_nav", "No navigation menu was found, so visitors can't easily reach other pages"));
     if (!crawl.hasFooter) out.push(rule("no_footer", "No footer with contact details and links"));
@@ -153,13 +210,26 @@ export function score(input: ScoreInput): ScoreResult {
       out.push(rule("no_title_or_meta", "The homepage is missing the title or summary Google shows in search results"));
     if (crawl.brokenLinkCount >= T.brokenLinksMin)
       out.push(rule("broken_links", `${crawl.brokenLinkCount} links on the site lead to missing pages`));
-    if (!crawl.hasH1) out.push(rule("no_h1", "The homepage has no main heading"));
-    if (crawl.schemaTypes.length === 0) out.push(rule("no_schema", "No structured business data for Google (schema.org)"));
+    if (!crawl.hasH1 && !js) out.push(rule("no_h1", "The homepage has no main heading"));
+    // No structured data at all, or some (e.g. a WebSite block) that never describes the business: never both.
+    if (crawl.schemaTypes.length === 0 && !js) out.push(rule("no_schema", "No structured business data for Google (schema.org)"));
+    else if (crawl.schemaTypes.length > 0 && !crawl.hasLocalBusinessSchema && !js)
+      out.push(rule("no_local_schema", "The site doesn't include business details (name, address, hours) in a form Google can read"));
     if (!crawl.hasOpenGraph) out.push(rule("no_open_graph", "Links shared on social media won't show a preview image or title"));
-    if (crawl.imagesMissingAltPct > T.missingAltPct)
+    if (missingAlt)
       out.push(rule("images_missing_alt", `${Math.round(crawl.imagesMissingAltPct * 100)}% of images have no description (alt text)`));
-    cats.technical = clamp(100 - deduct("technical"));
+    if (crawl.hasSitemap === false)
+      out.push(rule("no_sitemap", "The site has no sitemap file, which helps Google find all of a site's pages"));
+    if (crawl.mixedContentCount >= 1)
+      out.push(rule("mixed_content", "The page loads some content over an insecure connection, which browsers may block or flag"));
+    if (crawl.httpRedirectsToHttps === false)
+      out.push(rule("no_https_redirect", "Visiting the site without the secure 'https' version doesn't send people to the secure page"));
   }
+
+  // Only when they demonstrably have mail (MX) and demonstrably lack SPF; DMARC is deliberately never claimed (too common to be absent).
+  if (mailDns?.hasMx === true && mailDns.hasSpf === false)
+    out.push(rule("no_email_auth", "Their business email isn't set up with the sender-verification records that help messages reach inboxes, so some may end up in spam"));
+  if (crawl) cats.technical = clamp(100 - deduct("technical"));
 
   // Design comes only from the AI review of real screenshots: rules can't judge looks.
   if (review) {
@@ -187,7 +257,9 @@ export function score(input: ScoreInput): ScoreResult {
 
   const rank: Record<Finding["severity"], number> = { critical: 0, important: 1, nice: 2 };
   out.sort((a, b) => rank[a.severity] - rank[b.severity] || b.points - a.points);
-  return { score: opportunity, health, categoryScores: cats, niche, findings: out, offer: pickOffer(cats, health), lowPriority: opportunity < T.lowPriorityBelow };
+  // A paid auto-draft also needs at least one finding that matters: a pile of small ones on a healthy site isn't a reason to pitch.
+  const lowPriority = opportunity < T.lowPriorityBelow || !out.some((f) => f.severity !== "nice");
+  return { score: opportunity, health, categoryScores: cats, niche, findings: out, offer: pickOffer(cats, health), lowPriority };
 }
 
 function pickOffer(c: CategoryScores, health: number | null): Offer {

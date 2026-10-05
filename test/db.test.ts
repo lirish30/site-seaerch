@@ -20,6 +20,15 @@ describe("db", () => {
     expect((await getSearch(env.DB, s.id))!.processed_count).toBe(1);
   });
 
+  it("createSearch defaults new_only to 0 and round-trips newOnly", async () => {
+    const i = { location: "Boise, ID", businessType: "plumber", radiusKm: 15, maxResults: 50 };
+    expect((await createSearch(env.DB, i)).new_only).toBe(0);
+    expect((await createSearch(env.DB, i, { newOnly: false })).new_only).toBe(0);
+    const s = await createSearch(env.DB, i, { newOnly: true });
+    expect(s.new_only).toBe(1);
+    expect((await getSearch(env.DB, s.id))!.new_only).toBe(1);
+  });
+
   it("dedupes businesses by place_id and links to both searches", async () => {
     const s1 = await createSearch(env.DB, { location: "A", businessType: "b", radiusKm: 1, maxResults: 5 });
     const s2 = await createSearch(env.DB, { location: "A", businessType: "b", radiusKm: 1, maxResults: 5 });
@@ -92,14 +101,34 @@ describe("db", () => {
     await insertAudit(env.DB, {
       business_id: b.id, site_status: "ok", partial: false, pagespeed_mobile: 40, lcp_ms: 5000, cls: 0.1,
       mobile_friendly: true, https: true, has_title: true, has_meta_description: false, has_contact_form: true,
-      copyright_year: 2019, latest_content_date: null, broken_link_count: 0, score: 41, offer: "performance",
+      copyright_year: 2019, latest_content_date: null, broken_link_count: 0, platform: "wix", seo_score: 55, accessibility_score: 0, score: 41, offer: "performance",
       // v1-shaped finding, as stored by audits written before audit v2.
-      findings: [{ code: "slow_mobile", group: "speed", severity: "high", points: 25, evidence: "x" } as any], raw_r2_key: null, health_score: null, niche: null, category_scores: {}, ai_review: null, screenshots: { desktop: null, mobile: null }, site_links: {},
+      findings: [{ code: "slow_mobile", group: "speed", severity: "high", points: 25, evidence: "x" } as any], raw_r2_key: null, mail_warning: "No mail records",
+      health_score: null, niche: null, category_scores: {}, ai_review: null, screenshots: { desktop: null, mobile: null }, site_links: {},
     });
     const a = await latestAudit(env.DB, b.id);
     expect(a!.findings[0].code).toBe("slow_mobile");
     expect(a!.findings[0]).toMatchObject({ category: "speed", severity: "critical", source: "rule" });
     expect(a!.partial).toBe(false);
+    expect(a!.platform).toBe("wix");
+    expect(a!.seo_score).toBe(55);
+    expect(a!.accessibility_score).toBe(0);
+    expect(a!.mail_warning).toBe("No mail records");
+  });
+
+  it("stores a null platform", async () => {
+    const s = await createSearch(env.DB, { location: "A", businessType: "b", radiusKm: 1, maxResults: 5 });
+    const b = await upsertBusiness(env.DB, listing({ placeId: "p-np" }), s.id);
+    await insertAudit(env.DB, {
+      business_id: b.id, site_status: "no_website", partial: false, pagespeed_mobile: null, lcp_ms: null, cls: null,
+      mobile_friendly: null, https: null, has_title: null, has_meta_description: null, has_contact_form: null,
+      copyright_year: null, latest_content_date: null, broken_link_count: null, platform: null, seo_score: null, accessibility_score: null, score: 100, offer: "new_site",
+      findings: [], raw_r2_key: null, mail_warning: null, health_score: null, niche: null, category_scores: {}, ai_review: null, screenshots: { desktop: null, mobile: null }, site_links: {},
+    });
+    const a = (await latestAudit(env.DB, b.id))!;
+    expect(a.platform).toBeNull();
+    expect(a.mail_warning).toBeNull();
+    expect([a.seo_score, a.accessibility_score]).toEqual([null, null]);
   });
 
   it("replaces contacts", async () => {

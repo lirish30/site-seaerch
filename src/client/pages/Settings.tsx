@@ -3,10 +3,15 @@ import { api, ApiError } from "../api";
 import { parseSpendLimit } from "../spend";
 
 type S = Record<string, string | number>;
+// Fields that appear on the public shared report, with the help text shown under each.
+const HELP: Record<string, string> = {
+  your_name: "Also shown on shared reports.", business_name: "Also shown on shared reports.", logo_url: "An https image shown on shared reports.",
+};
 const FIELDS: [string, string, "input" | "textarea"][] = [
-  ["your_name", "Your name", "input"], ["business_name", "Business name", "input"], ["contact_email", "Contact email (used in crawler user-agent)", "input"],
+  ["your_name", "Your name", "input"], ["business_name", "Business name", "input"], ["contact_email", "Contact email (in the crawler user-agent and shown on shared reports)", "input"],
   ["services_blurb", "What you offer", "textarea"], ["signature", "Signature", "textarea"],
   ["physical_address", "Physical mailing address (required by CAN-SPAM)", "input"], ["opt_out_line", "Opt-out line", "input"],
+  ["logo_url", "Logo URL (https)", "input"],
 ];
 
 const VOICE: [string, string, [string, string][]][] = [
@@ -40,7 +45,10 @@ export default function Settings() {
     if (limit === null) { setErr("Enter a monthly spend limit between 0 and 10000."); return; }
     setSaving(true); setErr("");
     try { setS(await api.put<S>("/settings", { ...s, monthly_spend_limit_usd: limit })); setSaved(true); }
-    catch (e) { setErr(e instanceof ApiError ? `Couldn't save: ${e.message}` : "Couldn't save settings."); }
+    catch (e) {
+      setErr(e instanceof ApiError && e.fields.includes("logo_url") ? "Logo URL must be an https:// link"
+        : e instanceof ApiError ? `Couldn't save: ${e.message}` : "Couldn't save settings.");
+    }
     finally { setSaving(false); }
   }
   const total = usage.reduce((t, u) => t + u.est_cost_usd, 0);
@@ -54,6 +62,7 @@ export default function Settings() {
             {kind === "input"
               ? <input id={k} value={String(s[k] ?? "")} onChange={(e) => set(k, e.target.value)} />
               : <textarea id={k} value={String(s[k] ?? "")} onChange={(e) => set(k, e.target.value)} />}
+            {HELP[k] && <p className="muted">{HELP[k]}</p>}
           </div>
         ))}
         <h2 style={{ marginTop: 24 }}>Email voice</h2>

@@ -2,6 +2,7 @@ import type { Fetcher } from "../crawler/crawl";
 import { crawlSite } from "../crawler/crawl";
 import { runPageSpeed, RateLimitedError } from "../pagespeed";
 import { score } from "../scoring/scorer";
+import { lookupMailDns, siteMailDomain, UNKNOWN_MAIL_DNS, type MailDns } from "../dns";
 import { generateDraft, type ClaudeCaller } from "../drafter/draft";
 import { getBusiness } from "../db/businesses";
 import { replaceContacts, listContacts, ensureContact } from "../db/contacts";
@@ -141,6 +142,16 @@ export async function runLead(
     ps = null;
   }
 
+  // Never throws (adaptStep retries a throwing step): DNS trouble must not fail or degrade the lead.
+  // Only a domain the site itself lists an email address at is looked up: without one we know nothing about the business's mail.
+  const mailDns = await step.do("dns", async (): Promise<MailDns> => {
+    try {
+      if (!measurable(crawl.siteStatus)) return UNKNOWN_MAIL_DNS;
+      const domain = siteMailDomain(crawl.finalUrl ?? business.domain, await listContacts(deps.db, p.businessId));
+      return domain ? await lookupMailDns(domain, deps.fetch) : UNKNOWN_MAIL_DNS;
+    } catch { return UNKNOWN_MAIL_DNS; }
+  });
+
   let review: AiReview | null = null;
   if (deps.reviewer && measurable(crawl.siteStatus) && (rendered?.desktop || rendered?.mobile || crawl.facts)) {
     try {
@@ -160,7 +171,7 @@ export async function runLead(
   const audit = await step.do("score", async () => {
     const s = score({ siteStatus: crawl.siteStatus, crawl: crawl.facts, pagespeed: ps, now: deps.now(),
       mobile: rendered?.mobileFacts ?? null, review,
-      business: { category: business.category, rating: business.rating, reviewCount: business.review_count } });
+      business: { category: business.category, rating: business.rating, reviewCount: business.review_count }, mailDns });
     const f = crawl.facts;
     const a = await insertAudit(deps.db, {
       business_id: p.businessId, site_status: crawl.siteStatus, partial: measurable(crawl.siteStatus) && ps === null,
@@ -169,9 +180,13 @@ export async function runLead(
       https: f?.https ?? null, has_title: f?.hasTitle ?? null, has_meta_description: f?.hasMetaDescription ?? null,
       has_contact_form: f?.hasContactForm ?? null, copyright_year: f?.copyrightYear ?? null,
       latest_content_date: f?.latestContentDate ?? null, broken_link_count: f?.brokenLinkCount ?? null,
+      platform: f?.platform ?? null, // null = not crawled; "other" = crawled but unrecognised
+      seo_score: ps?.seoScore ?? null, accessibility_score: ps?.accessibilityScore ?? null,
       score: s.score, offer: s.offer, findings: s.findings, raw_r2_key: crawl.rawKey,
       health_score: s.health, niche: s.niche, category_scores: s.categoryScores, ai_review: review,
       screenshots: { desktop: rendered?.desktop ?? null, mobile: rendered?.mobile ?? null }, site_links: crawl.links ?? {},
+      // A note for the owner only: not a finding, never scored, and not passed to the drafter or the report.
+      mail_warning: mailDns.hasMx === false ? "A site email address is at a domain with no mail records, so emails to it will likely bounce" : null,
     });
     return { id: a.id, lowPriority: s.lowPriority };
   });

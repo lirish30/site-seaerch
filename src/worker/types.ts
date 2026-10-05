@@ -1,14 +1,17 @@
 export type LeadStatus = "new" | "reviewed" | "contacted" | "replied" | "won" | "lost" | "skip";
 export type SiteStatus = "ok" | "no_website" | "unreachable" | "parked" | "blocked";
+// Detected site builder. Audit.platform is null when the site was not crawled; "other" means crawled but unrecognised.
+export type Platform = "wix" | "squarespace" | "godaddy" | "wordpress" | "weebly" | "shopify" | "webflow" | "other";
 export type Offer = "new_site" | "performance" | "care_plan" | "seo_basics" | "conversion";
 export type AuditCategory = "design" | "content" | "cro" | "mobile" | "speed" | "technical";
 export type Severity = "critical" | "important" | "nice";
 export type FindingCode =
   | "slow_mobile" | "meh_mobile" | "slow_lcp" | "layout_shift" | "not_mobile_friendly" | "no_viewport"
   | "mobile_overflow" | "small_text_mobile"
-  | "old_copyright" | "stale_content" | "past_events" | "thin_homepage" | "missing_niche_page"
-  | "no_contact_path" | "no_cta" | "no_phone_visible" | "no_social_proof" | "no_nav" | "no_footer"
-  | "broken_links" | "no_https" | "no_title_or_meta" | "no_h1" | "no_schema" | "no_open_graph" | "images_missing_alt"
+  | "old_copyright" | "stale_content" | "past_events" | "thin_homepage" | "missing_niche_page" | "dated_build"
+  | "no_contact_path" | "no_cta" | "no_phone_visible" | "no_click_to_call" | "no_social_proof" | "no_nav" | "no_footer"
+  | "broken_links" | "no_https" | "no_title_or_meta" | "no_h1" | "no_schema" | "no_local_schema" | "no_open_graph" | "images_missing_alt"
+  | "low_seo_score" | "low_accessibility" | "no_sitemap" | "mixed_content" | "no_https_redirect" | "no_email_auth"
   | "no_website" | "site_unreachable" | "site_parked"
   | `ai_${string}`;
 
@@ -56,6 +59,13 @@ export interface Search {
   id: string; location: string; business_type: string; radius_km: number; max_results: number;
   status: "running" | "done" | "failed"; error: string | null;
   found_count: number; processed_count: number; created_at: string;
+  new_only: 0 | 1; // Radar-started: only businesses never audited get the per-lead pipeline
+}
+
+export interface Radar {
+  id: string; location: string; business_type: string; radius_km: number; max_results: number;
+  interval_days: number; enabled: 0 | 1; next_run_at: string; last_run_at: string | null;
+  last_search_id: string | null; last_error: string | null; claimed_at: string | null; created_at: string;
 }
 
 export interface Business {
@@ -90,6 +100,9 @@ export interface Audit {
   health_score: number | null; niche: string | null; category_scores: CategoryScores;
   ai_review: AiReview | null; screenshots: { desktop: string | null; mobile: string | null };
   site_links: Partial<Record<PageKind, string>>;
+  platform: Platform | null; seo_score: number | null; accessibility_score: number | null;
+  /** A note for the owner only (mail domain has no MX): never a finding, never scored, never sent to the drafter or the report. */
+  mail_warning: string | null;
 }
 export type AuditInsert = Omit<Audit, "id" | "created_at">;
 
@@ -111,6 +124,8 @@ export interface Settings {
   your_name: string; business_name: string; contact_email: string; services_blurb: string;
   signature: string; physical_address: string; opt_out_line: string; tone_notes: string;
   monthly_spend_limit_usd: number; tone_preset: TonePreset; email_length: EmailLength; cta_style: CtaStyle;
+  /** https URL (or "") of the sender's logo, shown on public report pages. */
+  logo_url: string;
 }
 export type TonePreset = "friendly_local" | "consultative" | "direct" | "formal";
 export type EmailLength = "short" | "medium" | "long";

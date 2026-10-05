@@ -17,7 +17,7 @@ const OFFER_TEXT: Record<Offer, string> = {
   new_site: "a new, simple, mobile-friendly website",
   performance: "a speed and mobile fix for their existing site",
   care_plan: "ongoing website care: keeping content, links and updates current",
-  seo_basics: "fixing the basics so Google and visitors trust the site (security, titles, contact options)",
+  seo_basics: "fixing the basics so Google and visitors can find, trust and use the site",
   conversion: "a conversion-focused refresh: clearer calls to action, easier contact and booking, and trust signals that turn visitors into customers",
 };
 

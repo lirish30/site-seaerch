@@ -8,6 +8,7 @@ import { listActivity, logActivity } from "../db/activity";
 import { latestAudit, latestAuditsFor } from "../db/audits";
 import { listContacts, contactsFor } from "../db/contacts";
 import { latestDraft, updateDraftBody, listDrafts } from "../db/drafts";
+import { activeReportFor, createReport, otherActiveCount, revokeReports, type ReportRow } from "../db/reports";
 import { pickRecipient } from "../recipient";
 import { regenerateDraft } from "../pipeline/lead";
 import { depsFromEnv } from "../workflows";
@@ -33,7 +34,7 @@ export async function leadRows(db: D1Database, businesses: Business[]) {
       topFinding: audit?.findings[0]?.evidence ?? null,
       offer: audit?.offer ?? null, bestContact: best.contact?.value ?? null, hasEmail: !!best.emailContact || !!pocs.get(b.id)?.email,
       poc: pocs.get(b.id) ? { name: pocs.get(b.id)!.name, email: pocs.get(b.id)!.email } : null,
-      partial: audit?.partial ?? false,
+      partial: audit?.partial ?? false, platform: audit?.platform ?? null, rating: b.rating, reviewCount: b.review_count,
     };
   });
 }
@@ -241,4 +242,27 @@ leadRoutes.post("/:id/reaudit", async (c) => {
   await c.env.LEAD_WORKFLOW.create({ id: `reaudit-${id}-${Date.now()}`, params: { businessId: id, searchId: null, forceDraft: true } });
   await logActivity(c.env.DB, id, reason?.trim() ? "score_flagged" : "reaudit", reason?.trim().slice(0, 500) || null);
   return c.json({ ok: true }, 202);
+});
+
+const reportView = (r: ReportRow) => ({ token: r.token, url: `/r/${r.token}`, expiresAt: r.expires_at });
+
+leadRoutes.post("/:id/report", async (c) => {
+  const id = c.req.param("id");
+  const audit = (await getBusiness(c.env.DB, id)) ? await latestAudit(c.env.DB, id) : null;
+  if (!audit) return c.json({ error: "not found" }, 404);
+  const existing = await activeReportFor(c.env.DB, id, audit.id);
+  if (existing) return c.json(reportView(existing));
+  return c.json(reportView(await createReport(c.env.DB, id, audit.id)), 201);
+});
+
+leadRoutes.get("/:id/report", async (c) => {
+  const id = c.req.param("id");
+  const audit = await latestAudit(c.env.DB, id);
+  const report = audit ? await activeReportFor(c.env.DB, id, audit.id) : null;
+  return c.json({ report: report ? reportView(report) : null, otherActive: await otherActiveCount(c.env.DB, id, report?.token ?? null) });
+});
+
+leadRoutes.delete("/:id/report", async (c) => {
+  await revokeReports(c.env.DB, c.req.param("id"));
+  return c.json({ ok: true });
 });

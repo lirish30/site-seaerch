@@ -118,7 +118,7 @@ IDs are text UUIDs; timestamps are ISO-8601 text.
 2. Otherwise the group with the most points: speed → `performance`, stale → `care_plan`, basics → `seo_basics`. Ties break in that order.
 
 ### Thresholds
-- Score < 20: tagged "low priority"; no auto-draft (manual "Generate draft" available).
+- Score < 20: tagged "low priority"; no auto-draft (manual "Generate draft" available). (v2: a lead is also low priority when none of its findings is worth `autoDraftMinFindingPoints` = 8 points or more, so a pile of small findings on an otherwise healthy site is not pitched; see 12.2.)
 - If PageSpeed is unavailable, score from crawl data only and set `partial = true`.
 
 ## 5. Recipient selection
@@ -187,3 +187,111 @@ Scoring weights and thresholds: `src/scoring/config.ts`.
 - No automated sending in v1.
 - Listing data comes from a third-party scraper provider; the app does not scrape Google Maps directly.
 - The crawler only fetches a handful of public pages per site, with a clear user-agent.
+
+## 12. v2 additions (2026-10-03)
+
+Audit signals, platform detection, richer lead filters, a shareable report, Radar (scheduled searches) and a mail DNS check. Sections 1-11 remain the v1 record; where this section differs (more findings, group caps, more tables and screens), this section is current.
+
+> **Merged with the site-search-v2 branch (2026-10-04).** The detections in 12.1 (conditions, evidence wording, null = unknown, JavaScript-render suppression, Lighthouse labels, mail DNS) are kept, but they are scored by the category / Site Health / Opportunity model in `src/worker/scoring/` rather than by group weights: each finding has a category (`technical`, `cro`, `content`) and a deduction in `DEDUCTIONS`, and severity is critical / important / nice. Group caps (12.2) and the group-based offer rule no longer exist; the offer is picked from the weakest category. `thin_content`, `no_h1` and `missing_alt` are covered by the existing `thin_homepage`, `no_h1` and `images_missing_alt`; `no_local_schema` fires only when the site has structured data that never describes the business (no structured data at all stays `no_schema`). The auto-draft rule is "opportunity under 25, or no finding above nice severity". The public report maps critical / important / nice to high / medium / low. Migrations for this section are `0007`-`0013` (renumbered after the v2 branch's `0002`-`0006`).
+
+### 12.1 New findings
+
+Weights live in `WEIGHTS` and thresholds in `THRESHOLDS` in `src/worker/scoring/config.ts`; rules in `src/worker/scoring/scorer.ts`. Severity is derived from weight: >= 15 high, 8-14 medium, below 8 low.
+
+| Group | Code | Weight | Rule | Evidence says (plain English) |
+|---|---|---|---|---|
+| seo | `low_seo_score` | 12 | Lighthouse SEO category score < 70 | Google's own check flagged things that can hold the site back in search, listing up to 3 mapped issues; falls back to the score if none map |
+| basics | `low_accessibility` | 6 | Lighthouse accessibility category score < 70 | Parts of the site are hard to read or use for some visitors, listing up to 2 mapped issues |
+| local | `no_click_to_call` | 8 | A phone number is on the page but no `tel:` link | The number isn't a tap-to-call link, so visitors on phones must copy and paste it |
+| local | `no_local_schema` | 5 | No LocalBusiness structured data (JSON-LD or microdata) | Business details (name, address, hours) aren't in a form Google can read |
+| seo | `thin_content` | 5 | Homepage under 150 words | The homepage has very little text (about N words) |
+| seo | `no_h1` | 3 | No `<h1>` on the homepage | The headline isn't marked as the main heading |
+| seo | `missing_alt` | 4 | >= 4 images and >= 50% have no `alt` | N of M images have no description, so Google and screen readers can't tell what they show |
+| seo | `no_sitemap` | 3 | No sitemap at any probed location (see 12.3) | The site has no sitemap file |
+| basics | `mixed_content` | 6 | >= 1 insecure (http) resource on an https page | The page loads some content over an insecure connection |
+| basics | `no_https_redirect` | 4 | The plain-http address serves the page instead of sending people to https | Visiting without the secure version doesn't send people to the secure page |
+| stale | `dated_build` | 10 | >= 1 outdated-technique marker in the HTML | The site is built with outdated techniques (up to 2 named) |
+| basics | `no_email_auth` | 4 | MX exists and SPF is absent (see 12.6) | Business email lacks sender-verification records, so some messages may land in spam |
+
+Existing v1 findings are unchanged. `not_mobile_friendly` is still emitted at most once.
+
+### 12.2 Score, group caps and offer selection
+
+- The total is `min(100, capGroups(findings))`. `capGroups` sums points per group and caps the groups listed in `GROUP_CAPS` (`seo` 20, `local` 15). `speed`, `stale`, `basics` and `site` stay uncapped.
+- Offer selection (section 4) deliberately uses raw, uncapped sums, and adds the raw `seo` and `local` points into the basics bucket. So SEO and local findings can only ever steer the offer to `seo_basics`.
+- The score is an INTERNAL opportunity score: higher = worse site = better prospect. It is never shown on the public report.
+- Auto-draft: `lowPriority` is `total < lowPriorityBelow` (20) OR no finding is worth at least `autoDraftMinFindingPoints` (8). The second clause exists because the v2 findings are mostly small: five of them (no local schema 5, thin content 5, no https redirect 4, no headline 3, no sitemap 3) add up to 20 on a fast, well-built site, which is not a reason to spend on a draft. A low-priority lead can still be drafted manually. The no_website / parked / unreachable shortcuts are never low priority.
+
+### 12.3 Truthfulness rules
+
+The code only claims what it observed, which is why some findings are suppressed:
+- The crawler reads static HTML only. `isLikelyJsRendered` (wix, squarespace or webflow, or a near-empty page with a JS mount point or script and no `<h1>`) suppresses ONLY the absence findings `no_click_to_call`, `no_local_schema`, `thin_content` and `no_h1`. It is never itself a claim. Presence-based findings (`missing_alt`, `mixed_content`) are unaffected.
+- Lighthouse failing-audit ids are mapped to plain-English labels in `AUDIT_LABELS` (`src/worker/scoring/labels.ts`). Unmapped ids are ignored; raw ids and Lighthouse's own wording never reach evidence.
+- Crawler and Lighthouse findings are de-duplicated by audit id: `image-alt` is dropped from `low_seo_score` (accessibility's), and from `low_accessibility` when `missing_alt` already fired; `document-title` / `meta-description` are dropped when the crawler already reports `no_title_or_meta`; `is-crawlable` is dropped on a bot-blocked site.
+- Site-level probes (robots.txt, sitemap at `/sitemap.xml`, `/sitemap_index.xml` and `/wp-sitemap.xml` plus any sitemap declared in robots.txt, http to https redirect) return "unknown" on any error, timeout, challenge page or ambiguous response, and unknown makes no claim. `no_sitemap` needs every probe to say "none".
+
+### 12.4 Platform detection and lead filters
+
+`audits.platform` is one of `wix`, `squarespace`, `godaddy`, `wordpress`, `weebly`, `shopify`, `webflow`, `other`; `null` = not crawled. It is detected from the `generator` meta tag and asset hosts (plus WordPress `/wp-content/` or `/wp-includes/` paths on the site's own host and Webflow's `data-wf-*` html attributes), never from brand-name text, and a footer link to a builder's site counts for nothing. It feeds the platform filter and the JS-render suppression for wix, squarespace and webflow.
+
+Lead tables (Search detail, All Leads) filter client-side on: hide skipped, min score, has email (all v1), plus min reviews, max rating (at or below), offer, and platform (including "not crawled").
+
+### 12.5 Shareable report
+
+- The owner creates a link from the lead page. Public URL `/r/<token>`, token 32 random bytes as 43 base64url characters. Expires after 30 days. "Revoke all" revokes every link for the business.
+- Creating a link for an audit that already has a live link returns that link. After a re-audit, older links stay live until expiry or revoke; the lead page shows "N older links still active".
+- The public JSON is exactly: `businessName`, `auditedAt`, `counts` (high/medium/low), `findings` (severity + evidence only, high first), `partial`, `sender` (`name`, `businessName`, `email`, `logoUrl`), `expiresAt`. It never includes the internal score, points, codes, contacts, notes or drafts.
+- Unknown, expired, revoked and malformed tokens all return the same 404.
+- Not indexable: `X-Robots-Tag: noindex, nofollow` on API responses and (via `public/_headers`) on `/r` and `/r/*`, a meta tag on the page, and `Disallow: /r/` in `public/robots.txt`. Responses are `no-store` with `Referrer-Policy: no-referrer`.
+- Settings: contact email, your name, business name and logo URL (https only, or empty) are PUBLIC on shared reports; the Settings page says so.
+
+### 12.6 Mail DNS
+
+`lookupMailDns` (`src/worker/dns.ts`, Cloudflare DNS-over-HTTPS) checks MX and SPF only. DMARC is deliberately neither checked nor claimed. The domain comes from an email address the crawler found on the site that belongs to the site's own host (the host itself or a parent of it); free-mail, hosted-platform and public-suffix domains never qualify (`PUBLIC_SUFFIXES` are denied exactly, so `ace.co.uk` still counts; `PLATFORM_SUFFIXES` are denied along with everything under them, so `joe.wixsite.com` does not; `HOSTED_SUFFIXES` is both lists), and with no such address nothing is looked up. Any lookup error is "unknown" and makes no claim.
+- `no_email_auth` fires only when MX exists and SPF is absent.
+- When a site-listed address is at a domain with no MX, `audits.mail_warning` holds an owner-only note shown on the lead page. It is never scored, and never in drafts or the public report.
+
+### 12.7 Radar
+
+Saved searches re-run by a Cloudflare Cron Trigger (`triggers.crons: ["17 13 * * *"]`, daily 13:17 UTC). Each tick lists enabled radars whose `next_run_at` has passed; interval is per radar (default 30 days, 7-90).
+- Starts go through `src/worker/search-start.ts`, the same guards as the manual search route: mailing settings and monthly spend limit. Spend counts recorded usage plus searches still `running` that started within 6 hours, at estimated cost; a recheck after the search row is inserted stops simultaneous starts from overshooting.
+- At most 3 radars start per tick; max 20 radars; a duplicate market (location + business type, case-insensitive) is rejected (409).
+- A radar is claimed atomically (single-statement compare-and-set that moves `next_run_at` out and stamps `claimed_at`) before it runs: no double runs, and a 10 s cooldown on manual Run now. A crash after the claim skips that interval rather than risking a double spend.
+- Searches a radar starts are `new_only` (`searches.new_only = 1`): `runSearch` starts the per-lead pipeline only for businesses with no audit row at all (or whose last run failed: `businesses.last_error` is set), still excluding skipped/contacted/replied/won/lost leads. Other businesses it finds are linked to the search and counted in `found_count` and `processed_count` but keep their existing audit and draft (re-audit one from its lead page). The spend estimate is unchanged (`maxResults` drafts). Manual searches still re-audit and re-draft leads the owner has not acted on.
+- A blocked or failed radar records the reason in `last_error` (shown on the Radar page) and retries the next day. A manual Run now that is blocked (spend limit, missing mailing settings) on a radar that is not yet due keeps its existing schedule; a Run now that starts a search moves `next_run_at` to now + the interval.
+- No email or push notification. New leads show as a count (businesses first seen by the last run) on the Radar page.
+- Local test: `npx wrangler dev -c wrangler.jsonc --local --test-scheduled`, then `curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=17+13+*+*+*"`.
+
+### 12.8 At a glance
+
+Migrations (additive; run `npm run db:migrate:remote` BEFORE `npm run deploy`):
+
+| File | Change |
+|---|---|
+| 0002 | `audits.platform` |
+| 0003 | `audits.seo_score`, `audits.accessibility_score` |
+| 0004 | `audit_reports` table (`token`, `business_id`, `audit_id`, `created_at`, `expires_at`, `revoked`); `settings.logo_url` |
+| 0005 | `radars` table, unique market index |
+| 0006 | `radars.claimed_at` |
+| 0007 | `audits.mail_warning` |
+| 0008 | `searches.new_only` |
+
+Endpoints (all behind the session cookie except the public report):
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/leads/:id/report` | Current link for the latest audit (or null) and count of other live links |
+| `POST /api/leads/:id/report` | Create (201) or return the live link for the latest audit |
+| `DELETE /api/leads/:id/report` | Revoke every link for the business |
+| `GET /api/public/report/:token` | Public report JSON (no auth) |
+| `GET /api/radar`, `POST /api/radar` | List radars with new-lead counts; create (optionally `runNow`) |
+| `PATCH /api/radar/:id`, `DELETE /api/radar/:id` | Enable/disable or change interval; delete (past searches and leads stay) |
+| `POST /api/radar/:id/run` | Run now (manual claim, same guards) |
+
+Screens: **Radar** (`/radar`: list, enable/disable, interval, Run now with cost confirmation, delete) and the "Repeat this search (Radar)" option on New Search; **Report** (`/r/<token>`, public, unauthenticated, noindex); share/revoke controls and the mail warning on Lead detail; new filters on the lead tables. Cron: `scheduled` handler in `src/worker/index.ts` runs `runDueRadars`.
+
+### 12.9 Known limitations
+
+- The PageSpeed test fixture is hand-written, not a live capture; the Lighthouse audit ids in `labels.ts` and the `viewport` / `font-size` / `tap-targets` audits behind mobile-friendliness (a missing audit counts as passing) are unverified against a real response.
+- No email notification for Radar.
+- The extractor is slow on very large pages (roughly 5 s CPU at 1 MB; HTML size cap filed as a separate task) and the HTML parser is slow on deeply nested unclosed markup.

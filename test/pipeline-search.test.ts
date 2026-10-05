@@ -4,8 +4,9 @@ import { runSearch } from "../src/worker/pipeline/search";
 import { FakeListingSource } from "../src/worker/listings/fake";
 import { RetryableError } from "../src/worker/listings/source";
 import { createSearch, getSearch } from "../src/worker/db/searches";
-import { listBusinessesForSearch, upsertBusiness, updateLead } from "../src/worker/db/businesses";
+import { listBusinessesForSearch, upsertBusiness, updateLead, setBusinessError } from "../src/worker/db/businesses";
 import { insertDraft, updateDraftBody } from "../src/worker/db/drafts";
+import { insertAudit } from "../src/worker/db/audits";
 import type { StepLike } from "../src/worker/pipeline/lead";
 import type { Listing } from "../src/worker/types";
 
@@ -127,5 +128,85 @@ describe("runSearch", () => {
     const after = (await getSearch(env.DB, s.id))!;
     expect(after.status).toBe("failed");
     expect(after.error).toMatch(/boom start/);
+  });
+
+  describe("new_only (Radar) searches", () => {
+    const audit = (businessId: string, o: { partial?: boolean; site_status?: "ok" | "unreachable" } = {}) => insertAudit(env.DB, {
+      business_id: businessId, site_status: o.site_status ?? "ok", partial: o.partial ?? false, pagespeed_mobile: null, lcp_ms: null, cls: null, mobile_friendly: null,
+      https: true, has_title: true, has_meta_description: true, has_contact_form: true, copyright_year: null, latest_content_date: null, broken_link_count: 0,
+      platform: null, seo_score: null, accessibility_score: null, score: 10, offer: "seo_basics", findings: [], raw_r2_key: null, mail_warning: null,
+      health_score: null, niche: null, category_scores: {}, ai_review: null, screenshots: { desktop: null, mobile: null }, site_links: {} });
+    const seedBusiness = async (id: string) => {
+      const s0 = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 50 });
+      return upsertBusiness(env.DB, L(id), s0.id);
+    };
+    async function run(listings: Listing[], newOnly: boolean) {
+      const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 50 }, { newOnly });
+      const started: string[] = [];
+      const { step } = recorder();
+      await runSearch({ db: env.DB, source: new FakeListingSource(listings), startLead: async (p) => { started.push(p.businessId); } }, step, s.id);
+      return { started, after: (await getSearch(env.DB, s.id))!, linked: await listBusinessesForSearch(env.DB, s.id, { hideSkipped: false }) };
+    }
+
+    it("does not restart an already-audited status-new business, counts it as processed, and finishes; a manual search does restart it", async () => {
+      const audited = await seedBusiness("NO-AUDITED");
+      await audit(audited.id);
+      const r = await run([L("NO-AUDITED")], true);
+      expect(r.started).toEqual([]);
+      expect(r.after).toMatchObject({ new_only: 1, status: "done", found_count: 1, processed_count: 1 });
+      expect(r.linked).toHaveLength(1);
+      const manual = await run([L("NO-AUDITED")], false);
+      expect(manual.started).toEqual([audited.id]);
+      expect(manual.after).toMatchObject({ new_only: 0, status: "done", found_count: 1, processed_count: 0 });
+    });
+
+    it("keeps an audit that is partial or from an unreachable site as 'audited' (never re-paid)", async () => {
+      const a = await seedBusiness("NO-PARTIAL"); await audit(a.id, { partial: true });
+      const b = await seedBusiness("NO-UNREACH"); await audit(b.id, { site_status: "unreachable" });
+      const r = await run([L("NO-PARTIAL"), L("NO-UNREACH")], true);
+      expect(r.started).toEqual([]);
+      expect(r.after).toMatchObject({ found_count: 2, processed_count: 2 });
+    });
+
+    it("starts a never-audited business, even one that is reviewed with an unedited draft", async () => {
+      const reviewed = await seedBusiness("NO-REV-NOAUDIT");
+      await updateLead(env.DB, reviewed.id, { leadStatus: "reviewed" });
+      const r = await run([L("NO-FRESH"), L("NO-REV-NOAUDIT")], true);
+      const fresh = r.linked.find((b) => b.place_id === "NO-FRESH")!;
+      expect(r.started.sort()).toEqual([fresh.id, reviewed.id].sort());
+      expect(r.after).toMatchObject({ found_count: 2, processed_count: 0 });
+    });
+
+    it("an audited reviewed lead with an unedited draft is not restarted (manual still restarts it)", async () => {
+      const reviewed = await seedBusiness("NO-REV-AUDITED");
+      await updateLead(env.DB, reviewed.id, { leadStatus: "reviewed" });
+      await audit(reviewed.id);
+      expect((await run([L("NO-REV-AUDITED")], true)).started).toEqual([]);
+      expect((await run([L("NO-REV-AUDITED")], false)).started).toEqual([reviewed.id]);
+    });
+
+    it("retries an audited lead whose last run failed (last_error set, e.g. the draft step), but not once it has recovered", async () => {
+      const failed = await seedBusiness("NO-FAILED");
+      await audit(failed.id);
+      await setBusinessError(env.DB, failed.id, "Claude: overloaded");
+      const retried = await run([L("NO-FAILED")], true);
+      expect(retried.started).toEqual([failed.id]);
+      expect(retried.after).toMatchObject({ found_count: 1, processed_count: 0 });
+      // A successful run clears the error (the lead workflow's first step), so the next Radar run leaves it alone.
+      await setBusinessError(env.DB, failed.id, null);
+      expect((await run([L("NO-FAILED")], true)).started).toEqual([]);
+    });
+
+    it("never works skipped/contacted/replied/won/lost businesses even with no audit (new-only only restricts)", async () => {
+      const ids: string[] = [];
+      for (const st of ["skip", "contacted", "replied", "won", "lost"] as const) {
+        const b = await seedBusiness(`NO-${st}`);
+        await updateLead(env.DB, b.id, { leadStatus: st });
+        ids.push(`NO-${st}`);
+      }
+      const r = await run(ids.map(L), true);
+      expect(r.started).toEqual([]);
+      expect(r.after).toMatchObject({ status: "done", found_count: 5, processed_count: 5 });
+    });
   });
 });

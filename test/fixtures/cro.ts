@@ -50,5 +50,6 @@ export function seedLeadAudit(businessId: string, siteLinks: Partial<Record<Page
   return insertAudit(env.DB, { business_id: businessId, site_status: "ok", partial: false, pagespeed_mobile: 60, lcp_ms: null, cls: null, mobile_friendly: true,
     https: true, has_title: true, has_meta_description: true, has_contact_form: true, copyright_year: null, latest_content_date: null, broken_link_count: 0,
     score: 40, offer, findings: [{ code: "no_https", category: "technical", severity: "critical", points: 15, evidence: "Not secure", recommendation: "Add HTTPS", source: "rule" }],
-    raw_r2_key: null, health_score: 60, niche: "trades", category_scores: {}, ai_review: null, screenshots: { desktop: null, mobile: null }, site_links: siteLinks });
+    raw_r2_key: null, health_score: 60, niche: "trades", category_scores: {}, ai_review: null, screenshots: { desktop: null, mobile: null }, site_links: siteLinks,
+    platform: null, seo_score: null, accessibility_score: null, mail_warning: null });
 }

@@ -12,11 +12,12 @@ export const DEDUCTIONS = {
   // speed (applied on top of the PageSpeed performance score)
   slow_lcp: 10, layout_shift: 10,
   // content
-  stale_content: 15, old_copyright: 10, past_events: 10, thin_homepage: 15, missing_niche_page: 12,
+  stale_content: 15, old_copyright: 10, past_events: 10, thin_homepage: 15, missing_niche_page: 12, dated_build: 15,
   // cro
-  no_contact_path: 45, no_cta: 20, no_phone_visible: 10, no_social_proof: 10, no_nav: 25, no_footer: 10,
+  no_contact_path: 45, no_cta: 20, no_phone_visible: 10, no_click_to_call: 8, no_social_proof: 10, no_nav: 25, no_footer: 10,
   // technical
-  no_https: 40, no_title_or_meta: 15, broken_links: 15, no_h1: 10, no_schema: 5, no_open_graph: 5, images_missing_alt: 10,
+  no_https: 40, no_title_or_meta: 15, broken_links: 15, no_h1: 10, no_schema: 5, no_local_schema: 5, no_open_graph: 5, images_missing_alt: 10,
+  low_seo_score: 15, low_accessibility: 10, no_sitemap: 5, mixed_content: 10, no_https_redirect: 8, no_email_auth: 5,
 } as const;
 
 /** How much the AI reviewer's score counts vs the rule-based score where both exist. */
@@ -34,6 +35,9 @@ export const THRESHOLDS = {
   smallTextPct: 0.3,
   missingAltPct: 0.5,
   lowPriorityBelow: 25,
+  // Lighthouse SEO / accessibility category scores (0-100) below these produce a finding.
+  seoLowBelow: 70,
+  a11yLowBelow: 70,
 } as const;
 
 /** Opportunity for sites with no usable website: health is 0 and the pitch is a new site. */

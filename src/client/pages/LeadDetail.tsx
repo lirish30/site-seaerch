@@ -6,10 +6,12 @@ import HealthGauge from "../components/HealthGauge";
 import { CategoryBars, FindingsList, Screenshots } from "../components/AuditPanel";
 import PeoplePanel from "../components/PeoplePanel";
 import CroPanel from "../components/CroPanel";
+import { shareState } from "../reportView";
 import type { CroItem, CroResponse } from "../cro";
 import { NICHE_LABEL, OFFER_LABEL, STATUSES, type Activity, type Audit, type Business, type Contact, type LeadStatus, type Person } from "../types";
 
 interface Draft { id: string; subject: string; body: string; recipient_reason: string; edited: boolean; created_at: string; steering_note: string | null; }
+interface ShareReport { token: string; url: string; expiresAt: string; }
 interface Data { business: Business; audit: Audit | null; contacts: Contact[]; draft: Draft | null; toContact: Contact | null; people: Person[]; activity: Activity[]; }
 
 const LINK_LABEL: Record<string, string> = {
@@ -39,6 +41,8 @@ export default function LeadDetail() {
   const [versions, setVersions] = useState<Draft[] | null>(null);
   const [attachPdf, setAttachPdf] = useState(true);
   const [exportLink, setExportLink] = useState<{ label: string; url: string }[]>([]);
+  const [report, setReport] = useState<ShareReport | null>(null); const [otherActive, setOtherActive] = useState(0); const [shareMsg, setShareMsg] = useState("");
+  const linkInput = useRef<HTMLInputElement>(null);
   // Serialises saves and lets other actions wait for in-flight ones.
   const pending = useRef<Promise<unknown>>(Promise.resolve());
   const savedDraft = useRef({ subject: "", body: "" });
@@ -60,6 +64,14 @@ export default function LeadDetail() {
       setCroFocus((p) => new Set([...p].filter((k) => usable.some((i) => i.id === k)))); // drop picks from an older audit
     }).catch(() => { setCroItems([]); setCroFocus(new Set()); });
   }, [tab, id, d?.draft?.id]);
+  const hasAudit = !!d?.audit;
+  useEffect(() => {
+    let cancelled = false;
+    setReport(null); setOtherActive(0); setShareMsg("");
+    if (hasAudit) api.get<{ report: ShareReport | null; otherActive: number }>(`/leads/${id}/report`)
+      .then((r) => { if (!cancelled) { setReport(r.report); setOtherActive(r.otherActive); } }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [id, hasAudit, d?.audit?.created_at]);
   if (!d) return <p>{msg || "Loading…"}</p>;
   const b = d.business;
   const a = d.audit;
@@ -149,6 +161,23 @@ export default function LeadDetail() {
     if (await patchLead({ websiteUrl: editingUrl.trim() || null })) { setEditingUrl(null); await reaudit(); }
   }
 
+  async function createReport() {
+    setShareMsg("");
+    try { setReport(await api.post<ShareReport>(`/leads/${id}/report`)); }
+    catch (e) { setShareMsg((e as Error).message); }
+  }
+  async function revokeReport() {
+    if (!confirm(otherActive > 0 ? "Revoke all report links for this business? Nobody with a link will be able to open it." : "Revoke this link? Anyone who has it will no longer be able to open the report.")) return;
+    try { await api.del(`/leads/${id}/report`); setReport(null); setOtherActive(0); setShareMsg("Link revoked"); }
+    catch (e) { setShareMsg((e as Error).message); }
+  }
+  async function copyLink() {
+    if (!report) return;
+    const link = location.origin + report.url;
+    try { await navigator.clipboard.writeText(link); setShareMsg("Link copied"); }
+    catch { linkInput.current?.select(); setShareMsg("Press Ctrl+C to copy the selected link"); }
+  }
+  const share = shareState(report, otherActive);
   const mailto = d.toContact ? `mailto:${d.toContact.value}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}` : null;
   const links = Object.entries(a?.site_links ?? {}).map(([k, u]) => [k, safeHttpUrl(u)] as const).filter((x): x is readonly [string, string] => !!x[1]);
   const otherContacts = d.contacts.filter((c) => !(c.type === "email" && c.person_name));
@@ -207,10 +236,14 @@ export default function LeadDetail() {
                     {a.partial && <span className="tag" title="Google's speed test didn't run">partial audit</span>}
                     {a.site_status === "blocked" && <span className="tag" title="The site's bot protection blocked our crawler">site blocks crawlers</span>}
                   </div>
+                  {(a.seo_score != null || a.accessibility_score != null) && <p className="muted small">
+                    {a.seo_score != null && <>Google SEO check {a.seo_score}/100</>}{a.seo_score != null && a.accessibility_score != null && " · "}
+                    {a.accessibility_score != null && <>Accessibility {a.accessibility_score}/100</>}{a.platform && a.platform !== "other" && <> · Built with {a.platform}</>}</p>}
                   {a.ai_review?.value_proposition && <p className="value-prop">“{a.ai_review.value_proposition}”</p>}
                   <CategoryBars scores={a.category_scores} />
                 </div>
               </div>
+              {a.mail_warning && <div className="notice" role="status"><span>⚠ {a.mail_warning}</span></div>}
               <Screenshots leadId={b.id} audit={a} />
               {a.ai_review && a.ai_review.strengths.length > 0 && <>
                 <h3>What's working</h3>
@@ -294,6 +327,18 @@ export default function LeadDetail() {
             <label className="check"><input type="checkbox" checked={attachPdf} onChange={(e) => setAttachPdf(e.target.checked)} /> Attach the audit PDF to the Gmail draft</label>
             {exportLink.length > 0 && <p className="row">{exportLink.map((l) => <a key={l.url} href={l.url} target="_blank" rel="noreferrer">{l.label} ↗</a>)}</p>}
             <p className="muted small">Nothing is ever sent from here. Gmail gets a draft for you to review.</p>
+            <h3>Share link</h3>
+            <p className="muted small">A public, read-only page of this audit's findings. Expires after 30 days; revoke any time.</p>
+            {report && <>
+              <input ref={linkInput} readOnly aria-label="Report link" value={location.origin + report.url} onFocus={(e) => e.currentTarget.select()} />
+              <p className="muted small">Expires {new Date(report.expiresAt).toLocaleDateString()}</p>
+            </>}
+            {share.olderText && <p className="muted small">{share.olderText}</p>}
+            <p className="row">
+              {report ? <button onClick={copyLink}>Copy link</button> : <button onClick={createReport}>Create report link</button>}
+              {share.canRevoke && <button onClick={revokeReport}>{share.revokeLabel}</button>}
+            </p>
+            {shareMsg && <p className="muted small" role="status">{shareMsg}</p>}
           </div>}
           <div className="card">
             <h3>Pipeline</h3>

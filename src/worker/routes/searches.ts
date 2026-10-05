@@ -1,18 +1,10 @@
 import { Hono } from "hono";
-import { z } from "zod";
 import type { Env } from "../env";
-import { createSearch, getSearch, listSearches, setSearchStatus } from "../db/searches";
+import { getSearch, listSearches } from "../db/searches";
 import { listBusinessesForSearch } from "../db/businesses";
 import { checkSpend, estimateSearchCost } from "../cost";
 import { leadRows } from "./leads";
-import { mailingSettingsMissing, MISSING_MAILING_SETTINGS } from "./compliance";
-
-const NewSearch = z.object({
-  location: z.string().trim().min(2),
-  businessType: z.string().trim().min(2),
-  radiusKm: z.number().min(1).max(100).default(15),
-  maxResults: z.number().int().min(1).max(200).default(50),
-});
+import { failureResponse, inFlightUsd, searchWorkflowStarter, startSearchRun } from "../search-start";
 
 export const searchRoutes = new Hono<{ Bindings: Env }>();
 
@@ -22,24 +14,14 @@ searchRoutes.get("/estimate", async (c) => {
   const raw = Number(c.req.query("maxResults") ?? 50);
   const n = Math.min(200, Math.max(1, Number.isFinite(raw) ? raw : 50));
   const estUsd = estimateSearchCost(n);
-  return c.json({ estUsd, ...(await checkSpend(c.env.DB, estUsd)) });
+  const inFlight = await inFlightUsd(c.env.DB); // same total the POST guard uses, so the two cannot disagree
+  return c.json({ estUsd, inFlightUsd: inFlight, ...(await checkSpend(c.env.DB, estUsd + inFlight)) });
 });
 
 searchRoutes.post("/", async (c) => {
-  const parsed = NewSearch.safeParse(await c.req.json().catch(() => ({})));
-  if (!parsed.success) return c.json({ error: parsed.error.issues.map((i) => i.message).join("; ") }, 400);
-  if (await mailingSettingsMissing(c.env.DB)) return c.json({ error: MISSING_MAILING_SETTINGS }, 400);
-  const spend = await checkSpend(c.env.DB, estimateSearchCost(parsed.data.maxResults));
-  if (!spend.ok) return c.json({ error: "spend limit", ...spend }, 402);
-  const s = await createSearch(c.env.DB, parsed.data);
-  try {
-    await c.env.SEARCH_WORKFLOW.create({ id: `search-${s.id}`, params: { searchId: s.id } });
-  } catch (e) {
-    const error = (e as Error).message.slice(0, 500);
-    await setSearchStatus(c.env.DB, s.id, "failed", error);
-    return c.json({ error }, 502);
-  }
-  return c.json(s, 201);
+  const r = await startSearchRun({ db: c.env.DB, startWorkflow: searchWorkflowStarter(c.env) }, await c.req.json().catch(() => ({})));
+  if (!r.ok) { const f = failureResponse(r); return c.json(f.body, f.status); }
+  return c.json(r.search, 201);
 });
 
 searchRoutes.get("/:id", async (c) => {

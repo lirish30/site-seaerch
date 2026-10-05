@@ -74,7 +74,7 @@ export async function setArchived(db: D1Database, id: string, archived: boolean)
 export async function deleteBusiness(db: D1Database, id: string) {
   await db.batch([
     db.prepare(`DELETE FROM cro_items WHERE cro_audit_id IN (SELECT id FROM cro_audits WHERE business_id = ?)`).bind(id),
-    ...["search_results", "audits", "contacts", "drafts", "people", "activity", "cro_audits"].map((t) =>
+    ...["search_results", "audits", "contacts", "drafts", "people", "activity", "cro_audits", "audit_reports"].map((t) =>
       db.prepare(`DELETE FROM ${t} WHERE business_id = ?`).bind(id)),
     db.prepare(`DELETE FROM businesses WHERE id = ?`).bind(id),
   ]);

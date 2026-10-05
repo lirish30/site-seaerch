@@ -11,8 +11,8 @@ const b = (v: number | null) => (v === null ? null : v === 1);
 const n = (v: boolean | null) => (v === null ? null : v ? 1 : 0);
 const json = <T,>(s: string | null, fallback: T): T => { try { return s ? JSON.parse(s) : fallback; } catch { return fallback; } };
 
-// v1 findings carried {group: speed|stale|basics, severity: high|medium|low} and no recommendation.
-const V1_CATEGORY: Record<string, Finding["category"]> = { speed: "speed", stale: "content", basics: "technical", site: "site" };
+// v1 findings carried {group: speed|stale|basics|seo|local, severity: high|medium|low} and no recommendation.
+const V1_CATEGORY: Record<string, Finding["category"]> = { speed: "speed", stale: "content", basics: "technical", seo: "technical", local: "cro", site: "site" };
 const V1_SEVERITY: Record<string, Finding["severity"]> = { high: "critical", medium: "important", low: "nice" };
 function normalizeFinding(f: any): Finding {
   if (f.category) return f as Finding;
@@ -28,6 +28,8 @@ function fromRow(r: Row): Audit {
     has_contact_form: b(r.has_contact_form), health_score: r.health_score ?? null, niche: r.niche ?? null,
     category_scores: json(r.category_scores, {}), ai_review: json(r.ai_review, null),
     screenshots: { desktop: null, mobile: null, ...json(r.screenshots, {}) }, site_links: json(r.site_links, {}),
+    platform: r.platform ?? null, seo_score: r.seo_score ?? null, accessibility_score: r.accessibility_score ?? null,
+    mail_warning: r.mail_warning ?? null,
   };
 }
 
@@ -37,13 +39,15 @@ export async function insertAudit(db: D1Database, a: AuditInsert): Promise<Audit
     `INSERT INTO audits (id, business_id, created_at, site_status, partial, pagespeed_mobile, lcp_ms, cls,
      mobile_friendly, https, has_title, has_meta_description, has_contact_form, copyright_year,
      latest_content_date, broken_link_count, score, offer, findings, raw_r2_key,
-     health_score, niche, category_scores, ai_review, screenshots, site_links)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+     health_score, niche, category_scores, ai_review, screenshots, site_links,
+     platform, seo_score, accessibility_score, mail_warning)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
   ).bind(id, a.business_id, new Date().toISOString(), a.site_status, a.partial ? 1 : 0, a.pagespeed_mobile,
     a.lcp_ms, a.cls, n(a.mobile_friendly), n(a.https), n(a.has_title), n(a.has_meta_description),
     n(a.has_contact_form), a.copyright_year, a.latest_content_date, a.broken_link_count, a.score, a.offer,
     JSON.stringify(a.findings), a.raw_r2_key, a.health_score, a.niche, JSON.stringify(a.category_scores),
-    a.ai_review ? JSON.stringify(a.ai_review) : null, JSON.stringify(a.screenshots), JSON.stringify(a.site_links)).run();
+    a.ai_review ? JSON.stringify(a.ai_review) : null, JSON.stringify(a.screenshots), JSON.stringify(a.site_links),
+    a.platform, a.seo_score, a.accessibility_score, a.mail_warning).run();
   return (await db.prepare(`SELECT * FROM audits WHERE id = ?`).bind(id).first<Row>().then((r) => fromRow(r!)));
 }
 

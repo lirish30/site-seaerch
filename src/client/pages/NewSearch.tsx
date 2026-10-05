@@ -3,13 +3,15 @@ import { Link, useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { estimateNewSearchSeconds, formatEta } from "../eta";
 import { searchFinished } from "../poll";
-import type { Search } from "../types";
+import type { Radar, Search } from "../types";
+import { RADAR_INTERVALS, radarBodyFor, radarFollowUpNotice } from "../radar";
 import BusinessTypePicker from "./BusinessTypePicker";
 import SearchProgress from "./SearchProgress";
 
 const RESULT_PRESETS = [25, 50, 100, 200];
 const RECENT_POLL_MS = 5000;
-type Estimate = { estUsd: number; spent: number; limit: number; ok: boolean };
+// inFlightUsd: estimated cost of searches still running, already counted in `ok` by the server.
+type Estimate = { estUsd: number; inFlightUsd?: number; spent: number; limit: number; ok: boolean };
 
 export default function NewSearch() {
   const nav = useNavigate();
@@ -20,6 +22,7 @@ export default function NewSearch() {
   const [err, setErr] = useState(""); const [busy, setBusy] = useState(false);
   const [started, setStarted] = useState("");
   const [recent, setRecent] = useState<Search[]>([]);
+  const [repeat, setRepeat] = useState(false); const [every, setEvery] = useState(30);
   const [recentErr, setRecentErr] = useState(""); const [estErr, setEstErr] = useState("");
 
   const loadRecent = useCallback(async () => {
@@ -44,7 +47,8 @@ export default function NewSearch() {
 
   const count = types.length;
   const totalUsd = est ? est.estUsd * count : 0;
-  const overLimit = est !== null && est.spent + totalUsd > est.limit;
+  const inFlight = est?.inFlightUsd ?? 0;
+  const overLimit = est !== null && est.spent + inFlight + totalUsd > est.limit;
   const canSubmit = !busy && count > 0 && location.trim().length >= 2 && !overLimit;
 
   async function submit(e: React.FormEvent) {
@@ -59,9 +63,18 @@ export default function NewSearch() {
         failed.push(x instanceof ApiError && x.status !== 402 ? `${t} (${x.message})` : t);
       }
     }
+    // Radar: each search just started is that market's first run, so its radar's first run is due in `every` days (runNow stays false).
+    let notice = "";
+    if (repeat) {
+      for (const s of ok) {
+        try { await api.post<Radar>("/radar", radarBodyFor({ location: s.location, businessType: s.business_type, radiusKm: s.radius_km, maxResults: s.max_results }, every)); }
+        catch (x) { notice = radarFollowUpNotice(x instanceof ApiError ? x.message : ""); }
+      }
+    }
     setBusy(false);
-    if (ok.length === 1 && failed.length === 0) { nav(`/searches/${ok[0].id}`); return; }
-    if (failed.length) setErr(`Couldn't start: ${failed.join(", ")}.${limitHit ? " This would go over your monthly spend limit." : ""}`);
+    if (ok.length === 1 && failed.length === 0) { nav(`/searches/${ok[0].id}`, notice ? { state: { notice } } : undefined); return; }
+    const errText = failed.length ? `Couldn't start: ${failed.join(", ")}.${limitHit ? " This would go over your monthly spend limit." : ""}` : "";
+    if (errText || notice) setErr([errText, notice].filter(Boolean).join(" "));
     if (ok.length) {
       setStarted(`Started ${ok.length} search${ok.length === 1 ? "" : "es"}. Progress updates below.`);
       setTypes(failed.length ? types.filter((t) => failed.some((f) => f.startsWith(t))) : []);
@@ -98,6 +111,18 @@ export default function NewSearch() {
         <label>Business types <span className="muted">· pick as many as you like</span></label>
         <BusinessTypePicker selected={types} onChange={setTypes} />
 
+        <div className="row" style={{ marginTop: 12 }}>
+          <label className="check">
+            <input type="checkbox" checked={repeat} onChange={(e) => setRepeat(e.target.checked)} />
+            Repeat {count > 1 ? "these searches" : "this search"} (Radar)
+          </label>
+          <label htmlFor="every" style={{ fontWeight: 400, margin: 0 }}>every</label>
+          <select id="every" style={{ width: "auto" }} value={every} disabled={!repeat} onChange={(e) => setEvery(Number(e.target.value))}>
+            {RADAR_INTERVALS.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+          <span>days</span>
+        </div>
+
         {started && <p className="ok">{started}</p>}
         {err && <p className="error">{err}</p>}
         {estErr && <p className="error">{estErr}</p>}
@@ -106,7 +131,7 @@ export default function NewSearch() {
             <strong>{count === 0 ? "Select at least one type" : `${count} type${count === 1 ? "" : "s"} · up to ${count * maxResults} leads`}</strong>
             <span className="muted">
               {est && count > 0 && <>Est. cost up to ${totalUsd.toFixed(2)} · takes {eta} · </>}
-              {est && <>spent ${est.spent.toFixed(2)} of ${est.limit.toFixed(2)} this month</>}
+              {est && <>spent ${est.spent.toFixed(2)} of ${est.limit.toFixed(2)} this month{inFlight ? ` + $${inFlight.toFixed(2)} in searches still running` : ""}</>}
             </span>
             {overLimit && <span className="error">This would go over your monthly spend limit.</span>}
           </div>
