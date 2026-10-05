@@ -1,14 +1,18 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import BulkBar from "../components/BulkBar";
+import { FitChip } from "../components/FitChip";
 import { MiniGauge } from "../components/HealthGauge";
+import { compareFit } from "../fitView";
 import { NICHE_LABEL, OFFER_LABEL, type LeadRow } from "../types";
-import { applyLeadFilters, defaultFilters, type LeadFilters, NOT_CRAWLED, OFFERS, platformOptions } from "../leadFilters";
+import { applyLeadFilters, defaultTableFilters, type LeadFilters, NOT_CRAWLED, OFFERS, platformOptions, type TableFilters } from "../leadFilters";
+import { allSelected, pruneSelection, someSelected, toggleId, togglePage } from "../bulkView";
 
-type Key = "name" | "health" | "score" | "niche" | "status" | "follow";
+type Key = "name" | "health" | "score" | "fit" | "niche" | "status" | "follow";
 const PAGE = 50;
 const host = (u: string | null) => (u ?? "").replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "");
 
-function value(r: LeadRow, k: Key): string | number {
+function value(r: LeadRow, k: Exclude<Key, "fit">): string | number {
   switch (k) {
     case "name": return r.business.name.toLowerCase();
     case "health": return r.health ?? 101; // unmeasured sorts last ascending
@@ -19,13 +23,23 @@ function value(r: LeadRow, k: Key): string | number {
   }
 }
 
-export default function LeadTable({ rows }: { rows: LeadRow[] }) {
+/**
+ * `filters`/`onFiltersChange` let a page own the filter state (to save and restore it); without them the table keeps its own.
+ * `bulk` turns on row checkboxes and the selection bar; `onChanged` reloads the rows after a bulk change or undo.
+ */
+export default function LeadTable({ rows, filters, onFiltersChange, bulk, onTagClick }: {
+  rows: LeadRow[]; filters?: TableFilters; onFiltersChange?: (t: TableFilters) => void;
+  bulk?: { onChanged: () => void | Promise<void>; archivedView?: boolean }; onTagClick?: (tag: string) => void;
+}) {
   const [sort, setSort] = useState<{ k: Key; dir: 1 | -1 }>({ k: "score", dir: -1 });
-  const [f, setF] = useState<LeadFilters>(defaultFilters);
-  const [q, setQ] = useState("");
-  const [niche, setNiche] = useState("");
+  const [own, setOwn] = useState<TableFilters>(defaultTableFilters);
+  const { f, q, niche } = filters ?? own;
+  const setTable = (p: Partial<TableFilters>) => { (onFiltersChange ?? setOwn)({ f, q, niche, ...p }); setPage(0); };
+  const setQ = (v: string) => setTable({ q: v });
+  const setNiche = (v: string) => setTable({ niche: v });
   const [page, setPage] = useState(0);
-  const set = (p: Partial<LeadFilters>) => { setF((x) => ({ ...x, ...p })); setPage(0); };
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const set = (p: Partial<LeadFilters>) => setTable({ f: { ...f, ...p } });
   const num = (v: string) => (v === "" ? null : Number(v));
 
   const niches = useMemo(() => [...new Set(rows.map((r) => r.niche).filter((x): x is string => !!x))].sort(), [rows]);
@@ -36,6 +50,7 @@ export default function LeadTable({ rows }: { rows: LeadRow[] }) {
       .filter((r) => !niche || r.niche === niche)
       .filter((r) => !needle || `${r.business.name} ${r.business.website_url ?? ""} ${r.business.address ?? ""}`.toLowerCase().includes(needle))
       .sort((a, b) => {
+        if (sort.k === "fit") return compareFit(a.fit, b.fit, sort.dir) || a.business.name.localeCompare(b.business.name);
         const x = value(a, sort.k), y = value(b, sort.k);
         return (x < y ? -1 : x > y ? 1 : 0) * sort.dir || a.business.name.localeCompare(b.business.name);
       });
@@ -49,13 +64,20 @@ export default function LeadTable({ rows }: { rows: LeadRow[] }) {
       <button className="th-btn" onClick={by(k, firstDir)}>{label}<span className="sort-ind">{sort.k === k ? (sort.dir === 1 ? "▲" : "▼") : ""}</span></button>
     </th>
   );
-  const reset = <T,>(fn: (v: T) => void) => (v: T) => { fn(v); setPage(0); };
+
+  // A selection only ever covers rows the user can see: filtering or reloading drops anything that left the view.
+  const viewIds = useMemo(() => view.map((r) => r.business.id), [view]);
+  useEffect(() => { setSelected((s) => pruneSelection(s, viewIds)); }, [viewIds]);
+  const pageIds = shown.map((r) => r.business.id);
+  const headBox = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (headBox.current) headBox.current.indeterminate = someSelected(selected, pageIds) && !allSelected(selected, pageIds); });
 
   return (
     <>
+      {bulk && <BulkBar selected={[...selected]} archivedView={bulk.archivedView} onClear={() => setSelected(new Set())} onDone={bulk.onChanged} />}
       <div className="table-tools">
-        <input className="search" type="search" placeholder="Search name, website, town…" value={q} onChange={(e) => reset(setQ)(e.target.value)} aria-label="Search leads" />
-        <select value={niche} onChange={(e) => reset(setNiche)(e.target.value)} aria-label="Industry">
+        <input className="search" type="search" placeholder="Search name, website, town…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search leads" />
+        <select value={niche} onChange={(e) => setNiche(e.target.value)} aria-label="Industry">
           <option value="">All industries</option>{niches.map((n) => <option key={n} value={n}>{NICHE_LABEL[n] ?? n}</option>)}
         </select>
         <select value={f.offer} onChange={(e) => set({ offer: e.target.value as LeadFilters["offer"] })} aria-label="Offer">
@@ -74,13 +96,17 @@ export default function LeadTable({ rows }: { rows: LeadRow[] }) {
       <div className="table-wrap">
         <table className="leads">
           <colgroup>
-            <col className="c-name" /><col className="c-health" /><col className="c-opp" /><col className="c-niche" />
+            {bulk && <col className="c-check" />}
+            <col className="c-name" /><col className="c-health" /><col className="c-opp" /><col className="c-fit" /><col className="c-niche" />
             <col className="c-issue" /><col className="c-contact" /><col className="c-status" /><col className="c-follow" />
           </colgroup>
           <thead><tr>
+            {bulk && <th className="check-cell"><input ref={headBox} type="checkbox" aria-label="Select all on this page" disabled={!shown.length}
+              checked={allSelected(selected, pageIds)} onChange={() => setSelected(togglePage(selected, pageIds))} /></th>}
             {th("name", "Business")}
             {th("health", "Health", 1, "Site Health: higher is a better website")}
             {th("score", "Opp.", -1, "Opportunity: higher is a better lead")}
+            {th("fit", "Fit", -1, "Fit: how well the business matches your best fit profile. — means no profile applies")}
             {th("niche", "Industry")}
             <th>Top issue</th><th>Contact</th>
             {th("status", "Status")}
@@ -88,15 +114,24 @@ export default function LeadTable({ rows }: { rows: LeadRow[] }) {
           </tr></thead>
           <tbody>
             {shown.map((r) => (
-              <tr key={r.business.id}>
+              <tr key={r.business.id} className={selected.has(r.business.id) ? "selected" : undefined}>
+                {bulk && <td className="check-cell"><input type="checkbox" aria-label={`Select ${r.business.name}`} checked={selected.has(r.business.id)}
+                  onChange={() => setSelected(toggleId(selected, r.business.id))} /></td>}
                 <td className="cell-name">
                   <Link to={`/leads/${r.business.id}`} title={r.business.name}>{r.business.name}</Link>
                   {r.business.last_error && <span className="warn-ico" title={r.business.last_error}>⚠</span>}
+                  {r.scan_stage === "quick" && <span className="badge quick-scan" title="Crawled and scored only. Run a full scan from the Promising page for screenshots, PageSpeed, AI review and a draft.">Quick scan</span>}
                   <div className="sub" title={r.business.website_url ?? ""}>{host(r.business.website_url) || "no website"}{r.platform && r.platform !== "other" ? ` · ${r.platform}` : ""}</div>
+                  {r.business.tags.length > 0 && (
+                    <div className="tag-list">{r.business.tags.map((t) => onTagClick
+                      ? <button key={t} className="tag" title={`Show only leads tagged "${t}"`} onClick={() => onTagClick(t)}>{t}</button>
+                      : <span key={t} className="tag">{t}</span>)}</div>
+                  )}
                 </td>
                 <td><MiniGauge score={r.health} /></td>
                 <td><span className={`opp ${r.score === null ? "" : r.score >= 60 ? "hot" : r.score >= 25 ? "warm" : "cool"}`}>{r.score ?? "…"}</span>
                   {r.partial && <span className="dot-partial" title="Google's speed test didn't run">•</span>}</td>
+                <td><FitChip fit={r.fit} /></td>
                 <td className="clip" title={r.niche ? NICHE_LABEL[r.niche] : ""}>{r.niche ? NICHE_LABEL[r.niche] ?? r.niche : <span className="muted">—</span>}</td>
                 <td><span className="clamp2" title={r.topFinding ?? ""}>{r.topFinding ?? <span className="muted">—</span>}</span>
                   {r.offer && <span className="sub">{OFFER_LABEL[r.offer] ?? r.offer}</span>}</td>
@@ -107,7 +142,7 @@ export default function LeadTable({ rows }: { rows: LeadRow[] }) {
                 <td className="nowrap">{r.business.follow_up_at ? new Date(`${r.business.follow_up_at}T00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : <span className="muted">—</span>}</td>
               </tr>
             ))}
-            {!shown.length && <tr><td colSpan={8} className="muted empty">No leads match these filters.</td></tr>}
+            {!shown.length && <tr><td colSpan={bulk ? 10 : 9} className="muted empty">No leads match these filters.</td></tr>}
           </tbody>
         </table>
       </div>

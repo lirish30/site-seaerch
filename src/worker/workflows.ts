@@ -8,6 +8,7 @@ import { browserRenderer } from "./render/render";
 import { setBusinessError } from "./db/businesses";
 import { incrementProcessed } from "./db/searches";
 import { runSearch } from "./pipeline/search";
+import type { ScanStage } from "./types";
 import { BrightDataListingSource } from "./listings/brightdata";
 import { runCroWithErrorHandling, type CroDeps, type CroParams } from "./cro/pipeline";
 import { CroFatalError, anthropicCroCaller } from "./cro/ai";
@@ -39,7 +40,7 @@ export function adaptStep(step: WorkflowStep): StepLike {
   };
 }
 
-export type LeadParams = { businessId: string; searchId: string | null; forceDraft?: boolean };
+export type LeadParams = { businessId: string; searchId: string | null; forceDraft?: boolean; stage?: ScanStage };
 
 export async function runLeadWithErrorHandling(deps: LeadDeps, step: WorkflowStep, p: LeadParams) {
   try {
@@ -65,11 +66,11 @@ export class LeadWorkflow extends WorkflowEntrypoint<Env, LeadParams> {
 export type SearchParams = { searchId: string };
 
 export async function startLeadIdempotent(
-  binding: Pick<Workflow, "create" | "get">, p: { businessId: string; searchId: string },
+  binding: Pick<Workflow, "create" | "get">, p: { businessId: string; searchId: string; stage?: ScanStage },
 ) {
   const id = `lead-${p.searchId}-${p.businessId}`;
   try {
-    await binding.create({ id, params: { businessId: p.businessId, searchId: p.searchId } });
+    await binding.create({ id, params: { businessId: p.businessId, searchId: p.searchId, stage: p.stage ?? "full" } });
   } catch (e) {
     const existing = await binding.get(id).catch(() => null);
     if (existing) return; // already started by a previous attempt

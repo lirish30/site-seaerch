@@ -2,16 +2,27 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../env";
 import type { Business, LeadStatus } from "../types";
-import { getBusiness, listAllBusinesses, updateLead, domainOf, setArchived, deleteBusiness } from "../db/businesses";
+import { getBusiness, listAllBusinesses, listQuickStageBusinesses, updateLead, domainOf, setArchived, deleteBusiness, applyBulk, undoBulk, normalizeTag } from "../db/businesses";
+import { createFilter, deleteFilter, FilterLimit, FilterNameTaken, listFilters } from "../db/filters";
 import { listPeople, createPerson, updatePerson, deletePerson, pocsFor } from "../db/people";
 import { listActivity, logActivity } from "../db/activity";
-import { latestAudit, latestAuditsFor } from "../db/audits";
+import { latestAudit, latestAuditsFor, listAudits } from "../db/audits";
+import { diffFindings, type AuditChanges } from "../audit/diff";
+import { isStale, urgencyOf } from "../audit/provenance";
+import { listServices } from "../db/services";
+import { listFitProfiles } from "../db/fit";
+import { InvalidSuppression, leadSuppression, suppressLead, suppressedLeadIds } from "../db/suppression";
+import { Note, Reason, bad } from "./suppressions";
+import { scoreFit } from "../scoring/fit";
+import { rankPromising } from "../scoring/promising";
+import { bestOffer } from "../services/best-offer";
 import { listContacts, contactsFor } from "../db/contacts";
 import { latestDraft, updateDraftBody, listDrafts } from "../db/drafts";
 import { activeReportFor, createReport, otherActiveCount, revokeReports, type ReportRow } from "../db/reports";
 import { pickRecipient } from "../recipient";
 import { regenerateDraft } from "../pipeline/lead";
 import { depsFromEnv } from "../workflows";
+import { checkSpend, PER_LEAD_COST } from "../cost";
 import { mailingSettingsMissing, MISSING_MAILING_SETTINGS } from "./compliance";
 import { reportFor, reportFileName } from "../report/data";
 import { htmlToPdf } from "../render/render";
@@ -25,7 +36,7 @@ const STATUSES = ["new", "reviewed", "contacted", "replied", "won", "lost", "ski
 
 export async function leadRows(db: D1Database, businesses: Business[]) {
   const ids = businesses.map((b) => b.id);
-  const [audits, contactMap, pocs] = await Promise.all([latestAuditsFor(db, ids), contactsFor(db, ids), pocsFor(db, ids)]);
+  const [audits, contactMap, pocs, profiles] = await Promise.all([latestAuditsFor(db, ids), contactsFor(db, ids), pocsFor(db, ids), listFitProfiles(db, { activeOnly: true })]);
   return businesses.map((b) => {
     const audit = audits.get(b.id) ?? null;
     const best = pickRecipient(contactMap.get(b.id) ?? [], domainOf(b.website_url));
@@ -35,6 +46,7 @@ export async function leadRows(db: D1Database, businesses: Business[]) {
       offer: audit?.offer ?? null, bestContact: best.contact?.value ?? null, hasEmail: !!best.emailContact || !!pocs.get(b.id)?.email,
       poc: pocs.get(b.id) ? { name: pocs.get(b.id)!.name, email: pocs.get(b.id)!.email } : null,
       partial: audit?.partial ?? false, platform: audit?.platform ?? null, rating: b.rating, reviewCount: b.review_count,
+      fit: scoreFit(b, audit, profiles), scan_stage: b.scan_stage,
     };
   });
 }
@@ -47,24 +59,104 @@ function intParam(v: string | undefined, def: number, min: number, max: number) 
 
 export const leadRoutes = new Hono<{ Bindings: Env }>();
 
+/** The 409 for a drafting/export action on a lead on the suppression list; null when the lead is clear (or unknown, which the route handles). */
+async function suppressedResponse(c: any, id: string): Promise<Response | null> {
+  const b = await getBusiness(c.env.DB, id);
+  const hit = b && (await leadSuppression(c.env.DB, b));
+  return hit ? c.json({ error: "suppressed", reason: hit.reason }, 409) : null;
+}
+
 leadRoutes.get("/", async (c) => {
   const status = c.req.query("status") as LeadStatus | undefined;
   if (status && !STATUSES.includes(status)) return c.json({ error: "bad status" }, 400);
   const limit = intParam(c.req.query("limit"), DEFAULT_LIMIT, 1, MAX_LIMIT);
   const offset = intParam(c.req.query("offset"), 0, 0, Number.MAX_SAFE_INTEGER);
   const archived = c.req.query("archived") === "1";
-  return c.json(await leadRows(c.env.DB, await listAllBusinesses(c.env.DB, { status, limit, offset, archived })));
+  const rawTag = c.req.query("tag");
+  const tag = rawTag === undefined || rawTag === "" ? undefined : normalizeTag(rawTag);
+  if (tag === null) return c.json({ error: "bad tag" }, 400);
+  return c.json(await leadRows(c.env.DB, await listAllBusinesses(c.env.DB, { status, limit, offset, archived, tag })));
 });
+
+// Quick-scanned leads worth a full scan, best first. Registered before /:id so "promising" is not read as an id.
+// A lead with no fit is kept (and sorted last), and suppressed leads are left out.
+leadRoutes.get("/promising", async (c) => {
+  const raw = c.req.query("minFit");
+  const minFit = raw === undefined || raw === "" ? undefined : Number(raw);
+  if (minFit !== undefined && !(Number.isFinite(minFit) && minFit >= 0 && minFit <= 100)) return c.json({ error: "minFit must be 0-100" }, 400);
+  const quick = await listQuickStageBusinesses(c.env.DB);
+  const hidden = await suppressedLeadIds(c.env.DB, quick);
+  return c.json(rankPromising(await leadRows(c.env.DB, quick.filter((b) => !hidden.has(b.id))), { minFit }));
+});
+
+// Batch triage. There is deliberately no bulk delete. Registered (with /filters) before /:id so these paths are not read as ids.
+const BulkBody = z.object({
+  ids: z.array(z.string().min(1).max(100)).min(1).max(200),
+  action: z.enum(["status", "archive", "restore", "tag", "untag"]),
+  status: z.enum(STATUSES).optional(),
+  tag: z.string().max(200).optional(),
+});
+leadRoutes.post("/bulk", async (c) => {
+  const p = BulkBody.safeParse(await c.req.json().catch(() => null));
+  if (!p.success) return c.json({ error: "invalid" }, 400);
+  const { ids, action, status } = p.data;
+  if (action === "status") {
+    if (!status) return c.json({ error: "status is required" }, 400);
+    return c.json(await applyBulk(c.env.DB, ids, { action, status }));
+  }
+  if (action === "tag" || action === "untag") {
+    const tag = normalizeTag(p.data.tag ?? "");
+    if (!tag) return c.json({ error: "A tag is 1-32 letters, numbers, spaces, - or _" }, 400);
+    return c.json(await applyBulk(c.env.DB, ids, { action, tag }));
+  }
+  return c.json(await applyBulk(c.env.DB, ids, { action }));
+});
+
+leadRoutes.post("/bulk/undo", async (c) => {
+  const p = z.object({ undoToken: z.string().min(1).max(100) }).safeParse(await c.req.json().catch(() => null));
+  if (!p.success) return c.json({ error: "invalid" }, 400);
+  const result = await undoBulk(c.env.DB, p.data.undoToken);
+  return result === null ? c.json({ error: "Nothing to undo: it was already undone or took longer than 10 minutes." }, 404) : c.json(result);
+});
+
+// Saved list filters: `query` is the leads page's serialized filter state, opaque to the server.
+const FilterBody = z.object({ name: z.string().trim().min(1).max(60), query: z.string().max(2000) });
+leadRoutes.get("/filters", async (c) => c.json(await listFilters(c.env.DB)));
+leadRoutes.post("/filters", async (c) => {
+  const p = FilterBody.safeParse(await c.req.json().catch(() => null));
+  if (!p.success) return c.json({ error: "A name of 1-60 characters is required." }, 400);
+  try { return c.json(await createFilter(c.env.DB, p.data), 201); }
+  catch (e) {
+    if (e instanceof FilterNameTaken) return c.json({ error: "A saved filter with that name already exists." }, 409);
+    if (e instanceof FilterLimit) return c.json({ error: "You can keep up to 50 saved filters. Delete one first." }, 400);
+    throw e;
+  }
+});
+leadRoutes.delete("/filters/:id", async (c) =>
+  (await deleteFilter(c.env.DB, c.req.param("id"))) ? c.json({ ok: true }) : c.json({ error: "not found" }, 404));
 
 leadRoutes.get("/:id", async (c) => {
   const id = c.req.param("id");
   let business = await getBusiness(c.env.DB, id);
   if (!business) return c.json({ error: "not found" }, 404);
   if (business.lead_status === "new") business = await updateLead(c.env.DB, id, { leadStatus: "reviewed" });
-  const [audit, contacts, draft, people, activity] = await Promise.all([latestAudit(c.env.DB, id), listContacts(c.env.DB, id),
-    latestDraft(c.env.DB, id), listPeople(c.env.DB, id), listActivity(c.env.DB, id)]);
+  const [recent, contacts, draft, people, activity, profiles] = await Promise.all([listAudits(c.env.DB, id, 2), listContacts(c.env.DB, id),
+    latestDraft(c.env.DB, id), listPeople(c.env.DB, id), listActivity(c.env.DB, id), listFitProfiles(c.env.DB, { activeOnly: true })]);
+  const [audit = null, previous] = recent;
+  let changes: AuditChanges | null = null;
+  if (audit && previous) {
+    const d = diffFindings(previous.findings, audit.findings);
+    changes = { since: previous.created_at, added: d.added, resolved: d.resolved, unchangedCount: d.unchanged.length };
+  }
+  const hit = await leadSuppression(c.env.DB, business);
   const toContact = draft?.to_contact_id ? contacts.find((x) => x.id === draft.to_contact_id) ?? null : null;
-  return c.json({ business, audit, contacts, draft, toContact, people, activity });
+  // `stale` is derived per request (it depends on now), so it rides on the response, never on the stored finding.
+  const now = new Date();
+  const shown = audit && { ...audit, findings: audit.findings.map((f) => ({ ...f, stale: isStale(f, audit.created_at, now) })) };
+  // Matched on the stale-flagged findings so `because` carries each finding's `stale` for the evidence badge.
+  const best_offer = shown ? bestOffer(shown.findings, await listServices(c.env.DB, { activeOnly: true }), shown.offer) : null;
+  return c.json({ business, audit: shown, contacts, draft, toContact, people, activity, changes, urgency: audit ? urgencyOf(audit.findings) : 0, best_offer,
+    fit: scoreFit(business, audit, profiles), suppressed: hit ? { reason: hit.reason, note: hit.note } : null });
 });
 
 // Screenshots live in the private R2 bucket; serve the latest audit's copy behind the app's auth.
@@ -104,6 +196,8 @@ async function exportGuard(c: any, fn: () => Promise<Response>) {
 
 leadRoutes.post("/:id/gmail-draft", (c) => exportGuard(c, async () => {
   const id = c.req.param("id");
+  const blocked = await suppressedResponse(c, id);
+  if (blocked) return blocked;
   const { attachReport } = await c.req.json<{ attachReport?: boolean }>().catch(() => ({ attachReport: false }));
   const draft = await latestDraft(c.env.DB, id);
   if (!draft) return c.json({ error: "Write a draft first" }, 400);
@@ -124,6 +218,8 @@ leadRoutes.post("/:id/gmail-draft", (c) => exportGuard(c, async () => {
 
 leadRoutes.post("/:id/drive", (c) => exportGuard(c, async () => {
   const id = c.req.param("id");
+  const blocked = await suppressedResponse(c, id);
+  if (blocked) return blocked;
   const r = await reportFor(c.env, id);
   if (!r) return c.json({ error: "No audit yet" }, 404);
   const { token, row } = await googleAccess(c.env, new URL(c.req.url).origin);
@@ -172,6 +268,25 @@ leadRoutes.post("/:id/archive", async (c) => {
   return c.json(b);
 });
 
+const SuppressLead = z.object({ reason: Reason, note: Note });
+leadRoutes.post("/:id/suppress", async (c) => {
+  const p = SuppressLead.safeParse(await c.req.json().catch(() => ({})));
+  if (!p.success) return c.json({ error: bad(p.error) }, 400);
+  const id = c.req.param("id");
+  const b = await getBusiness(c.env.DB, id);
+  if (!b) return c.json({ error: "not found" }, 404);
+  let added: number;
+  try { added = await suppressLead(c.env.DB, b, p.data); }
+  catch (e) {
+    if (e instanceof InvalidSuppression) return c.json({ error: e.message }, 400);
+    throw e;
+  }
+  // Rows that already existed keep their own reason, so only a real change is logged.
+  if (added > 0) await logActivity(c.env.DB, id, "suppressed", [p.data.reason, p.data.note].filter(Boolean).join(": "));
+  const hit = await leadSuppression(c.env.DB, b);
+  return c.json({ ok: true, added, suppressed: hit ? { reason: hit.reason, note: hit.note } : null });
+});
+
 leadRoutes.delete("/:id", async (c) => {
   const id = c.req.param("id");
   if (!(await getBusiness(c.env.DB, id))) return c.json({ error: "not found" }, 404);
@@ -218,6 +333,8 @@ const Regenerate = z.object({
   tone: z.enum(["friendly_local", "consultative", "direct", "formal"]).nullable().optional(),
 });
 leadRoutes.post("/:id/regenerate", async (c) => {
+  const blocked = await suppressedResponse(c, c.req.param("id"));
+  if (blocked) return blocked;
   if (await mailingSettingsMissing(c.env.DB)) return c.json({ error: MISSING_MAILING_SETTINGS }, 400);
   const p = Regenerate.safeParse(await c.req.json().catch(() => ({})));
   if (!p.success) return c.json({ error: "invalid" }, 400);
@@ -239,8 +356,27 @@ leadRoutes.post("/:id/reaudit", async (c) => {
   if (!(await getBusiness(c.env.DB, id))) return c.json({ error: "not found" }, 404);
   if (await mailingSettingsMissing(c.env.DB)) return c.json({ error: MISSING_MAILING_SETTINGS }, 400);
   const { reason } = await c.req.json<{ reason?: string }>().catch(() => ({ reason: undefined }));
+  const spend = await checkSpend(c.env.DB, PER_LEAD_COST);
+  if (!spend.ok) return c.json({ error: "spend limit", ...spend }, 402);
   await c.env.LEAD_WORKFLOW.create({ id: `reaudit-${id}-${Date.now()}`, params: { businessId: id, searchId: null, forceDraft: true } });
   await logActivity(c.env.DB, id, reason?.trim() ? "score_flagged" : "reaudit", reason?.trim().slice(0, 500) || null);
+  return c.json({ ok: true }, 202);
+});
+
+// Pays for the rest of a quick-scanned lead (screenshots, PageSpeed, AI review, draft). Any lead may be re-run this way;
+// the draft step skips a suppressed lead itself, so there is no suppression check here.
+leadRoutes.post("/:id/full-scan", async (c) => {
+  const id = c.req.param("id");
+  if (!(await getBusiness(c.env.DB, id))) return c.json({ error: "not found" }, 404);
+  if (await mailingSettingsMissing(c.env.DB)) return c.json({ error: MISSING_MAILING_SETTINGS }, 400);
+  const spend = await checkSpend(c.env.DB, PER_LEAD_COST);
+  if (!spend.ok) return c.json({ error: "spend limit", ...spend }, 402);
+  try {
+    await c.env.LEAD_WORKFLOW.create({ id: `fullscan-${id}-${Date.now()}`, params: { businessId: id, searchId: null, forceDraft: false, stage: "full" } });
+  } catch (e) {
+    return c.json({ error: String((e as Error)?.message ?? e).slice(0, 300) }, 502);
+  }
+  await logActivity(c.env.DB, id, "reaudit", "Full scan");
   return c.json({ ok: true }, 202);
 });
 
@@ -248,6 +384,8 @@ const reportView = (r: ReportRow) => ({ token: r.token, url: `/r/${r.token}`, ex
 
 leadRoutes.post("/:id/report", async (c) => {
   const id = c.req.param("id");
+  const blocked = await suppressedResponse(c, id);
+  if (blocked) return blocked;
   const audit = (await getBusiness(c.env.DB, id)) ? await latestAudit(c.env.DB, id) : null;
   if (!audit) return c.json({ error: "not found" }, 404);
   const existing = await activeReportFor(c.env.DB, id, audit.id);

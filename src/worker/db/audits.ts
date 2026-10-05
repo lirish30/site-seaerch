@@ -57,6 +57,13 @@ export async function latestAudit(db: D1Database, businessId: string): Promise<A
   return r ? fromRow(r) : null;
 }
 
+/** Audit history for a business, newest first. */
+export async function listAudits(db: D1Database, businessId: string, limit = 20): Promise<Audit[]> {
+  const rows = (await db.prepare(`SELECT * FROM audits WHERE business_id = ? ORDER BY created_at DESC LIMIT ?`)
+    .bind(businessId, limit).all<Row>()).results;
+  return rows.map(fromRow);
+}
+
 /** Latest audit per business, fetched in one query per chunk of ids. */
 export async function latestAuditsFor(db: D1Database, businessIds: string[]): Promise<Map<string, Audit>> {
   const out = new Map<string, Audit>();

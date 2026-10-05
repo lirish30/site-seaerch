@@ -23,6 +23,7 @@ export default function NewSearch() {
   const [started, setStarted] = useState("");
   const [recent, setRecent] = useState<Search[]>([]);
   const [repeat, setRepeat] = useState(false); const [every, setEvery] = useState(30);
+  const [quickScan, setQuickScan] = useState(true);
   const [recentErr, setRecentErr] = useState(""); const [estErr, setEstErr] = useState("");
 
   const loadRecent = useCallback(async () => {
@@ -57,7 +58,7 @@ export default function NewSearch() {
     let limitHit = false;
     for (const t of types) {
       if (limitHit) { failed.push(`${t} (spend limit)`); continue; }
-      try { ok.push(await api.post<Search>("/searches", { location, businessType: t, maxResults })); }
+      try { ok.push(await api.post<Search>("/searches", { location, businessType: t, maxResults, quickScan })); }
       catch (x) {
         if (x instanceof ApiError && x.status === 402) limitHit = true;
         failed.push(x instanceof ApiError && x.status !== 402 ? `${t} (${x.message})` : t);
@@ -110,6 +111,17 @@ export default function NewSearch() {
 
         <label>Business types <span className="muted">· pick as many as you like</span></label>
         <BusinessTypePicker selected={types} onChange={setTypes} />
+
+        <div style={{ marginTop: 12 }}>
+          <label className="check">
+            <input type="checkbox" checked={quickScan} onChange={(e) => setQuickScan(e.target.checked)} />
+            Quick scan first (cheaper)
+          </label>
+          <p className="muted small" style={{ margin: "4px 0 0 26px" }}>
+            Crawls and scores each business only. Screenshots, PageSpeed, the AI review and the draft wait until you run a full scan on the good ones from the Promising page.
+            {repeat && quickScan ? " Repeats (Radar) always run full scans." : ""}
+          </p>
+        </div>
 
         <div className="row" style={{ marginTop: 12 }}>
           <label className="check">

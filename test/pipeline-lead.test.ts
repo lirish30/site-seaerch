@@ -58,6 +58,19 @@ describe("runLead", () => {
     expect((await getSearch(env.DB, s.id))!.processed_count).toBe(1);
   });
 
+  it("stamps every finding with observed_at and confidence", async () => {
+    const s = await createSearch(env.DB, { location: "Boise", businessType: "plumber", radiusKm: 10, maxResults: 5 });
+    const b = await upsertBusiness(env.DB, listing({ placeId: "L-prov" }), s.id);
+    const d = deps();
+    await runLead(d, step, { businessId: b.id, searchId: s.id });
+    const a = (await latestAudit(env.DB, b.id))!;
+    expect(a.findings.length).toBeGreaterThan(0);
+    for (const f of a.findings) {
+      expect(f.observed_at).toBe(d.now().toISOString());
+      expect(f.confidence).toBeDefined();
+    }
+  });
+
   it("persists lighthouse seo and accessibility scores and scores them", async () => {
     const s = await createSearch(env.DB, { location: "Boise", businessType: "plumber", radiusKm: 10, maxResults: 5 });
     const b = await upsertBusiness(env.DB, listing({ placeId: "L-lh" }), s.id);

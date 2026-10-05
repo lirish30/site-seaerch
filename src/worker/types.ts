@@ -24,6 +24,9 @@ export interface Finding {
   evidence: string;
   recommendation: string;
   source: "rule" | "ai";
+  /** ISO time the finding was observed. Optional: audits stored before provenance have none. */
+  observed_at?: string;
+  confidence?: "high" | "medium" | "low";
 }
 
 /** Kinds of page a business site may link to; used for niche checks and lead links. */
@@ -60,6 +63,28 @@ export interface Search {
   status: "running" | "done" | "failed"; error: string | null;
   found_count: number; processed_count: number; created_at: string;
   new_only: 0 | 1; // Radar-started: only businesses never audited get the per-lead pipeline
+  quick_scan: 0 | 1; // its leads run the quick stage (no render, PageSpeed, AI review or draft); Radar searches never set it
+}
+
+/** How far a lead's audit has been paid for: 'quick' is crawl + score only, 'full' adds screenshots, PageSpeed, AI review and a draft. */
+export type ScanStage = "quick" | "full";
+
+/** A thing the user sells. finding_codes/finding_categories say which audit evidence points at it (a trailing * in a code is a prefix wildcard). */
+export interface Service {
+  id: string; key: string; name: string; category: string; summary: string;
+  deliverables: string[]; prerequisites: string[]; first_engagement: string | null;
+  finding_codes: string[]; finding_categories: AuditCategory[];
+  is_specialty: boolean; active: boolean; sort: number;
+}
+
+/** A kind of client the user wants for a service. Only the criteria that are set count toward fit. */
+export interface FitProfile {
+  id: string; name: string; service_key: string; industries: string[]; geos: string[]; platforms: Platform[];
+  min_reviews: number | null; min_rating: number | null; active: boolean;
+}
+/** Best profile's score. `fit` is null when no active profile defines a criterion. Never depends on site health. */
+export interface FitResult {
+  fit: number | null; profile: { id: string; name: string; service_key: string } | null; matched: string[]; missing: string[];
 }
 
 export interface Radar {
@@ -74,6 +99,9 @@ export interface Business {
   rating: number | null; review_count: number | null; first_seen_search_id: string | null;
   lead_status: LeadStatus; notes: string | null; contacted_at: string | null; last_error: string | null;
   created_at: string; archived_at: string | null; follow_up_at: string | null; deal_value: number | null;
+  scan_stage: ScanStage;
+  /** Free-form labels: lowercase, at most 20, each at most 32 characters. Stored as JSON, parsed on read. */
+  tags: string[];
 }
 
 export interface PersonInput {
@@ -85,7 +113,7 @@ export interface Person {
   linkedin: string | null; source: "manual" | "site"; is_poc: boolean; created_at: string;
 }
 
-export type ActivityKind = "status" | "archived" | "restored" | "website" | "reaudit" | "score_flagged" | "export" | "draft" | "cro_audit";
+export type ActivityKind = "status" | "archived" | "restored" | "website" | "reaudit" | "score_flagged" | "export" | "draft" | "cro_audit" | "suppressed" | "import" | "bulk" | "today_done" | "snoozed";
 export interface Activity { id: string; business_id: string; kind: ActivityKind; detail: string | null; created_at: string; }
 
 export interface Audit {
@@ -130,3 +158,8 @@ export interface Settings {
 export type TonePreset = "friendly_local" | "consultative" | "direct" | "formal";
 export type EmailLength = "short" | "medium" | "long";
 export type CtaStyle = "mini_audit" | "call" | "reply" | "proposal";
+
+export const SUPPRESSION_REASONS = ["client", "opt_out", "competitor", "active_deal", "other"] as const;
+export type SuppressionReason = (typeof SUPPRESSION_REASONS)[number];
+export type SuppressionKind = "domain" | "place_id";
+export interface Suppression { id: string; kind: SuppressionKind; value: string; reason: SuppressionReason; note: string | null; created_at: string; }

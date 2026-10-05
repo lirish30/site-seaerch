@@ -10,6 +10,8 @@ export const NewSearch = z.object({
   businessType: z.string().trim().min(2),
   radiusKm: z.number().min(1).max(100).default(15),
   maxResults: z.number().int().min(1).max(200).default(50),
+  // Crawl and score only; screenshots, PageSpeed, AI review and drafts wait for a manual full scan. Radar never sets it.
+  quickScan: z.boolean().default(false),
 });
 export type SearchInput = z.infer<typeof NewSearch>;
 
@@ -54,7 +56,7 @@ export async function startSearchRun(
   const g = await checkSearchGuards(deps.db, input);
   if (!g.ok) return g;
   // newOnly (Radar) changes what the workflow does per lead, not what it may cost: the estimate stays maxResults drafts.
-  const search = await createSearch(deps.db, g.data, { newOnly: opts.newOnly });
+  const search = await createSearch(deps.db, g.data, { newOnly: opts.newOnly, quickScan: g.data.quickScan });
   // Requests arriving together all read the same in-flight total above. Now that our row exists (and counts), check
   // again: alone this is the same math as the pre-check; under a true race it may reject every racer, which is the
   // safe direction for a spend guard.

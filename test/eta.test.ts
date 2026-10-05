@@ -4,7 +4,7 @@ import type { Search } from "../src/client/types";
 
 const T0 = Date.parse("2026-10-03T12:00:00.000Z");
 const s = (o: Partial<Search>): Search => ({ id: "s", location: "L", business_type: "b", max_results: 50, status: "running",
-  error: null, found_count: 0, processed_count: 0, created_at: "2026-10-03T12:00:00.000Z", new_only: 0, ...o });
+  error: null, found_count: 0, processed_count: 0, created_at: "2026-10-03T12:00:00.000Z", new_only: 0, quick_scan: 0, ...o });
 
 describe("searchStage", () => {
   it("is fetching until listings are found, then auditing, then done", () => {

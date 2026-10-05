@@ -1,14 +1,19 @@
 export type LeadStatus = "new" | "reviewed" | "contacted" | "replied" | "won" | "lost" | "skip";
 export interface Business { id: string; name: string; category: string | null; address: string | null; phone: string | null;
   website_url: string | null; maps_url: string | null; lead_status: LeadStatus; notes: string | null; contacted_at: string | null; last_error: string | null;
-  rating: number | null; review_count: number | null; archived_at: string | null; follow_up_at: string | null; deal_value: number | null; created_at: string; }
+  rating: number | null; review_count: number | null; archived_at: string | null; follow_up_at: string | null; deal_value: number | null; created_at: string;
+  scan_stage: ScanStage; tags: string[]; }
+/** 'quick' = crawled and scored only; 'full' = also screenshots, PageSpeed, AI review and a draft. */
+export type ScanStage = "quick" | "full";
 export interface LeadRow { business: Business; score: number | null; health: number | null; niche: string | null; topFinding: string | null; offer: string | null;
   bestContact: string | null; hasEmail: boolean; partial: boolean; poc: { name: string; email: string | null } | null;
-  platform: string | null; rating: number | null; reviewCount: number | null; }
+  platform: string | null; rating: number | null; reviewCount: number | null; fit: FitResult; scan_stage: ScanStage; }
 
 export type AuditCategory = "design" | "content" | "cro" | "mobile" | "speed" | "technical";
 export type Severity = "critical" | "important" | "nice";
-export interface Finding { code: string; category: AuditCategory | "site"; severity: Severity; points: number; evidence: string; recommendation: string; source: "rule" | "ai"; }
+export interface Finding { code: string; category: AuditCategory | "site"; severity: Severity; points: number; evidence: string; recommendation: string; source: "rule" | "ai";
+  observed_at?: string; confidence?: "high" | "medium" | "low"; stale?: boolean; }
+export interface AuditChanges { since: string; added: Finding[]; resolved: Finding[]; unchangedCount: number; }
 export interface AiReview {
   niche: string; value_proposition: string; scores: Record<"design" | "content" | "cro" | "mobile", number>;
   summaries: Record<"design" | "content" | "cro" | "mobile", string>; strengths: string[]; niche_checklist: { item: string; present: boolean }[];
@@ -35,8 +40,57 @@ export const NICHE_LABEL: Record<string, string> = {
   education: "Education", fitness_beauty: "Fitness & beauty", nonprofit_community: "Nonprofit & community", general: "Local business",
 };
 export interface Search { id: string; location: string; business_type: string; radius_km?: number; max_results: number; status: "running" | "done" | "failed";
-  error: string | null; found_count: number; processed_count: number; created_at: string; new_only: 0 | 1; }
+  error: string | null; found_count: number; processed_count: number; created_at: string; new_only: 0 | 1; quick_scan: 0 | 1; }
 export const STATUSES: LeadStatus[] = ["new", "reviewed", "contacted", "replied", "won", "lost", "skip"];
 export interface Radar { id: string; location: string; business_type: string; radius_km?: number; max_results: number; interval_days: number;
   enabled: 0 | 1; next_run_at: string; last_run_at: string | null; last_search_id: string | null; last_error: string | null; created_at: string;
   newLeadCount: number; lastSearchStatus: Search["status"] | null; }
+
+export interface Service {
+  id: string; key: string; name: string; category: string; summary: string; deliverables: string[]; prerequisites: string[];
+  first_engagement: string | null; finding_codes: string[]; finding_categories: AuditCategory[];
+  is_specialty: boolean; active: boolean; sort: number;
+}
+/** What GET /api/leads/:id returns as `best_offer`; `because` findings carry the per-request `stale` flag. */
+export interface BestOffer { service: Service; because: Finding[]; legacyOffer: string | null; }
+
+export type Platform = "wix" | "squarespace" | "godaddy" | "wordpress" | "weebly" | "shopify" | "webflow" | "other";
+export interface FitProfile {
+  id: string; name: string; service_key: string; industries: string[]; geos: string[]; platforms: Platform[];
+  min_reviews: number | null; min_rating: number | null; active: boolean;
+}
+/** `fit` on each lead list row and on GET /api/leads/:id; null when no active profile defines a criterion. */
+export interface FitResult { fit: number | null; profile: { id: string; name: string; service_key: string } | null; matched: string[]; missing: string[]; }
+
+export type SuppressionReason = "client" | "opt_out" | "competitor" | "active_deal" | "other";
+export interface Suppression { id: string; kind: "domain" | "place_id"; value: string; reason: SuppressionReason; note: string | null; created_at: string; }
+/** `suppressed` on GET /api/leads/:id: the reason and note of the list entry this lead matches, or null. */
+export interface LeadSuppression { reason: SuppressionReason; note: string | null; }
+
+/** POST /api/import/preview and /commit. */
+export type ImportKind = "new" | "exact" | "ambiguous" | "duplicate_in_file" | "suppressed" | "invalid";
+export interface ImportRowData { name: string; url: string | null; address?: string | null; phone?: string | null; category?: string | null; source: string }
+export interface ImportCandidate { id: string; name: string; domain: string | null; website_url: string | null; address: string | null; lead_status: LeadStatus; archived_at: string | null }
+export interface ImportPreviewRow {
+  index: number; line: number; row: ImportRowData; kind: ImportKind; reason?: string; candidates: ImportCandidate[];
+  /** True when the name was taken from the web address because none was given. */
+  nameDerived?: boolean;
+}
+export interface ImportCommitResult {
+  created: number; linked: number; alreadyExisted: number; skipped: number; auditsQueued: number; searchId: string | null;
+  refused: { index: number; name: string; reason: string }[];
+  failures: { index: number; name: string; error: string; kind: "row" | "audit" }[];
+  leads: { index: number; id: string; name: string; outcome: "created" | "linked" | "existing" }[];
+  warnings?: string[];
+}
+
+/** POST /api/leads/bulk. There is no delete action. */
+export type BulkAction = "status" | "archive" | "restore" | "tag" | "untag";
+export interface BulkResult { updated: number; skipped: number; undoToken: string | null; }
+/** POST /api/leads/bulk/undo: `skipped` leads were edited since the bulk change and were left alone. */
+export interface UndoResult { restored: number; skipped: number; }
+export interface SavedFilter { id: string; name: string; query: string; created_at: string; }
+
+export type TodayKind = "follow_up_due" | "draft_unsent" | "stalled_deal" | "promising_quick_scan";
+/** One thing to do today (GET /api/today). `id` is `${kind}:${businessId}`; `due` is set for follow-ups only. */
+export interface TodayItem { id: string; kind: TodayKind; businessId: string; businessName: string; reason: string; due: string | null; priority: number; }

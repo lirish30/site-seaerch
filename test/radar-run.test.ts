@@ -71,6 +71,12 @@ describe("radar-started searches are new-only", () => {
     const rows = (await env.DB.prepare(`SELECT new_only FROM searches`).all<{ new_only: number }>()).results;
     expect(rows).toEqual([{ new_only: 1 }, { new_only: 1 }]);
   });
+  it("and never quick-scan: unattended spend and behavior are unchanged", async () => {
+    await seed({ id: "q", next: ago(1) });
+    await env.DB.prepare(`DELETE FROM searches`).run();
+    await runDueRadars(deps(fakeStart().fn));
+    expect((await env.DB.prepare(`SELECT quick_scan FROM searches`).all<{ quick_scan: number }>()).results).toEqual([{ quick_scan: 0 }]);
+  });
 });
 
 describe("runDueRadars claim", () => {

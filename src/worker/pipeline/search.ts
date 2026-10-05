@@ -1,8 +1,9 @@
 import { isRetryable, type ListingSource } from "../listings/source";
 import type { StepLike } from "./lead";
-import type { Business, Listing } from "../types";
+import type { Business, Listing, ScanStage } from "../types";
 import { getSearch, setFoundCount, setSearchStatus, setProcessedCount } from "../db/searches";
 import { upsertBusiness } from "../db/businesses";
+import { isSuppressed } from "../db/suppression";
 import { latestDraft } from "../db/drafts";
 import { latestAudit } from "../db/audits";
 import { recordUsage } from "../db/usage";
@@ -12,7 +13,7 @@ export const LEAD_BATCH_SIZE = 5;
 export const LEAD_BATCH_DELAY_MS = 20_000;
 
 export interface SearchDeps {
-  db: D1Database; source: ListingSource; startLead: (p: { businessId: string; searchId: string }) => Promise<void>;
+  db: D1Database; source: ListingSource; startLead: (p: { businessId: string; searchId: string; stage: ScanStage }) => Promise<void>;
 }
 
 // Only (re)work leads nobody has acted on: brand new ones, or reviewed ones whose latest draft
@@ -21,7 +22,11 @@ export interface SearchDeps {
 // already has an audit and draft for is never re-paid. Any audit row counts, even a partial or unreachable one.
 // The exception is a lead whose last run FAILED (last_error is set when a lead workflow gives up, e.g. the draft step
 // after the audit was saved, and cleared when the next run starts): it never completed, so it is worth retrying.
-async function shouldStartLead(db: D1Database, b: Business, newOnly: boolean): Promise<boolean> {
+// A quick-scan search never touches a lead that already had its full scan: re-running it as quick would replace its
+// full audit (screenshots, PageSpeed, AI review) as the latest one and put it back in the Promising queue.
+// scan_stage defaults to 'full' for every new row, so "already full" means 'full' AND an audit exists; an unaudited lead is new work.
+async function shouldStartLead(db: D1Database, b: Business, newOnly: boolean, quick: boolean): Promise<boolean> {
+  if (quick && b.scan_stage === "full" && (await latestAudit(db, b.id))) return false;
   const open = b.lead_status === "new" || (b.lead_status === "reviewed" && !(await latestDraft(db, b.id))?.edited);
   return open && (!newOnly || !!b.last_error || !(await latestAudit(db, b.id)));
 }
@@ -55,22 +60,30 @@ export async function runSearch(deps: SearchDeps, step: StepLike, searchId: stri
     const toProcess = await step.do("upsert", async () => {
       const ids = new Set<string>();
       const notStarted = new Set<string>(); // linked to this search, but already decided/worked on
+      // Matches the suppression list (clients, opt-outs, competitors): never stored or started, but counted below as found
+      // and processed so the search's progress still reaches done. Keyed so a repeated listing counts once.
+      const suppressed = new Set<string>();
       for (const l of fetched.listings) {
+        // A known business may have a domain the listing lacks (e.g. it came back without a website this time).
+        const known = l.placeId ? await deps.db.prepare(`SELECT domain FROM businesses WHERE place_id = ?`).bind(l.placeId).first<{ domain: string | null }>() : null;
+        const hit = await isSuppressed(deps.db, { placeId: l.placeId, domain: known?.domain, websiteUrl: l.websiteUrl });
+        if (hit) { suppressed.add(l.placeId ? `p:${l.placeId}` : `d:${hit.value}`); continue; }
         const b = await upsertBusiness(deps.db, l, searchId);
         if (ids.has(b.id) || notStarted.has(b.id)) continue;
-        if (await shouldStartLead(deps.db, b, search.new_only === 1)) ids.add(b.id); else notStarted.add(b.id);
+        if (await shouldStartLead(deps.db, b, search.new_only === 1, search.quick_scan === 1)) ids.add(b.id); else notStarted.add(b.id);
       }
-      await setFoundCount(deps.db, searchId, ids.size + notStarted.size);
+      await setFoundCount(deps.db, searchId, ids.size + notStarted.size + suppressed.size);
       // Absolute set (no leads started yet) so a step retry cannot double-count.
-      await setProcessedCount(deps.db, searchId, notStarted.size);
+      await setProcessedCount(deps.db, searchId, notStarted.size + suppressed.size);
       return [...ids];
     });
 
+    const stage: ScanStage = search.quick_scan === 1 ? "quick" : "full";
     for (let i = 0; i < toProcess.length; i += LEAD_BATCH_SIZE) {
       if (i > 0) await step.sleep(`batch-gap-${i}`, LEAD_BATCH_DELAY_MS);
       const batch = toProcess.slice(i, i + LEAD_BATCH_SIZE);
       await step.do(`start-batch-${i}`, async () => {
-        for (const businessId of batch) await deps.startLead({ businessId, searchId });
+        for (const businessId of batch) await deps.startLead({ businessId, searchId, stage });
         return true;
       });
     }

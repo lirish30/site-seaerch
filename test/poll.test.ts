@@ -3,7 +3,7 @@ import { pollDelay, searchFinished } from "../src/client/poll";
 import type { Search } from "../src/client/types";
 
 const s = (o: Partial<Search>): Search => ({ id: "s", location: "L", business_type: "b", max_results: 5, status: "running",
-  error: null, found_count: 0, processed_count: 0, created_at: "", new_only: 0, ...o });
+  error: null, found_count: 0, processed_count: 0, created_at: "", new_only: 0, quick_scan: 0, ...o });
 
 describe("pollDelay", () => {
   it("polls every 4s while healthy and backs off 8s → 15s cap on consecutive failures", () => {

@@ -1,18 +1,24 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { safeHttpUrl } from "../links";
 import HealthGauge from "../components/HealthGauge";
 import { CategoryBars, FindingsList, Screenshots } from "../components/AuditPanel";
+import EvidenceBadge from "../components/EvidenceBadge";
+import BestOfferCard from "../components/BestOfferCard";
+import { FitExplanation } from "../components/FitChip";
+import { topFindings } from "../evidenceView";
 import PeoplePanel from "../components/PeoplePanel";
 import CroPanel from "../components/CroPanel";
 import { shareState } from "../reportView";
+import { REASONS, reasonLabel, suppressedMessage } from "../suppressionView";
+import { isSpendLimit, SPEND_LIMIT_REACHED } from "../spend";
 import type { CroItem, CroResponse } from "../cro";
-import { NICHE_LABEL, OFFER_LABEL, STATUSES, type Activity, type Audit, type Business, type Contact, type LeadStatus, type Person } from "../types";
+import { NICHE_LABEL, OFFER_LABEL, STATUSES, type Activity, type Audit, type AuditChanges, type BestOffer, type Business, type Contact, type FitResult, type LeadStatus, type LeadSuppression, type Person, type SuppressionReason } from "../types";
 
 interface Draft { id: string; subject: string; body: string; recipient_reason: string; edited: boolean; created_at: string; steering_note: string | null; }
 interface ShareReport { token: string; url: string; expiresAt: string; }
-interface Data { business: Business; audit: Audit | null; contacts: Contact[]; draft: Draft | null; toContact: Contact | null; people: Person[]; activity: Activity[]; }
+interface Data { business: Business; audit: Audit | null; contacts: Contact[]; draft: Draft | null; toContact: Contact | null; people: Person[]; activity: Activity[]; changes: AuditChanges | null; urgency: number; best_offer: BestOffer | null; fit: FitResult; suppressed: LeadSuppression | null; }
 
 const LINK_LABEL: Record<string, string> = {
   contact: "Contact page", careers: "Careers / jobs", menu: "Menu", services: "Services", about: "About", team: "Team",
@@ -22,8 +28,22 @@ const TONE_OPTIONS: [string, string][] = [["", "Default tone (from Settings)"], 
 
 const ACTIVITY_LABEL: Record<string, string> = {
   status: "Status", archived: "Archived", restored: "Restored", website: "Website changed", reaudit: "Re-audit",
-  score_flagged: "Score flagged", export: "Exported", draft: "Draft", cro_audit: "CRO audit",
+  score_flagged: "Score flagged", export: "Exported", draft: "Draft", cro_audit: "CRO audit", suppressed: "Suppressed", import: "Imported", bulk: "Bulk change",
+  today_done: "Marked done in Today", snoozed: "Snoozed in Today",
 };
+
+function ChangesBlock({ changes }: { changes: AuditChanges }) {
+  const list = (items: Audit["findings"]) => <ul>{items.map((f, i) => <li key={`${f.code}:${i}`}>{f.evidence}</li>)}</ul>;
+  return (
+    <section className="changes" aria-label="Changes since last audit">
+      <h3>Changes since last audit <span className="muted small">(vs. {new Date(changes.since).toLocaleDateString()})</span></h3>
+      {changes.added.length > 0 && <div className="changes-added"><h4>New issues ({changes.added.length})</h4>{list(changes.added)}</div>}
+      {changes.resolved.length > 0 && <div className="changes-resolved"><h4>Resolved ({changes.resolved.length})</h4>{list(changes.resolved)}</div>}
+      {changes.added.length === 0 && changes.resolved.length === 0 && <p className="muted">No change in findings.</p>}
+      <p className="muted small">{changes.unchangedCount} unchanged</p>
+    </section>
+  );
+}
 
 export default function LeadDetail() {
   const { id } = useParams();
@@ -141,7 +161,7 @@ export default function LeadDetail() {
   async function reaudit(reason?: string) {
     await flush();
     try { await api.post(`/leads/${id}/reaudit`, reason ? { reason } : {}); setMsg("Re-audit started. Refresh in a minute or two."); await load(); }
-    catch (e) { fail(e); }
+    catch (e) { if (isSpendLimit(e)) setMsg(SPEND_LIMIT_REACHED); else fail(e); }
   }
   async function flagScore() {
     const reason = window.prompt("What looks wrong? (e.g. \"the site loads fine\", \"they do have a contact form\"). We'll note it and re-audit.");
@@ -150,6 +170,12 @@ export default function LeadDetail() {
   async function archive(archived: boolean) {
     await flush();
     try { await api.post(`/leads/${id}/archive`, { archived }); await load(); setMsg(archived ? "Archived. It's hidden from your lead lists." : "Restored."); }
+    catch (e) { fail(e); }
+  }
+  async function suppress(reason: SuppressionReason) {
+    if (!window.confirm(`Mark ${b.name} as ${reasonLabel(reason).toLowerCase()}? Searches will skip it, and its draft and export buttons will be turned off. You can undo this under Suppressions in Settings.`)) return;
+    await flush(); setMsg("");
+    try { await api.post(`/leads/${id}/suppress`, { reason }); await load(); setMsg(`Marked as ${reasonLabel(reason).toLowerCase()}.`); }
     catch (e) { fail(e); }
   }
   async function remove() {
@@ -191,6 +217,7 @@ export default function LeadDetail() {
             {[b.category, b.address].filter(Boolean).join(" · ")}
             {b.rating !== null && <> · ★ {b.rating}{b.review_count !== null && ` (${b.review_count} reviews)`}</>}
           </p>
+          <FitExplanation fit={d.fit} />
           <div className="link-chips">
             {editingUrl !== null ? (
               <span className="row url-edit">
@@ -207,11 +234,24 @@ export default function LeadDetail() {
           </div>
         </div>
         <div className="lead-actions">
+          {!d.suppressed && (
+            // Controlled at "" so choosing an option fires once and the control resets, like an action menu.
+            <select aria-label="Mark this business as" value="" onChange={(e) => { if (e.target.value) suppress(e.target.value as SuppressionReason); }}>
+              <option value="">Mark as…</option>
+              {REASONS.map((r) => <option key={r} value={r}>{reasonLabel(r)}</option>)}
+            </select>
+          )}
           <button onClick={() => reaudit()}>Re-audit</button>
           <button onClick={flagScore} title="Tell us the audit got something wrong and re-run it">Score looks wrong</button>
           {b.archived_at ? <button onClick={() => archive(false)}>Restore</button> : <button onClick={() => archive(true)}>Archive</button>}
           <button className="danger" onClick={remove}>Delete</button>
         </div>
+        {d.suppressed && (
+          <div className="suppressed-banner" role="alert">
+            <span>{suppressedMessage(d.suppressed)}</span>
+            <Link to="/settings">Manage suppressions</Link>
+          </div>
+        )}
         {b.last_error && <p className="error">⚠ {b.last_error}</p>}
         {msg && <p className="muted" role="status">{msg}</p>}
       </header>
@@ -231,6 +271,7 @@ export default function LeadDetail() {
                 <div className="audit-summary">
                   <div className="row">
                     <span className="stat"><strong>{a.score}</strong> opportunity</span>
+                    <span className="stat" title="How much time pressure the findings add up to. Separate from site health and opportunity."><strong>{d.urgency}</strong> urgency</span>
                     {a.niche && <span className="tag niche">{NICHE_LABEL[a.niche] ?? a.niche}</span>}
                     <span className="tag offer">Pitch: {OFFER_LABEL[a.offer] ?? a.offer}</span>
                     {a.partial && <span className="tag" title="Google's speed test didn't run">partial audit</span>}
@@ -244,6 +285,7 @@ export default function LeadDetail() {
                 </div>
               </div>
               {a.mail_warning && <div className="notice" role="status"><span>⚠ {a.mail_warning}</span></div>}
+              {d.best_offer && <BestOfferCard offer={d.best_offer} auditCreatedAt={a.created_at} />}
               <Screenshots leadId={b.id} audit={a} />
               {a.ai_review && a.ai_review.strengths.length > 0 && <>
                 <h3>What's working</h3>
@@ -253,6 +295,19 @@ export default function LeadDetail() {
                 <h3>What a {NICHE_LABEL[a.ai_review.niche]?.toLowerCase() ?? "business"} site needs</h3>
                 <ul className="checklist">{a.ai_review.niche_checklist.map((c) => <li key={c.item} className={c.present ? "yes" : "no"}>{c.present ? "✓" : "✗"} {c.item}</li>)}</ul>
               </>}
+              {d.changes && <ChangesBlock changes={d.changes} />}
+              <h3>Top issues</h3>
+              <ul className="top-issues">
+                {topFindings(a.findings).map((f, i) => (
+                  <li key={`${f.code}:${i}`} className={`finding sev-${f.severity}`}>
+                    <div>
+                      <p className="finding-evidence"><span className={`sev-dot sev-${f.severity}`} />{f.evidence}</p>
+                      {f.recommendation && <p className="finding-fix">→ {f.recommendation}</p>}
+                      <EvidenceBadge finding={f} auditCreatedAt={a.created_at} stale={!!f.stale} />
+                    </div>
+                  </li>
+                ))}
+              </ul>
               <h3>All issues</h3>
               <FindingsList findings={a.findings} />
               <p className="muted small">Audited {new Date(a.created_at).toLocaleString()}{a.pagespeed_mobile !== null && ` · Google mobile speed ${a.pagespeed_mobile}/100`}</p>
@@ -273,8 +328,8 @@ export default function LeadDetail() {
                   <p className="muted small">{body.trim().split(/\s+/).length} words</p>
                   <p className="row">
                     <button onClick={copy}>Copy email</button>
-                    {mailto && <a href={mailto} onClick={saveDraft}><button>Open in mail app</button></a>}
-                    <button className="primary" onClick={copyAndMark}>Copy & mark contacted</button>
+                    {mailto && !d.suppressed && <a href={mailto} onClick={saveDraft}><button>Open in mail app</button></a>}
+                    <button className="primary" onClick={copyAndMark} disabled={!!d.suppressed}>Copy & mark contacted</button>
                   </p>
                 </> : <p className="muted">No draft yet{a && a.score < 25 ? " (low priority lead)" : ""}.</p>}
                 {versions && versions.length > 1 && <>
@@ -307,7 +362,7 @@ export default function LeadDetail() {
                   ))}</div>
                 </>}
                 <p className="row" style={{ marginTop: 12 }}>
-                  <button className="primary" onClick={regenerate} disabled={busy === "regen"}>{busy === "regen" ? "Writing…" : d.draft ? "Regenerate email" : "Generate email"}</button>
+                  <button className="primary" onClick={regenerate} disabled={busy === "regen" || !!d.suppressed} title={d.suppressed ? "Suppressed: drafting is turned off" : ""}>{busy === "regen" ? "Writing…" : d.draft ? "Regenerate email" : "Generate email"}</button>
                   {focus.size + croFocus.size > 0 && <button className="link-btn" onClick={() => { setFocus(new Set()); setCroFocus(new Set()); }}>Clear {focus.size + croFocus.size} selected</button>}
                 </p>
               </div>
@@ -321,8 +376,8 @@ export default function LeadDetail() {
             <div className="export-grid">
               <a href={`/api/leads/${b.id}/report.html`} target="_blank" rel="noreferrer"><button>View report</button></a>
               <a href={`/api/leads/${b.id}/report.pdf`}><button>Download PDF</button></a>
-              <button onClick={() => exportTo("gmail")} disabled={!d.draft || busy === "gmail"} title={d.draft ? "" : "Write a draft first"}>{busy === "gmail" ? "Saving…" : "Gmail draft"}</button>
-              <button onClick={() => exportTo("drive")} disabled={busy === "drive"}>{busy === "drive" ? "Saving…" : "Save to Drive"}</button>
+              <button onClick={() => exportTo("gmail")} disabled={!d.draft || busy === "gmail" || !!d.suppressed} title={d.suppressed ? "Suppressed: exports are turned off" : d.draft ? "" : "Write a draft first"}>{busy === "gmail" ? "Saving…" : "Gmail draft"}</button>
+              <button onClick={() => exportTo("drive")} disabled={busy === "drive" || !!d.suppressed} title={d.suppressed ? "Suppressed: exports are turned off" : ""}>{busy === "drive" ? "Saving…" : "Save to Drive"}</button>
             </div>
             <label className="check"><input type="checkbox" checked={attachPdf} onChange={(e) => setAttachPdf(e.target.checked)} /> Attach the audit PDF to the Gmail draft</label>
             {exportLink.length > 0 && <p className="row">{exportLink.map((l) => <a key={l.url} href={l.url} target="_blank" rel="noreferrer">{l.label} ↗</a>)}</p>}
@@ -335,7 +390,7 @@ export default function LeadDetail() {
             </>}
             {share.olderText && <p className="muted small">{share.olderText}</p>}
             <p className="row">
-              {report ? <button onClick={copyLink}>Copy link</button> : <button onClick={createReport}>Create report link</button>}
+              {report ? <button onClick={copyLink}>Copy link</button> : <button onClick={createReport} disabled={!!d.suppressed} title={d.suppressed ? "Suppressed: sharing is turned off" : ""}>Create report link</button>}
               {share.canRevoke && <button onClick={revokeReport}>{share.revokeLabel}</button>}
             </p>
             {shareMsg && <p className="muted small" role="status">{shareMsg}</p>}
