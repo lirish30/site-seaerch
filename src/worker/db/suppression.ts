@@ -1,15 +1,11 @@
-import { domainOf } from "./businesses";
+import { domainOf, siteDomain } from "./businesses";
 import { isSocialOnlyUrl } from "../crawler/extract";
 import { SUPPRESSION_REASONS, type Business, type Suppression, type SuppressionKind, type SuppressionReason } from "../types";
 
 /** Bad input to `addSuppression` (empty/invalid value, social-only host, unknown reason). The message is safe to show. */
 export class InvalidSuppression extends Error {}
 
-/** A usable domain: normalized, has a dot, and is not a shared social/platform host (those never identify one business). */
-function cleanDomain(raw: string | null | undefined): string | null {
-  const d = domainOf(raw?.trim() || null);
-  return d && d.includes(".") && !isSocialOnlyUrl(`https://${d}/`) ? d : null;
-}
+const cleanDomain = siteDomain;
 
 /** Normalizes a suppression value for its kind. Throws `InvalidSuppression` for anything unusable. */
 export function normalizeSuppressionValue(kind: SuppressionKind, raw: string): string {

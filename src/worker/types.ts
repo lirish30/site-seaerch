@@ -111,7 +111,7 @@ export interface Person {
   linkedin: string | null; source: "manual" | "site"; is_poc: boolean; created_at: string;
 }
 
-export type ActivityKind = "status" | "archived" | "restored" | "website" | "reaudit" | "score_flagged" | "export" | "draft" | "cro_audit" | "suppressed";
+export type ActivityKind = "status" | "archived" | "restored" | "website" | "reaudit" | "score_flagged" | "export" | "draft" | "cro_audit" | "suppressed" | "import";
 export interface Activity { id: string; business_id: string; kind: ActivityKind; detail: string | null; created_at: string; }
 
 export interface Audit {

@@ -1,5 +1,6 @@
 import type { Business, LeadStatus, Listing, ScanStage } from "../types";
 import { isSocialOnlyUrl } from "../crawler/extract";
+import { namesSimilar } from "../import/names";
 
 export function domainOf(url: string | null): string | null {
   if (!url) return null;
@@ -10,6 +11,15 @@ export function domainOf(url: string | null): string | null {
     return null;
   }
 }
+
+/** A usable site domain: normalized, has a dot, and is not a shared social/listing host (those never identify one business). */
+export function siteDomain(url: string | null | undefined): string | null {
+  const d = domainOf(url?.trim() || null);
+  return d && d.includes(".") && !isSocialOnlyUrl(`https://${d}/`) ? d : null;
+}
+
+/** The domain a stored business is matched on: its own column, else its website's host. Never a social host. */
+export const businessDomain = (b: Pick<Business, "domain" | "website_url">): string | null => siteDomain(b.domain) ?? siteDomain(b.website_url);
 
 export async function getBusiness(db: D1Database, id: string): Promise<Business | null> {
   return db.prepare(`SELECT * FROM businesses WHERE id = ?`).bind(id).first<Business>();
@@ -111,4 +121,20 @@ export async function updateLead(db: D1Database, id: string, u: {
 
 export async function setBusinessError(db: D1Database, id: string, msg: string | null) {
   await db.prepare(`UPDATE businesses SET last_error = ? WHERE id = ?`).bind(msg, id).run();
+}
+
+/** Every business, for matching many import rows against without a query per row. Archived leads are included: re-importing one is still a duplicate. */
+export async function loadMatchPool(db: D1Database): Promise<Business[]> {
+  return (await db.prepare(`SELECT * FROM businesses ORDER BY created_at, id`).all<Business>()).results;
+}
+
+/**
+ * Existing businesses that share the row's domain or have a similar name (see `namesSimilar`). `pool` lets a caller that
+ * checks many rows pass `loadMatchPool` once (and add what it creates) instead of reading the table per row.
+ */
+export async function findBusinessCandidates(
+  db: D1Database, row: { name: string; url: string | null }, pool?: Business[],
+): Promise<Business[]> {
+  const domain = siteDomain(row.url);
+  return (pool ?? (await loadMatchPool(db))).filter((b) => (domain && businessDomain(b) === domain) || namesSimilar(row.name, b.name));
 }

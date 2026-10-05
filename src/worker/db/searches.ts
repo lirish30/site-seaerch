@@ -43,3 +43,18 @@ export async function runningMaxResultsSince(db: D1Database, sinceIso: string): 
   return (await db.prepare(`SELECT max_results FROM searches WHERE status = 'running' AND created_at > ?`).bind(sinceIso).all<{ max_results: number }>())
     .results.map((r) => r.max_results);
 }
+
+/**
+ * The container search an import's leads are filed under: `upsertBusiness` needs a search to link a business to, and
+ * search/lead views then keep working. It is finished at once (status done) so no progress screen waits on it.
+ */
+export async function createImportSearch(db: D1Database, source: string): Promise<Search> {
+  const s = await createSearch(db, { location: `Import ${source}`, businessType: "import", radiusKm: 1, maxResults: 1 });
+  await setSearchStatus(db, s.id, "done");
+  return (await getSearch(db, s.id))!;
+}
+
+/** Records how many leads an import created, as both found and processed (nothing is processed later). */
+export async function finishImportSearch(db: D1Database, id: string, created: number) {
+  await db.prepare(`UPDATE searches SET found_count = ?, processed_count = ? WHERE id = ?`).bind(created, created, id).run();
+}
