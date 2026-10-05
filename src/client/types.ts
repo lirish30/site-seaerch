@@ -2,7 +2,9 @@ export type LeadStatus = "new" | "reviewed" | "contacted" | "replied" | "won" | 
 export interface Business { id: string; name: string; category: string | null; address: string | null; phone: string | null;
   website_url: string | null; maps_url: string | null; lead_status: LeadStatus; notes: string | null; contacted_at: string | null; last_error: string | null;
   rating: number | null; review_count: number | null; archived_at: string | null; follow_up_at: string | null; deal_value: number | null; created_at: string;
-  scan_stage: ScanStage; tags: string[]; }
+  scan_stage: ScanStage; tags: string[];
+  /** When the lead was starred, or null. */
+  starred_at: string | null; }
 /** 'quick' = crawled and scored only; 'full' = also screenshots, PageSpeed, AI review and a draft. */
 export type ScanStage = "quick" | "full";
 export interface LeadRow { business: Business; score: number | null; health: number | null; niche: string | null; topFinding: string | null; offer: string | null;
@@ -85,12 +87,13 @@ export interface ImportCommitResult {
 }
 
 /** POST /api/leads/bulk. There is no delete action. */
-export type BulkAction = "status" | "archive" | "restore" | "tag" | "untag";
-export interface BulkResult { updated: number; skipped: number; undoToken: string | null; }
+export type BulkAction = "status" | "archive" | "restore" | "tag" | "untag" | "star" | "unstar";
+/** `keptStarred`: starred leads a bulk archive left alone (they are also counted in `skipped`). */
+export interface BulkResult { updated: number; skipped: number; keptStarred?: number; undoToken: string | null; }
 /** POST /api/leads/bulk/undo: `skipped` leads were edited since the bulk change and were left alone. */
 export interface UndoResult { restored: number; skipped: number; }
 export interface SavedFilter { id: string; name: string; query: string; created_at: string; }
 
-export type TodayKind = "follow_up_due" | "draft_unsent" | "stalled_deal" | "promising_quick_scan";
+export type TodayKind = "follow_up_due" | "draft_unsent" | "stalled_deal" | "starred_idle" | "promising_quick_scan";
 /** One thing to do today (GET /api/today). `id` is `${kind}:${businessId}`; `due` is set for follow-ups only. */
 export interface TodayItem { id: string; kind: TodayKind; businessId: string; businessName: string; reason: string; due: string | null; priority: number; }

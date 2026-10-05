@@ -362,3 +362,13 @@ button.tag { cursor:pointer; } button.tag:hover { border-color:var(--accent); }
 .today-actions button { padding:6px 12px; font-size:13px; }
 .today-kind.follow_up_due { border-color:var(--bad); color:var(--bad); } .today-kind.stalled_deal { border-color:var(--warn); color:var(--warn); }
 .today-kind.promising_quick_scan { border-color:var(--ok); color:var(--ok); }
+
+/* ---------- Starred leads ---------- */
+.star-btn { all:unset; cursor:pointer; font-size:16px; line-height:1; margin-right:6px; color:var(--muted); vertical-align:middle; }
+.star-btn:hover { color:var(--warn); } .star-btn.on { color:var(--warn); }
+.star-btn:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:3px; }
+.star-btn:disabled { opacity:.5; cursor:default; }
+table.leads tbody tr.starred { background:color-mix(in srgb, var(--warn) 7%, transparent); }
+.chip-toggle { padding:6px 12px; font-size:13px; border-radius:var(--pill); white-space:nowrap; }
+.chip-toggle.on { background:var(--warn); border-color:var(--warn); color:#fff; }
+.today-kind.starred_idle { border-color:var(--warn); color:var(--warn); }

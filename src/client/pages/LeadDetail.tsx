@@ -9,6 +9,7 @@ import BestOfferCard from "../components/BestOfferCard";
 import { FitExplanation } from "../components/FitChip";
 import { topFindings } from "../evidenceView";
 import PeoplePanel from "../components/PeoplePanel";
+import StarToggle from "../components/StarToggle";
 import CroPanel from "../components/CroPanel";
 import { shareState } from "../reportView";
 import { REASONS, reasonLabel, suppressedMessage } from "../suppressionView";
@@ -29,7 +30,7 @@ const TONE_OPTIONS: [string, string][] = [["", "Default tone (from Settings)"], 
 const ACTIVITY_LABEL: Record<string, string> = {
   status: "Status", archived: "Archived", restored: "Restored", website: "Website changed", reaudit: "Re-audit",
   score_flagged: "Score flagged", export: "Exported", draft: "Draft", cro_audit: "CRO audit", suppressed: "Suppressed", import: "Imported", bulk: "Bulk change",
-  today_done: "Marked done in Today", snoozed: "Snoozed in Today",
+  today_done: "Marked done in Today", snoozed: "Snoozed in Today", starred: "Starred", unstarred: "Unstarred",
 };
 
 function ChangesBlock({ changes }: { changes: AuditChanges }) {
@@ -54,6 +55,7 @@ export default function LeadDetail() {
   const [steer, setSteer] = useState(""); const [busy, setBusy] = useState(""); const [msg, setMsg] = useState("");
   const [notes, setNotes] = useState("");
   const [editingUrl, setEditingUrl] = useState<string | null>(null);
+  const [starBusy, setStarBusy] = useState(false);
   const [focus, setFocus] = useState<Set<string>>(new Set());
   const [croItems, setCroItems] = useState<CroItem[]>([]);
   const [croFocus, setCroFocus] = useState<Set<string>>(new Set());
@@ -125,6 +127,11 @@ export default function LeadDetail() {
       return true;
     } catch (e) { fail(e); return false; }
   }
+  const toggleStar = async () => {
+    if (starBusy) return;
+    setStarBusy(true);
+    try { if (await patchLead({ starred: !d!.business.starred_at })) await load(); } finally { setStarBusy(false); }
+  };
   const setStatus = (s: LeadStatus) => patchLead({ leadStatus: s }).then(async (ok) => { if (ok) await load(); return ok; });
   async function copy(): Promise<boolean> {
     await saveDraft(); await flush();
@@ -212,7 +219,7 @@ export default function LeadDetail() {
     <div className="lead">
       <header className="lead-head card">
         <div className="lead-title">
-          <h2>{b.name} {b.archived_at && <span className="tag">Archived</span>}</h2>
+          <h2><StarToggle on={b.starred_at !== null} name={b.name} busy={starBusy} onClick={() => void toggleStar()} /> {b.name} {b.archived_at && <span className="tag">Archived</span>}</h2>
           <p className="muted">
             {[b.category, b.address].filter(Boolean).join(" · ")}
             {b.rating !== null && <> · ★ {b.rating}{b.review_count !== null && ` (${b.review_count} reviews)`}</>}

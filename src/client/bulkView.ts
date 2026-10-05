@@ -39,10 +39,13 @@ export interface BulkRequest { action: BulkAction; status?: LeadStatus; tag?: st
 const plural = (n: number) => `${n} lead${n === 1 ? "" : "s"}`;
 /** The sentence shown after a bulk action. */
 export function bulkSummary(req: BulkRequest, r: BulkResult): string {
-  const skipped = r.skipped ? ` ${plural(r.skipped)} already matched or couldn't take it, so left alone.` : "";
+  // A bulk archive leaves starred leads alone; they are counted in `skipped` too, so they are taken out of the generic sentence.
+  const kept = r.keptStarred ?? 0, other = r.skipped - kept;
+  const skipped = (other > 0 ? ` ${plural(other)} already matched or couldn't take it, so left alone.` : "")
+    + (kept > 0 ? ` ${kept} starred lead${kept === 1 ? "" : "s"} left alone. Unstar ${kept === 1 ? "it" : "them"} first to archive ${kept === 1 ? "it" : "them"}.` : "");
   if (!r.updated) return `Nothing changed.${skipped}`;
   const verb = {
-    status: `Set status to ${req.status} on`, archive: "Archived", restore: "Restored",
+    status: `Set status to ${req.status} on`, archive: "Archived", restore: "Restored", star: "Starred", unstar: "Unstarred",
     tag: `Added tag "${req.tag}" to`, untag: `Removed tag "${req.tag}" from`,
   }[req.action];
   return `${verb} ${plural(r.updated)}.${skipped}`;

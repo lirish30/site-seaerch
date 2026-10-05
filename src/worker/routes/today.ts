@@ -11,7 +11,7 @@ export const todayRoutes = new Hono<{ Bindings: Env }>();
 
 todayRoutes.get("/", async (c) => c.json({ items: await buildToday(c.env.DB, new Date()) }));
 
-/** The kind must be one of the four and the lead must exist, else 404. */
+/** The kind must be one of the Today kinds and the lead must exist, else 404. */
 async function target(c: { env: Env; req: { param: (k: string) => string } }) {
   const kind = c.req.param("kind"), id = c.req.param("businessId");
   if (!isTodayKind(kind) || !(await getBusiness(c.env.DB, id))) return null;

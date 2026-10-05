@@ -100,6 +100,8 @@ export interface Business {
   lead_status: LeadStatus; notes: string | null; contacted_at: string | null; last_error: string | null;
   created_at: string; archived_at: string | null; follow_up_at: string | null; deal_value: number | null;
   scan_stage: ScanStage;
+  /** When the lead was starred, or null. Starred leads sort first and are exempt from the quality filters and from bulk archive. */
+  starred_at: string | null;
   /** Free-form labels: lowercase, at most 20, each at most 32 characters. Stored as JSON, parsed on read. */
   tags: string[];
 }
@@ -113,7 +115,7 @@ export interface Person {
   linkedin: string | null; source: "manual" | "site"; is_poc: boolean; created_at: string;
 }
 
-export type ActivityKind = "status" | "archived" | "restored" | "website" | "reaudit" | "score_flagged" | "export" | "draft" | "cro_audit" | "suppressed" | "import" | "bulk" | "today_done" | "snoozed";
+export type ActivityKind = "status" | "archived" | "restored" | "website" | "reaudit" | "score_flagged" | "export" | "draft" | "cro_audit" | "suppressed" | "import" | "bulk" | "today_done" | "snoozed" | "starred" | "unstarred";
 export interface Activity { id: string; business_id: string; kind: ActivityKind; detail: string | null; created_at: string; }
 
 export interface Audit {

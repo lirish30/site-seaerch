@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../env";
 import type { Business, LeadStatus } from "../types";
-import { getBusiness, listAllBusinesses, listQuickStageBusinesses, updateLead, domainOf, setArchived, deleteBusiness, applyBulk, undoBulk, normalizeTag } from "../db/businesses";
+import { getBusiness, listAllBusinesses, listQuickStageBusinesses, updateLead, domainOf, setArchived, deleteBusiness, applyBulk, undoBulk, normalizeTag, setStarred } from "../db/businesses";
 import { createFilter, deleteFilter, FilterLimit, FilterNameTaken, listFilters } from "../db/filters";
 import { listPeople, createPerson, updatePerson, deletePerson, pocsFor } from "../db/people";
 import { listActivity, logActivity } from "../db/activity";
@@ -75,7 +75,8 @@ leadRoutes.get("/", async (c) => {
   const rawTag = c.req.query("tag");
   const tag = rawTag === undefined || rawTag === "" ? undefined : normalizeTag(rawTag);
   if (tag === null) return c.json({ error: "bad tag" }, 400);
-  return c.json(await leadRows(c.env.DB, await listAllBusinesses(c.env.DB, { status, limit, offset, archived, tag })));
+  const starred = c.req.query("starred") === "1";
+  return c.json(await leadRows(c.env.DB, await listAllBusinesses(c.env.DB, { status, limit, offset, archived, tag, starred })));
 });
 
 // Quick-scanned leads worth a full scan, best first. Registered before /:id so "promising" is not read as an id.
@@ -92,7 +93,7 @@ leadRoutes.get("/promising", async (c) => {
 // Batch triage. There is deliberately no bulk delete. Registered (with /filters) before /:id so these paths are not read as ids.
 const BulkBody = z.object({
   ids: z.array(z.string().min(1).max(100)).min(1).max(200),
-  action: z.enum(["status", "archive", "restore", "tag", "untag"]),
+  action: z.enum(["status", "archive", "restore", "tag", "untag", "star", "unstar"]),
   status: z.enum(STATUSES).optional(),
   tag: z.string().max(200).optional(),
 });
@@ -246,6 +247,7 @@ const PatchLead = z.object({
   followUpAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   dealValue: z.number().min(0).max(10_000_000).nullable().optional(),
   websiteUrl: nullableUrl.optional(),
+  starred: z.boolean().optional(),
 });
 leadRoutes.patch("/:id", async (c) => {
   const p = PatchLead.safeParse(await c.req.json().catch(() => ({})));
@@ -253,6 +255,9 @@ leadRoutes.patch("/:id", async (c) => {
   const id = c.req.param("id");
   const before = await getBusiness(c.env.DB, id);
   if (!before) return c.json({ error: "not found" }, 404);
+  // Before updateLead, whose return value is the lead as it stands after every change in this request.
+  if (p.data.starred !== undefined && (await setStarred(c.env.DB, id, p.data.starred))?.changed)
+    await logActivity(c.env.DB, id, p.data.starred ? "starred" : "unstarred");
   const after = await updateLead(c.env.DB, id, p.data);
   if (p.data.leadStatus && p.data.leadStatus !== before.lead_status) await logActivity(c.env.DB, id, "status", `${before.lead_status} → ${p.data.leadStatus}`);
   if (p.data.websiteUrl !== undefined && p.data.websiteUrl !== before.website_url) await logActivity(c.env.DB, id, "website", p.data.websiteUrl ?? "removed");
