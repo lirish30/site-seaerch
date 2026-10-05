@@ -8,6 +8,9 @@ import { insertAudit } from "../src/worker/db/audits";
 import { insertDraft } from "../src/worker/db/drafts";
 import { saveSettings } from "../src/worker/db/settings";
 import { runSearch } from "../src/worker/pipeline/search";
+import { runLead, type LeadDeps } from "../src/worker/pipeline/lead";
+import { latestAudit } from "../src/worker/db/audits";
+import { latestDraft } from "../src/worker/db/drafts";
 import { FakeListingSource } from "../src/worker/listings/fake";
 import type { StepLike } from "../src/worker/pipeline/lead";
 import type { Listing } from "../src/worker/types";
@@ -208,5 +211,52 @@ describe("suppression routes", () => {
     const r = await api(`/api/leads/${b.id}/report`, { method: "POST" });
     expect(r.status).toBe(409);
     expect((await r.json<any>()).reason).toBe("active_deal");
+  });
+});
+
+describe("runLead draft step", () => {
+  const step: StepLike = { do: (_n, fn) => fn(), sleep: async () => {} };
+  const page = () => new Response(`<html><head><title>Ace</title><meta name="viewport" content="x"></head><body><p>hi</p></body></html>`, { headers: { "content-type": "text/html" } });
+  function deps() {
+    const d: any = {
+      db: env.DB, raw: env.RAW, pagespeedKey: "K", now: () => new Date("2026-10-02T00:00:00Z"), claudeCalls: 0,
+      fetch: async (u: string) => (u.startsWith("https://www.googleapis.com/") ? Response.json({}) : u.startsWith("https://ace-supp.example.com") ? page() : new Response("nf", { status: 404 })),
+    };
+    d.claude = async () => { d.claudeCalls++; return { subject: "Hi", body: "Body", to_contact_id: null, recipient_reason: "r" }; };
+    return d as LeadDeps & { claudeCalls: number };
+  }
+  const seed = async (placeId: string) => {
+    const s = await createSearch(env.DB, { location: "Boise", businessType: "plumber", radiusKm: 10, maxResults: 5 });
+    return upsertBusiness(env.DB, { placeId, name: "Ace", category: "Plumber", address: "Boise", phone: null, websiteUrl: "https://ace-supp.example.com", mapsUrl: null, rating: null, reviewCount: null }, s.id);
+  };
+  const drafts = (id: string) => env.DB.prepare(`SELECT COUNT(*) AS n FROM drafts WHERE business_id = ?`).bind(id).first<number>("n");
+
+  it("a suppressed lead is still re-audited with forceDraft, but gets no draft and no drafting spend", async () => {
+    const b = await seed("RL-SUP");
+    await addSuppression(env.DB, { kind: "place_id", value: "RL-SUP", reason: "opt_out" });
+    const d = deps();
+    const r = await runLead(d, step, { businessId: b.id, searchId: null, forceDraft: true });
+    expect(r.draftId).toBeNull();
+    expect(r.auditId).toBeTruthy();
+    expect((await latestAudit(env.DB, b.id))?.id).toBe(r.auditId);
+    expect(await latestDraft(env.DB, b.id)).toBeNull();
+    expect(await drafts(b.id)).toBe(0);
+    expect(d.claudeCalls).toBe(0);
+  });
+
+  it("a lead suppressed by domain only (after its workflow was queued) is also not drafted", async () => {
+    const b = await seed("RL-SUP-DOM");
+    await addSuppression(env.DB, { kind: "domain", value: "ace-supp.example.com", reason: "client" });
+    expect((await runLead(deps(), step, { businessId: b.id, searchId: null, forceDraft: true })).draftId).toBeNull();
+    expect(await drafts(b.id)).toBe(0);
+  });
+
+  it("a lead that is not suppressed still drafts with forceDraft", async () => {
+    const b = await seed("RL-OK");
+    const d = deps();
+    const r = await runLead(d, step, { businessId: b.id, searchId: null, forceDraft: true });
+    expect(r.draftId).not.toBeNull();
+    expect(await drafts(b.id)).toBe(1);
+    expect(d.claudeCalls).toBe(1);
   });
 });

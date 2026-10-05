@@ -5,6 +5,7 @@ import { score } from "../scoring/scorer";
 import { lookupMailDns, siteMailDomain, UNKNOWN_MAIL_DNS, type MailDns } from "../dns";
 import { generateDraft, type ClaudeCaller } from "../drafter/draft";
 import { getBusiness } from "../db/businesses";
+import { leadSuppression } from "../db/suppression";
 import { replaceContacts, listContacts, ensureContact } from "../db/contacts";
 import { pocFor } from "../db/people";
 import { insertAudit, latestAudit } from "../db/audits";
@@ -194,6 +195,10 @@ export async function runLead(
 
   const draftId = await step.do("draft", async () => {
     if (audit.lowPriority && !p.forceDraft) return null;
+    // Checked here, at run time, so a lead suppressed after its workflow was queued (or re-audited) never gets an AI draft.
+    // The audit above still runs: a re-audit of a suppressed lead refreshes the audit, only the draft is withheld.
+    const current = await getBusiness(deps.db, p.businessId);
+    if (current && (await leadSuppression(deps.db, current))) return null;
     return (await draftFor(deps, p.businessId, { steeringNote: p.steeringNote ?? null })).id;
   });
 
