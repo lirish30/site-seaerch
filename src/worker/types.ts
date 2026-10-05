@@ -63,7 +63,11 @@ export interface Search {
   status: "running" | "done" | "failed"; error: string | null;
   found_count: number; processed_count: number; created_at: string;
   new_only: 0 | 1; // Radar-started: only businesses never audited get the per-lead pipeline
+  quick_scan: 0 | 1; // its leads run the quick stage (no render, PageSpeed, AI review or draft); Radar searches never set it
 }
+
+/** How far a lead's audit has been paid for: 'quick' is crawl + score only, 'full' adds screenshots, PageSpeed, AI review and a draft. */
+export type ScanStage = "quick" | "full";
 
 /** A thing the user sells. finding_codes/finding_categories say which audit evidence points at it (a trailing * in a code is a prefix wildcard). */
 export interface Service {
@@ -95,6 +99,7 @@ export interface Business {
   rating: number | null; review_count: number | null; first_seen_search_id: string | null;
   lead_status: LeadStatus; notes: string | null; contacted_at: string | null; last_error: string | null;
   created_at: string; archived_at: string | null; follow_up_at: string | null; deal_value: number | null;
+  scan_stage: ScanStage;
 }
 
 export interface PersonInput {

@@ -3,14 +3,14 @@ import type { Search } from "../types";
 export async function createSearch(
   db: D1Database,
   i: { location: string; businessType: string; radiusKm: number; maxResults: number },
-  opts: { newOnly?: boolean } = {},
+  opts: { newOnly?: boolean; quickScan?: boolean } = {},
 ): Promise<Search> {
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
   await db.prepare(
-    `INSERT INTO searches (id, location, business_type, radius_km, max_results, status, created_at, new_only)
-     VALUES (?, ?, ?, ?, ?, 'running', ?, ?)`,
-  ).bind(id, i.location, i.businessType, i.radiusKm, Math.min(i.maxResults, 200), now, opts.newOnly ? 1 : 0).run();
+    `INSERT INTO searches (id, location, business_type, radius_km, max_results, status, created_at, new_only, quick_scan)
+     VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?)`,
+  ).bind(id, i.location, i.businessType, i.radiusKm, Math.min(i.maxResults, 200), now, opts.newOnly ? 1 : 0, opts.quickScan ? 1 : 0).run();
   return (await getSearch(db, id))!;
 }
 

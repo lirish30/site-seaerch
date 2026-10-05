@@ -1,4 +1,4 @@
-import type { Business, LeadStatus, Listing } from "../types";
+import type { Business, LeadStatus, Listing, ScanStage } from "../types";
 import { isSocialOnlyUrl } from "../crawler/extract";
 
 export function domainOf(url: string | null): string | null {
@@ -63,6 +63,16 @@ export async function listAllBusinesses(db: D1Database, o: { status?: LeadStatus
     ? db.prepare(`SELECT * FROM businesses WHERE lead_status = ? AND ${arch} ${page}`).bind(o.status, lim, off)
     : db.prepare(`SELECT * FROM businesses WHERE ${arch} ${page}`).bind(lim, off);
   return (await stmt.all<Business>()).results;
+}
+
+/** Leads that have had only the cheap crawl-and-score pass, newest first. Archived ones are left out. */
+export async function listQuickStageBusinesses(db: D1Database, limit = 500) {
+  return (await db.prepare(`SELECT * FROM businesses WHERE scan_stage = 'quick' AND archived_at IS NULL ORDER BY created_at DESC, id DESC LIMIT ?`)
+    .bind(limit).all<Business>()).results;
+}
+
+export async function setScanStage(db: D1Database, id: string, stage: ScanStage) {
+  await db.prepare(`UPDATE businesses SET scan_stage = ? WHERE id = ?`).bind(stage, id).run();
 }
 
 export async function setArchived(db: D1Database, id: string, archived: boolean) {

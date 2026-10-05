@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../env";
 import type { Business, LeadStatus } from "../types";
-import { getBusiness, listAllBusinesses, updateLead, domainOf, setArchived, deleteBusiness } from "../db/businesses";
+import { getBusiness, listAllBusinesses, listQuickStageBusinesses, updateLead, domainOf, setArchived, deleteBusiness } from "../db/businesses";
 import { listPeople, createPerson, updatePerson, deletePerson, pocsFor } from "../db/people";
 import { listActivity, logActivity } from "../db/activity";
 import { latestAudit, latestAuditsFor, listAudits } from "../db/audits";
@@ -10,9 +10,10 @@ import { diffFindings, type AuditChanges } from "../audit/diff";
 import { isStale, urgencyOf } from "../audit/provenance";
 import { listServices } from "../db/services";
 import { listFitProfiles } from "../db/fit";
-import { InvalidSuppression, leadSuppression, suppressLead } from "../db/suppression";
+import { InvalidSuppression, leadSuppression, suppressLead, suppressedLeadIds } from "../db/suppression";
 import { Note, Reason, bad } from "./suppressions";
 import { scoreFit } from "../scoring/fit";
+import { rankPromising } from "../scoring/promising";
 import { bestOffer } from "../services/best-offer";
 import { listContacts, contactsFor } from "../db/contacts";
 import { latestDraft, updateDraftBody, listDrafts } from "../db/drafts";
@@ -43,7 +44,7 @@ export async function leadRows(db: D1Database, businesses: Business[]) {
       offer: audit?.offer ?? null, bestContact: best.contact?.value ?? null, hasEmail: !!best.emailContact || !!pocs.get(b.id)?.email,
       poc: pocs.get(b.id) ? { name: pocs.get(b.id)!.name, email: pocs.get(b.id)!.email } : null,
       partial: audit?.partial ?? false, platform: audit?.platform ?? null, rating: b.rating, reviewCount: b.review_count,
-      fit: scoreFit(b, audit, profiles),
+      fit: scoreFit(b, audit, profiles), scan_stage: b.scan_stage,
     };
   });
 }
@@ -70,6 +71,17 @@ leadRoutes.get("/", async (c) => {
   const offset = intParam(c.req.query("offset"), 0, 0, Number.MAX_SAFE_INTEGER);
   const archived = c.req.query("archived") === "1";
   return c.json(await leadRows(c.env.DB, await listAllBusinesses(c.env.DB, { status, limit, offset, archived })));
+});
+
+// Quick-scanned leads worth a full scan, best first. Registered before /:id so "promising" is not read as an id.
+// A lead with no fit is kept (and sorted last), and suppressed leads are left out.
+leadRoutes.get("/promising", async (c) => {
+  const raw = c.req.query("minFit");
+  const minFit = raw === undefined || raw === "" ? undefined : Number(raw);
+  if (minFit !== undefined && !(Number.isFinite(minFit) && minFit >= 0 && minFit <= 100)) return c.json({ error: "minFit must be 0-100" }, 400);
+  const quick = await listQuickStageBusinesses(c.env.DB);
+  const hidden = await suppressedLeadIds(c.env.DB, quick);
+  return c.json(rankPromising(await leadRows(c.env.DB, quick.filter((b) => !hidden.has(b.id))), { minFit }));
 });
 
 leadRoutes.get("/:id", async (c) => {
@@ -295,6 +307,21 @@ leadRoutes.post("/:id/reaudit", async (c) => {
   const { reason } = await c.req.json<{ reason?: string }>().catch(() => ({ reason: undefined }));
   await c.env.LEAD_WORKFLOW.create({ id: `reaudit-${id}-${Date.now()}`, params: { businessId: id, searchId: null, forceDraft: true } });
   await logActivity(c.env.DB, id, reason?.trim() ? "score_flagged" : "reaudit", reason?.trim().slice(0, 500) || null);
+  return c.json({ ok: true }, 202);
+});
+
+// Pays for the rest of a quick-scanned lead (screenshots, PageSpeed, AI review, draft). Any lead may be re-run this way;
+// the draft step skips a suppressed lead itself, so there is no suppression check here.
+leadRoutes.post("/:id/full-scan", async (c) => {
+  const id = c.req.param("id");
+  if (!(await getBusiness(c.env.DB, id))) return c.json({ error: "not found" }, 404);
+  if (await mailingSettingsMissing(c.env.DB)) return c.json({ error: MISSING_MAILING_SETTINGS }, 400);
+  try {
+    await c.env.LEAD_WORKFLOW.create({ id: `fullscan-${id}-${Date.now()}`, params: { businessId: id, searchId: null, forceDraft: false, stage: "full" } });
+  } catch (e) {
+    return c.json({ error: String((e as Error)?.message ?? e).slice(0, 300) }, 502);
+  }
+  await logActivity(c.env.DB, id, "reaudit", "Full scan");
   return c.json({ ok: true }, 202);
 });
 

@@ -1,6 +1,6 @@
 import { isRetryable, type ListingSource } from "../listings/source";
 import type { StepLike } from "./lead";
-import type { Business, Listing } from "../types";
+import type { Business, Listing, ScanStage } from "../types";
 import { getSearch, setFoundCount, setSearchStatus, setProcessedCount } from "../db/searches";
 import { upsertBusiness } from "../db/businesses";
 import { isSuppressed } from "../db/suppression";
@@ -13,7 +13,7 @@ export const LEAD_BATCH_SIZE = 5;
 export const LEAD_BATCH_DELAY_MS = 20_000;
 
 export interface SearchDeps {
-  db: D1Database; source: ListingSource; startLead: (p: { businessId: string; searchId: string }) => Promise<void>;
+  db: D1Database; source: ListingSource; startLead: (p: { businessId: string; searchId: string; stage: ScanStage }) => Promise<void>;
 }
 
 // Only (re)work leads nobody has acted on: brand new ones, or reviewed ones whose latest draft
@@ -74,11 +74,12 @@ export async function runSearch(deps: SearchDeps, step: StepLike, searchId: stri
       return [...ids];
     });
 
+    const stage: ScanStage = search.quick_scan === 1 ? "quick" : "full";
     for (let i = 0; i < toProcess.length; i += LEAD_BATCH_SIZE) {
       if (i > 0) await step.sleep(`batch-gap-${i}`, LEAD_BATCH_DELAY_MS);
       const batch = toProcess.slice(i, i + LEAD_BATCH_SIZE);
       await step.do(`start-batch-${i}`, async () => {
-        for (const businessId of batch) await deps.startLead({ businessId, searchId });
+        for (const businessId of batch) await deps.startLead({ businessId, searchId, stage });
         return true;
       });
     }

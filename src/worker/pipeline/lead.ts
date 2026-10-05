@@ -4,7 +4,7 @@ import { runPageSpeed, RateLimitedError } from "../pagespeed";
 import { score } from "../scoring/scorer";
 import { lookupMailDns, siteMailDomain, UNKNOWN_MAIL_DNS, type MailDns } from "../dns";
 import { generateDraft, type ClaudeCaller } from "../drafter/draft";
-import { getBusiness } from "../db/businesses";
+import { getBusiness, setScanStage } from "../db/businesses";
 import { leadSuppression } from "../db/suppression";
 import { replaceContacts, listContacts, ensureContact } from "../db/contacts";
 import { pocFor } from "../db/people";
@@ -20,7 +20,7 @@ import { reviewSite, type ReviewCaller } from "../audit/review";
 import { isSocialOnlyUrl } from "../crawler/extract";
 import { croItemsForBusiness } from "../db/cro";
 import type { CroItem } from "../cro/types";
-import type { AiReview, Draft, Finding, Offer, SiteStatus, TonePreset } from "../types";
+import type { AiReview, Draft, Finding, Offer, ScanStage, SiteStatus, TonePreset } from "../types";
 
 export interface DraftOptions { steeringNote?: string | null; focus?: number[]; tone?: TonePreset | null; croFocus?: string[] }
 
@@ -75,8 +75,11 @@ export function regenerateDraft(deps: LeadDeps, businessId: string, o: DraftOpti
 
 export async function runLead(
   deps: LeadDeps, step: StepLike,
-  p: { businessId: string; searchId: string | null; forceDraft?: boolean; steeringNote?: string | null },
+  p: { businessId: string; searchId: string | null; forceDraft?: boolean; steeringNote?: string | null; stage?: ScanStage },
 ) {
+  // A quick run is crawl + DNS + score only. Render, PageSpeed, the AI review and the draft are the paid steps; they are
+  // not even opened, so nothing is spent or recorded for them. Re-running as "full" later fills them in.
+  const quick = p.stage === "quick";
   const business = await getBusiness(deps.db, p.businessId);
   if (!business) throw new Error(`Business ${p.businessId} not found`);
 
@@ -85,7 +88,7 @@ export async function runLead(
   // A render failure never fails the lead; the audit just falls back to raw HTML.
   let rendered: { finalUrl: string; htmlKey: string | null; desktop: string | null; mobile: string | null; mobileFacts: { overflowX: boolean; smallTextPct: number } | null } | null = null;
   const site = business.website_url?.trim();
-  if (deps.render && site && !isSocialOnlyUrl(withScheme(site))) {
+  if (!quick && deps.render && site && !isSocialOnlyUrl(withScheme(site))) {
     try {
       rendered = await step.do("render", async () => {
         const r = await deps.render!(withScheme(site));
@@ -123,7 +126,7 @@ export async function runLead(
   // Retries may be exhausted (e.g. rate limited); degrade to a partial audit rather than failing the lead.
   // No instanceof check: error classes may not survive Workflows' step-error serialization.
   let ps: Awaited<ReturnType<typeof runPageSpeed>>["facts"] | null = null;
-  try {
+  if (!quick) try {
     ps = await step.do("pagespeed", async () => {
     // Bot-blocked sites still get PageSpeed (Google's runner is usually let through).
     if (!measurable(crawl.siteStatus) || !crawl.finalUrl) return null;
@@ -155,7 +158,7 @@ export async function runLead(
   });
 
   let review: AiReview | null = null;
-  if (deps.reviewer && measurable(crawl.siteStatus) && (rendered?.desktop || rendered?.mobile || crawl.facts)) {
+  if (!quick && deps.reviewer && measurable(crawl.siteStatus) && (rendered?.desktop || rendered?.mobile || crawl.facts)) {
     try {
       review = await step.do("review", async () => {
         const img = async (k: string | null | undefined) => (k ? deps.raw.get(k).then(async (o) => (o ? b64(await o.arrayBuffer()) : null)) : null);
@@ -190,10 +193,11 @@ export async function runLead(
       // A note for the owner only: not a finding, never scored, and not passed to the drafter or the report.
       mail_warning: mailDns.hasMx === false ? "A site email address is at a domain with no mail records, so emails to it will likely bounce" : null,
     });
+    await setScanStage(deps.db, p.businessId, quick ? "quick" : "full");
     return { id: a.id, lowPriority: s.lowPriority };
   });
 
-  const draftId = await step.do("draft", async () => {
+  const draftId = quick ? null : await step.do("draft", async () => {
     if (audit.lowPriority && !p.forceDraft) return null;
     // Checked here, at run time, so a lead suppressed after its workflow was queued (or re-audited) never gets an AI draft.
     // The audit above still runs: a re-audit of a suppressed lead refreshes the audit, only the draft is withheld.

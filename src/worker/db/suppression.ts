@@ -60,6 +60,22 @@ export async function isSuppressed(
     .bind(...(placeId ? [placeId] : []), ...domains).first<Suppression>();
 }
 
+/** Ids of the businesses that match the suppression list, from one query (the same rule as `isSuppressed`, for list pages). */
+export async function suppressedLeadIds(db: D1Database, bs: Pick<Business, "id" | "domain" | "place_id" | "website_url">[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (!bs.length) return out;
+  const rows = await listSuppressions(db);
+  const domains = new Set(rows.filter((r) => r.kind === "domain").map((r) => r.value));
+  const places = new Set(rows.filter((r) => r.kind === "place_id").map((r) => r.value));
+  if (!domains.size && !places.size) return out;
+  for (const b of bs) {
+    const pid = b.place_id?.trim();
+    const hit = (pid && places.has(pid)) || [cleanDomain(b.domain), cleanDomain(b.website_url)].some((d) => d && domains.has(d));
+    if (hit) out.add(b.id);
+  }
+  return out;
+}
+
 /** The suppression a stored lead matches (its own domain, place ID or website host). */
 export const leadSuppression = (db: D1Database, b: Pick<Business, "domain" | "place_id" | "website_url">) =>
   isSuppressed(db, { domain: b.domain, placeId: b.place_id, websiteUrl: b.website_url });
