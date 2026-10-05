@@ -252,6 +252,15 @@ describe("POST /api/import/commit", () => {
     expect(await counts()).toEqual(before);
   });
 
+  it("accepts a skipped row with no name (an invalid CSV row the client skips) but not a nameless row that would be written", async () => {
+    const ok = await api("/api/import/commit", { source: "x", rows: [{ row: { name: "", url: "https://cm-nameless.com" }, action: "skip" }] });
+    expect(ok.status).toBe(200);
+    expect(await ok.json<any>()).toMatchObject({ created: 0, skipped: 1 });
+    const no = await api("/api/import/commit", { source: "x", rows: [{ row: R("Fine", null), action: "skip" }, { row: R("", null), action: "create" }] });
+    expect(no.status).toBe(400);
+    expect((await no.json<any>()).error).toMatch(/^row 2: each row needs a name/);
+  });
+
   it("a create whose website is not a usable address is a row failure", async () => {
     const res = await withWorkflow(okWorkflow().create, () => api("/api/import/commit", { source: "x", rows: [{ row: R("Cm Badsite", "not a website"), action: "create" }] }));
     const body = await res.json<any>();

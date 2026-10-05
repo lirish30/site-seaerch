@@ -8,6 +8,7 @@ import Settings from "./pages/Settings";
 import Report from "./pages/Report";
 import Radar from "./pages/Radar";
 import Promising from "./pages/Promising";
+import Import from "./pages/Import";
 
 export default function App() {
   return (
@@ -21,6 +22,7 @@ export default function App() {
             <NavLink to="/" end>New search</NavLink>
             <NavLink to="/leads">All leads</NavLink>
             <NavLink to="/promising">Promising</NavLink>
+            <NavLink to="/import">Import</NavLink>
             <NavLink to="/radar">Radar</NavLink>
             <NavLink to="/settings">Settings</NavLink>
           </nav>
@@ -31,6 +33,7 @@ export default function App() {
               <Route path="/leads" element={<AllLeads />} />
               <Route path="/leads/:id" element={<LeadDetail />} />
               <Route path="/promising" element={<Promising />} />
+              <Route path="/import" element={<Import />} />
               <Route path="/radar" element={<Radar />} />
               <Route path="/settings" element={<Settings />} />
             </Routes>

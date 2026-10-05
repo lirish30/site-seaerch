@@ -327,3 +327,13 @@ td.empty { text-align:center; padding:24px; }
 /* Quick scan badge and Promising queue */
 .badge.quick-scan { margin-left:6px; border-color:var(--accent); color:var(--link); font-size:11px; padding:0 6px; cursor:help; vertical-align:middle; }
 table.promising td:last-child { min-width:190px; }
+
+/* Import leads */
+.import-form textarea { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:14px; }
+.import-preview, .import-result, .import-form { margin-top:16px; }
+table.import-table td { vertical-align:top; } table.import-table td:last-child { min-width:220px; }
+table.import-table select.undecided { border-color:var(--warn); }
+.badge.imp-new { border-color:var(--ok); color:var(--ok); } .badge.imp-exact { border-color:var(--accent); color:var(--link); }
+.badge.imp-ambiguous { border-color:var(--warn); color:var(--warn); }
+.badge.imp-suppressed, .badge.imp-invalid { border-color:var(--bad); color:var(--bad); } .badge.imp-duplicate_in_file { color:var(--muted); }
+.import-tally { margin:12px 0 0; } .warn-text { color:var(--warn); }

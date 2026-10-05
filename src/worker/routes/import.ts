@@ -9,7 +9,6 @@ import { isSuppressed } from "../db/suppression";
 import { matchBusiness, type ImportRow, type MatchKind } from "../import/match";
 import { normalizeName } from "../import/names";
 import { CsvFormatError, ImportLimitError, MAX_IMPORT_ROWS, parseCsv, type ParsedRow } from "../import/parse";
-import { bad } from "./suppressions";
 
 export const importRoutes = new Hono<{ Bindings: Env }>();
 
@@ -21,8 +20,9 @@ const PreviewBody = z.object({
   text: z.string().optional(), url: z.string().trim().max(500).optional(), name: z.string().trim().max(200).optional(), source: Source,
 });
 
+// A skipped row is never read, so an empty name (a CSV row that had none) is only an error on rows that will be written.
 const RowIn = z.object({
-  name: z.string({ error: "each row needs a name" }).trim().min(1, "each row needs a name").max(200, "a business name is too long (200 characters at most)"),
+  name: z.string({ error: "each row needs a name" }).trim().max(200, "a business name is too long (200 characters at most)"),
   url: opt(500), address: opt(300), phone: opt(60), category: opt(120),
 });
 const CommitBody = z.object({
@@ -32,6 +32,9 @@ const CommitBody = z.object({
   }).refine((r) => r.action !== "link" || !!r.businessId, { message: "link needs the business to link to" }))
     .min(1, "there are no rows to import").max(MAX_IMPORT_ROWS, `import at most ${MAX_IMPORT_ROWS} rows at a time`),
 });
+
+/** Zod issues as one sentence; an issue inside `rows` is prefixed with its row number as the user sees it (1-based). */
+const bad = (e: z.ZodError) => e.issues.map((i) => (i.path[0] === "rows" && typeof i.path[1] === "number" ? `row ${i.path[1] + 1}: ` : i.path.length ? `${i.path.join(".")}: ` : "") + i.message).join("; ");
 
 const REASON_TEXT: Record<string, string> = { client: "an existing client", opt_out: "opted out", competitor: "a competitor", active_deal: "an active deal", other: "other" };
 const suppressedReason = (s: Suppression) => `On your suppression list: ${REASON_TEXT[s.reason] ?? s.reason}.`;
@@ -106,6 +109,8 @@ importRoutes.post("/commit", async (c) => {
   if (!p.success) return c.json({ error: bad(p.error) }, 400);
   const { source, rows } = p.data;
   const db = c.env.DB;
+  const nameless = rows.findIndex((r) => r.action !== "skip" && !r.row.name);
+  if (nameless >= 0) return c.json({ error: `row ${nameless + 1}: each row needs a name` }, 400);
 
   const pool = await loadMatchPool(db); // grows as rows are created, so a repeat later in the same request sees the first one
   let container: Search | null = null;

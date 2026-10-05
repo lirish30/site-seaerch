@@ -66,3 +66,19 @@ export type SuppressionReason = "client" | "opt_out" | "competitor" | "active_de
 export interface Suppression { id: string; kind: "domain" | "place_id"; value: string; reason: SuppressionReason; note: string | null; created_at: string; }
 /** `suppressed` on GET /api/leads/:id: the reason and note of the list entry this lead matches, or null. */
 export interface LeadSuppression { reason: SuppressionReason; note: string | null; }
+
+/** POST /api/import/preview and /commit. */
+export type ImportKind = "new" | "exact" | "ambiguous" | "duplicate_in_file" | "suppressed" | "invalid";
+export interface ImportRowData { name: string; url: string | null; address?: string | null; phone?: string | null; category?: string | null; source: string }
+export interface ImportCandidate { id: string; name: string; domain: string | null; website_url: string | null; address: string | null; lead_status: LeadStatus; archived_at: string | null }
+export interface ImportPreviewRow {
+  index: number; line: number; row: ImportRowData; kind: ImportKind; reason?: string; candidates: ImportCandidate[];
+  /** True when the name was taken from the web address because none was given. */
+  nameDerived?: boolean;
+}
+export interface ImportCommitResult {
+  created: number; linked: number; alreadyExisted: number; skipped: number; auditsQueued: number; searchId: string | null;
+  refused: { index: number; name: string; reason: string }[];
+  failures: { index: number; name: string; error: string; kind: "row" | "audit" }[];
+  leads: { index: number; id: string; name: string; outcome: "created" | "linked" | "existing" }[];
+}
