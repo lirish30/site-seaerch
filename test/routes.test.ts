@@ -130,6 +130,23 @@ describe("routes", () => {
     expect(d.draft.edited).toBe(true);
   });
 
+  it("lead detail carries a finding diff against the previous audit, null with one audit", async () => {
+    const { b } = await seedLead();
+    expect((await (await api(`/api/leads/${b.id}`)).json<any>()).changes).toBeNull();
+    const fnd = (code: string) => ({ code, category: "technical", severity: "important", points: 5, evidence: code, recommendation: "", source: "rule" });
+    await env.DB.prepare(`UPDATE audits SET created_at = ?, findings = ? WHERE business_id = ?`)
+      .bind("2026-03-01T00:00:00.000Z", JSON.stringify([fnd("no_https"), fnd("slow_lcp")]), b.id).run();
+    await insertAudit(env.DB, { business_id: b.id, site_status: "ok", partial: true, pagespeed_mobile: null, lcp_ms: null, cls: null, mobile_friendly: null,
+      https: false, has_title: true, has_meta_description: true, has_contact_form: false, copyright_year: null, latest_content_date: null, broken_link_count: 0,
+      platform: null, seo_score: null, accessibility_score: null, mail_warning: null,
+      score: 10, offer: "seo_basics", findings: [fnd("slow_lcp") as any, fnd("no_contact_form") as any], raw_r2_key: null, health_score: null, niche: null, category_scores: {}, ai_review: null, screenshots: { desktop: null, mobile: null }, site_links: {} });
+    const { changes } = await (await api(`/api/leads/${b.id}`)).json<any>();
+    expect(changes.since).toBe("2026-03-01T00:00:00.000Z");
+    expect(changes.added.map((x: any) => x.code)).toEqual(["no_contact_form"]);
+    expect(changes.resolved.map((x: any) => x.code)).toEqual(["no_https"]);
+    expect(changes.unchangedCount).toBe(1);
+  });
+
   it("leadRows batches audits/contacts correctly for ~150 businesses (latest audit wins)", async () => {
     const s = await createSearch(env.DB, { location: "Bulk", businessType: "bulk", radiusKm: 1, maxResults: 200 });
     const ids: string[] = [];

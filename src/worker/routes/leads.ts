@@ -1,11 +1,12 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../env";
-import type { Business, LeadStatus } from "../types";
+import type { Business, Finding, LeadStatus } from "../types";
 import { getBusiness, listAllBusinesses, updateLead, domainOf, setArchived, deleteBusiness } from "../db/businesses";
 import { listPeople, createPerson, updatePerson, deletePerson, pocsFor } from "../db/people";
 import { listActivity, logActivity } from "../db/activity";
-import { latestAudit, latestAuditsFor } from "../db/audits";
+import { latestAudit, latestAuditsFor, listAudits } from "../db/audits";
+import { diffFindings } from "../audit/diff";
 import { listContacts, contactsFor } from "../db/contacts";
 import { latestDraft, updateDraftBody, listDrafts } from "../db/drafts";
 import { activeReportFor, createReport, otherActiveCount, revokeReports, type ReportRow } from "../db/reports";
@@ -61,10 +62,16 @@ leadRoutes.get("/:id", async (c) => {
   let business = await getBusiness(c.env.DB, id);
   if (!business) return c.json({ error: "not found" }, 404);
   if (business.lead_status === "new") business = await updateLead(c.env.DB, id, { leadStatus: "reviewed" });
-  const [audit, contacts, draft, people, activity] = await Promise.all([latestAudit(c.env.DB, id), listContacts(c.env.DB, id),
+  const [recent, contacts, draft, people, activity] = await Promise.all([listAudits(c.env.DB, id, 2), listContacts(c.env.DB, id),
     latestDraft(c.env.DB, id), listPeople(c.env.DB, id), listActivity(c.env.DB, id)]);
+  const [audit = null, previous] = recent;
+  let changes: { since: string; added: Finding[]; resolved: Finding[]; unchangedCount: number } | null = null;
+  if (audit && previous) {
+    const d = diffFindings(previous.findings, audit.findings);
+    changes = { since: previous.created_at, added: d.added, resolved: d.resolved, unchangedCount: d.unchanged.length };
+  }
   const toContact = draft?.to_contact_id ? contacts.find((x) => x.id === draft.to_contact_id) ?? null : null;
-  return c.json({ business, audit, contacts, draft, toContact, people, activity });
+  return c.json({ business, audit, contacts, draft, toContact, people, activity, changes });
 });
 
 // Screenshots live in the private R2 bucket; serve the latest audit's copy behind the app's auth.
