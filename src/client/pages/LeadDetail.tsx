@@ -28,6 +28,7 @@ const TONE_OPTIONS: [string, string][] = [["", "Default tone (from Settings)"], 
 const ACTIVITY_LABEL: Record<string, string> = {
   status: "Status", archived: "Archived", restored: "Restored", website: "Website changed", reaudit: "Re-audit",
   score_flagged: "Score flagged", export: "Exported", draft: "Draft", cro_audit: "CRO audit", suppressed: "Suppressed", import: "Imported", bulk: "Bulk change",
+  today_done: "Marked done in Today", snoozed: "Snoozed in Today",
 };
 
 function ChangesBlock({ changes }: { changes: AuditChanges }) {

@@ -105,6 +105,28 @@ export async function listQuickStageBusinesses(db: D1Database, limit = 500) {
     .bind(limit).all<BusinessRow>()).results);
 }
 
+/** A lead the Today queue might list, with the two values it needs that live in other tables. */
+export type TodayCandidate = Business & { latest_draft_at: string | null; latest_score: number | null };
+
+/**
+ * Non-archived leads that could produce a Today item as of `nowIso`, from one query: a due follow-up, a new/reviewed lead with a draft,
+ * a contacted/replied lead with a deal value, or a quick-scanned lead whose latest audit scores at least `minQuickScore`.
+ * The draft time and latest score are sub-selects so no per-lead query is needed; the caller applies the finer rules.
+ */
+export async function listTodayCandidates(db: D1Database, nowIso: string, minQuickScore: number): Promise<TodayCandidate[]> {
+  const open = `lead_status NOT IN ('won','lost','skip')`;
+  const latestScore = `(SELECT a.score FROM audits a WHERE a.business_id = businesses.id ORDER BY a.created_at DESC LIMIT 1)`;
+  const sql = `SELECT *, (SELECT MAX(d.created_at) FROM drafts d WHERE d.business_id = businesses.id) AS latest_draft_at, ${latestScore} AS latest_score
+    FROM businesses WHERE archived_at IS NULL AND (
+      (follow_up_at IS NOT NULL AND follow_up_at <= ? AND ${open})
+      OR (lead_status IN ('new','reviewed') AND EXISTS (SELECT 1 FROM drafts d WHERE d.business_id = businesses.id))
+      OR (lead_status IN ('contacted','replied') AND deal_value IS NOT NULL)
+      OR (scan_stage = 'quick' AND ${open} AND ${latestScore} >= ?)
+    ) ORDER BY created_at, id`;
+  const res = (await db.prepare(sql).bind(nowIso, minQuickScore).all<BusinessRow & { latest_draft_at: string | null; latest_score: number | null }>()).results;
+  return res.map((r) => ({ ...fromBusinessRow(r), latest_draft_at: r.latest_draft_at ?? null, latest_score: r.latest_score ?? null }));
+}
+
 export async function setScanStage(db: D1Database, id: string, stage: ScanStage) {
   await db.prepare(`UPDATE businesses SET scan_stage = ? WHERE id = ?`).bind(stage, id).run();
 }

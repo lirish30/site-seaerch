@@ -13,6 +13,7 @@ import { serviceRoutes } from "./routes/services";
 import { fitRoutes } from "./routes/fit";
 import { suppressionRoutes } from "./routes/suppressions";
 import { importRoutes } from "./routes/import";
+import { todayRoutes } from "./routes/today";
 import { runDueRadars } from "./radar-run";
 import { searchWorkflowStarter } from "./search-start";
 
@@ -30,6 +31,7 @@ app.route("/api/services", serviceRoutes);
 app.route("/api/fit-profiles", fitRoutes);
 app.route("/api/suppressions", suppressionRoutes);
 app.route("/api/import", importRoutes);
+app.route("/api/today", todayRoutes);
 // Mounted last at /api: /api/leads/:id/cro-audit(s), /api/cro-items/:id, /api/cro-audits/:id/... (all behind requireAuth).
 app.route("/api", croRoutes);
 
