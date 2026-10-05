@@ -28,7 +28,7 @@ export async function passwordMatches(given: string, actual: string) {
   return a === b;
 }
 
-const PUBLIC = new Set(["/api/health", "/api/login"]);
+const PUBLIC = new Set(["/api/health", "/api/login", "/api/google/callback"]);
 
 // The only unauthenticated data route: a single non-empty token segment under this prefix, nothing else.
 const PUBLIC_REPORT_PREFIX = "/api/public/report/";

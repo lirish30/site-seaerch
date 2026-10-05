@@ -77,6 +77,40 @@ describe("BrightDataListingSource", () => {
     expect(isRetryable(err)).toBe(true);
   });
 
+  // Live-captured: Bright Data reports an upstream Google Maps failure as HTTP 200 + empty body, with the real
+  // status in x-brd-status-code. Previously res.json() threw "Unexpected end of JSON input" (not retryable).
+  it("HTTP 200 with x-brd-status-code 502 and empty body → retryable error naming the Bright Data error", async () => {
+    const src = new BrightDataListingSource({ apiKey: "K", zone: "Z", fetch: async () =>
+      new Response("", { status: 200, headers: { "x-brd-status-code": "502", "x-brd-error-code": "maps_ajax_failed", "x-brd-error": "Significant request was rejected" } }) });
+    const err = await src.search({ location: "x", businessType: "y", radiusKm: 1, maxResults: 5 }).catch((e) => e);
+    expect(isRetryable(err)).toBe(true);
+    expect(err.message).toContain("502");
+    expect(err.message).toContain("maps_ajax_failed");
+    expect(err.message).not.toMatch(/JSON/);
+  });
+
+  it("HTTP 200 with an empty body and no error headers → retryable error, not a JSON SyntaxError", async () => {
+    const src = new BrightDataListingSource({ apiKey: "K", zone: "Z", fetch: async () => new Response("", { status: 200 }) });
+    const err = await src.search({ location: "x", businessType: "y", radiusKm: 1, maxResults: 5 }).catch((e) => e);
+    expect(isRetryable(err)).toBe(true);
+    expect(err.message).toMatch(/empty/i);
+  });
+
+  it("HTTP 200 with x-brd-status-code 4xx (not 429) → non-retryable error", async () => {
+    const src = new BrightDataListingSource({ apiKey: "K", zone: "Z", fetch: async () =>
+      new Response("", { status: 200, headers: { "x-brd-status-code": "403", "x-brd-error-code": "blocked" } }) });
+    const err = await src.search({ location: "x", businessType: "y", radiusKm: 1, maxResults: 5 }).catch((e) => e);
+    expect(err.message).toContain("403");
+    expect(isRetryable(err)).toBe(false);
+  });
+
+  it("HTTP 200 with a non-JSON body → readable, retryable error", async () => {
+    const src = new BrightDataListingSource({ apiKey: "K", zone: "Z", fetch: async () => new Response("<html>oops</html>", { status: 200 }) });
+    const err = await src.search({ location: "x", businessType: "y", radiusKm: 1, maxResults: 5 }).catch((e) => e);
+    expect(isRetryable(err)).toBe(true);
+    expect(err.message).toContain("<html>oops");
+  });
+
   it("HTTP 4xx (not 429) → non-retryable error", async () => {
     const src = new BrightDataListingSource({ apiKey: "K", zone: "Z", fetch: async () => new Response("bad zone", { status: 401 }) });
     const err = await src.search({ location: "x", businessType: "y", radiusKm: 1, maxResults: 5 }).catch((e) => e);

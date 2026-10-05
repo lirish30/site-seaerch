@@ -1,4 +1,4 @@
-export type Service = "brightdata" | "pagespeed" | "claude";
+export type Service = "brightdata" | "pagespeed" | "claude" | "browser" | "claude_cro";
 
 export async function recordUsage(db: D1Database, service: Service, units: number, estCostUsd: number) {
   const now = new Date().toISOString();

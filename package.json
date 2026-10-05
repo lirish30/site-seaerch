@@ -11,10 +11,12 @@
     "typecheck": "tsc --noEmit",
     "db:migrate:local": "wrangler d1 migrations apply site-search --local",
     "db:migrate:remote": "wrangler d1 migrations apply site-search --remote",
-    "prompt-check": "tsx scripts/prompt-check.ts"
+    "prompt-check": "tsx scripts/prompt-check.ts",
+    "cro-eval": "tsx scripts/cro-eval.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
+    "@cloudflare/puppeteer": "^1.4.0",
     "hono": "^4.13.12",
     "node-html-parser": "^9.0.4",
     "react": "^19.3.0",

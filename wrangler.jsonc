@@ -11,10 +11,12 @@
   "d1_databases": [
     { "binding": "DB", "database_name": "site-search", "database_id": "373804f6-ecf3-448e-a9ed-ddc82b853f01", "migrations_dir": "migrations" }
   ],
+  "browser": { "binding": "BROWSER" },
   "r2_buckets": [{ "binding": "RAW", "bucket_name": "site-search-raw" }],
   "workflows": [
     { "name": "lead-workflow", "binding": "LEAD_WORKFLOW", "class_name": "LeadWorkflow" },
-    { "name": "search-workflow", "binding": "SEARCH_WORKFLOW", "class_name": "SearchWorkflow" }
+    { "name": "search-workflow", "binding": "SEARCH_WORKFLOW", "class_name": "SearchWorkflow" },
+    { "name": "cro-audit-workflow", "binding": "CRO_AUDIT_WORKFLOW", "class_name": "CroAuditWorkflow" }
   ],
   "ratelimits": [{ "name": "LOGIN_LIMITER", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } }],
   "triggers": { "crons": ["17 13 * * *"] },

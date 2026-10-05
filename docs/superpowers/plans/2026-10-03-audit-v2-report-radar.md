@@ -36,7 +36,7 @@ Raise the reply rate of outreach by (a) auditing more of what a prospect's site 
 
 ## Task 1 — Platform detection
 
-**Files:** `src/worker/crawler/extract.ts`, `src/worker/crawler/crawl.ts`, `src/worker/scoring/scorer.ts` (CrawlFacts type only), `src/worker/types.ts`, `src/worker/db/audits.ts`, `src/worker/pipeline/lead.ts`, `migrations/0002_platform.sql`, tests (`test/extract.test.ts`, `test/crawl.test.ts`, `test/db.test.ts`, `test/pipeline-lead.test.ts`).
+**Files:** `src/worker/crawler/extract.ts`, `src/worker/crawler/crawl.ts`, `src/worker/scoring/scorer.ts` (CrawlFacts type only), `src/worker/types.ts`, `src/worker/db/audits.ts`, `src/worker/pipeline/lead.ts`, `migrations/0007_platform.sql`, tests (`test/extract.test.ts`, `test/crawl.test.ts`, `test/db.test.ts`, `test/pipeline-lead.test.ts`).
 
 **Build:**
 - `detectPlatform(html: string): Platform` exported from `extract.ts`, `type Platform = "wix" | "squarespace" | "godaddy" | "wordpress" | "weebly" | "shopify" | "webflow" | "other"`. Signals: `<meta name="generator">` content, and asset/host markers (`static.wixstatic.com`/`wix.com`, `squarespace.com`/`sqsp`, `img1.wsimg.com`/`godaddy` website builder, `/wp-content/`, `weebly.com`, `cdn.shopify.com`, `webflow` classes/`assets.website-files.com`). Return `"other"` when nothing matches. Add `platform` to `PageFacts` (home page only is used).
@@ -60,7 +60,7 @@ Raise the reply rate of outreach by (a) auditing more of what a prospect's site 
 
 ## Task 3 — Lighthouse SEO + accessibility categories, new finding groups
 
-**Files:** `src/worker/pagespeed.ts`, `src/worker/scoring/scorer.ts`, `src/worker/scoring/config.ts`, `src/worker/types.ts`, `src/worker/db/audits.ts`, `src/worker/pipeline/lead.ts`, `migrations/0003_lighthouse_scores.sql`, `src/client/pages/LeadDetail.tsx` (display), tests (`test/pagespeed.test.ts`, `test/scorer.test.ts`, `test/db.test.ts`, `test/pipeline-lead.test.ts`).
+**Files:** `src/worker/pagespeed.ts`, `src/worker/scoring/scorer.ts`, `src/worker/scoring/config.ts`, `src/worker/types.ts`, `src/worker/db/audits.ts`, `src/worker/pipeline/lead.ts`, `migrations/0008_lighthouse_scores.sql`, `src/client/pages/LeadDetail.tsx` (display), tests (`test/pagespeed.test.ts`, `test/scorer.test.ts`, `test/db.test.ts`, `test/pipeline-lead.test.ts`).
 
 **Build:**
 - `runPageSpeed` requests `category=performance&category=seo&category=accessibility` (repeat the param) in the **same single call**. Extend `PageSpeedFacts` with `seoScore: number | null`, `accessibilityScore: number | null` (0–100, null if category missing), `seoIssues: string[]`, `accessibilityIssues: string[]` — plain-English labels for the failing audits, via an explicit map of Lighthouse audit id → label, e.g. `meta-description` → "no search-results summary", `document-title` → "no page title", `image-alt` → "images without descriptions", `link-text` → "links that just say 'click here'", `is-crawlable` → "blocked from Google", `canonical` → "no preferred page address set", `color-contrast` → "text that's hard to read against its background", `label` → "form fields without labels". Unknown failing audit ids are ignored (never surfaced raw). An audit "fails" when `score !== null && score < 0.9`. Keep existing performance parsing and the `passes()` semantics unchanged.
@@ -105,7 +105,7 @@ Raise the reply rate of outreach by (a) auditing more of what a prospect's site 
 
 ## Task 6 — Shareable audit report
 
-**Files:** new `migrations/0004_reports.sql`, `src/worker/db/reports.ts`, `src/worker/routes/reports.ts`, `src/worker/index.ts`, `src/worker/auth.ts`, `src/worker/db/settings.ts`, `src/worker/routes/settings.ts`, `src/client/App.tsx`, `src/client/api.ts`, new `src/client/pages/Report.tsx`, `src/client/pages/LeadDetail.tsx`, `src/client/pages/Settings.tsx`, `src/client/types.ts`, tests (`test/reports.test.ts`, `test/auth.test.ts`).
+**Files:** new `migrations/0009_reports.sql`, `src/worker/db/reports.ts`, `src/worker/routes/reports.ts`, `src/worker/index.ts`, `src/worker/auth.ts`, `src/worker/db/settings.ts`, `src/worker/routes/settings.ts`, `src/client/App.tsx`, `src/client/api.ts`, new `src/client/pages/Report.tsx`, `src/client/pages/LeadDetail.tsx`, `src/client/pages/Settings.tsx`, `src/client/types.ts`, tests (`test/reports.test.ts`, `test/auth.test.ts`).
 
 **Build:**
 - Table `audit_reports(token TEXT PRIMARY KEY, business_id TEXT NOT NULL, audit_id TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, revoked INTEGER NOT NULL DEFAULT 0)` + index on `business_id`. Settings gains `logo_url TEXT NOT NULL DEFAULT ''` (same migration). Tokens: 32 random bytes, base64url, from `crypto.getRandomValues`. Default expiry 30 days.
@@ -118,7 +118,7 @@ Raise the reply rate of outreach by (a) auditing more of what a prospect's site 
 
 ## Task 7 — Radar (saved, scheduled searches)
 
-**Files:** new `migrations/0005_radar.sql`, `src/worker/db/radar.ts`, `src/worker/routes/radar.ts`, `src/worker/radar-run.ts`, `src/worker/index.ts`, `wrangler.jsonc`, `src/client/App.tsx`, new `src/client/pages/Radar.tsx`, `src/client/pages/NewSearch.tsx`, `src/client/api.ts`, `src/client/types.ts`, tests (`test/radar.test.ts`, `test/health.test.ts` if affected).
+**Files:** new `migrations/0010_radar.sql`, `src/worker/db/radar.ts`, `src/worker/routes/radar.ts`, `src/worker/radar-run.ts`, `src/worker/index.ts`, `wrangler.jsonc`, `src/client/App.tsx`, new `src/client/pages/Radar.tsx`, `src/client/pages/NewSearch.tsx`, `src/client/api.ts`, `src/client/types.ts`, tests (`test/radar.test.ts`, `test/health.test.ts` if affected).
 
 **Build:**
 - Table `radars(id TEXT PRIMARY KEY, location TEXT NOT NULL, business_type TEXT NOT NULL, radius_km REAL NOT NULL, max_results INTEGER NOT NULL, interval_days INTEGER NOT NULL DEFAULT 30, enabled INTEGER NOT NULL DEFAULT 1, next_run_at TEXT NOT NULL, last_run_at TEXT, last_search_id TEXT, last_error TEXT, created_at TEXT NOT NULL)`.

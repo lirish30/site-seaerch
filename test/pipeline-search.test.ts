@@ -134,7 +134,8 @@ describe("runSearch", () => {
     const audit = (businessId: string, o: { partial?: boolean; site_status?: "ok" | "unreachable" } = {}) => insertAudit(env.DB, {
       business_id: businessId, site_status: o.site_status ?? "ok", partial: o.partial ?? false, pagespeed_mobile: null, lcp_ms: null, cls: null, mobile_friendly: null,
       https: true, has_title: true, has_meta_description: true, has_contact_form: true, copyright_year: null, latest_content_date: null, broken_link_count: 0,
-      platform: null, seo_score: null, accessibility_score: null, score: 10, offer: "seo_basics", findings: [], raw_r2_key: null, mail_warning: null });
+      platform: null, seo_score: null, accessibility_score: null, score: 10, offer: "seo_basics", findings: [], raw_r2_key: null, mail_warning: null,
+      health_score: null, niche: null, category_scores: {}, ai_review: null, screenshots: { desktop: null, mobile: null }, site_links: {} });
     const seedBusiness = async (id: string) => {
       const s0 = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 50 });
       return upsertBusiness(env.DB, L(id), s0.id);

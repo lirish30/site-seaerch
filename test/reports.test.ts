@@ -21,7 +21,11 @@ beforeAll(async () => {
     services_blurb: "SECRET-BLURB", signature: "SECRET-SIG", physical_address: "SECRET-SENDER-ADDR" });
 });
 
-const fnd = (code: Finding["code"], severity: Finding["severity"], points: number, evidence: string): Finding => ({ code, group: "basics", severity, points, evidence });
+// Findings are stored as critical / important / nice; the public report shows them as high / medium / low.
+type PublicSev = "high" | "medium" | "low";
+const STORED: Record<PublicSev, Finding["severity"]> = { high: "critical", medium: "important", low: "nice" };
+const fnd = (code: Finding["code"], severity: PublicSev, points: number, evidence: string): Finding =>
+  ({ code, category: "technical", severity: STORED[severity], points, evidence, recommendation: "SECRET-RECOMMENDATION", source: "rule" });
 const FINDINGS = [
   fnd("no_title_or_meta", "low", 3, "Low one"), fnd("no_https", "high", 15, "High one"), fnd("slow_mobile", "medium", 8, "Medium one"),
   fnd("no_h1", "low", 2, "Low two"), fnd("slow_lcp", "high", 11, "High two"),
@@ -32,7 +36,9 @@ async function seedAudit(businessId: string, o: { findings?: Finding[]; partial?
   await wait();
   return insertAudit(env.DB, { business_id: businessId, site_status: "ok", partial: o.partial ?? false, pagespeed_mobile: 31, lcp_ms: 4100, cls: 0.2, mobile_friendly: null,
     https: false, has_title: true, has_meta_description: true, has_contact_form: false, copyright_year: null, latest_content_date: null, broken_link_count: 0, platform: "wix",
-    seo_score: 62, accessibility_score: 71, score: o.score ?? 8675, offer: "new_site", findings: o.findings ?? FINDINGS, raw_r2_key: "raw/SECRET-R2-KEY", mail_warning: "SECRET-MAIL-WARNING no mail records bounce" });
+    seo_score: 62, accessibility_score: 71, score: o.score ?? 8675, offer: "new_site", findings: o.findings ?? FINDINGS, raw_r2_key: "raw/SECRET-R2-KEY", mail_warning: "SECRET-MAIL-WARNING no mail records bounce",
+    health_score: 4321, niche: "SECRET-NICHE", category_scores: { design: 13 }, ai_review: null,
+    screenshots: { desktop: "shots/SECRET-DESKTOP.jpg", mobile: null }, site_links: { contact: "https://secret-site.example/SECRET-CONTACT" } });
 }
 
 async function seedLead(name = "Ace Plumbing") {
@@ -166,12 +172,22 @@ describe("public report endpoint", () => {
       { severity: "low", evidence: "Low one" }, { severity: "low", evidence: "Low two" },
     ]);
     // nothing internal anywhere in the serialized body
-    for (const s of ["SECRET", "8675", "points", "no_https", "slow_mobile", "basics", "score", b.id, a.id, "raw/", "wix", "new_site", "reviewed", "4242"]) {
+    for (const s of ["SECRET", "8675", "4321", "points", "no_https", "slow_mobile", "basics", "technical", "critical", "important", "nice", "recommendation", "score", "shots/", b.id, a.id, "raw/", "wix", "new_site", "reviewed", "4242"]) {
       expect(text, s).not.toContain(s);
     }
     // the owner-only mail note is stored on the audit and must stay out of the public report
     expect((await latestAudit(env.DB, b.id))!.mail_warning).toContain("SECRET-MAIL-WARNING");
     expect(text).not.toMatch(/mail_warning|mail records|bounce/i);
+  });
+
+  it("audits stored before audit v2 (high / medium / low findings) still show with their severity", async () => {
+    const { b } = await seedLead();
+    await seedAudit(b.id, { findings: [{ code: "no_https", group: "basics", severity: "high", points: 15, evidence: "Old high" } as any,
+      { code: "no_h1", group: "seo", severity: "low", points: 3, evidence: "Old low" } as any] });
+    const j = await (await api(`/api/leads/${b.id}/report`, { method: "POST" })).json<any>();
+    const body = await (await pub(j.token)).json<any>();
+    expect(body.counts).toEqual({ high: 1, medium: 0, low: 1 });
+    expect(body.findings).toEqual([{ severity: "high", evidence: "Old high" }, { severity: "low", evidence: "Old low" }]);
   });
 
   it("shows partial and handles zero findings; hides a non-https logo", async () => {

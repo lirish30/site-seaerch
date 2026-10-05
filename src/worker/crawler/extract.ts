@@ -1,11 +1,20 @@
 import { parse, type HTMLElement, type Node } from "node-html-parser";
-import type { Platform } from "../types";
+import type { PageKind, Platform } from "../types";
+import { PAGE_KINDS, kindOf } from "./pageKinds";
 
 export interface PageFacts {
   title: string | null; metaDescription: string | null; hasViewport: boolean; hasForm: boolean;
   emails: { value: string; personName: string | null; role: string | null }[];
   phones: string[]; socials: string[]; copyrightYear: number | null;
   dates: string[]; eventDates: string[]; internalLinks: string[]; isParked: boolean; platform: Platform;
+  /** Internal links with their anchor text; nav/footer links come first. */
+  anchors: { url: string; text: string }[];
+  hasNav: boolean; navItemCount: number; hasFooter: boolean; hasH1: boolean; hasCta: boolean;
+  hasSocialProof: boolean; hasBooking: boolean; hasEmbeddedForm: boolean; hasOpenGraph: boolean;
+  schemaTypes: string[];
+  /** Links to job boards or ATS pages (careers often live off-site). */
+  externalCareers: string[];
+  // Visible words; images that are content (not hidden/presentational), and those with no alt attribute at all (alt="" is decorative).
   h1Count: number; wordCount: number; imageCount: number; imagesMissingAlt: number; hasTelLink: boolean; hasLocalBusinessSchema: boolean;
   mixedContentCount: number; datedBuildMarkers: string[]; isLikelyJsRendered: boolean;
   hasPhoneNumber: boolean;
@@ -30,6 +39,12 @@ const SOCIAL_ONLY = /(^|\.)(facebook\.com|fb\.com|instagram\.com|yelp\.com|linkt
 const NON_HTML = /\.(pdf|jpe?g|png|gif|svg|webp|zip|docx?|xlsx?|mp4|mp3)(\?|$)/i;
 const PARKED = /(domain (may be|is) for sale|buy this domain|this domain is parked|parked free|godaddy\.com\/domainsearch|\bsedo\.com\b|\bhugedomains\b|\bdan\.com\b)/i;
 const ROLE_RE = /^(owner|co-owner|founder|co-founder|president|ceo|manager|office manager|general manager|principal|director|partner|administrator|marketing( manager| director)?)$/i;
+// Third-party form, booking and ATS providers: their widgets are iframes/scripts a plain <form> check misses.
+const EMBED_FORM = /hsforms|hubspot\.com\/forms|hs-form|typeform|jotform|docs\.google\.com\/forms|forms\.gle|wufoo|formstack|cognitoforms|123formbuilder|paperform|tally\.so|wpforms|gform_wrapper|wpcf7|ninja-forms|elementor-form|wixforms|squarespace-form|form-block|fs-form/i;
+const BOOKING = /calendly|acuityscheduling|opentable|resy\.com|toasttab|squareup\.com\/appointments|square\.site\/book|booksy|vagaro|mindbodyonline|zocdoc|housecallpro|jobber|servicetitan|setmore|simplybook|yelp\.com\/reservations|tock\.com|doordash|ubereats|grubhub|chownow|appointy|schedulicity/i;
+const ATS = /indeed\.com|greenhouse\.io|lever\.co|workable\.com|bamboohr\.com\/careers|applytojob|jobvite|smartrecruiters|ziprecruiter|paylocity\.com\/recruiting|recruitee|breezy\.hr|careers\./i;
+const CTA_RE = /\b(book|schedule|get (a |your )?(free )?(quote|estimate|started|in touch)|request|call (us|now|today)|contact us|order( online| now)?|reserve|make an appointment|free consultation|sign up|apply now|donate|enroll|buy now|shop now)\b/i;
+const SOCIAL_PROOF = /testimonial|what (our )?(clients|customers|patients|guests) (say|are saying)|\breviews?\b|★|5[- ]star|google reviews|trusted by|case stud/i;
 const MONTHS = ["january","february","march","april","may","june","july","august","september","october","november","december"];
 const MONTH_DATE_RE = new RegExp(`\\b(${MONTHS.join("|")}|${MONTHS.map((m) => m.slice(0, 3)).join("|")})\\.?\\s+(\\d{1,2}),?\\s+(20\\d{2}|19\\d{2})\\b`, "gi");
 const ISO_DATE_RE = /\b(20\d{2}|19\d{2})-(\d{2})-(\d{2})\b/g;
@@ -332,6 +347,21 @@ function visibleText(root: HTMLElement): string {
     .map((c) => c.nodeType === 1 ? (/^(HEAD|TITLE)$/.test((c as HTMLElement).tagName) ? "" : (c as HTMLElement).structuredText) : c.nodeType === 3 && !isDoctype(c.rawText.trim()) ? c.text : "").join(" ");
 }
 
+// JSON-LD script bodies from raw HTML with a linear indexOf scan: a backtracking regex over hostile markup
+// (thousands of unclosed <script ...> tags) is quadratic and can hang the worker.
+function jsonLdBodies(html: string): string[] {
+  const out: string[] = []; const lower = html.toLowerCase();
+  for (let i = lower.indexOf("<script"); i !== -1 && out.length < 50; i = lower.indexOf("<script", i + 7)) {
+    const tagEnd = lower.indexOf(">", i);
+    if (tagEnd === -1) break;
+    const close = lower.indexOf("</script>", tagEnd);
+    if (close === -1) break;
+    if (lower.slice(i, tagEnd).includes("application/ld+json")) out.push(html.slice(tagEnd + 1, close));
+    i = close;
+  }
+  return out;
+}
+
 function isContactForm(f: HTMLElement): boolean {
   const fields = f.querySelectorAll("input, textarea");
   if (fields.length >= 2) return true;
@@ -394,6 +424,40 @@ export function extractPage(html: string, pageUrl: string): PageFacts {
     internal.add(u.toString());
   }
 
+  // Nav/footer links first so crawl targets follow the site's own structure.
+  const navEls = root.querySelectorAll('nav, [role="navigation"], header');
+  const footerEls = root.querySelectorAll('footer, [role="contentinfo"], #footer, .footer, .site-footer');
+  const anchorOf = (a: HTMLElement) => {
+    const href = (a.getAttribute("href") ?? "").trim();
+    if (!href || /^(mailto:|tel:|javascript:|#)/i.test(href)) return null;
+    try {
+      const u = new URL(href, base); u.hash = "";
+      if (u.hostname.toLowerCase().replace(/^www\./, "") !== base.hostname.toLowerCase().replace(/^www\./, "")) return null;
+      if (NON_HTML.test(u.pathname)) return null;
+      return { url: u.toString(), text: a.text.replace(/\s+/g, " ").trim().slice(0, 60) };
+    } catch { return null; }
+  };
+  const anchorMap = new Map<string, { url: string; text: string }>();
+  for (const el of [...navEls, ...footerEls, root]) {
+    for (const a of el.querySelectorAll("a[href]")) {
+      const x = anchorOf(a);
+      if (x && !anchorMap.has(x.url)) anchorMap.set(x.url, x);
+    }
+  }
+  const navLinks = new Set(navEls.flatMap((n) => n.querySelectorAll("a[href]").map((a) => a.getAttribute("href"))));
+
+  const externalCareers = root.querySelectorAll("a[href]").map((a) => a.getAttribute("href") ?? "")
+    .filter((h) => /^https?:/i.test(h) && ATS.test(h) && /career|job|apply|hiring|recruit/i.test(h)).slice(0, 3);
+
+  // Script bodies are dropped by the parser, so read JSON-LD from the raw HTML.
+  const schemaTypes = new Set<string>(jsonLdBodies(html).flatMap((b) => [...b.matchAll(/"@type"\s*:\s*"([^"]{1,200})"/g)].map((m) => m[1])));
+  const embedHay = [
+    ...root.querySelectorAll("iframe[src], script[src]").map((e) => e.getAttribute("src") ?? ""),
+    ...root.querySelectorAll("[class], [id]").map((e) => `${e.getAttribute("class") ?? ""} ${e.getAttribute("id") ?? ""}`),
+  ].join(" ");
+  const linkHay = root.querySelectorAll("a[href], iframe[src]").map((e) => e.getAttribute("href") ?? e.getAttribute("src") ?? "").join(" ");
+  const ctaTexts = root.querySelectorAll('a, button, input[type="submit"]').map((e) => e.text || e.getAttribute("value") || "");
+
   // The main parse drops script/style/noscript text, so structuredText is visible text; the head (title) is not, hence body when there is one.
   const visible = visibleText(root).replace(/\s+/g, " ").trim();
   const dom = scanDom(root, base.protocol === "https:");
@@ -413,6 +477,18 @@ export function extractPage(html: string, pageUrl: string): PageFacts {
     eventDates: [...eventDates],
     internalLinks: [...internal],
     isParked: PARKED.test(`${title ?? ""} ${text.slice(0, 3000)}`),
+    anchors: [...anchorMap.values()],
+    hasNav: navLinks.size >= 2,
+    navItemCount: navLinks.size,
+    hasFooter: footerEls.length > 0,
+    hasH1: root.querySelectorAll("h1").some((h) => h.text.trim().length > 0),
+    hasCta: ctaTexts.some((t) => CTA_RE.test(t)),
+    hasSocialProof: SOCIAL_PROOF.test(text) || /testimonial|review/i.test(embedHay),
+    hasBooking: BOOKING.test(`${linkHay} ${embedHay}`),
+    hasEmbeddedForm: EMBED_FORM.test(embedHay),
+    hasOpenGraph: !!root.querySelector('meta[property="og:title"], meta[property="og:image"]'),
+    schemaTypes: [...schemaTypes],
+    externalCareers,
     platform,
     h1Count: dom.h1Count,
     wordCount: visible.match(/\S+/g)?.length ?? 0,
@@ -428,29 +504,30 @@ export function extractPage(html: string, pageUrl: string): PageFacts {
   };
 }
 
-const TARGET_PATTERNS = [/contact/i, /about/i, /team|staff|people/i, /blog/i, /news|updates/i, /event|calendar/i];
-
-export function pickCrawlTargets(links: string[], baseUrl: string, max: number): string[] {
+/** One link per page kind, in PAGE_KINDS priority order, plus the kind each link was chosen for. */
+export function classifyLinks(anchors: { url: string; text: string }[], baseUrl: string): Partial<Record<PageKind, string>> {
   const base = new URL(baseUrl);
   const baseHost = base.hostname.toLowerCase().replace(/^www\./, "");
-  const seen = new Set<string>([base.toString()]);
-  const candidates: URL[] = [];
-  for (const l of links) {
+  const out: Partial<Record<PageKind, string>> = {};
+  for (const a of anchors) {
     let u: URL;
-    try { u = new URL(l, base); } catch { continue; }
+    try { u = new URL(a.url, base); } catch { continue; }
     if (!/^https?:$/.test(u.protocol) || u.hostname.toLowerCase().replace(/^www\./, "") !== baseHost) continue;
-    u.hash = "";
-    candidates.push(u);
+    const k = kindOf(u.toString(), a.text);
+    if (k && !out[k]) out[k] = u.toString();
   }
+  return out;
+}
+
+export function pickCrawlTargets(anchors: { url: string; text: string }[], baseUrl: string, max: number): string[] {
+  const kinds = classifyLinks(anchors, baseUrl);
+  const seen = new Set<string>([new URL(baseUrl).toString()]);
   const out: string[] = [];
-  for (const pat of TARGET_PATTERNS) {
-    for (const u of candidates) {
-      const s = u.toString();
-      if (seen.has(s) || !pat.test(u.pathname)) continue;
-      seen.add(s); out.push(s);
-      break;
-    }
+  for (const [k] of PAGE_KINDS) {
+    const u = kinds[k];
+    if (!u || seen.has(u)) continue;
+    seen.add(u); out.push(u);
     if (out.length >= max) break;
   }
-  return out.slice(0, max);
+  return out;
 }

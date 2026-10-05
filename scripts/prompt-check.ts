@@ -10,7 +10,9 @@ const settings: Settings = {
   services_blurb: "I build, speed up, and look after websites for small local businesses.",
   signature: "Logan Irish", physical_address: process.env.ADDRESS ?? "123 Main St, Boise, ID 83702",
   opt_out_line: "If you'd rather not hear from me, just reply \"no thanks\" and I won't follow up.",
-  tone_notes: process.env.TONE ?? "", monthly_spend_limit_usd: 25, logo_url: "",
+  tone_notes: process.env.TONE ?? "", monthly_spend_limit_usd: 25,
+  tone_preset: (process.env.TONE_PRESET as Settings["tone_preset"]) ?? "friendly_local",
+  email_length: (process.env.EMAIL_LENGTH as Settings["email_length"]) ?? "short", cta_style: "mini_audit", logo_url: "",
 };
 const JARGON = /\b(LCP|CLS|Core Web Vitals|meta description|viewport|SEO)\b/i;
 const leads = JSON.parse(readFileSync("scripts/fixtures/leads.json", "utf8"));

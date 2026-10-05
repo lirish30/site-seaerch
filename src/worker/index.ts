@@ -5,6 +5,8 @@ import { authRoutes } from "./routes/auth";
 import { searchRoutes } from "./routes/searches";
 import { leadRoutes } from "./routes/leads";
 import { settingsRoutes } from "./routes/settings";
+import { googleRoutes } from "./routes/google";
+import { croRoutes } from "./routes/cro";
 import { publicRoutes } from "./routes/public";
 import { radarRoutes } from "./routes/radar";
 import { runDueRadars } from "./radar-run";
@@ -17,8 +19,11 @@ app.route("/api", authRoutes);
 app.route("/api/searches", searchRoutes);
 app.route("/api/leads", leadRoutes);
 app.route("/api/settings", settingsRoutes);
+app.route("/api/google", googleRoutes);
 app.route("/api/public", publicRoutes);
 app.route("/api/radar", radarRoutes);
+// Mounted last at /api: /api/leads/:id/cro-audit(s), /api/cro-items/:id, /api/cro-audits/:id/... (all behind requireAuth).
+app.route("/api", croRoutes);
 
 export default {
   fetch: app.fetch,
@@ -31,4 +36,4 @@ export default {
     );
   },
 } satisfies ExportedHandler<Env>;
-export { LeadWorkflow, SearchWorkflow } from "./workflows";
+export { LeadWorkflow, SearchWorkflow, CroAuditWorkflow } from "./workflows";

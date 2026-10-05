@@ -7,3 +7,4 @@ dist
 .dev.vars
 scripts/out
 .prod-login.txt
+scripts/cro-eval/fixtures/*.json

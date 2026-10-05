@@ -1,6 +1,6 @@
 import type { LeadRow } from "./types";
 
-export const OFFERS = ["new_site", "performance", "care_plan", "seo_basics"] as const;
+export const OFFERS = ["new_site", "performance", "care_plan", "seo_basics", "conversion"] as const;
 export const NOT_CRAWLED = "not_crawled";
 // minReviews / maxRating: null (or <= 0 for minReviews) means off. offer / platform: "any" means off.
 export interface LeadFilters { hideSkipped: boolean; minScore: number; emailOnly: boolean; minReviews: number | null; maxRating: number | null; offer: "any" | (typeof OFFERS)[number]; platform: string; }

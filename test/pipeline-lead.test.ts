@@ -8,6 +8,7 @@ import { upsertBusiness } from "../src/worker/db/businesses";
 import { latestAudit } from "../src/worker/db/audits";
 import { latestDraft } from "../src/worker/db/drafts";
 import { listContacts } from "../src/worker/db/contacts";
+import { createPerson } from "../src/worker/db/people";
 import type { Listing } from "../src/worker/types";
 
 const step: StepLike = { do: (_n, fn) => fn(), sleep: async () => {} };
@@ -30,6 +31,12 @@ function deps(over: Partial<LeadDeps> = {}): LeadDeps & { claudeCalls: number } 
 }
 const listing = (o: Partial<Listing>): Listing => ({ placeId: null, name: "Ace", category: "Plumber", address: "Boise", phone: null,
   websiteUrl: "https://ace.com", mapsUrl: null, rating: null, reviewCount: null, ...o });
+
+const GOOD_SITE_BODY = `<header><nav><a href="/services">Services</a><a href="/projects">Our work</a><a href="/about">About</a><a href="/contact">Contact</a></nav></header>
+  <h1>Boise's trusted plumbers</h1><a href="/contact">Get a free quote</a><a href="tel:2085551234">(208) 555-1234</a>
+  <p>${"Licensed, insured local plumbers fixing leaks, water heaters and drains across Boise and Meridian since 1998. ".repeat(10)}</p>
+  <p>What our customers say: fast, friendly and fair.</p>
+  <form><input name="email"><textarea></textarea></form><footer>© 2026 Ace Plumbing</footer>`;
 
 describe("runLead", () => {
   it("crawls, scores, drafts, stores contacts and raw, increments progress", async () => {
@@ -87,7 +94,7 @@ describe("runLead", () => {
     const a = (await latestAudit(env.DB, b.id))!;
     expect(a.partial).toBe(true);
     expect(a.pagespeed_mobile).toBeNull();
-    expect(a.findings.map((f) => f.group)).not.toContain("speed");
+    expect(a.findings.map((f) => f.category)).not.toContain("speed");
   });
 
   it("bot-blocked site → blocked audit scored from PageSpeed on the original URL, no 'didn't load' claim", async () => {
@@ -126,7 +133,7 @@ describe("runLead", () => {
     const b = await upsertBusiness(env.DB, listing({ placeId: "L3", websiteUrl: "https://good.com" }), s.id);
     const good = async (u: string) => u.includes("pagespeedonline")
       ? Response.json({ lighthouseResult: { categories: { performance: { score: 0.95 } }, audits: { "largest-contentful-paint": { numericValue: 1000 }, "cumulative-layout-shift": { numericValue: 0 } } } })
-      : u === "https://good.com/" ? page(`<form><input name="email"><textarea></textarea></form><p>© 2026</p>`, `<title>G</title><meta name="description" content="d"><meta name="viewport" content="x">`)
+      : u === "https://good.com/" ? page(GOOD_SITE_BODY, `<title>G</title><meta name="description" content="d"><meta name="viewport" content="x"><meta property="og:title" content="G"><script type="application/ld+json">{"@type":"Plumber"}</script>`)
       : new Response("", { status: 404, headers: { "content-type": "text/html" } });
     const d = deps({ fetch: good });
     const r = await runLead(d, step, { businessId: b.id, searchId: s.id });
@@ -155,9 +162,26 @@ describe("runLead", () => {
     let lastUser = "";
     const d = deps({ claude: async (p) => { lastUser = p.user; return { subject: "S2", body: "B2", to_contact_id: null, recipient_reason: "r" }; } });
     await runLead(d, step, { businessId: b.id, searchId: s.id });
-    const dr = await regenerateDraft(d, b.id, "shorter");
+    const dr = await regenerateDraft(d, b.id, { steeringNote: "shorter" });
     expect(lastUser).toContain("shorter");
     expect(dr.steering_note).toBe("shorter");
+  });
+
+  it("regenerateDraft focuses on chosen findings and addresses the point of contact", async () => {
+    const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 5 });
+    const b = await upsertBusiness(env.DB, listing({ placeId: "L5b" }), s.id);
+    let lastUser = "";
+    const d = deps({ claude: async (p) => { lastUser = p.user; return { subject: "S", body: "B", to_contact_id: null, recipient_reason: "r" }; } });
+    await runLead(d, step, { businessId: b.id, searchId: s.id, forceDraft: true });
+    const a = (await latestAudit(env.DB, b.id))!;
+    await createPerson(env.DB, b.id, { name: "Ann Lee", role: "Owner", email: "ann@ace.com", is_poc: true });
+    const dr = await regenerateDraft(d, b.id, { focus: [a.findings.length - 1] });
+    expect(lastUser).toContain("Lead with these issues");
+    expect(lastUser).toContain(a.findings.at(-1)!.evidence);
+    expect(lastUser).toContain("Address the email to: Ann Lee (Owner)");
+    const to = (await listContacts(env.DB, b.id)).find((c) => c.id === dr.to_contact_id)!;
+    expect(to.value).toBe("ann@ace.com");
+    expect(dr.recipient_reason).toBe("Your chosen point of contact");
   });
 
   it("pagespeed step failing after retries → partial audit, draft still runs", async () => {
@@ -168,6 +192,68 @@ describe("runLead", () => {
     const r = await runLead(d, failing, { businessId: b.id, searchId: s.id, forceDraft: true });
     expect((await latestAudit(env.DB, b.id))!.partial).toBe(true);
     expect(r.draftId).not.toBeNull();
+  });
+});
+
+const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+const aiReview = { niche: "trades", value_proposition: "Boise plumbing", scores: { design: 82, content: 70, cro: 65, mobile: 80 },
+  summaries: { design: "Clean", content: "OK", cro: "Weak CTA", mobile: "Fine" }, strengths: ["Clear phone number"],
+  niche_checklist: [{ item: "Quote form", present: false }],
+  findings: [{ category: "cro", severity: "important", title: "No quote button", evidence: "Only a phone number", recommendation: "Add a quote form" }] };
+
+describe("runLead with browser render + AI review", () => {
+  it("stores screenshots, uses the rendered DOM, and records the review, niche and health", async () => {
+    const s = await createSearch(env.DB, { location: "B", businessType: "plumber", radiusKm: 1, maxResults: 5 });
+    const b = await upsertBusiness(env.DB, listing({ placeId: "R1" }), s.id);
+    let reviewContent: any[] = [];
+    const d = deps({
+      // The raw HTML has no form; the rendered DOM has a HubSpot form injected by JS.
+      render: async (url) => ({ finalUrl: url.endsWith("/") ? url : `${url}/`, desktopJpeg: jpeg, mobileJpeg: jpeg,
+        mobile: { overflowX: true, smallTextPct: 0.1 },
+        html: `<html><head><title>Ace</title></head><body><nav><a href="/services">Services</a><a href="/contact">Contact</a></nav>
+          <h1>Ace Plumbing</h1><div class="hs-form-frame"></div>${"<p>Plumbing services for Boise homes and businesses.</p>".repeat(10)}</body></html>` }),
+      reviewer: async (p) => { reviewContent = p.content; return aiReview; },
+    });
+    await runLead(d, step, { businessId: b.id, searchId: s.id });
+    const a = (await latestAudit(env.DB, b.id))!;
+    expect(a.screenshots.desktop).toMatch(/^shots\/.+-desktop\.jpg$/);
+    expect(await env.RAW.get(a.screenshots.mobile!)).not.toBeNull();
+    expect(reviewContent.filter((c) => c.type === "image")).toHaveLength(2);
+    expect(a.ai_review?.niche).toBe("trades");
+    expect(a.niche).toBe("trades");
+    expect(a.category_scores.design).toBe(82);
+    expect(a.health_score).toBeGreaterThan(0);
+    expect(a.findings.map((f) => f.code)).toContain("mobile_overflow");
+    expect(a.findings.map((f) => f.code)).not.toContain("no_contact_path");
+    expect(a.site_links.services).toBe("https://ace.com/services");
+    expect(a.mobile_friendly).toBe(false);
+  });
+
+  it("a site that blocks plain fetches but renders in a browser is audited, not marked blocked", async () => {
+    const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 5 });
+    const b = await upsertBusiness(env.DB, listing({ placeId: "R2", websiteUrl: "https://walled3.com" }), s.id);
+    const d = deps({
+      fetch: async (u) => u.includes("pagespeedonline") ? Response.json(psiSlow)
+        : new Response("Just a moment...", { status: 403, headers: { "content-type": "text/html" } }),
+      render: async () => ({ finalUrl: "https://walled3.com/", desktopJpeg: jpeg, mobileJpeg: jpeg, mobile: { overflowX: false, smallTextPct: 0 },
+        html: `<html><head><title>Walled</title><meta name="viewport" content="x"></head><body>${"<p>Real content here for customers.</p>".repeat(30)}</body></html>` }),
+    });
+    await runLead(d, step, { businessId: b.id, searchId: s.id });
+    const a = (await latestAudit(env.DB, b.id))!;
+    expect(a.site_status).toBe("ok");
+    expect(a.has_title).toBe(true);
+  });
+
+  it("render or review failures degrade to a rules-only audit", async () => {
+    const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 5 });
+    const b = await upsertBusiness(env.DB, listing({ placeId: "R3" }), s.id);
+    const d = deps({ render: async () => { throw new Error("browser down"); }, reviewer: async () => ({ junk: true }) });
+    await runLead(d, step, { businessId: b.id, searchId: s.id });
+    const a = (await latestAudit(env.DB, b.id))!;
+    expect(a.site_status).toBe("ok");
+    expect(a.ai_review).toBeNull();
+    expect(a.screenshots).toEqual({ desktop: null, mobile: null });
+    expect(a.category_scores.design).toBeUndefined();
   });
 });
 

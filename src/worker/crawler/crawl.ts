@@ -1,13 +1,18 @@
-import type { ContactInput, SiteStatus } from "../types";
+import type { ContactInput, PageKind, SiteStatus } from "../types";
 import type { CrawlFacts } from "../scoring/scorer";
-import { extractPage, isSocialOnlyUrl, pickCrawlTargets, type PageFacts } from "./extract";
+import { classifyLinks, extractPage, isSocialOnlyUrl, pickCrawlTargets, type PageFacts } from "./extract";
 
 export type Fetcher = (url: string, init?: RequestInit) => Promise<Response>;
 export interface CrawlResult {
   siteStatus: SiteStatus; finalUrl: string | null; facts: CrawlFacts | null; contacts: ContactInput[];
   pages: { url: string; status: number; html: string }[]; error: string | null;
+  links: Partial<Record<PageKind, string>>;
 }
-interface Opts { fetch: Fetcher; userAgent: string; now: Date; timeoutMs?: number; maxPages?: number; }
+interface Opts {
+  fetch: Fetcher; userAgent: string; now: Date; timeoutMs?: number; maxPages?: number;
+  /** Homepage as rendered by a real browser: catches JS-built forms/nav and gets past some bot walls. */
+  rendered?: { url: string; html: string } | null;
+}
 
 const MAX_BROKEN_CHECKS = 15;
 
@@ -58,7 +63,7 @@ function isChallengePage(title: string | null, html: string): boolean {
 
 const isHtml = (r: Response) => (r.headers.get("content-type") ?? "").includes("text/html");
 const empty = (status: SiteStatus, error: string | null = null): CrawlResult =>
-  ({ siteStatus: status, finalUrl: null, facts: null, contacts: [], pages: [], error });
+  ({ siteStatus: status, finalUrl: null, facts: null, contacts: [], pages: [], error, links: {} });
 
 const GONE = (s: number) => s === 404 || s === 410;
 const SITEMAP_LINE = /^\s*sitemap\s*:\s*\S/im;
@@ -139,25 +144,38 @@ export async function crawlSite(websiteUrl: string | null, o: Opts): Promise<Cra
       break;
     } catch (e) { lastErr = (e as Error).message; }
   }
-  if (!home) return empty("unreachable", lastErr ?? "fetch failed");
-  // Bot protection: the site exists but refuses automated visitors. Keep the URL so PageSpeed can still run.
-  const blocked = (why: string): CrawlResult => ({ ...empty("blocked", why), finalUrl: homeUrl });
-  if (BLOCKED_STATUSES.has(home.status)) return blocked(`HTTP ${home.status}`);
-  if (home.status >= 400) return empty("unreachable", `HTTP ${home.status}`);
-  if (!home.headers.get("content-type")) return blocked("Homepage has no content-type");
-  if (!isHtml(home)) return empty("unreachable", `Homepage is ${home.headers.get("content-type")}`);
-  // A redirect that lands on a social/listing page is not a real website.
-  if (isSocialOnlyUrl(homeUrl)) return empty("no_website");
+  // A browser render that loaded a real page beats a plain fetch that failed or hit a bot wall.
+  const r = o.rendered && o.rendered.html.length > 500 ? o.rendered : null;
+  const rFacts = r ? extractPage(r.html, r.url) : null;
+  const renderUsable = !!r && !!rFacts && !isChallengePage(rFacts.title, r.html) && !isSocialOnlyUrl(r.url);
+  let homeStatus = home?.status ?? 200;
+  const failure = ((): CrawlResult | null => {
+    if (!home) return empty("unreachable", lastErr ?? "fetch failed");
+    // Bot protection: the site exists but refuses automated visitors. Keep the URL so PageSpeed can still run.
+    const blocked = (why: string): CrawlResult => ({ ...empty("blocked", why), finalUrl: homeUrl });
+    if (BLOCKED_STATUSES.has(home.status)) return blocked(`HTTP ${home.status}`);
+    if (home.status >= 400) return empty("unreachable", `HTTP ${home.status}`);
+    if (!home.headers.get("content-type")) return blocked("Homepage has no content-type");
+    if (!isHtml(home)) return empty("unreachable", `Homepage is ${home.headers.get("content-type")}`);
+    // A redirect that lands on a social/listing page is not a real website.
+    if (isSocialOnlyUrl(homeUrl)) return empty("no_website");
+    if (isChallengePage(extractPage(homeBody, homeUrl).title, homeBody)) return blocked("Homepage is a bot-check challenge");
+    return null;
+  })();
+  if (failure) {
+    if (failure.siteStatus === "no_website" || !renderUsable) return failure;
+    homeUrl = r!.url; homeBody = r!.html; homeStatus = 200;
+  }
 
   const homeHtml = homeBody;
-  const homeFacts = extractPage(homeHtml, homeUrl);
-  if (isChallengePage(homeFacts.title, homeHtml)) return blocked("Homepage is a bot-check challenge");
-  if (homeFacts.isParked) return { ...empty("parked"), finalUrl: homeUrl };
+  const rawFacts = extractPage(homeHtml, homeUrl);
+  const homeFacts = rFacts && renderUsable ? mergeFacts(rawFacts, rFacts) : rawFacts;
+  if (homeFacts.isParked && rawFacts.isParked) return { ...empty("parked"), finalUrl: homeUrl };
 
-  const pages: CrawlResult["pages"] = [{ url: homeUrl, status: home.status, html: homeHtml }];
+  const pages: CrawlResult["pages"] = [{ url: homeUrl, status: homeStatus, html: homeHtml }];
   const facts: { url: string; f: PageFacts }[] = [{ url: homeUrl, f: homeFacts }];
 
-  const targets = pickCrawlTargets(homeFacts.internalLinks, homeUrl, (o.maxPages ?? 6) - 1);
+  const targets = pickCrawlTargets(homeFacts.anchors, homeUrl, (o.maxPages ?? 8) - 1);
   for (const t of targets) {
     try {
       const { res: r, body: h } = await get(t, o, "GET", true);
@@ -193,16 +211,32 @@ export async function crawlSite(websiteUrl: string | null, o: Opts): Promise<Cra
       contacts.push({ type: "email", value: e.value, source_url: url, person_name: e.personName, role: e.role, confidence: e.personName ? 0.9 : 0.7 });
     }
   }
-  const formPage = facts.find((x) => x.f.hasForm && /contact/i.test(x.url)) ?? facts.find((x) => x.f.hasForm);
+  const formPage = facts.find((x) => (x.f.hasForm || x.f.hasEmbeddedForm) && /contact/i.test(x.url))
+    ?? facts.find((x) => x.f.hasForm || x.f.hasEmbeddedForm);
   if (formPage) contacts.push({ type: "form", value: formPage.url, source_url: formPage.url, person_name: null, role: null, confidence: 0.6 });
   const phone = facts.flatMap((x) => x.f.phones)[0];
   if (phone) contacts.push({ type: "phone", value: phone, source_url: homeUrl, person_name: null, role: null, confidence: 0.5 });
   for (const s of [...new Set(facts.flatMap((x) => x.f.socials))].slice(0, 5))
     contacts.push({ type: "social", value: s, source_url: homeUrl, person_name: null, role: null, confidence: 0.4 });
 
+  const any = (k: keyof PageFacts) => facts.some((x) => !!x.f[k]);
+  const links = classifyLinks(facts.flatMap((x) => x.f.anchors), homeUrl);
+  const careers = facts.flatMap((x) => x.f.externalCareers)[0];
+  if (careers && !links.careers) links.careers = careers;
+  const kindsFound = new Set<PageKind>(Object.keys(links) as PageKind[]);
+  if (any("hasBooking")) kindsFound.add("booking");
+  const imgs = facts.reduce((s, x) => s + x.f.imageCount, 0);
+  const noAlt = facts.reduce((s, x) => s + x.f.imagesMissingAlt, 0);
+
   return {
-    siteStatus: "ok", finalUrl: homeUrl, pages, error: null, contacts,
+    siteStatus: "ok", finalUrl: homeUrl, pages, error: null, contacts, links,
     facts: {
+      hasNav: homeFacts.hasNav, navItemCount: homeFacts.navItemCount, hasFooter: homeFacts.hasFooter,
+      hasH1: homeFacts.hasH1, hasCta: any("hasCta"), hasSocialProof: any("hasSocialProof"), hasBooking: any("hasBooking"),
+      hasOpenGraph: homeFacts.hasOpenGraph, schemaTypes: [...new Set(facts.flatMap((x) => x.f.schemaTypes))],
+      homeWordCount: homeFacts.wordCount, imagesMissingAltPct: imgs ? noAlt / imgs : 0,
+      phoneVisible: homeFacts.phones.length > 0 || /href="tel:/i.test(homeHtml),
+      pageKinds: [...kindsFound].sort(), rendered: renderUsable,
       https: homeUrl.startsWith("https://"),
       hasTitle: !!homeFacts.title,
       hasMetaDescription: !!homeFacts.metaDescription,
@@ -228,5 +262,37 @@ export async function crawlSite(websiteUrl: string | null, o: Opts): Promise<Cra
       hasSitemap: siteFiles.sitemap,
       httpRedirectsToHttps: httpRedirect,
     },
+  };
+}
+
+/** Union of what the raw HTML and the browser-rendered DOM show; the render wins on structure. */
+function mergeFacts(raw: PageFacts, r: PageFacts): PageFacts {
+  const uniq = <T,>(xs: T[], key: (x: T) => string) => [...new Map(xs.map((x) => [key(x), x])).values()];
+  return {
+    ...r,
+    title: r.title ?? raw.title, metaDescription: raw.metaDescription ?? r.metaDescription,
+    hasViewport: raw.hasViewport || r.hasViewport, hasForm: raw.hasForm || r.hasForm,
+    emails: uniq([...raw.emails, ...r.emails], (e) => e.value),
+    phones: [...new Set([...raw.phones, ...r.phones])], socials: [...new Set([...raw.socials, ...r.socials])],
+    copyrightYear: Math.max(raw.copyrightYear ?? 0, r.copyrightYear ?? 0) || null,
+    dates: [...new Set([...raw.dates, ...r.dates])], eventDates: [...new Set([...raw.eventDates, ...r.eventDates])],
+    internalLinks: [...new Set([...raw.internalLinks, ...r.internalLinks])],
+    anchors: uniq([...r.anchors, ...raw.anchors], (a) => a.url),
+    isParked: raw.isParked && r.isParked,
+    hasNav: raw.hasNav || r.hasNav, navItemCount: Math.max(raw.navItemCount, r.navItemCount),
+    hasFooter: raw.hasFooter || r.hasFooter, hasH1: raw.hasH1 || r.hasH1, hasCta: raw.hasCta || r.hasCta,
+    hasSocialProof: raw.hasSocialProof || r.hasSocialProof, hasBooking: raw.hasBooking || r.hasBooking,
+    hasEmbeddedForm: raw.hasEmbeddedForm || r.hasEmbeddedForm, hasOpenGraph: raw.hasOpenGraph || r.hasOpenGraph,
+    schemaTypes: [...new Set([...raw.schemaTypes, ...r.schemaTypes])],
+    wordCount: Math.max(raw.wordCount, r.wordCount),
+    externalCareers: [...new Set([...raw.externalCareers, ...r.externalCareers])],
+    platform: raw.platform !== "other" ? raw.platform : r.platform,
+    h1Count: Math.max(raw.h1Count, r.h1Count),
+    hasTelLink: raw.hasTelLink || r.hasTelLink, hasPhoneNumber: raw.hasPhoneNumber || r.hasPhoneNumber,
+    hasLocalBusinessSchema: raw.hasLocalBusinessSchema || r.hasLocalBusinessSchema,
+    mixedContentCount: Math.max(raw.mixedContentCount, r.mixedContentCount),
+    datedBuildMarkers: [...new Set([...raw.datedBuildMarkers, ...r.datedBuildMarkers])],
+    // The facts come from the page as a real browser built it, so absence checks are no longer guesses about JS-built content.
+    isLikelyJsRendered: false,
   };
 }

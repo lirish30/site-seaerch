@@ -35,11 +35,17 @@ export async function revokeReports(db: D1Database, businessId: string): Promise
 
 export interface PublicReport {
   businessName: string; auditedAt: string; counts: { high: number; medium: number; low: number };
-  findings: { severity: Finding["severity"]; evidence: string }[]; partial: boolean;
+  findings: { severity: PublicSeverity; evidence: string }[]; partial: boolean;
   sender: { name: string; businessName: string; email: string; logoUrl: string }; expiresAt: string;
 }
 
 const SEVERITIES = ["high", "medium", "low"] as const;
+export type PublicSeverity = (typeof SEVERITIES)[number];
+// The public page speaks high / medium / low. Audit findings use critical / important / nice; findings stored before
+// audit v2 already used high / medium / low. Anything else is never shown.
+const PUBLIC_SEVERITY: Record<string, PublicSeverity> = {
+  critical: "high", important: "medium", nice: "low", high: "high", medium: "medium", low: "low",
+};
 
 /** The ONLY shape exposed publicly. Fields are copied one by one so nothing else can leak in by accident. */
 export async function publicReport(db: D1Database, token: string, now = new Date()): Promise<PublicReport | null> {
@@ -51,8 +57,8 @@ export async function publicReport(db: D1Database, token: string, now = new Date
   ).bind(token, now.toISOString()).first<{ business_name: string; audited_at: string; partial: number; findings: string; expires_at: string;
     your_name: string; sender_business: string; contact_email: string; logo_url: string }>();
   if (!r) return null;
-  const all = JSON.parse(r.findings) as Finding[];
-  const findings = SEVERITIES.flatMap((sev) => all.filter((f) => f.severity === sev).map((f) => ({ severity: sev, evidence: f.evidence })));
+  const all = (JSON.parse(r.findings) as Pick<Finding, "severity" | "evidence">[]).filter((f) => typeof f?.evidence === "string" && f.evidence);
+  const findings = SEVERITIES.flatMap((sev) => all.filter((f) => PUBLIC_SEVERITY[f.severity] === sev).map((f) => ({ severity: sev, evidence: f.evidence })));
   const count = (sev: string) => findings.filter((f) => f.severity === sev).length;
   return {
     businessName: r.business_name, auditedAt: r.audited_at, counts: { high: count("high"), medium: count("medium"), low: count("low") },

@@ -192,6 +192,8 @@ Scoring weights and thresholds: `src/scoring/config.ts`.
 
 Audit signals, platform detection, richer lead filters, a shareable report, Radar (scheduled searches) and a mail DNS check. Sections 1-11 remain the v1 record; where this section differs (more findings, group caps, more tables and screens), this section is current.
 
+> **Merged with the site-search-v2 branch (2026-10-04).** The detections in 12.1 (conditions, evidence wording, null = unknown, JavaScript-render suppression, Lighthouse labels, mail DNS) are kept, but they are scored by the category / Site Health / Opportunity model in `src/worker/scoring/` rather than by group weights: each finding has a category (`technical`, `cro`, `content`) and a deduction in `DEDUCTIONS`, and severity is critical / important / nice. Group caps (12.2) and the group-based offer rule no longer exist; the offer is picked from the weakest category. `thin_content`, `no_h1` and `missing_alt` are covered by the existing `thin_homepage`, `no_h1` and `images_missing_alt`; `no_local_schema` fires only when the site has structured data that never describes the business (no structured data at all stays `no_schema`). The auto-draft rule is "opportunity under 25, or no finding above nice severity". The public report maps critical / important / nice to high / medium / low. Migrations for this section are `0007`-`0013` (renumbered after the v2 branch's `0002`-`0006`).
+
 ### 12.1 New findings
 
 Weights live in `WEIGHTS` and thresholds in `THRESHOLDS` in `src/worker/scoring/config.ts`; rules in `src/worker/scoring/scorer.ts`. Severity is derived from weight: >= 15 high, 8-14 medium, below 8 low.

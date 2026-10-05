@@ -10,7 +10,10 @@ const logoUrl = z.string().trim().max(500).refine((v) => v === "" || (/^https:\/
 const S = z.object({
   your_name: z.string().max(200), business_name: z.string().max(200), contact_email: z.string().max(200),
   services_blurb: z.string().max(2000), signature: z.string().max(1000), physical_address: z.string().max(500),
-  opt_out_line: z.string().max(500), tone_notes: z.string().max(5000), monthly_spend_limit_usd: z.number().min(0).max(10000), logo_url: logoUrl,
+  opt_out_line: z.string().max(500), tone_notes: z.string().max(5000), monthly_spend_limit_usd: z.number().min(0).max(10000),
+  tone_preset: z.enum(["friendly_local", "consultative", "direct", "formal"]),
+  email_length: z.enum(["short", "medium", "long"]), cta_style: z.enum(["mini_audit", "call", "reply", "proposal"]),
+  logo_url: logoUrl,
 }).partial();
 
 export const settingsRoutes = new Hono<{ Bindings: Env }>();

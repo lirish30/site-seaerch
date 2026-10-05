@@ -33,9 +33,11 @@ const TOOL = {
 export function anthropicCaller(apiKey: string): ClaudeCaller {
   const client = new Anthropic({ apiKey });
   return async ({ system, user }) => {
-    // DRAFT_MODEL rejects forced tool use (tool_choice "tool"/"any"), so ask for the tool in the prompt instead.
     const msg = await client.messages.create({
-      model: DRAFT_MODEL, max_tokens: 800,
+      // claude-sonnet-5-5 rejects tool_choice type "tool"/"any", so ask for the tool in the
+      // prompt instead; a missing tool_use block falls through to generateDraft's retry.
+      // Sonnet 5.5 thinks adaptively; leave room so thinking can't crowd out the tool call. Drafting is simple: low effort.
+      model: DRAFT_MODEL, max_tokens: 2000, output_config: { effort: "low" },
       system: `${system}\n\nRespond only by calling the ${TOOL.name} tool.`,
       tools: [TOOL], tool_choice: { type: "auto" },
       messages: [{ role: "user", content: user }],
@@ -47,7 +49,8 @@ export function anthropicCaller(apiKey: string): ClaudeCaller {
 
 export const wordCount = (s: string) => s.trim().split(/\s+/).filter(Boolean).length;
 
-export async function generateDraft(i: DraftInput, call: ClaudeCaller) {
+/** `preferredContactId` (the lead's chosen point of contact) wins over the model's and the ranking's pick. */
+export async function generateDraft(i: DraftInput, call: ClaudeCaller, preferredContactId: string | null = null) {
   const prompt = buildPrompt(i);
   let parsed: z.infer<typeof Output> | null = null;
   for (let attempt = 0; attempt < 2 && !parsed; attempt++) {
@@ -60,6 +63,7 @@ export async function generateDraft(i: DraftInput, call: ClaudeCaller) {
   const emailIds = new Set(i.contacts.filter((c) => c.type === "email").map((c) => c.id));
   let toId = parsed.to_contact_id && emailIds.has(parsed.to_contact_id) ? parsed.to_contact_id : null;
   let reason = parsed.recipient_reason;
+  if (preferredContactId && emailIds.has(preferredContactId)) { toId = preferredContactId; reason = "Your chosen point of contact"; }
   if (!toId) { toId = ranked.emailContact?.id ?? null; reason = ranked.reason; }
 
   let body = parsed.body.trimEnd();
