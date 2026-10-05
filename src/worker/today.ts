@@ -59,9 +59,12 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
   const candidates = await listTodayCandidates(db, now.toISOString(), MIN_QUICK_SCORE);
   if (!candidates.length) return [];
 
+  // Suppression excludes a lead from searches and automations, not from the owner's own work. A follow-up date or an open deal on a
+  // lead marked "Active deal" or "Client" still belongs on Today, so suppressed leads keep follow_up_due and stalled_deal. They are
+  // hidden only from draft_unsent and promising_quick_scan, which lead toward outreach or spend. (Departs from "suppressed leads never
+  // appear" in the original plan; archived leads are already left out of the candidates for every kind.)
   const suppressed = await suppressedLeadIds(db, candidates);
-  const live = candidates.filter((b) => !suppressed.has(b.id));
-  const activity = await recentActivity(db, live.map((b) => b.id), new Date(t - ACTIVITY_WINDOW_DAYS * DAY).toISOString());
+  const activity = await recentActivity(db, candidates.map((b) => b.id), new Date(t - ACTIVITY_WINDOW_DAYS * DAY).toISOString());
 
   const lastContact = new Map<string, number>(), lastExport = new Map<string, number>();
   const queueAction = new Map<string, { hiddenUntil: number }>(); // `${businessId}|${kind}` -> the latest done/snooze, rows arrive oldest first
@@ -84,13 +87,13 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
   const push = (kind: TodayKind, b: { id: string; name: string }, reason: string, due: string | null, priority: number) =>
     ({ id: `${kind}:${b.id}`, kind, businessId: b.id, businessName: b.name, reason, due, priority }) satisfies TodayItem;
 
-  for (const b of live) {
+  for (const b of candidates) {
     if (b.follow_up_at && ms(b.follow_up_at) <= t && open(b.lead_status) && !hidden(b.id, "follow_up_due")) {
       const late = Math.max(0, Math.floor((t - ms(b.follow_up_at)) / DAY));
       items.push(push("follow_up_due", b, late === 0 ? "Follow-up is due today" : `Follow-up was due ${plural(late, "day")} ago`,
         b.follow_up_at, 100 + Math.min(late, MAX_OVERDUE_BONUS)));
     }
-    if ((b.lead_status === "new" || b.lead_status === "reviewed") && b.latest_draft_at && !hidden(b.id, "draft_unsent")) {
+    if (!suppressed.has(b.id) && (b.lead_status === "new" || b.lead_status === "reviewed") && b.latest_draft_at && !hidden(b.id, "draft_unsent")) {
       const at = ms(b.latest_draft_at), age = t - at;
       if (age > DRAFT_UNSENT_DAYS * DAY && (lastExport.get(b.id) ?? -Infinity) < at)
         items.push(push("draft_unsent", b, `Email draft written ${plural(Math.floor(age / DAY), "day")} ago and never exported`, null, 60));
@@ -98,10 +101,10 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
     if ((b.lead_status === "contacted" || b.lead_status === "replied") && b.deal_value !== null && !hidden(b.id, "stalled_deal")
       && (lastContact.get(b.id) ?? -Infinity) <= t - STALLED_DAYS * DAY)
       items.push(push("stalled_deal", b, `${money(b.deal_value)} deal (${b.lead_status}) with no activity in ${STALLED_DAYS} days`, null, 70));
-    if (b.scan_stage === "quick" && open(b.lead_status) && b.latest_score !== null && b.latest_score >= MIN_QUICK_SCORE && !hidden(b.id, "promising_quick_scan"))
+    if (!suppressed.has(b.id) && b.scan_stage === "quick" && open(b.lead_status) && b.latest_score !== null && b.latest_score >= MIN_QUICK_SCORE && !hidden(b.id, "promising_quick_scan"))
       quick.push({ score: b.latest_score, item: push("promising_quick_scan", b, `Quick scan scored ${b.latest_score}. Worth a full scan`, null, 40) });
   }
-  // Hidden and suppressed leads were dropped above, so the cap counts only what the user would see.
+  // Hidden and suppressed quick-scan leads were skipped above, so the cap counts only what the user would see.
   quick.sort((a, c) => c.score - a.score);
   items.push(...quick.slice(0, MAX_QUICK_ITEMS).map((q) => q.item));
 

@@ -184,7 +184,7 @@ describe("promising_quick_scan", () => {
   });
 });
 
-describe("archived and suppressed leads never appear", () => {
+describe("archived and suppressed leads", () => {
   it("archived leads are hidden for every kind", async () => {
     await lead("A1", { archived: true, followUpAt: ago(2) });
     const d = await lead("A2", { archived: true }); await draft(d, ago(5));
@@ -192,18 +192,52 @@ describe("archived and suppressed leads never appear", () => {
     await audit(await lead("A4", { archived: true, stage: "quick" }), 90);
     expect(await today()).toEqual([]);
   });
-  it("suppressed leads (by domain or place ID) are hidden for every kind", async () => {
+  it("an archived lead stays hidden even when it is also suppressed", async () => {
+    await lead("A5", { archived: true, website: "https://both.com", followUpAt: ago(2), status: "contacted", dealValue: 100 });
+    await addSuppression(env.DB, { kind: "domain", value: "both.com", reason: "client" });
+    expect(await today()).toEqual([]);
+  });
+  // Suppression keeps a lead out of searches and automations. The owner's own follow-up dates and open deals (marked "Active deal" or
+  // "Client") still need a work surface, so those two kinds stay. Drafts and quick scans lead toward outreach or spend, so they hide.
+  it("suppressed leads (by domain or place ID) still get follow_up_due and stalled_deal items", async () => {
     const f = await lead("S1", { website: "https://blocked.com", followUpAt: ago(2) });
-    const d = await lead("S2", { website: "https://blocked.com/x" }); await draft(d, ago(5));
-    await lead("S3", { website: "https://www.blocked.com", status: "contacted", dealValue: 100 });
-    await audit(await lead("S4", { website: "https://blocked.com", stage: "quick" }), 90);
-    await addSuppression(env.DB, { kind: "domain", value: "blocked.com", reason: "opt_out" });
+    const st = await lead("S3", { website: "https://www.blocked.com", status: "contacted", dealValue: 100 });
+    await addSuppression(env.DB, { kind: "domain", value: "blocked.com", reason: "client" });
     const byPlace = await lead("S5", { followUpAt: ago(2) });
     const pid = (await env.DB.prepare(`SELECT place_id FROM businesses WHERE id = ?`).bind(byPlace).first<{ place_id: string }>())!.place_id;
-    await addSuppression(env.DB, { kind: "place_id", value: pid, reason: "opt_out" });
-    expect(f).toBeTruthy();
-    await lead("Visible", { followUpAt: ago(2) });
-    expect((await today()).map((i) => i.businessName)).toEqual(["Visible"]);
+    await addSuppression(env.DB, { kind: "place_id", value: pid, reason: "client" });
+    expect((await of("follow_up_due")).map((i) => i.businessId).sort()).toEqual([f, byPlace].sort());
+    expect((await of("stalled_deal")).map((i) => i.businessId)).toEqual([st]);
+  });
+  it("suppressed leads get no draft_unsent or promising_quick_scan items", async () => {
+    const d = await lead("S2", { website: "https://blocked.com/x" }); await draft(d, ago(5));
+    await audit(await lead("S4", { website: "https://blocked.com", stage: "quick" }), 90);
+    const byPlace = await lead("S6", { stage: "quick" }); await audit(byPlace, 90);
+    const dByPlace = await lead("S7"); await draft(dByPlace, ago(5));
+    await addSuppression(env.DB, { kind: "domain", value: "blocked.com", reason: "opt_out" });
+    for (const id of [byPlace, dByPlace]) {
+      const pid = (await env.DB.prepare(`SELECT place_id FROM businesses WHERE id = ?`).bind(id).first<{ place_id: string }>())!.place_id;
+      await addSuppression(env.DB, { kind: "place_id", value: pid, reason: "opt_out" });
+    }
+    const v = await lead("Visible", { stage: "quick" }); await audit(v, 70);
+    const vd = await lead("VisibleDraft"); await draft(vd, ago(5));
+    expect((await of("draft_unsent")).map((i) => i.businessId)).toEqual([vd]);
+    expect((await of("promising_quick_scan")).map((i) => i.businessId)).toEqual([v]);
+  });
+  it("one suppressed lead shows its follow-up and deal but not its draft or quick scan", async () => {
+    const id = await lead("Mixed", { website: "https://mixed.com", followUpAt: ago(2), status: "contacted", dealValue: 500, stage: "quick" });
+    await draft(id, ago(5)); await audit(id, 90);
+    await env.DB.prepare(`UPDATE businesses SET lead_status = 'new' WHERE id = ?`).bind(id).run();
+    await addSuppression(env.DB, { kind: "domain", value: "mixed.com", reason: "client" });
+    expect((await today()).map((i) => i.kind)).toEqual(["follow_up_due"]);
+    await env.DB.prepare(`UPDATE businesses SET lead_status = 'contacted' WHERE id = ?`).bind(id).run();
+    expect((await today()).map((i) => i.kind).sort()).toEqual(["follow_up_due", "stalled_deal"]);
+  });
+  it("suppressed quick-scan leads do not use up the five quick-scan slots", async () => {
+    for (let n = 0; n < 5; n++) await audit(await lead(`Sup${n}`, { website: "https://slots.com", stage: "quick" }), 95);
+    await addSuppression(env.DB, { kind: "domain", value: "slots.com", reason: "opt_out" });
+    for (let n = 0; n < 5; n++) await audit(await lead(`Vis${n}`, { stage: "quick" }), 60);
+    expect((await of("promising_quick_scan")).map((i) => i.businessName).sort()).toEqual(["Vis0", "Vis1", "Vis2", "Vis3", "Vis4"]);
   });
 });
 
