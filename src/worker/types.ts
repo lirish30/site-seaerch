@@ -65,6 +65,14 @@ export interface Search {
   new_only: 0 | 1; // Radar-started: only businesses never audited get the per-lead pipeline
 }
 
+/** A thing the user sells. finding_codes/finding_categories say which audit evidence points at it (a trailing * in a code is a prefix wildcard). */
+export interface Service {
+  id: string; key: string; name: string; category: string; summary: string;
+  deliverables: string[]; prerequisites: string[]; first_engagement: string | null;
+  finding_codes: string[]; finding_categories: AuditCategory[];
+  is_specialty: boolean; active: boolean; sort: number;
+}
+
 export interface Radar {
   id: string; location: string; business_type: string; radius_km: number; max_results: number;
   interval_days: number; enabled: 0 | 1; next_run_at: string; last_run_at: string | null;

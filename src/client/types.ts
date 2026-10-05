@@ -42,3 +42,9 @@ export const STATUSES: LeadStatus[] = ["new", "reviewed", "contacted", "replied"
 export interface Radar { id: string; location: string; business_type: string; radius_km?: number; max_results: number; interval_days: number;
   enabled: 0 | 1; next_run_at: string; last_run_at: string | null; last_search_id: string | null; last_error: string | null; created_at: string;
   newLeadCount: number; lastSearchStatus: Search["status"] | null; }
+
+export interface Service {
+  id: string; key: string; name: string; category: string; summary: string; deliverables: string[]; prerequisites: string[];
+  first_engagement: string | null; finding_codes: string[]; finding_categories: AuditCategory[];
+  is_specialty: boolean; active: boolean; sort: number;
+}

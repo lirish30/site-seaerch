@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../api";
 import { parseSpendLimit } from "../spend";
+import ServicesEditor from "../components/ServicesEditor";
 
 type S = Record<string, string | number>;
 // Fields that appear on the public shared report, with the help text shown under each.
@@ -53,6 +54,7 @@ export default function Settings() {
   }
   const total = usage.reduce((t, u) => t + u.est_cost_usd, 0);
   return (
+    <>
     <div className="grid2">
       <div className="card">
         <h2>Your profile</h2>
@@ -103,5 +105,7 @@ export default function Settings() {
       </div>
       </div>
     </div>
+    <div style={{ marginTop: 16 }}><ServicesEditor /></div>
+    </>
   );
 }

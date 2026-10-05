@@ -290,3 +290,13 @@ td.empty { text-align:center; padding:24px; }
 .changes { border:1px solid var(--line); border-radius:var(--radius); padding:4px 14px 8px; margin:16px 0; }
 .changes h4 { margin:8px 0 2px; font-size:13px; } .changes ul { margin:0; padding-left:20px; }
 .changes-added h4 { color:var(--bad); } .changes-resolved h4 { color:var(--ok); }
+
+/* Services editor (Settings) */
+.services h3 { color:var(--muted); font-size:13px; text-transform:uppercase; letter-spacing:.04em; margin:20px 0 4px; }
+.svc { border-bottom:1px solid var(--line); padding:8px 0; } .svc.off > .svc-head summary { color:var(--muted); }
+.svc-head { display:flex; gap:16px; align-items:flex-start; } .svc-head details { flex:1; min-width:0; }
+.svc-head summary { cursor:pointer; display:flex; gap:8px; align-items:center; }
+.svc-details { padding:4px 0 8px; } .svc-details textarea { min-height:0; }
+.services label.check { display:flex; gap:6px; align-items:center; margin:0; font-weight:400; white-space:nowrap; }
+.services input[type=checkbox] { width:auto; padding:0; }
+@media (max-width: 640px) { .svc-head { flex-wrap:wrap; } .svc-head details { flex-basis:100%; } }
