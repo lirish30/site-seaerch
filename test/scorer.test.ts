@@ -138,7 +138,7 @@ describe("score: rules", () => {
   });
 
   it("weakest category picks the offer", () => {
-    expect(score({ siteStatus: "ok", crawl: { ...goodCrawl, https: false, hasTitle: false, schemaTypes: [], hasH1: false }, pagespeed: goodPs, now }).offer).toBe("seo_basics");
+    expect(score({ siteStatus: "ok", crawl: { ...goodCrawl, https: false, hasTitle: false, schemaTypes: [], hasLocalBusinessSchema: false, hasH1: false }, pagespeed: goodPs, now }).offer).toBe("seo_basics");
     expect(score({ siteStatus: "ok", crawl: goodCrawl, pagespeed: { performanceScore: 35, lcpMs: 6000, cls: 0.4, mobileFriendly: true, ...noLh }, now }).offer).toBe("performance");
     expect(score({ siteStatus: "ok", crawl: { ...goodCrawl, hasCta: false, hasSocialProof: false, phoneVisible: false }, pagespeed: goodPs, now }).offer).toBe("conversion");
   });
@@ -152,7 +152,7 @@ describe("score: rules", () => {
   });
 
   it("findings are sorted critical first and carry recommendations", () => {
-    const r = score({ siteStatus: "ok", crawl: { ...goodCrawl, https: false, schemaTypes: [] }, pagespeed: goodPs, now });
+    const r = score({ siteStatus: "ok", crawl: { ...goodCrawl, https: false, schemaTypes: [], hasLocalBusinessSchema: false }, pagespeed: goodPs, now });
     expect(r.findings.map((f) => f.severity)).toEqual(["critical", "nice"]);
     expect(r.findings.every((f) => f.recommendation.length > 0)).toBe(true);
   });
@@ -287,9 +287,46 @@ describe("score: crawl-level findings", () => {
     expect(codes(run({ schemaTypes: ["WebSite"], hasLocalBusinessSchema: true }))).toEqual([]);
   });
 
-  it("missing alt: images_missing_alt stays the one alt-text claim", () => {
-    expect(codes(run({ imagesMissingAltPct: 0.5 }))).toEqual([]);
-    expect(codes(run({ imagesMissingAltPct: 0.7 }))).toEqual(["images_missing_alt"]);
+  it("images_missing_alt: needs 4+ homepage images and at least half missing", () => {
+    expect(codes(run({ imageCount: 3, imagesMissingAlt: 3 }))).toEqual([]);
+    expect(codes(run({ imageCount: 4, imagesMissingAlt: 2 }))).toEqual(["images_missing_alt"]);
+    expect(codes(run({ imageCount: 4, imagesMissingAlt: 1 }))).toEqual([]);
+    expect(codes(run({ imageCount: 100, imagesMissingAlt: 49 }))).toEqual([]);
+    expect(codes(run({ imageCount: 100, imagesMissingAlt: 50 }))).toEqual(["images_missing_alt"]);
+    expect(codes(run({ imageCount: 1, imagesMissingAlt: 1, imagesMissingAltPct: 1 }))).toEqual([]); // one logo is never "100% of images"
+    expect(find(run({ imageCount: 10, imagesMissingAlt: 7 }), "images_missing_alt")).toMatchObject({ category: "technical", points: 10,
+      evidence: "7 of 10 images have no description, so Google and screen readers can't tell what they show" });
+  });
+
+  it("images_missing_alt removes image-alt from the accessibility evidence (no double claim)", () => {
+    const a11y = { accessibilityScore: 40, accessibilityIssueIds: ["image-alt", "color-contrast", "label"] };
+    expect(find(run({}, a11y), "low_accessibility")!.evidence)
+      .toBe("Parts of the site are hard to read or use for some visitors (images without text descriptions, text that's hard to read against its background)");
+    const both = run({ imageCount: 4, imagesMissingAlt: 4 }, a11y);
+    expect(find(both, "low_accessibility")!.evidence)
+      .toBe("Parts of the site are hard to read or use for some visitors (text that's hard to read against its background, form fields without labels)");
+    const only = run({ imageCount: 4, imagesMissingAlt: 4 }, { accessibilityScore: 40, accessibilityIssueIds: ["image-alt"] });
+    expect(find(only, "low_accessibility")!.evidence).toBe("Parts of the site are hard to read or use for some visitors");
+  });
+
+  it("no_schema is not claimed when business microdata / RDFa / array-typed JSON-LD was found", () => {
+    expect(codes(run({ schemaTypes: [], hasLocalBusinessSchema: true }))).toEqual([]);
+    expect(codes(run({ schemaTypes: [], hasLocalBusinessSchema: false }))).toEqual(["no_schema"]);
+  });
+
+  it("crawl facts cached by the pre-merge deploy (no new fields) score without throwing or guessing", () => {
+    const NEW = ["platform", "h1Count", "wordCount", "imageCount", "imagesMissingAlt", "hasPhone", "hasTelLink", "hasLocalBusinessSchema",
+      "mixedContentCount", "datedBuildMarkers", "isLikelyJsRendered", "hasRobotsTxt", "hasSitemap", "httpRedirectsToHttps"];
+    const old = (c: Partial<CrawlFacts>) => { const o: Record<string, unknown> = { ...goodCrawl, ...c }; for (const k of NEW) delete o[k]; return o as unknown as CrawlFacts; };
+    const oldPs = { performanceScore: 92, lcpMs: 1800, cls: 0.02, mobileFriendly: true } as unknown as PageSpeedFacts;
+    const depends = ["dated_build", "no_local_schema", "no_click_to_call", "images_missing_alt", "no_sitemap", "mixed_content", "no_https_redirect", "low_seo_score", "low_accessibility"];
+    for (const c of [old({}), old({ schemaTypes: ["WebSite"] }), old({ imagesMissingAltPct: 1 }), old({ phoneVisible: true })]) {
+      const r = score({ siteStatus: "ok", crawl: c, pagespeed: oldPs, now });
+      for (const f of r.findings) expect(depends, f.code).not.toContain(f.code);
+    }
+    expect(score({ siteStatus: "ok", crawl: old({}), pagespeed: oldPs, now }).findings).toEqual([]);
+    // the facts it does have still count: no structured data at all is still claimed
+    expect(codes(score({ siteStatus: "ok", crawl: old({ schemaTypes: [] }), pagespeed: oldPs, now }))).toEqual(["no_schema"]);
   });
 
   it("no_sitemap only when definitely absent (null = unknown)", () => {
@@ -325,7 +362,7 @@ describe("score: crawl-level findings", () => {
     expect(codes(run(absent))).toEqual(["no_click_to_call", "no_h1", "no_schema", "thin_homepage"]);
     expect(codes(run({ ...absent, isLikelyJsRendered: true }))).toEqual([]);
     expect(codes(run({ schemaTypes: ["WebSite"], hasLocalBusinessSchema: false, isLikelyJsRendered: true }))).toEqual([]);
-    const present = { imagesMissingAltPct: 1, hasSitemap: false, mixedContentCount: 2, httpRedirectsToHttps: false, datedBuildMarkers: ["frames"] };
+    const present = { imageCount: 5, imagesMissingAlt: 5, hasSitemap: false, mixedContentCount: 2, httpRedirectsToHttps: false, datedBuildMarkers: ["frames"] };
     expect(codes(run({ ...present, isLikelyJsRendered: true }))).toEqual(["dated_build", "images_missing_alt", "mixed_content", "no_https_redirect", "no_sitemap"]);
   });
 
@@ -334,9 +371,9 @@ describe("score: crawl-level findings", () => {
   });
 
   it("evidence of every new finding is free of jargon", () => {
-    const r = run({ hasTelLink: false, schemaTypes: ["WebSite"], hasLocalBusinessSchema: false, hasSitemap: false, mixedContentCount: 3, httpRedirectsToHttps: false,
+    const r = run({ hasTelLink: false, schemaTypes: ["WebSite"], hasLocalBusinessSchema: false, imageCount: 8, imagesMissingAlt: 8, hasSitemap: false, mixedContentCount: 3, httpRedirectsToHttps: false,
       datedBuildMarkers: ["old-style font tags", "scrolling or blinking text", "frames", "Flash", "old-style centering tags", "an old, no-longer-updated code library", "table-based page layout"] });
-    const newCodes = ["no_click_to_call", "no_local_schema", "no_sitemap", "mixed_content", "no_https_redirect", "dated_build"];
+    const newCodes = ["no_click_to_call", "no_local_schema", "images_missing_alt", "no_sitemap", "mixed_content", "no_https_redirect", "dated_build"];
     expect(codes(r)).toEqual([...newCodes].sort());
     for (const c of newCodes) expect(find(r, c)!.evidence, c).not.toMatch(BANNED);
     for (const m of ["old-style font tags", "scrolling or blinking text", "frames", "Flash", "old-style centering tags", "an old, no-longer-updated code library", "table-based page layout"]) {

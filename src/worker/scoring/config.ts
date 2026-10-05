@@ -33,7 +33,9 @@ export const THRESHOLDS = {
   brokenLinksMin: 3,
   thinHomepageWords: 120,
   smallTextPct: 0.3,
-  missingAltPct: 0.5,
+  // images_missing_alt: at least this many homepage images, and at least this share of them with no alt attribute.
+  missingAltMinImages: 4,
+  missingAltShare: 0.5,
   lowPriorityBelow: 25,
   // Lighthouse SEO / accessibility category scores (0-100) below these produce a finding.
   seoLowBelow: 70,

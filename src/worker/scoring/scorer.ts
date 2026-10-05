@@ -127,10 +127,16 @@ export function score(input: ScoreInput): ScoreResult {
 
   const out: Finding[] = [];
   const cats: CategoryScores = {};
+  // Crawl/PageSpeed facts may come from a step output cached by an older deploy (Workflows replays finished steps), so every
+  // fact added later is read defensively: a missing value means "unknown" and never produces a finding.
+  const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
   // We only read static HTML when no browser render was usable, so a JS-built page can hide anything: absence claims are suppressed for it.
-  const js = !!crawl?.isLikelyJsRendered;
-  // Presence-based: the images really are in the HTML, so JS rendering doesn't undo it.
-  const missingAlt = !!crawl && crawl.imagesMissingAltPct > T.missingAltPct;
+  const js = crawl?.isLikelyJsRendered === true;
+  // Homepage images, presence-based: the images really are in the HTML, so JS rendering doesn't undo it. Needs a few images,
+  // so one undescribed logo is never "100% of images".
+  const imgs = num(crawl?.imageCount), noAlt = num(crawl?.imagesMissingAlt);
+  const missingAlt = imgs !== null && noAlt !== null && imgs >= T.missingAltMinImages && noAlt / imgs >= T.missingAltShare;
+  const seoScore = num(ps?.seoScore), a11yScore = num(ps?.accessibilityScore);
   const deduct = (c: AuditCategory) => out.filter((f) => f.category === c && f.source === "rule").reduce((s, f) => s + f.points, 0);
 
   // Speed: PageSpeed is a measurement of load time only, so it is capped at 10% of Health.
@@ -144,20 +150,20 @@ export function score(input: ScoreInput): ScoreResult {
     cats.speed = clamp(ps.performanceScore - deduct("speed"));
 
     // Lighthouse SEO / accessibility: listed under technical. The scorer owns all prospect-facing wording (labels.ts).
-    if (ps.seoScore !== null && ps.seoScore < T.seoLowBelow) {
+    if (seoScore !== null && seoScore < T.seoLowBelow) {
       // Drop ids that would repeat another claim or describe something that isn't the business's site:
       // image-alt (accessibility's), title/summary (the crawler's no_title_or_meta), is-crawlable on a bot-challenge page.
       const drop = new Set(["image-alt"]);
       if (siteStatus === "blocked") drop.add("is-crawlable");
       if (crawl && (!crawl.hasTitle || !crawl.hasMetaDescription)) { drop.add("document-title"); drop.add("meta-description"); }
-      const issues = labelsFor(ps.seoIssueIds.filter((id) => !drop.has(id)), 3);
+      const issues = labelsFor((ps.seoIssueIds ?? []).filter((id) => !drop.has(id)), 3);
       out.push(rule("low_seo_score", issues.length
         ? `Google's own check flagged things that can hold the site back in search: ${issues.join(", ")}`
-        : `Google's own check scored the homepage's search-friendliness at ${ps.seoScore}/100`));
+        : `Google's own check scored the homepage's search-friendliness at ${seoScore}/100`));
     }
-    if (ps.accessibilityScore !== null && ps.accessibilityScore < T.a11yLowBelow) {
+    if (a11yScore !== null && a11yScore < T.a11yLowBelow) {
       // images_missing_alt already says it, so image-alt is not repeated.
-      const issues = labelsFor(ps.accessibilityIssueIds.filter((id) => !(missingAlt && id === "image-alt")), 2);
+      const issues = labelsFor((ps.accessibilityIssueIds ?? []).filter((id) => !(missingAlt && id === "image-alt")), 2);
       out.push(rule("low_accessibility", issues.length
         ? `Parts of the site are hard to read or use for some visitors (${issues.join(", ")})`
         : "Parts of the site are hard to read or use for some visitors"));
@@ -183,8 +189,9 @@ export function score(input: ScoreInput): ScoreResult {
       out.push(rule("old_copyright", `The footer still says © ${crawl.copyrightYear}`));
     if (crawl.pastEventDates.length > 0)
       out.push(rule("past_events", `Lists events that already happened (e.g. ${crawl.pastEventDates[0]})`));
-    if (crawl.datedBuildMarkers.length >= 1)
-      out.push(rule("dated_build", `The site is built with outdated techniques (${crawl.datedBuildMarkers.slice(0, 2).join(", ")})`));
+    const markers = Array.isArray(crawl.datedBuildMarkers) ? crawl.datedBuildMarkers : [];
+    if (markers.length >= 1)
+      out.push(rule("dated_build", `The site is built with outdated techniques (${markers.slice(0, 2).join(", ")})`));
     if (crawl.homeWordCount < T.thinHomepageWords && !js)
       out.push(rule("thin_homepage", `The homepage has only about ${crawl.homeWordCount} words, so it says little about the business`));
     for (const p of NICHES[niche].pages) {
@@ -197,7 +204,7 @@ export function score(input: ScoreInput): ScoreResult {
     if (!contactPath) out.push(rule("no_contact_path", "There's no contact form, booking link, or email address anywhere on the site"));
     if (!crawl.hasCta) out.push(rule("no_cta", "No clear button telling visitors what to do next (call, book, get a quote)"));
     if (!crawl.phoneVisible) out.push(rule("no_phone_visible", "No phone number on the homepage"));
-    else if (crawl.hasPhone && !crawl.hasTelLink && !js)
+    else if (crawl.hasPhone === true && crawl.hasTelLink === false && !js)
       out.push(rule("no_click_to_call", "Their phone number isn't set up as a tap-to-call link, so on many phones visitors have to copy and paste it"));
     if (!crawl.hasSocialProof) out.push(rule("no_social_proof", "No reviews or testimonials on the site"));
     if (!crawl.hasNav) out.push(rule("no_nav", "No navigation menu was found, so visitors can't easily reach other pages"));
@@ -211,16 +218,17 @@ export function score(input: ScoreInput): ScoreResult {
     if (crawl.brokenLinkCount >= T.brokenLinksMin)
       out.push(rule("broken_links", `${crawl.brokenLinkCount} links on the site lead to missing pages`));
     if (!crawl.hasH1 && !js) out.push(rule("no_h1", "The homepage has no main heading"));
-    // No structured data at all, or some (e.g. a WebSite block) that never describes the business: never both.
-    if (crawl.schemaTypes.length === 0 && !js) out.push(rule("no_schema", "No structured business data for Google (schema.org)"));
-    else if (crawl.schemaTypes.length > 0 && !crawl.hasLocalBusinessSchema && !js)
+    // No structured data at all, or some (e.g. a WebSite block) that never describes the business: never both. Business microdata,
+    // RDFa or array-typed JSON-LD (hasLocalBusinessSchema) counts as structured data even when no string @type was read.
+    if (crawl.schemaTypes.length === 0 && crawl.hasLocalBusinessSchema !== true && !js) out.push(rule("no_schema", "No structured business data for Google (schema.org)"));
+    else if (crawl.schemaTypes.length > 0 && crawl.hasLocalBusinessSchema === false && !js)
       out.push(rule("no_local_schema", "The site doesn't include business details (name, address, hours) in a form Google can read"));
     if (!crawl.hasOpenGraph) out.push(rule("no_open_graph", "Links shared on social media won't show a preview image or title"));
     if (missingAlt)
-      out.push(rule("images_missing_alt", `${Math.round(crawl.imagesMissingAltPct * 100)}% of images have no description (alt text)`));
+      out.push(rule("images_missing_alt", `${noAlt} of ${imgs} images have no description, so Google and screen readers can't tell what they show`));
     if (crawl.hasSitemap === false)
       out.push(rule("no_sitemap", "The site has no sitemap file, which helps Google find all of a site's pages"));
-    if (crawl.mixedContentCount >= 1)
+    if ((num(crawl.mixedContentCount) ?? 0) >= 1)
       out.push(rule("mixed_content", "The page loads some content over an insecure connection, which browsers may block or flag"));
     if (crawl.httpRedirectsToHttps === false)
       out.push(rule("no_https_redirect", "Visiting the site without the secure 'https' version doesn't send people to the secure page"));
