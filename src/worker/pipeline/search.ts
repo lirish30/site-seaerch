@@ -3,6 +3,7 @@ import type { StepLike } from "./lead";
 import type { Business, Listing } from "../types";
 import { getSearch, setFoundCount, setSearchStatus, setProcessedCount } from "../db/searches";
 import { upsertBusiness } from "../db/businesses";
+import { isSuppressed } from "../db/suppression";
 import { latestDraft } from "../db/drafts";
 import { latestAudit } from "../db/audits";
 import { recordUsage } from "../db/usage";
@@ -55,14 +56,21 @@ export async function runSearch(deps: SearchDeps, step: StepLike, searchId: stri
     const toProcess = await step.do("upsert", async () => {
       const ids = new Set<string>();
       const notStarted = new Set<string>(); // linked to this search, but already decided/worked on
+      // Matches the suppression list (clients, opt-outs, competitors): never stored or started, but counted below as found
+      // and processed so the search's progress still reaches done. Keyed so a repeated listing counts once.
+      const suppressed = new Set<string>();
       for (const l of fetched.listings) {
+        // A known business may have a domain the listing lacks (e.g. it came back without a website this time).
+        const known = l.placeId ? await deps.db.prepare(`SELECT domain FROM businesses WHERE place_id = ?`).bind(l.placeId).first<{ domain: string | null }>() : null;
+        const hit = await isSuppressed(deps.db, { placeId: l.placeId, domain: known?.domain, websiteUrl: l.websiteUrl });
+        if (hit) { suppressed.add(l.placeId ? `p:${l.placeId}` : `d:${hit.value}`); continue; }
         const b = await upsertBusiness(deps.db, l, searchId);
         if (ids.has(b.id) || notStarted.has(b.id)) continue;
         if (await shouldStartLead(deps.db, b, search.new_only === 1)) ids.add(b.id); else notStarted.add(b.id);
       }
-      await setFoundCount(deps.db, searchId, ids.size + notStarted.size);
+      await setFoundCount(deps.db, searchId, ids.size + notStarted.size + suppressed.size);
       // Absolute set (no leads started yet) so a step retry cannot double-count.
-      await setProcessedCount(deps.db, searchId, notStarted.size);
+      await setProcessedCount(deps.db, searchId, notStarted.size + suppressed.size);
       return [...ids];
     });
 

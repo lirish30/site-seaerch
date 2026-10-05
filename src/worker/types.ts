@@ -106,7 +106,7 @@ export interface Person {
   linkedin: string | null; source: "manual" | "site"; is_poc: boolean; created_at: string;
 }
 
-export type ActivityKind = "status" | "archived" | "restored" | "website" | "reaudit" | "score_flagged" | "export" | "draft" | "cro_audit";
+export type ActivityKind = "status" | "archived" | "restored" | "website" | "reaudit" | "score_flagged" | "export" | "draft" | "cro_audit" | "suppressed";
 export interface Activity { id: string; business_id: string; kind: ActivityKind; detail: string | null; created_at: string; }
 
 export interface Audit {
@@ -151,3 +151,8 @@ export interface Settings {
 export type TonePreset = "friendly_local" | "consultative" | "direct" | "formal";
 export type EmailLength = "short" | "medium" | "long";
 export type CtaStyle = "mini_audit" | "call" | "reply" | "proposal";
+
+export const SUPPRESSION_REASONS = ["client", "opt_out", "competitor", "active_deal", "other"] as const;
+export type SuppressionReason = (typeof SUPPRESSION_REASONS)[number];
+export type SuppressionKind = "domain" | "place_id";
+export interface Suppression { id: string; kind: SuppressionKind; value: string; reason: SuppressionReason; note: string | null; created_at: string; }

@@ -10,6 +10,8 @@ import { diffFindings, type AuditChanges } from "../audit/diff";
 import { isStale, urgencyOf } from "../audit/provenance";
 import { listServices } from "../db/services";
 import { listFitProfiles } from "../db/fit";
+import { InvalidSuppression, leadSuppression, suppressLead } from "../db/suppression";
+import { Note, Reason, bad } from "./suppressions";
 import { scoreFit } from "../scoring/fit";
 import { bestOffer } from "../services/best-offer";
 import { listContacts, contactsFor } from "../db/contacts";
@@ -54,6 +56,13 @@ function intParam(v: string | undefined, def: number, min: number, max: number) 
 
 export const leadRoutes = new Hono<{ Bindings: Env }>();
 
+/** The 409 for a drafting/export action on a lead on the suppression list; null when the lead is clear (or unknown, which the route handles). */
+async function suppressedResponse(c: any, id: string): Promise<Response | null> {
+  const b = await getBusiness(c.env.DB, id);
+  const hit = b && (await leadSuppression(c.env.DB, b));
+  return hit ? c.json({ error: "suppressed", reason: hit.reason }, 409) : null;
+}
+
 leadRoutes.get("/", async (c) => {
   const status = c.req.query("status") as LeadStatus | undefined;
   if (status && !STATUSES.includes(status)) return c.json({ error: "bad status" }, 400);
@@ -76,6 +85,7 @@ leadRoutes.get("/:id", async (c) => {
     const d = diffFindings(previous.findings, audit.findings);
     changes = { since: previous.created_at, added: d.added, resolved: d.resolved, unchangedCount: d.unchanged.length };
   }
+  const hit = await leadSuppression(c.env.DB, business);
   const toContact = draft?.to_contact_id ? contacts.find((x) => x.id === draft.to_contact_id) ?? null : null;
   // `stale` is derived per request (it depends on now), so it rides on the response, never on the stored finding.
   const now = new Date();
@@ -83,7 +93,7 @@ leadRoutes.get("/:id", async (c) => {
   // Matched on the stale-flagged findings so `because` carries each finding's `stale` for the evidence badge.
   const best_offer = shown ? bestOffer(shown.findings, await listServices(c.env.DB, { activeOnly: true }), shown.offer) : null;
   return c.json({ business, audit: shown, contacts, draft, toContact, people, activity, changes, urgency: audit ? urgencyOf(audit.findings) : 0, best_offer,
-    fit: scoreFit(business, audit, profiles) });
+    fit: scoreFit(business, audit, profiles), suppressed: hit ? { reason: hit.reason, note: hit.note } : null });
 });
 
 // Screenshots live in the private R2 bucket; serve the latest audit's copy behind the app's auth.
@@ -123,6 +133,8 @@ async function exportGuard(c: any, fn: () => Promise<Response>) {
 
 leadRoutes.post("/:id/gmail-draft", (c) => exportGuard(c, async () => {
   const id = c.req.param("id");
+  const blocked = await suppressedResponse(c, id);
+  if (blocked) return blocked;
   const { attachReport } = await c.req.json<{ attachReport?: boolean }>().catch(() => ({ attachReport: false }));
   const draft = await latestDraft(c.env.DB, id);
   if (!draft) return c.json({ error: "Write a draft first" }, 400);
@@ -143,6 +155,8 @@ leadRoutes.post("/:id/gmail-draft", (c) => exportGuard(c, async () => {
 
 leadRoutes.post("/:id/drive", (c) => exportGuard(c, async () => {
   const id = c.req.param("id");
+  const blocked = await suppressedResponse(c, id);
+  if (blocked) return blocked;
   const r = await reportFor(c.env, id);
   if (!r) return c.json({ error: "No audit yet" }, 404);
   const { token, row } = await googleAccess(c.env, new URL(c.req.url).origin);
@@ -191,6 +205,25 @@ leadRoutes.post("/:id/archive", async (c) => {
   return c.json(b);
 });
 
+const SuppressLead = z.object({ reason: Reason, note: Note });
+leadRoutes.post("/:id/suppress", async (c) => {
+  const p = SuppressLead.safeParse(await c.req.json().catch(() => ({})));
+  if (!p.success) return c.json({ error: bad(p.error) }, 400);
+  const id = c.req.param("id");
+  const b = await getBusiness(c.env.DB, id);
+  if (!b) return c.json({ error: "not found" }, 404);
+  let added: number;
+  try { added = await suppressLead(c.env.DB, b, p.data); }
+  catch (e) {
+    if (e instanceof InvalidSuppression) return c.json({ error: e.message }, 400);
+    throw e;
+  }
+  // Rows that already existed keep their own reason, so only a real change is logged.
+  if (added > 0) await logActivity(c.env.DB, id, "suppressed", [p.data.reason, p.data.note].filter(Boolean).join(": "));
+  const hit = await leadSuppression(c.env.DB, b);
+  return c.json({ ok: true, added, suppressed: hit ? { reason: hit.reason, note: hit.note } : null });
+});
+
 leadRoutes.delete("/:id", async (c) => {
   const id = c.req.param("id");
   if (!(await getBusiness(c.env.DB, id))) return c.json({ error: "not found" }, 404);
@@ -237,6 +270,8 @@ const Regenerate = z.object({
   tone: z.enum(["friendly_local", "consultative", "direct", "formal"]).nullable().optional(),
 });
 leadRoutes.post("/:id/regenerate", async (c) => {
+  const blocked = await suppressedResponse(c, c.req.param("id"));
+  if (blocked) return blocked;
   if (await mailingSettingsMissing(c.env.DB)) return c.json({ error: MISSING_MAILING_SETTINGS }, 400);
   const p = Regenerate.safeParse(await c.req.json().catch(() => ({})));
   if (!p.success) return c.json({ error: "invalid" }, 400);
@@ -267,6 +302,8 @@ const reportView = (r: ReportRow) => ({ token: r.token, url: `/r/${r.token}`, ex
 
 leadRoutes.post("/:id/report", async (c) => {
   const id = c.req.param("id");
+  const blocked = await suppressedResponse(c, id);
+  if (blocked) return blocked;
   const audit = (await getBusiness(c.env.DB, id)) ? await latestAudit(c.env.DB, id) : null;
   if (!audit) return c.json({ error: "not found" }, 404);
   const existing = await activeReportFor(c.env.DB, id, audit.id);

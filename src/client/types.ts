@@ -58,3 +58,8 @@ export interface FitProfile {
 }
 /** `fit` on each lead list row and on GET /api/leads/:id; null when no active profile defines a criterion. */
 export interface FitResult { fit: number | null; profile: { id: string; name: string; service_key: string } | null; matched: string[]; missing: string[]; }
+
+export type SuppressionReason = "client" | "opt_out" | "competitor" | "active_deal" | "other";
+export interface Suppression { id: string; kind: "domain" | "place_id"; value: string; reason: SuppressionReason; note: string | null; created_at: string; }
+/** `suppressed` on GET /api/leads/:id: the reason and note of the list entry this lead matches, or null. */
+export interface LeadSuppression { reason: SuppressionReason; note: string | null; }

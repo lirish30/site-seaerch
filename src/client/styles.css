@@ -318,3 +318,8 @@ td.empty { text-align:center; padding:24px; }
 .fitp-platforms { display:flex; gap:4px 14px; flex-wrap:wrap; }
 .fit-profiles label.check { margin:0; font-weight:400; white-space:nowrap; } .fit-profiles input[type=checkbox] { width:auto; padding:0; }
 .fit-profiles .field-row3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; } @media (max-width: 640px) { .fit-profiles .field-row3 { grid-template-columns:1fr; } }
+
+/* Suppressions */
+.supp-list li { display:flex; gap:12px; align-items:center; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--line); } .supp-main { min-width:0; overflow-wrap:anywhere; }
+.suppressed-banner { display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap; margin:12px 0 0; padding:10px 14px; border:1px solid var(--bad); border-radius:var(--radius); background:color-mix(in srgb, var(--bad) 8%, var(--card)); font-weight:600; }
+.lead-actions select { width:auto; }
