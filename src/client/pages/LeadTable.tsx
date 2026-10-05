@@ -1,14 +1,16 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { FitChip } from "../components/FitChip";
 import { MiniGauge } from "../components/HealthGauge";
+import { compareFit } from "../fitView";
 import { NICHE_LABEL, OFFER_LABEL, type LeadRow } from "../types";
 import { applyLeadFilters, defaultFilters, type LeadFilters, NOT_CRAWLED, OFFERS, platformOptions } from "../leadFilters";
 
-type Key = "name" | "health" | "score" | "niche" | "status" | "follow";
+type Key = "name" | "health" | "score" | "fit" | "niche" | "status" | "follow";
 const PAGE = 50;
 const host = (u: string | null) => (u ?? "").replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "");
 
-function value(r: LeadRow, k: Key): string | number {
+function value(r: LeadRow, k: Exclude<Key, "fit">): string | number {
   switch (k) {
     case "name": return r.business.name.toLowerCase();
     case "health": return r.health ?? 101; // unmeasured sorts last ascending
@@ -36,6 +38,7 @@ export default function LeadTable({ rows }: { rows: LeadRow[] }) {
       .filter((r) => !niche || r.niche === niche)
       .filter((r) => !needle || `${r.business.name} ${r.business.website_url ?? ""} ${r.business.address ?? ""}`.toLowerCase().includes(needle))
       .sort((a, b) => {
+        if (sort.k === "fit") return compareFit(a.fit, b.fit, sort.dir) || a.business.name.localeCompare(b.business.name);
         const x = value(a, sort.k), y = value(b, sort.k);
         return (x < y ? -1 : x > y ? 1 : 0) * sort.dir || a.business.name.localeCompare(b.business.name);
       });
@@ -74,13 +77,14 @@ export default function LeadTable({ rows }: { rows: LeadRow[] }) {
       <div className="table-wrap">
         <table className="leads">
           <colgroup>
-            <col className="c-name" /><col className="c-health" /><col className="c-opp" /><col className="c-niche" />
+            <col className="c-name" /><col className="c-health" /><col className="c-opp" /><col className="c-fit" /><col className="c-niche" />
             <col className="c-issue" /><col className="c-contact" /><col className="c-status" /><col className="c-follow" />
           </colgroup>
           <thead><tr>
             {th("name", "Business")}
             {th("health", "Health", 1, "Site Health: higher is a better website")}
             {th("score", "Opp.", -1, "Opportunity: higher is a better lead")}
+            {th("fit", "Fit", -1, "Fit: how well the business matches your best fit profile. — means no profile applies")}
             {th("niche", "Industry")}
             <th>Top issue</th><th>Contact</th>
             {th("status", "Status")}
@@ -97,6 +101,7 @@ export default function LeadTable({ rows }: { rows: LeadRow[] }) {
                 <td><MiniGauge score={r.health} /></td>
                 <td><span className={`opp ${r.score === null ? "" : r.score >= 60 ? "hot" : r.score >= 25 ? "warm" : "cool"}`}>{r.score ?? "…"}</span>
                   {r.partial && <span className="dot-partial" title="Google's speed test didn't run">•</span>}</td>
+                <td><FitChip fit={r.fit} /></td>
                 <td className="clip" title={r.niche ? NICHE_LABEL[r.niche] : ""}>{r.niche ? NICHE_LABEL[r.niche] ?? r.niche : <span className="muted">—</span>}</td>
                 <td><span className="clamp2" title={r.topFinding ?? ""}>{r.topFinding ?? <span className="muted">—</span>}</span>
                   {r.offer && <span className="sub">{OFFER_LABEL[r.offer] ?? r.offer}</span>}</td>
@@ -107,7 +112,7 @@ export default function LeadTable({ rows }: { rows: LeadRow[] }) {
                 <td className="nowrap">{r.business.follow_up_at ? new Date(`${r.business.follow_up_at}T00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : <span className="muted">—</span>}</td>
               </tr>
             ))}
-            {!shown.length && <tr><td colSpan={8} className="muted empty">No leads match these filters.</td></tr>}
+            {!shown.length && <tr><td colSpan={9} className="muted empty">No leads match these filters.</td></tr>}
           </tbody>
         </table>
       </div>

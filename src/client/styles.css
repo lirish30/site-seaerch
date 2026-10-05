@@ -211,7 +211,7 @@ table.leads tbody tr:hover { background:var(--hover); }
 .th-btn { all:unset; cursor:pointer; display:inline-flex; gap:4px; align-items:center; color:var(--muted); font-weight:600; }
 .th-btn:hover { color:var(--fg); } .th-btn:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:3px; }
 .sort-ind { font-size:9px; color:var(--accent); min-width:8px; }
-col.c-name { width:22%; } col.c-health { width:78px; } col.c-opp { width:60px; } col.c-niche { width:120px; }
+col.c-name { width:22%; } col.c-health { width:78px; } col.c-opp { width:60px; } col.c-fit { width:56px; } col.c-niche { width:120px; }
 col.c-issue { width:auto; } col.c-contact { width:180px; } col.c-status { width:96px; } col.c-follow { width:96px; }
 .cell-name a { font-weight:600; text-decoration:none; color:var(--fg); display:inline-block; max-width:calc(100% - 18px); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:bottom; }
 .cell-name a:hover { color:var(--link); text-decoration:underline; }
@@ -306,3 +306,15 @@ td.empty { text-align:center; padding:24px; }
 .best-offer-kicker { color:var(--accent); font-weight:700; text-transform:uppercase; letter-spacing:.05em; margin:12px 0 0; }
 .best-offer h3 { margin:2px 0 6px; } .best-offer h4 { margin:12px 0 2px; font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
 .best-offer ul:not(.top-issues) { margin:0; padding-left:20px; }
+
+/* Fit */
+.fit-chip { font-weight:800; font-variant-numeric:tabular-nums; padding:1px 7px; border-radius:var(--pill); background:var(--hover); cursor:help; }
+.fit-chip.none { font-weight:400; color:var(--muted); background:none; }
+.fit-explain { margin-top:8px; } .fit-explain .stat strong { font-size:22px; }
+.fit-lists { margin:2px 0 0; display:flex; gap:4px 16px; flex-wrap:wrap; }
+.fit-yes { color:var(--ok); } .fit-no { color:var(--warn); }
+.fitp { border-bottom:1px solid var(--line); padding:12px 0; } .fitp.off .fitp-name { color:var(--muted); }
+.fitp-head { display:flex; gap:16px; align-items:center; flex-wrap:wrap; } .fitp-head h3 { margin:0; flex:1; }
+.fitp-platforms { display:flex; gap:4px 14px; flex-wrap:wrap; }
+.fit-profiles label.check { margin:0; font-weight:400; white-space:nowrap; } .fit-profiles input[type=checkbox] { width:auto; padding:0; }
+.fit-profiles .field-row3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; } @media (max-width: 640px) { .fit-profiles .field-row3 { grid-template-columns:1fr; } }

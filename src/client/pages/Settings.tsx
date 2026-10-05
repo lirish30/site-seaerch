@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../api";
 import { parseSpendLimit } from "../spend";
+import FitProfilesEditor from "../components/FitProfilesEditor";
 import ServicesEditor from "../components/ServicesEditor";
 
 type S = Record<string, string | number>;
@@ -106,6 +107,7 @@ export default function Settings() {
       </div>
     </div>
     <div style={{ marginTop: 16 }}><ServicesEditor /></div>
+    <div style={{ marginTop: 16 }}><FitProfilesEditor /></div>
     </>
   );
 }

@@ -4,7 +4,7 @@ export interface Business { id: string; name: string; category: string | null; a
   rating: number | null; review_count: number | null; archived_at: string | null; follow_up_at: string | null; deal_value: number | null; created_at: string; }
 export interface LeadRow { business: Business; score: number | null; health: number | null; niche: string | null; topFinding: string | null; offer: string | null;
   bestContact: string | null; hasEmail: boolean; partial: boolean; poc: { name: string; email: string | null } | null;
-  platform: string | null; rating: number | null; reviewCount: number | null; fit?: FitResult; }
+  platform: string | null; rating: number | null; reviewCount: number | null; fit: FitResult; }
 
 export type AuditCategory = "design" | "content" | "cro" | "mobile" | "speed" | "technical";
 export type Severity = "critical" | "important" | "nice";
