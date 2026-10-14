@@ -29,6 +29,9 @@ const SAMPLES: WorkSample[] = [
 ];
 const ALLOWED_URLS = new Set([...SAMPLES.map((s) => s.url), settings.resume_url]);
 const MAX_WORDS = purpose === "full_time" ? { short: 170, medium: 230, long: 300 }[settings.email_length] : { short: 120, medium: 180, long: 250 }[settings.email_length];
+// The first sentence after the greeting. A full-time email should open on the sender, not on a problem with the company's site.
+const firstSentence = (body: string) => body.replace(/^\s*(?:hi|hello|dear)\b[^\n]*\n+/i, "").split(/(?<=[.!?])\s/)[0] ?? "";
+const ABOUT_THEIR_SITE = /\byour\s+(?:site|website|homepage|home page|page)\b/i;
 const JARGON = /\b(LCP|CLS|Core Web Vitals|meta description|viewport|SEO)\b/i;
 const leads = JSON.parse(readFileSync("scripts/fixtures/leads.json", "utf8"));
 const call = anthropicCaller(key);
@@ -51,6 +54,10 @@ for (const l of leads) {
       noJargon: !JARGON.test(v.body),
       onlyKnownLinks: purpose === "freelance" || urls.every((u) => ALLOWED_URLS.has(u)),
       noFakeOpening: purpose === "freelance" || !/job posting|your opening|open position/i.test(v.body),
+      // A full-time email is about the sender: no fix plan, no invented way of having looked, and it does not open on a site problem.
+      noFixSteps: purpose === "freelance" || !/\bI(?:'d| would| will)\s+(?:start|begin|first|fix|improve|compress|trim|put|tackle)|\bmy approach|\bhere's how|\bI can fix/i.test(v.body),
+      noViewingClaims: purpose === "freelance" || !/\b(on my phone|I tested|I ran|I checked|I was looking at|I came across|I stumbled)/i.test(v.body),
+      opensOnPerson: purpose === "freelance" || !ABOUT_THEIR_SITE.test(firstSentence(v.body)),
     };
     const ok = Object.values(checks).every(Boolean);
     if (!ok) failures++;
