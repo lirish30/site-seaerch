@@ -9,27 +9,28 @@ import BestOfferCard from "../components/BestOfferCard";
 import { FitExplanation } from "../components/FitChip";
 import { topFindings } from "../evidenceView";
 import PeoplePanel from "../components/PeoplePanel";
+import StarToggle from "../components/StarToggle";
 import CroPanel from "../components/CroPanel";
 import { shareState } from "../reportView";
 import { REASONS, reasonLabel, suppressedMessage } from "../suppressionView";
 import { isSpendLimit, SPEND_LIMIT_REACHED } from "../spend";
-import type { CroItem, CroResponse } from "../cro";
+import EmailComposer, { type ComposerHandle } from "../components/EmailComposer";
+import InlineError from "../components/InlineError";
+import type { Draft } from "../emailView";
 import { NICHE_LABEL, OFFER_LABEL, STATUSES, type Activity, type Audit, type AuditChanges, type BestOffer, type Business, type Contact, type FitResult, type LeadStatus, type LeadSuppression, type Person, type SuppressionReason } from "../types";
 
-interface Draft { id: string; subject: string; body: string; recipient_reason: string; edited: boolean; created_at: string; steering_note: string | null; }
 interface ShareReport { token: string; url: string; expiresAt: string; }
-interface Data { business: Business; audit: Audit | null; contacts: Contact[]; draft: Draft | null; toContact: Contact | null; people: Person[]; activity: Activity[]; changes: AuditChanges | null; urgency: number; best_offer: BestOffer | null; fit: FitResult; suppressed: LeadSuppression | null; }
+interface Data { business: Business; audit: Audit | null; contacts: Contact[]; draft: Draft | null; variants: Draft[]; toContact: Contact | null; people: Person[]; activity: Activity[]; changes: AuditChanges | null; urgency: number; best_offer: BestOffer | null; fit: FitResult; suppressed: LeadSuppression | null; }
 
 const LINK_LABEL: Record<string, string> = {
   contact: "Contact page", careers: "Careers / jobs", menu: "Menu", services: "Services", about: "About", team: "Team",
   booking: "Booking", pricing: "Pricing", locations: "Locations", portfolio: "Portfolio", testimonials: "Reviews", blog: "Blog", shop: "Shop",
 };
-const TONE_OPTIONS: [string, string][] = [["", "Default tone (from Settings)"], ["friendly_local", "Friendly local"], ["consultative", "Consultative expert"], ["direct", "Direct & short"], ["formal", "Formal"]];
 
 const ACTIVITY_LABEL: Record<string, string> = {
   status: "Status", archived: "Archived", restored: "Restored", website: "Website changed", reaudit: "Re-audit",
   score_flagged: "Score flagged", export: "Exported", draft: "Draft", cro_audit: "CRO audit", suppressed: "Suppressed", import: "Imported", bulk: "Bulk change",
-  today_done: "Marked done in Today", snoozed: "Snoozed in Today",
+  today_done: "Marked done in Today", snoozed: "Snoozed in Today", starred: "Starred", unstarred: "Unstarred",
 };
 
 function ChangesBlock({ changes }: { changes: AuditChanges }) {
@@ -50,40 +51,25 @@ export default function LeadDetail() {
   const nav = useNavigate();
   const [d, setD] = useState<Data | null>(null);
   const [tab, setTab] = useState<"audit" | "cro" | "email">("audit");
-  const [subject, setSubject] = useState(""); const [body, setBody] = useState("");
-  const [steer, setSteer] = useState(""); const [busy, setBusy] = useState(""); const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(""); const [msg, setMsg] = useState(""); const [exportError, setExportError] = useState("");
   const [notes, setNotes] = useState("");
   const [editingUrl, setEditingUrl] = useState<string | null>(null);
-  const [focus, setFocus] = useState<Set<string>>(new Set());
-  const [croItems, setCroItems] = useState<CroItem[]>([]);
-  const [croFocus, setCroFocus] = useState<Set<string>>(new Set());
-  const [tone, setTone] = useState("");
-  const [versions, setVersions] = useState<Draft[] | null>(null);
+  const [starBusy, setStarBusy] = useState(false);
   const [attachPdf, setAttachPdf] = useState(true);
   const [exportLink, setExportLink] = useState<{ label: string; url: string }[]>([]);
   const [report, setReport] = useState<ShareReport | null>(null); const [otherActive, setOtherActive] = useState(0); const [shareMsg, setShareMsg] = useState("");
   const linkInput = useRef<HTMLInputElement>(null);
   // Serialises saves and lets other actions wait for in-flight ones.
   const pending = useRef<Promise<unknown>>(Promise.resolve());
-  const savedDraft = useRef({ subject: "", body: "" });
+  const composer = useRef<ComposerHandle>(null);
   const savedNotes = useRef("");
 
   async function load() {
     const x = await api.get<Data>(`/leads/${id}`);
-    savedDraft.current = { subject: x.draft?.subject ?? "", body: x.draft?.body ?? "" };
     savedNotes.current = x.business.notes ?? "";
-    setD(x); setSubject(savedDraft.current.subject); setBody(savedDraft.current.body); setNotes(savedNotes.current);
+    setD(x); setNotes(savedNotes.current);
   }
   useEffect(() => { load().catch((e) => setMsg((e as Error).message)); }, [id]);
-  useEffect(() => {
-    if (tab !== "email") return;
-    api.get<Draft[]>(`/leads/${id}/drafts`).then(setVersions).catch(() => setVersions([]));
-    api.get<CroResponse>(`/leads/${id}/cro-audit`).then((r) => {
-      const usable = r.audit?.status === "done" ? r.items.filter((i) => i.included) : [];
-      setCroItems(usable);
-      setCroFocus((p) => new Set([...p].filter((k) => usable.some((i) => i.id === k)))); // drop picks from an older audit
-    }).catch(() => { setCroItems([]); setCroFocus(new Set()); });
-  }, [tab, id, d?.draft?.id]);
   const hasAudit = !!d?.audit;
   useEffect(() => {
     let cancelled = false;
@@ -105,12 +91,6 @@ export default function LeadDetail() {
     return run;
   }
   const flush = () => pending.current;
-  const saveDraft = () => queue(async () => {
-    if (!d!.draft || (subject === savedDraft.current.subject && body === savedDraft.current.body)) return;
-    await api.patch(`/leads/${id}/draft`, { subject, body });
-    savedDraft.current = { subject, body };
-    setD((p) => (p && p.draft ? { ...p, draft: { ...p.draft, subject, body } } : p));
-  });
   const saveNotes = () => queue(async () => {
     if (notes === savedNotes.current) return;
     const nb = await api.patch<Business>(`/leads/${id}`, { notes });
@@ -125,26 +105,14 @@ export default function LeadDetail() {
       return true;
     } catch (e) { fail(e); return false; }
   }
+  const toggleStar = async () => {
+    if (starBusy) return;
+    setStarBusy(true);
+    try { if (await patchLead({ starred: !d!.business.starred_at })) await load(); } finally { setStarBusy(false); }
+  };
   const setStatus = (s: LeadStatus) => patchLead({ leadStatus: s }).then(async (ok) => { if (ok) await load(); return ok; });
-  async function copy(): Promise<boolean> {
-    await saveDraft(); await flush();
-    if (subject !== savedDraft.current.subject || body !== savedDraft.current.body) return false; // save failed; msg already set
-    try { await navigator.clipboard.writeText(`Subject: ${subject}\n\n${body}`); setMsg("Copied"); return true; }
-    catch (e) { fail(e); return false; }
-  }
-  async function copyAndMark() { if (await copy() && await setStatus("contacted")) setMsg("Copied and marked contacted"); }
-  async function regenerate() {
-    await flush(); setBusy("regen"); setMsg("");
-    // Finding keys are "code:index" into the audit's findings.
-    const focusIdx = [...focus].map((k) => Number(k.split(":").pop())).filter(Number.isInteger);
-    try {
-      await api.post(`/leads/${id}/regenerate`, { steeringNote: steer, focus: focusIdx, croFocus: [...croFocus], tone: tone || null });
-      const picked = focusIdx.length + croFocus.size;
-      setSteer(""); await load(); setMsg(picked ? `New draft focused on ${picked} chosen issue(s).` : "New draft written.");
-    } catch (e) { fail(e); } finally { setBusy(""); }
-  }
   async function exportTo(kind: "gmail" | "drive") {
-    await saveDraft(); await flush(); setBusy(kind); setMsg(""); setExportLink([]);
+    await composer.current?.save(); await flush(); setBusy(kind); setMsg(""); setExportLink([]); setExportError("");
     try {
       if (kind === "gmail") {
         const r = await api.post<{ url: string }>(`/leads/${id}/gmail-draft`, { attachReport: attachPdf });
@@ -154,10 +122,8 @@ export default function LeadDetail() {
         setExportLink([{ label: "Google Doc", url: r.docUrl }, ...(r.pdfUrl ? [{ label: "PDF in Drive", url: r.pdfUrl }] : [])]); setMsg("Saved to Google Drive.");
       }
       await load();
-    } catch (e) { fail(e); } finally { setBusy(""); }
+    } catch (e) { setExportError((e as Error).message); } finally { setBusy(""); }
   }
-  function loadVersion(v: Draft) { setSubject(v.subject); setBody(v.body); setMsg("Loaded an earlier version into the editor. Click outside the editor to save it."); }
-  const toggleFocus = (k: string) => setFocus((p) => { const n = new Set(p); if (n.has(k)) n.delete(k); else if (n.size < 5) n.add(k); return n; });
   async function reaudit(reason?: string) {
     await flush();
     try { await api.post(`/leads/${id}/reaudit`, reason ? { reason } : {}); setMsg("Re-audit started. Refresh in a minute or two."); await load(); }
@@ -204,7 +170,6 @@ export default function LeadDetail() {
     catch { linkInput.current?.select(); setShareMsg("Press Ctrl+C to copy the selected link"); }
   }
   const share = shareState(report, otherActive);
-  const mailto = d.toContact ? `mailto:${d.toContact.value}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}` : null;
   const links = Object.entries(a?.site_links ?? {}).map(([k, u]) => [k, safeHttpUrl(u)] as const).filter((x): x is readonly [string, string] => !!x[1]);
   const otherContacts = d.contacts.filter((c) => !(c.type === "email" && c.person_name));
 
@@ -212,7 +177,7 @@ export default function LeadDetail() {
     <div className="lead">
       <header className="lead-head card">
         <div className="lead-title">
-          <h2>{b.name} {b.archived_at && <span className="tag">Archived</span>}</h2>
+          <h2><StarToggle on={b.starred_at !== null} name={b.name} busy={starBusy} onClick={() => void toggleStar()} /> {b.name} {b.archived_at && <span className="tag">Archived</span>}</h2>
           <p className="muted">
             {[b.category, b.address].filter(Boolean).join(" · ")}
             {b.rating !== null && <> · ★ {b.rating}{b.review_count !== null && ` (${b.review_count} reviews)`}</>}
@@ -317,56 +282,9 @@ export default function LeadDetail() {
           {tab === "cro" && <CroPanel leadId={b.id} onError={setMsg} />}
 
           {tab === "email" && (
-            <div className="card email-grid">
-              <div>
-                {d.draft ? <>
-                  <p><strong>To:</strong> {d.toContact?.value ?? "—"} <span className="muted">({d.draft.recipient_reason})</span></p>
-                  <label htmlFor="subj">Subject</label>
-                  <input id="subj" value={subject} onChange={(e) => setSubject(e.target.value)} onBlur={saveDraft} />
-                  <label htmlFor="body">Body</label>
-                  <textarea id="body" style={{ minHeight: 360 }} value={body} onChange={(e) => setBody(e.target.value)} onBlur={saveDraft} />
-                  <p className="muted small">{body.trim().split(/\s+/).length} words</p>
-                  <p className="row">
-                    <button onClick={copy}>Copy email</button>
-                    {mailto && !d.suppressed && <a href={mailto} onClick={saveDraft}><button>Open in mail app</button></a>}
-                    <button className="primary" onClick={copyAndMark} disabled={!!d.suppressed}>Copy & mark contacted</button>
-                  </p>
-                </> : <p className="muted">No draft yet{a && a.score < 25 ? " (low priority lead)" : ""}.</p>}
-                {versions && versions.length > 1 && <>
-                  <h3>Earlier versions</h3>
-                  <ul className="versions">{versions.map((v) => (
-                    <li key={v.id} className={v.id === d.draft?.id ? "current" : ""}>
-                      <span>{new Date(v.created_at).toLocaleString()} · {v.subject}{v.steering_note && <span className="muted"> · “{v.steering_note}”</span>}</span>
-                      {v.id !== d.draft?.id && <button className="link-btn" onClick={() => loadVersion(v)}>Use</button>}
-                    </li>
-                  ))}</ul>
-                </>}
-              </div>
-              <div>
-                <h3>Rewrite this email</h3>
-                <label htmlFor="tone">Tone for this email</label>
-                <select id="tone" value={tone} onChange={(e) => setTone(e.target.value)}>
-                  {TONE_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                </select>
-                <label htmlFor="steer">Extra instruction (optional)</label>
-                <input id="steer" placeholder="shorter / mention I'm local / offer a discount" value={steer} onChange={(e) => setSteer(e.target.value)} />
-                {a && <>
-                  <label>Issues to lead with <span className="muted small">(pick up to 5; none = the most important)</span></label>
-                  <div className="picker-box"><FindingsList findings={a.findings} selectable selected={focus} onToggle={toggleFocus} /></div>
-                </>}
-                {croItems.length > 0 && <>
-                  <label>CRO opportunities <span className="muted small">(from the CRO audit; pick up to 5)</span></label>
-                  <div className="picker-box">{croItems.map((i) => (
-                    <label key={i.id} className="row small check"><input type="checkbox" checked={croFocus.has(i.id)} disabled={!croFocus.has(i.id) && croFocus.size >= 5}
-                      onChange={() => setCroFocus((s) => { const n = new Set(s); if (n.has(i.id)) n.delete(i.id); else if (n.size < 5) n.add(i.id); return n; })} />{i.title}</label>
-                  ))}</div>
-                </>}
-                <p className="row" style={{ marginTop: 12 }}>
-                  <button className="primary" onClick={regenerate} disabled={busy === "regen" || !!d.suppressed} title={d.suppressed ? "Suppressed: drafting is turned off" : ""}>{busy === "regen" ? "Writing…" : d.draft ? "Regenerate email" : "Generate email"}</button>
-                  {focus.size + croFocus.size > 0 && <button className="link-btn" onClick={() => { setFocus(new Set()); setCroFocus(new Set()); }}>Clear {focus.size + croFocus.size} selected</button>}
-                </p>
-              </div>
-            </div>
+            <EmailComposer ref={composer} leadId={b.id} draft={d.draft} variants={d.variants ?? []} toContact={d.toContact} suppressed={!!d.suppressed}
+              lowPriority={!!a && a.score < 25} findings={a?.findings ?? []} onChanged={load} onMessage={setMsg}
+              onMarkContacted={async () => { const ok = await setStatus("contacted"); return ok; }} />
           )}
         </div>
 
@@ -380,6 +298,7 @@ export default function LeadDetail() {
               <button onClick={() => exportTo("drive")} disabled={busy === "drive" || !!d.suppressed} title={d.suppressed ? "Suppressed: exports are turned off" : ""}>{busy === "drive" ? "Saving…" : "Save to Drive"}</button>
             </div>
             <label className="check"><input type="checkbox" checked={attachPdf} onChange={(e) => setAttachPdf(e.target.checked)} /> Attach the audit PDF to the Gmail draft</label>
+            <InlineError message={exportError} />
             {exportLink.length > 0 && <p className="row">{exportLink.map((l) => <a key={l.url} href={l.url} target="_blank" rel="noreferrer">{l.label} ↗</a>)}</p>}
             <p className="muted small">Nothing is ever sent from here. Gmail gets a draft for you to review.</p>
             <h3>Share link</h3>

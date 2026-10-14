@@ -7,7 +7,7 @@ import { STATUSES, type BulkResult, type LeadStatus, type UndoResult } from "../
 const friendly = (e: unknown, fallback: string) => (e instanceof ApiError && e.status < 500 && e.message ? e.message : fallback);
 
 /**
- * The selection bar: set status, archive/restore, tag. After an action it keeps an Undo button for 10 seconds.
+ * The selection bar: set status, star/unstar, archive/restore, tag. After an action it keeps an Undo button for 10 seconds.
  * A failed request shows its error here and leaves the selection as it was. There is no delete action.
  */
 export default function BulkBar({ selected, archivedView = false, onClear, onDone }: {
@@ -70,7 +70,9 @@ export default function BulkBar({ selected, archivedView = false, onClear, onDon
           <select aria-label="Set status" value="" disabled={busy} onChange={(e) => { if (e.target.value) void run({ action: "status", status: e.target.value as LeadStatus }); }}>
             <option value="">Set status…</option>{STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
-          <button disabled={busy} onClick={() => run({ action: archivedView ? "restore" : "archive" })}>{archivedView ? "Restore" : "Archive"}</button>
+          <button disabled={busy} onClick={() => run({ action: "star" })}>★ Star</button>
+          <button disabled={busy} onClick={() => run({ action: "unstar" })}>Unstar</button>
+          <button disabled={busy} title={archivedView ? undefined : "Starred leads are left alone. Unstar them first to archive them."} onClick={() => run({ action: archivedView ? "restore" : "archive" })}>{archivedView ? "Restore" : "Archive"}</button>
           <form className="row nowrap" onSubmit={(e) => { e.preventDefault(); if (cleanTag) void run({ action: "tag", tag: cleanTag }); }}>
             <input className="bulk-tag" value={tag} maxLength={40} placeholder="tag" aria-label="Tag" onChange={(e) => setTag(e.target.value)} disabled={busy} />
             <button type="submit" disabled={busy || !cleanTag} title={tag.trim() && !cleanTag ? "A tag is up to 32 letters, numbers, spaces, - or _" : undefined}>Add tag</button>

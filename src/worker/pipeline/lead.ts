@@ -9,7 +9,9 @@ import { leadSuppression } from "../db/suppression";
 import { replaceContacts, listContacts, ensureContact } from "../db/contacts";
 import { pocFor } from "../db/people";
 import { insertAudit, latestAudit } from "../db/audits";
-import { insertDraft } from "../db/drafts";
+import { insertDraft, latestDraft } from "../db/drafts";
+import { listWorkSamples } from "../db/workSamples";
+import { matchSamples } from "../drafter/samples";
 import { getSettings } from "../db/settings";
 import { incrementProcessed } from "../db/searches";
 import { recordUsage } from "../db/usage";
@@ -20,9 +22,26 @@ import { reviewSite, type ReviewCaller } from "../audit/review";
 import { isSocialOnlyUrl } from "../crawler/extract";
 import { croItemsForBusiness } from "../db/cro";
 import type { CroItem } from "../cro/types";
-import type { AiReview, Draft, Finding, Offer, ScanStage, SiteStatus, TonePreset } from "../types";
+import type { AiReview, Draft, Finding, Offer, Purpose, ScanStage, SiteStatus, TonePreset } from "../types";
 
-export interface DraftOptions { steeringNote?: string | null; focus?: number[]; tone?: TonePreset | null; croFocus?: string[] }
+/** One-click rewrites of the current draft. */
+export const TWEAKS = {
+  shorter: "Make it noticeably shorter: cut it by about a third without losing the one observation or the ask.",
+  warmer: "Make it warmer and more personal, like a note to someone you would like to meet. Keep the facts the same.",
+  more_direct: "Make it more direct: shorter sentences, no warm-up, get to the point faster.",
+  swap_samples: "Cite different work samples than the current draft does, if others are listed. Keep everything else.",
+} as const;
+export type Tweak = keyof typeof TWEAKS;
+
+export interface DraftOptions {
+  steeringNote?: string | null; focus?: number[]; tone?: TonePreset | null; croFocus?: string[];
+  /** Defaults to the current draft's purpose when rewriting it, else the account's default. */
+  purpose?: Purpose;
+  /** Rewrite the current draft with one change instead of writing fresh variants. */
+  tweak?: Tweak;
+  /** Cite exactly these work samples. */
+  sampleIds?: string[];
+}
 
 export interface StepLike {
   do<T>(name: string, fn: () => Promise<T>): Promise<T>;
@@ -44,10 +63,12 @@ const croFinding = (i: CroItem): Finding => ({ code: `cro:${i.id}` as Finding["c
   evidence: i.observation, recommendation: i.change, source: "ai" });
 
 async function draftFor(deps: LeadDeps, businessId: string, o: DraftOptions = {}): Promise<Draft> {
-  const [business, audit, settings, poc] = await Promise.all([
+  const [business, audit, settings, poc, current, allSamples] = await Promise.all([
     getBusiness(deps.db, businessId), latestAudit(deps.db, businessId), getSettings(deps.db), pocFor(deps.db, businessId),
+    o.tweak ? latestDraft(deps.db, businessId) : Promise.resolve(null), listWorkSamples(deps.db),
   ]);
   if (!business || !audit) throw new Error("Cannot draft: business or audit missing");
+  if (o.tweak && !current) throw new Error("Write a draft first");
   // A point of contact with an email becomes a draftable contact so the draft can be addressed to them.
   const pocContact = poc?.email
     ? await ensureContact(deps.db, businessId, { type: "email", value: poc.email, source_url: null, person_name: poc.name, role: poc.role, confidence: 1 })
@@ -59,12 +80,32 @@ async function draftFor(deps: LeadDeps, businessId: string, o: DraftOptions = {}
   // Mostly-CRO picks make this a conversion pitch.
   const offer: Offer = croItems.length * 2 > focus.length ? "conversion" : audit.offer;
   const steeringNote = o.steeringNote ?? null;
+  const purpose: Purpose = o.purpose ?? current?.purpose ?? settings.default_purpose ?? "full_time";
+  // Samples the current draft already cites are set aside when the tweak asks for different ones.
+  const used = o.tweak === "swap_samples" && current ? allSamples.filter((w) => current.body.includes(w.url)).map((w) => w.id) : [];
+  const samples = purpose === "full_time"
+    ? matchSamples(allSamples, { category: business.category, niche: audit.niche, findings: audit.findings }, { pickIds: o.sampleIds, excludeIds: used })
+    : [];
   const d = await generateDraft({
     settings, business, findings: audit.findings, offer, contacts, steeringNote, focus, tone: o.tone ?? null,
     niche: audit.niche, valueProposition: audit.ai_review?.value_proposition ?? null, poc: poc ? { name: poc.name, role: poc.role } : null,
+    purpose, samples,
+    revise: o.tweak && current ? { subject: current.subject, body: current.body, instruction: TWEAKS[o.tweak] } : undefined,
   }, deps.claude, pocContact?.id ?? null);
   await recordUsage(deps.db, "claude", 1, PRICES.claudePerDraft);
-  return insertDraft(deps.db, { business_id: businessId, audit_id: audit.id, offer, steering_note: steeringNote, ...d });
+  // Variants share a timestamp, so the first-written leads; a full-time note goes without the mailing footer unless asked.
+  const group = crypto.randomUUID();
+  const at = new Date().toISOString();
+  let first: Draft | null = null;
+  for (const [n, v] of d.variants.entries()) {
+    const row = await insertDraft(deps.db, {
+      business_id: businessId, audit_id: audit.id, offer, steering_note: steeringNote, to_contact_id: d.to_contact_id,
+      recipient_reason: d.recipient_reason, subject: v.subject, body: v.body, purpose, angle: v.angle,
+      include_footer: current && o.tweak ? current.include_footer : purpose === "freelance", variant_group: group, variant_index: n, created_at: at,
+    });
+    first ??= row;
+  }
+  return first!;
 }
 
 const measurable = (s: SiteStatus) => s === "ok" || s === "blocked";

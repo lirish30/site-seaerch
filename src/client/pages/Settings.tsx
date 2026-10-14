@@ -4,22 +4,36 @@ import { parseSpendLimit } from "../spend";
 import FitProfilesEditor from "../components/FitProfilesEditor";
 import ServicesEditor from "../components/ServicesEditor";
 import SuppressionsEditor from "../components/SuppressionsEditor";
+import SignatureBuilder from "../components/SignatureBuilder";
+import WorkSamplesEditor from "../components/WorkSamplesEditor";
 
 type S = Record<string, string | number>;
 // Fields that appear on the public shared report, with the help text shown under each.
 const HELP: Record<string, string> = {
   your_name: "Also shown on shared reports.", business_name: "Also shown on shared reports.", logo_url: "An https image shown on shared reports.",
+  signature: "Used only when you haven't built a signature below.",
+  physical_address: "Optional. Added to the bottom of an email when you turn the footer on for it.",
+  opt_out_line: "Optional. Added with the address when the footer is on.",
 };
 const FIELDS: [string, string, "input" | "textarea"][] = [
   ["your_name", "Your name", "input"], ["business_name", "Business name", "input"], ["contact_email", "Contact email (in the crawler user-agent and shown on shared reports)", "input"],
-  ["services_blurb", "What you offer", "textarea"], ["signature", "Signature", "textarea"],
-  ["physical_address", "Physical mailing address (required by CAN-SPAM)", "input"], ["opt_out_line", "Opt-out line", "input"],
+  ["services_blurb", "What you offer", "textarea"], ["signature", "Plain-text signature", "textarea"],
+  ["physical_address", "Mailing address (footer)", "input"], ["opt_out_line", "Opt-out line (footer)", "input"],
   ["logo_url", "Logo URL (https)", "input"],
+];
+
+// What a full-time email can say about you. Everything here is optional, but the more real it is the better the email.
+const JOB_FIELDS: [string, string, "input" | "textarea", string][] = [
+  ["role_title", "Your role", "input", "e.g. Front-end developer"],
+  ["bio", "Short bio", "textarea", "Two or three sentences: what you do well, what you care about. Emails only use what you write here."],
+  ["goal_line", "What you're looking for", "input", "e.g. A full-time front-end or web developer role at a growing team"],
+  ["availability", "Availability", "input", "e.g. Open to full-time roles from January"],
+  ["resume_url", "Resume link (https)", "input", "Included in full-time emails when set."],
 ];
 
 const VOICE: [string, string, [string, string][]][] = [
   ["tone_preset", "Tone", [["friendly_local", "Friendly local"], ["consultative", "Consultative expert"], ["direct", "Direct & short"], ["formal", "Formal"]]],
-  ["email_length", "Length", [["short", "Short (≈120 words)"], ["medium", "Medium (≈180 words)"], ["long", "Long (≈250 words)"]]],
+  ["email_length", "Length", [["short", "Short (≈120 words; job emails ≈170)"], ["medium", "Medium (≈180 words; job emails ≈230)"], ["long", "Long (≈250 words; job emails ≈300)"]]],
   ["cta_style", "Ask them to…", [["mini_audit", "Receive their free audit report"], ["call", "Book a 10-minute call"], ["reply", "Reply yes/no"], ["proposal", "Receive a proposal with prices"]]],
 ];
 
@@ -50,6 +64,8 @@ export default function Settings() {
     try { setS(await api.put<S>("/settings", { ...s, monthly_spend_limit_usd: limit })); setSaved(true); }
     catch (e) {
       setErr(e instanceof ApiError && e.fields.includes("logo_url") ? "Logo URL must be an https:// link"
+        : e instanceof ApiError && e.fields.includes("signature_json") ? "A link or image in your signature isn't a valid address. Links need http(s):// and the image must be https://."
+        : e instanceof ApiError && e.fields.includes("resume_url") ? "Resume link must be a web address, like https://yoursite.com/resume.pdf"
         : e instanceof ApiError ? `Couldn't save: ${e.message}` : "Couldn't save settings.");
     }
     finally { setSaving(false); }
@@ -69,6 +85,26 @@ export default function Settings() {
             {HELP[k] && <p className="muted">{HELP[k]}</p>}
           </div>
         ))}
+        <h2 style={{ marginTop: 24 }}>Job search</h2>
+        <p className="muted small">Used for full-time emails, and the starting point when an email is written automatically.</p>
+        {JOB_FIELDS.map(([k, label, kind, help]) => (
+          <div key={k}>
+            <label htmlFor={k}>{label}</label>
+            {kind === "input"
+              ? <input id={k} value={String(s[k] ?? "")} onChange={(e) => set(k, e.target.value)} />
+              : <textarea id={k} value={String(s[k] ?? "")} onChange={(e) => set(k, e.target.value)} />}
+            <p className="muted small">{help}</p>
+          </div>
+        ))}
+        <label htmlFor="default_purpose">Write emails for…</label>
+        <select id="default_purpose" value={String(s.default_purpose ?? "full_time")} onChange={(e) => set("default_purpose", e.target.value)}>
+          <option value="full_time">A full-time role</option>
+          <option value="freelance">Freelance work</option>
+        </select>
+        <p className="muted small">Scans and re-audits write their first draft this way. You can switch per lead.</p>
+        <h2 style={{ marginTop: 24 }}>Email signature</h2>
+        <p className="muted small">Goes under every email, as a rich signature with your graphic and links. Save to apply it.</p>
+        <SignatureBuilder value={String(s.signature_json ?? "")} onChange={(json) => set("signature_json", json)} />
         <h2 style={{ marginTop: 24 }}>Email voice</h2>
         <p className="muted small">Applies to every draft. You can still change the tone for a single email on the lead page.</p>
         <div className="voice-grid">
@@ -107,6 +143,7 @@ export default function Settings() {
       </div>
       </div>
     </div>
+    <div style={{ marginTop: 16 }}><WorkSamplesEditor /></div>
     <div style={{ marginTop: 16 }}><ServicesEditor /></div>
     <div style={{ marginTop: 16 }}><FitProfilesEditor /></div>
     <div style={{ marginTop: 16 }}><SuppressionsEditor /></div>

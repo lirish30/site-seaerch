@@ -41,9 +41,14 @@ describe("bulkSummary", () => {
     expect(bulkSummary({ action: "status", status: "contacted" }, { updated: 2, skipped: 0, undoToken: "t" })).toBe("Set status to contacted on 2 leads.");
     expect(bulkSummary({ action: "tag", tag: "hot" }, { updated: 2, skipped: 1, undoToken: "t" })).toBe('Added tag "hot" to 2 leads. 1 lead already matched or couldn\'t take it, so left alone.');
     expect(bulkSummary({ action: "untag", tag: "hot" }, { updated: 1, skipped: 0, undoToken: "t" })).toBe('Removed tag "hot" from 1 lead.');
+    expect(bulkSummary({ action: "star" }, { updated: 2, skipped: 0, undoToken: "t" })).toBe("Starred 2 leads.");
+    expect(bulkSummary({ action: "unstar" }, { updated: 1, skipped: 0, undoToken: "t" })).toBe("Unstarred 1 lead.");
   });
   it("says so when nothing changed", () => {
     expect(bulkSummary({ action: "archive" }, { updated: 0, skipped: 2, undoToken: null })).toMatch(/^Nothing changed\. 2 leads/);
+    expect(bulkSummary({ action: "archive" }, { updated: 2, skipped: 1, keptStarred: 1, undoToken: "t" })).toBe("Archived 2 leads. 1 starred lead left alone. Unstar it first to archive it.");
+    expect(bulkSummary({ action: "archive" }, { updated: 0, skipped: 3, keptStarred: 3, undoToken: null })).toBe("Nothing changed. 3 starred leads left alone. Unstar them first to archive them.");
+    expect(bulkSummary({ action: "archive" }, { updated: 1, skipped: 3, keptStarred: 2, undoToken: "t" })).toBe("Archived 1 lead. 1 lead already matched or couldn't take it, so left alone. 2 starred leads left alone. Unstar them first to archive them.");
   });
 });
 
@@ -79,6 +84,14 @@ describe("saved filter serialisation", () => {
     expect(v.status).toBe("");
     expect(v.table.f).toMatchObject({ offer: "any", minScore: 100, maxRating: null, minReviews: 0, hideSkipped: true });
     expect(v.tag).toHaveLength(32);
+  });
+  it("a starred view round-trips, and is left out of the query when off", () => {
+    const v = view({ starred: true, status: "new" });
+    expect(new URLSearchParams(serializeView(v)).get("starred")).toBe("1");
+    expect(parseView(serializeView(v))).toEqual(v);
+    expect(serializeView(view({ status: "new" }))).not.toContain("starred");
+    expect(parseView("starred=0").starred).toBe(false);
+    expect(parseView("starred=banana").starred).toBe(false);
   });
   it("lowercases and trims the tag when saving", () => {
     expect(new URLSearchParams(serializeView(view({ tag: "  Hot " }))).get("tag")).toBe("hot");

@@ -116,9 +116,6 @@ describe("newOnly pass-through", () => {
     expect(calls).toEqual([]);
     expect(await newOnlyRows()).toEqual([]); // rejected by the pre-check: nothing inserted
     expect(await startSearchRun({ db: env.DB, startWorkflow: async () => {} }, { ...INPUT, location: "" }, { newOnly })).toMatchObject({ ok: false, kind: "invalid" });
-    await saveSettings(env.DB, { physical_address: "", opt_out_line: "" });
-    expect(await startSearchRun({ db: env.DB, startWorkflow: async () => {} }, INPUT, { newOnly })).toMatchObject({ ok: false, kind: "compliance" });
-    await saveSettings(env.DB, { physical_address: "1 Main St", opt_out_line: "Reply no." });
   });
 
   it.each([[false], [true]])("the post-insert recheck still fails the search with newOnly %s", async (newOnly) => {

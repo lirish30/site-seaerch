@@ -28,14 +28,14 @@ beforeEach(async () => {
 
 let searchId = "";
 interface Seed {
-  status?: string; followUpAt?: string | null; dealValue?: number | null; stage?: "quick" | "full"; archived?: boolean; website?: string | null;
+  status?: string; followUpAt?: string | null; dealValue?: number | null; stage?: "quick" | "full"; archived?: boolean; website?: string | null; starredAt?: string | null;
 }
 async function lead(name: string, o: Seed = {}) {
   if (!searchId) searchId = (await createSearch(env.DB, { location: "Boise", businessType: "plumber", radiusKm: 10, maxResults: 5 })).id;
   const b = await upsertBusiness(env.DB, { placeId: crypto.randomUUID(), name, category: null, address: null, phone: null,
     websiteUrl: o.website === undefined ? null : o.website, mapsUrl: null, rating: null, reviewCount: null }, searchId);
-  await env.DB.prepare(`UPDATE businesses SET lead_status = ?, follow_up_at = ?, deal_value = ?, scan_stage = ?, archived_at = ? WHERE id = ?`)
-    .bind(o.status ?? "new", o.followUpAt ?? null, o.dealValue ?? null, o.stage ?? "full", o.archived ? "2026-01-01T00:00:00.000Z" : null, b.id).run();
+  await env.DB.prepare(`UPDATE businesses SET lead_status = ?, follow_up_at = ?, deal_value = ?, scan_stage = ?, archived_at = ?, starred_at = ? WHERE id = ?`)
+    .bind(o.status ?? "new", o.followUpAt ?? null, o.dealValue ?? null, o.stage ?? "full", o.archived ? "2026-01-01T00:00:00.000Z" : null, o.starredAt ?? null, b.id).run();
   return b.id;
 }
 const draft = (businessId: string, createdAt: string) => env.DB.prepare(
@@ -370,5 +370,70 @@ describe("GET /api/today and the done / snooze actions", () => {
     expect((await post(`/api/today/follow_up_due/nope/snooze`, { days: 1 })).status).toBe(404);
     expect((await post(`/api/today/bogus/${id}/done`)).status).toBe(404);
     expect((await post(`/api/today/bogus/${id}/snooze`, { days: 1 })).status).toBe(404);
+  });
+});
+
+describe("starred_idle", () => {
+  it("lists a starred lead with nothing since, once it has been starred for 7 days", async () => {
+    const id = await lead("Saved", { starredAt: ago(9) });
+    const [item] = await of("starred_idle");
+    expect(item).toMatchObject({ id: `starred_idle:${id}`, kind: "starred_idle", businessId: id, businessName: "Saved", due: null, priority: 50 });
+    expect(item.reason).toBe("Starred 9 days ago, nothing since");
+  });
+  it("waits until the star is 7 days old", async () => {
+    await lead("Fresh", { starredAt: ago(6) });
+    expect(await of("starred_idle")).toEqual([]);
+    await lead("Edge", { starredAt: ago(7) });
+    expect((await of("starred_idle")).map((i) => i.businessName)).toEqual(["Edge"]);
+  });
+  it("real activity since the star resets the clock; starring, bulk edits and queue clicks do not count as activity", async () => {
+    const touched = await lead("Touched", { starredAt: ago(20) });
+    await act(touched, "status", ago(3), "new → reviewed");
+    expect(await of("starred_idle")).toEqual([]);
+    const quiet = await lead("Quiet", { starredAt: ago(20) });
+    for (const kind of ["starred", "bulk", "today_done", "snoozed"]) await act(quiet, kind, ago(2), kind === "snoozed" ? "follow_up_due|2026-10-01T00:00:00.000Z" : null);
+    expect((await of("starred_idle")).map((i) => i.businessName)).toEqual(["Quiet"]);
+  });
+  it("activity older than 7 days, but newer than the star, still lets the item show", async () => {
+    const id = await lead("Old touch", { starredAt: ago(20) });
+    await act(id, "status", ago(10), "new → reviewed");
+    const [item] = await of("starred_idle");
+    expect(item.businessName).toBe("Old touch");
+    expect(item.reason).toBe("Starred 20 days ago, no activity in 10 days");
+  });
+  it("skips won, lost and skipped leads, archived leads and unstarred leads", async () => {
+    for (const status of ["won", "lost", "skip"]) await lead(status, { starredAt: ago(30), status });
+    await lead("Archived", { starredAt: ago(30), archived: true });
+    await lead("Plain");
+    expect(await of("starred_idle")).toEqual([]);
+  });
+  it("is kept for a suppressed lead, like a follow-up, since it is the owner's own reminder", async () => {
+    const id = await lead("Client", { starredAt: ago(30), website: "https://client.example.com" });
+    await addSuppression(env.DB, { kind: "domain", value: "client.example.com", reason: "client", note: null });
+    expect((await of("starred_idle")).map((i) => i.businessId)).toEqual([id]);
+  });
+  it("Done hides it for 7 days and Snooze hides it until the date", async () => {
+    const id = await lead("Quietly", { starredAt: ago(30) });
+    await act(id, "today_done", ago(2), "starred_idle");
+    expect(await of("starred_idle")).toEqual([]);
+    await act(id, "today_done", ago(8), "starred_idle"); // older click: the latest row decides, and 2 days ago still wins
+    expect(await of("starred_idle")).toEqual([]);
+    await act(id, "snoozed", ago(1), `starred_idle|${ahead(3)}`);
+    expect(await of("starred_idle")).toEqual([]);
+    await act(id, "snoozed", ago(0), `starred_idle|${ago(0)}`);
+    expect((await of("starred_idle")).map((i) => i.businessName)).toEqual(["Quietly"]);
+  });
+  it("the Done and Snooze routes accept the new kind", async () => {
+    const id = await lead("Routes", { starredAt: ago(30) });
+    expect((await post(`/api/today/starred_idle/${id}/done`)).status).toBe(200);
+    expect((await post(`/api/today/starred_idle/${id}/snooze`, { days: 3 })).status).toBe(200);
+  });
+  it("sits between an unsent draft (60) and a quick scan (40) in priority", async () => {
+    await lead("Saved", { starredAt: ago(9) });
+    const d = await lead("Drafted");
+    await draft(d, ago(5));
+    const q = await lead("Quick", { stage: "quick" });
+    await audit(q, 80);
+    expect((await today()).map((i) => i.kind)).toEqual(["draft_unsent", "starred_idle", "promising_quick_scan"]);
   });
 });

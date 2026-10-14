@@ -401,12 +401,12 @@ describe("per-lead paid scans respect the monthly spend limit", () => {
     });
   }
 
-  it("the mailing-settings guard still answers 400 before the spend check", async () => {
+  it("a blank mailing address no longer gets in the way: the spend check answers", async () => {
     const b = await seedQuick({ name: "SPEND-guard" });
     await recordUsage(env.DB, "claude", 1, 100);
     await saveSettings(env.DB, { physical_address: "" });
     try {
-      for (const path of ["full-scan", "reaudit"]) expect((await api(`/api/leads/${b.id}/${path}`, { method: "POST", body: JSON.stringify({}) })).status).toBe(400);
+      for (const path of ["full-scan", "reaudit"]) expect((await api(`/api/leads/${b.id}/${path}`, { method: "POST", body: JSON.stringify({}) })).status).toBe(402);
     } finally { await saveSettings(env.DB, { physical_address: "1 Main St, Boise, ID" }); }
   });
 });

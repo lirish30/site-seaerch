@@ -85,7 +85,7 @@ describe("POST /api/leads/bulk", () => {
 
   it("returns updated 0 and no token when nothing changed", async () => {
     const body = await (await bulk({ ids: ["nope"], action: "archive" })).json<any>();
-    expect(body).toEqual({ updated: 0, skipped: 0, undoToken: null });
+    expect(body).toEqual({ updated: 0, skipped: 0, keptStarred: 0, undoToken: null });
   });
 
   it("treats a duplicate id once", async () => {

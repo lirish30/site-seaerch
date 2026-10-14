@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { api, ApiError } from "../api";
 import BulkBar from "../components/BulkBar";
+import StarToggle from "../components/StarToggle";
 import { FitChip } from "../components/FitChip";
 import { MiniGauge } from "../components/HealthGauge";
 import { compareFit } from "../fitView";
 import { NICHE_LABEL, OFFER_LABEL, type LeadRow } from "../types";
-import { applyLeadFilters, defaultTableFilters, type LeadFilters, NOT_CRAWLED, OFFERS, platformOptions, type TableFilters } from "../leadFilters";
+import { applyLeadFilters, defaultTableFilters, isStarred, type LeadFilters, NOT_CRAWLED, OFFERS, platformOptions, starredFirst, type TableFilters } from "../leadFilters";
 import { allSelected, pruneSelection, someSelected, toggleId, togglePage } from "../bulkView";
 
 type Key = "name" | "health" | "score" | "fit" | "niche" | "status" | "follow";
@@ -25,7 +27,8 @@ function value(r: LeadRow, k: Exclude<Key, "fit">): string | number {
 
 /**
  * `filters`/`onFiltersChange` let a page own the filter state (to save and restore it); without them the table keeps its own.
- * `bulk` turns on row checkboxes and the selection bar; `onChanged` reloads the rows after a bulk change or undo.
+ * `bulk` turns on row checkboxes, the selection bar and the ★ on each row; `onChanged` reloads the rows after a bulk change, an undo or a star.
+ * Starred rows always sort above the rest, whichever column is sorted.
  */
 export default function LeadTable({ rows, filters, onFiltersChange, bulk, onTagClick }: {
   rows: LeadRow[]; filters?: TableFilters; onFiltersChange?: (t: TableFilters) => void;
@@ -46,14 +49,14 @@ export default function LeadTable({ rows, filters, onFiltersChange, bulk, onTagC
   const platforms = useMemo(() => platformOptions(rows), [rows]);
   const view = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return applyLeadFilters(rows, f)
+    return starredFirst(applyLeadFilters(rows, f)
       .filter((r) => !niche || r.niche === niche)
       .filter((r) => !needle || `${r.business.name} ${r.business.website_url ?? ""} ${r.business.address ?? ""}`.toLowerCase().includes(needle))
       .sort((a, b) => {
         if (sort.k === "fit") return compareFit(a.fit, b.fit, sort.dir) || a.business.name.localeCompare(b.business.name);
         const x = value(a, sort.k), y = value(b, sort.k);
         return (x < y ? -1 : x > y ? 1 : 0) * sort.dir || a.business.name.localeCompare(b.business.name);
-      });
+      }));
   }, [rows, sort, f, q, niche]);
   const pages = Math.max(1, Math.ceil(view.length / PAGE));
   const shown = view.slice(Math.min(page, pages - 1) * PAGE, Math.min(page, pages - 1) * PAGE + PAGE);
@@ -70,6 +73,25 @@ export default function LeadTable({ rows, filters, onFiltersChange, bulk, onTagC
   useEffect(() => { setSelected((s) => pruneSelection(s, viewIds)); }, [viewIds]);
   const pageIds = shown.map((r) => r.business.id);
   const headBox = useRef<HTMLInputElement>(null);
+
+  // One star request per lead at a time; the rows reload afterwards so the lead moves to the top of the list.
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  const [starBusy, setStarBusy] = useState<ReadonlySet<string>>(new Set());
+  const [starErr, setStarErr] = useState("");
+  const toggleStar = async (r: LeadRow) => {
+    const id = r.business.id;
+    if (starBusy.has(id) || !bulk) return;
+    setStarBusy((s) => new Set(s).add(id)); setStarErr("");
+    try {
+      await api.patch(`/leads/${id}`, { starred: !isStarred(r) });
+      await Promise.resolve(bulk.onChanged()).catch(() => { /* the page reports its own load errors */ });
+    } catch (e) {
+      if (alive.current) setStarErr(e instanceof ApiError && e.status < 500 && e.message ? e.message : `Couldn't ${isStarred(r) ? "unstar" : "star"} ${r.business.name}. Try again.`);
+    } finally {
+      if (alive.current) setStarBusy((s) => { const n = new Set(s); n.delete(id); return n; });
+    }
+  };
   useEffect(() => { if (headBox.current) headBox.current.indeterminate = someSelected(selected, pageIds) && !allSelected(selected, pageIds); });
 
   return (
@@ -93,6 +115,7 @@ export default function LeadTable({ rows, filters, onFiltersChange, bulk, onTagC
         <label className="check">Max rating <input type="number" min={0} max={5} step={0.1} className="num" value={f.maxRating ?? ""} onChange={(e) => set({ maxRating: num(e.target.value) })} /></label>
         <span className="muted small">{view.length} of {rows.length}</span>
       </div>
+      {starErr && <p className="error" role="alert">{starErr}</p>}
       <div className="table-wrap">
         <table className="leads">
           <colgroup>
@@ -114,10 +137,11 @@ export default function LeadTable({ rows, filters, onFiltersChange, bulk, onTagC
           </tr></thead>
           <tbody>
             {shown.map((r) => (
-              <tr key={r.business.id} className={selected.has(r.business.id) ? "selected" : undefined}>
+              <tr key={r.business.id} className={[selected.has(r.business.id) ? "selected" : "", isStarred(r) ? "starred" : ""].filter(Boolean).join(" ") || undefined}>
                 {bulk && <td className="check-cell"><input type="checkbox" aria-label={`Select ${r.business.name}`} checked={selected.has(r.business.id)}
                   onChange={() => setSelected(toggleId(selected, r.business.id))} /></td>}
                 <td className="cell-name">
+                  {bulk && <StarToggle on={isStarred(r)} name={r.business.name} busy={starBusy.has(r.business.id)} onClick={() => void toggleStar(r)} />}
                   <Link to={`/leads/${r.business.id}`} title={r.business.name}>{r.business.name}</Link>
                   {r.business.last_error && <span className="warn-ico" title={r.business.last_error}>⚠</span>}
                   {r.scan_stage === "quick" && <span className="badge quick-scan" title="Crawled and scored only. Run a full scan from the Promising page for screenshots, PageSpeed, AI review and a draft.">Quick scan</span>}

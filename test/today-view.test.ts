@@ -8,8 +8,9 @@ const item = (kind: TodayItem["kind"], businessId: string): TodayItem =>
 
 describe("today view helpers", () => {
   it("labels every kind", () => {
-    expect(Object.keys(TODAY_KIND_LABEL).sort()).toEqual(["draft_unsent", "follow_up_due", "promising_quick_scan", "stalled_deal"]);
+    expect(Object.keys(TODAY_KIND_LABEL).sort()).toEqual(["draft_unsent", "follow_up_due", "promising_quick_scan", "stalled_deal", "starred_idle"]);
     expect(TODAY_KIND_LABEL.follow_up_due).toBe("Follow-up");
+    expect(TODAY_KIND_LABEL.starred_idle).toBe("Saved");
   });
   it("offers snooze for 1, 3 and 7 days, all inside the API's 1-30", () => {
     expect([...SNOOZE_DAYS]).toEqual([1, 3, 7]);

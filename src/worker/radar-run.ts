@@ -46,7 +46,7 @@ export async function runDueRadars(deps: RadarDeps, opts: { maxPerRun?: number }
     try {
       const o = await runRadar(deps, radar);
       if (o.status === "started") summary.started++;
-      else if (o.status === "claim_lost" || o.failure.kind === "spend" || o.failure.kind === "compliance") summary.skipped++;
+      else if (o.status === "claim_lost" || o.failure.kind === "spend") summary.skipped++;
       else summary.failed++;
     } catch (e) {
       summary.failed++;

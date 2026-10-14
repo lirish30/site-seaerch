@@ -166,16 +166,13 @@ describe("runDueRadars guards", () => {
     expect(row.last_run_at).toBeNull(); // "last run" means a search actually started
   });
 
-  it.each([["physical_address"], ["opt_out_line"]])("missing %s blocks the run the same way", async (field) => {
+  it.each([["physical_address"], ["opt_out_line"]])("a blank %s does not block the run", async (field) => {
     await saveSettings(env.DB, { [field]: "  " });
     await seed({ id: "r", next: ago(1) });
     const s = fakeStart();
     const r = await runDueRadars(deps(s.fn));
-    expect(r).toEqual({ started: 0, skipped: 1, failed: 0 });
-    expect(s.ids).toEqual([]);
-    const row = (await getRadar(env.DB, "r"))!;
-    expect(row.last_error).toMatch(/Settings/);
-    expect(row.next_run_at).toBe(ahead(1));
+    expect(r).toEqual({ started: 1, skipped: 0, failed: 0 });
+    expect(s.ids).toHaveLength(1);
   });
 
   it("counts searches already started in the same tick toward the spend limit", async () => {

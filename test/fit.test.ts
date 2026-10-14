@@ -11,7 +11,7 @@ const biz = (o: Partial<Business> = {}): Business => ({
   id: "b1", place_id: null, domain: null, name: "Ace Plumbing", category: "Plumber", address: "12 Main St, Boise, ID",
   phone: null, website_url: "https://ace.com", maps_url: null, rating: 4.5, review_count: 30, first_seen_search_id: null,
   lead_status: "new", notes: null, contacted_at: null, last_error: null, created_at: "2026-01-01", archived_at: null,
-  follow_up_at: null, deal_value: null, scan_stage: "full", tags: [], ...o,
+  follow_up_at: null, deal_value: null, scan_stage: "full", tags: [], starred_at: null, ...o,
 });
 const aud = (o: Partial<Audit> = {}): Audit => ({ id: "a1", business_id: "b1", created_at: "2026-01-01", site_status: "ok", health_score: 80, platform: "wordpress", ...o } as Audit);
 const prof = (o: Partial<FitProfile> = {}): FitProfile => ({

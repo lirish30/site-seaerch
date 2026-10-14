@@ -3,12 +3,12 @@ import { api, ApiError } from "../api";
 import SavedFilters from "../components/SavedFilters";
 import { defaultView, parseView, serializeView, type LeadView } from "../savedFilters";
 import { STATUSES, type LeadRow, type LeadStatus } from "../types";
-import type { TableFilters } from "../leadFilters";
+import { isStarred, type TableFilters } from "../leadFilters";
 import LeadTable from "./LeadTable";
 
 export default function AllLeads() {
   const [view, setView] = useState<LeadView>(defaultView);
-  const { status, archived, tag } = view;
+  const { status, archived, tag, starred } = view;
   // The tag box is typed into freely; it only becomes the filter on Enter or blur, so each keystroke doesn't refetch.
   const [tagDraft, setTagDraft] = useState("");
   const [rows, setRows] = useState<LeadRow[] | null>(null);
@@ -22,17 +22,19 @@ export default function AllLeads() {
   useEffect(() => {
     let cancelled = false; // ignore responses for a filter the user has already changed away from
     // A new filter shows "Loading…"; a reload after a bulk change keeps the table on screen.
-    const key = `${status}|${archived}|${tag}`;
+    const key = `${status}|${archived}|${tag}|${starred}`;
     if (loadedFor.current !== key) { loadedFor.current = key; setRows(null); }
     setErr("");
-    const q = new URLSearchParams({ limit: "500", ...(status ? { status } : {}), ...(archived ? { archived: "1" } : {}), ...(tag ? { tag } : {}) });
+    const q = new URLSearchParams({ limit: "500", ...(status ? { status } : {}), ...(archived ? { archived: "1" } : {}), ...(tag ? { tag } : {}), ...(starred ? { starred: "1" } : {}) });
     api.get<LeadRow[]>(`/leads?${q}`)
       .then((r) => { if (!cancelled) setRows(r); })
       .catch((e) => { if (!cancelled) setErr(e instanceof ApiError ? e.message : "Couldn't load leads."); });
     return () => { cancelled = true; };
-  }, [status, archived, tag, reloads]);
+  }, [status, archived, tag, starred, reloads]);
   const reload = useCallback(() => setReloads((n) => n + 1), []);
 
+  // Counted from the loaded rows (the server lists starred leads first, so they are all in them), so it follows the status and tag filters.
+  const starredCount = useMemo(() => (rows ?? []).filter(isStarred).length, [rows]);
   const tags = useMemo(() => [...new Set((rows ?? []).flatMap((r) => r.business.tags))].sort(), [rows]);
   const current = serializeView(view);
   const apply = (query: string) => { const v = parseView(query); setView(v); setTagDraft(v.tag); };
@@ -50,6 +52,8 @@ export default function AllLeads() {
             onChange={(e) => setTagDraft(e.target.value)} onBlur={() => applyTag(tagDraft)}
             onKeyDown={(e) => { if (e.key === "Enter") applyTag(tagDraft); }} />
           <datalist id="lead-tags">{tags.map((t) => <option key={t} value={t} />)}</datalist>
+          <button className={`chip-toggle${starred ? " on" : ""}`} aria-pressed={starred} onClick={() => patch({ starred: !starred })}
+            title={starred ? "Showing only starred leads. Click to show all." : "Show only starred leads"}>★ Starred{rows ? ` (${starredCount})` : ""}</button>
           <div className="segmented small-seg" role="group" aria-label="Show">
             <button className={!archived ? "on" : ""} aria-pressed={!archived} onClick={() => patch({ archived: false })}>Active</button>
             <button className={archived ? "on" : ""} aria-pressed={archived} onClick={() => patch({ archived: true })}>Archived</button>

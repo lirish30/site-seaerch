@@ -3,7 +3,7 @@ import type { Settings } from "../types";
 const FIELDS: (keyof Settings)[] = [
   "your_name", "business_name", "contact_email", "services_blurb", "signature",
   "physical_address", "opt_out_line", "tone_notes", "monthly_spend_limit_usd", "tone_preset", "email_length", "cta_style",
-  "logo_url",
+  "logo_url", "role_title", "bio", "availability", "resume_url", "goal_line", "signature_json", "default_purpose",
 ];
 
 export async function getSettings(db: D1Database): Promise<Settings> {

@@ -88,13 +88,15 @@ export async function listBusinessesForSearch(db: D1Database, searchId: string, 
 }
 
 /** `tag` must already be normalized (see `normalizeTag`). */
-export async function listAllBusinesses(db: D1Database, o: { status?: LeadStatus; limit?: number; offset?: number; archived?: boolean; tag?: string }) {
+export async function listAllBusinesses(db: D1Database, o: { status?: LeadStatus; limit?: number; offset?: number; archived?: boolean; tag?: string; starred?: boolean }) {
   const where = [o.archived ? "archived_at IS NOT NULL" : "archived_at IS NULL"];
   const args: (string | number)[] = [];
   if (o.status) { where.push("lead_status = ?"); args.push(o.status); }
+  if (o.starred) where.push("starred_at IS NOT NULL");
   // json_each throws on malformed JSON, which would fail the whole list over one bad row; such a row just has no tags.
   if (o.tag) { where.push("EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(businesses.tags) THEN businesses.tags ELSE '[]' END) WHERE value = ?)"); args.push(o.tag); }
-  const stmt = db.prepare(`SELECT * FROM businesses WHERE ${where.join(" AND ")} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`)
+  // Starred first, so a starred lead is always inside the page the list loads however many newer leads there are.
+  const stmt = db.prepare(`SELECT * FROM businesses WHERE ${where.join(" AND ")} ORDER BY starred_at IS NULL, created_at DESC, id DESC LIMIT ? OFFSET ?`)
     .bind(...args, o.limit ?? -1, o.offset ?? 0);
   return rows((await stmt.all<BusinessRow>()).results);
 }
@@ -110,7 +112,7 @@ export type TodayCandidate = Business & { latest_draft_at: string | null; latest
 
 /**
  * Non-archived leads that could produce a Today item as of `nowIso`, from one query: a due follow-up, a new/reviewed lead with a draft,
- * a contacted/replied lead with a deal value, or a quick-scanned lead whose latest audit scores at least `minQuickScore`.
+ * a contacted/replied lead with a deal value, a starred open lead, or a quick-scanned lead whose latest audit scores at least `minQuickScore`.
  * The draft time and latest score are sub-selects so no per-lead query is needed; the caller applies the finer rules.
  */
 export async function listTodayCandidates(db: D1Database, nowIso: string, minQuickScore: number): Promise<TodayCandidate[]> {
@@ -121,6 +123,7 @@ export async function listTodayCandidates(db: D1Database, nowIso: string, minQui
       (follow_up_at IS NOT NULL AND follow_up_at <= ? AND ${open})
       OR (lead_status IN ('new','reviewed') AND EXISTS (SELECT 1 FROM drafts d WHERE d.business_id = businesses.id))
       OR (lead_status IN ('contacted','replied') AND deal_value IS NOT NULL)
+      OR (starred_at IS NOT NULL AND ${open})
       OR (scan_stage = 'quick' AND ${open} AND ${latestScore} >= ?)
     ) ORDER BY created_at, id`;
   const res = (await db.prepare(sql).bind(nowIso, minQuickScore).all<BusinessRow & { latest_draft_at: string | null; latest_score: number | null }>()).results;
@@ -131,6 +134,7 @@ export async function setScanStage(db: D1Database, id: string, stage: ScanStage)
   await db.prepare(`UPDATE businesses SET scan_stage = ? WHERE id = ?`).bind(stage, id).run();
 }
 
+const starStmt = (db: D1Database, id: string, at: string | null) => db.prepare(`UPDATE businesses SET starred_at = ? WHERE id = ?`).bind(at, id);
 const archiveStmt = (db: D1Database, id: string, archived: boolean, at = new Date().toISOString()) =>
   db.prepare(`UPDATE businesses SET archived_at = ? WHERE id = ?`).bind(archived ? at : null, id);
 // Moving to "contacted" stamps contacted_at; any other status leaves it alone.
@@ -168,19 +172,32 @@ export async function updateLead(db: D1Database, id: string, u: {
   return (await getBusiness(db, id))!;
 }
 
+/**
+ * Stars or unstars one lead. Starring an already-starred lead keeps its original time. Returns the lead after the change with
+ * `changed` saying whether anything was written, or null when there is no such lead.
+ */
+export async function setStarred(db: D1Database, id: string, starred: boolean): Promise<{ business: Business; changed: boolean } | null> {
+  const before = await getBusiness(db, id);
+  if (!before) return null;
+  if (!!before.starred_at === starred) return { business: before, changed: false };
+  await db.prepare(`UPDATE businesses SET starred_at = ? WHERE id = ?`).bind(starred ? new Date().toISOString() : null, id).run();
+  return { business: (await getBusiness(db, id))!, changed: true };
+}
+
 export type BulkOp =
   | { action: "status"; status: LeadStatus }
-  | { action: "archive" | "restore" }
+  | { action: "archive" | "restore" | "star" | "unstar" }
   | { action: "tag" | "untag"; tag: string };
 /**
  * What a bulk action wrote to one lead: the value it replaced and the value it left, for ONLY the columns that action touches
- * (status: lead_status + contacted_at; archive/restore: archived_at; tag/untag: tags). Undo puts `before` back only while the
+ * (status: lead_status + contacted_at; archive/restore: archived_at; tag/untag: tags; star/unstar: starred_at). Undo puts `before` back only while the
  * lead still holds `after`, so an edit made since (a status change, opening a "new" lead, a tag edit) is never overwritten.
  */
 type BulkSnapshot =
   | { id: string; kind: "status"; before: { lead_status: LeadStatus; contacted_at: string | null }; after: { lead_status: LeadStatus; contacted_at: string | null } }
   | { id: string; kind: "archived"; before: { archived_at: string | null }; after: { archived_at: string | null } }
-  | { id: string; kind: "tags"; before: { tags: string[] }; after: { tags: string[] } };
+  | { id: string; kind: "tags"; before: { tags: string[] }; after: { tags: string[] } }
+  | { id: string; kind: "starred"; before: { starred_at: string | null }; after: { starred_at: string | null } };
 
 export const UNDO_WINDOW_MS = 10 * 60_000;
 // D1 allows 100 bound variables per statement.
@@ -206,11 +223,18 @@ function bulkChange(db: D1Database, b: Business, op: BulkOp, at: string): { stmt
         snap: { id: b.id, kind: "status", before: { lead_status: b.lead_status, contacted_at: b.contacted_at }, after: { lead_status: op.status, contacted_at } } };
     }
     case "archive":
-      return b.archived_at ? null : { stmt: archiveStmt(db, b.id, true, at), detail: "archive (bulk)",
+      // Starred leads are never swept up by a bulk archive (applyBulk counts them); unstar first to archive one.
+      return b.archived_at || b.starred_at ? null : { stmt: archiveStmt(db, b.id, true, at), detail: "archive (bulk)",
         snap: { id: b.id, kind: "archived", before: { archived_at: null }, after: { archived_at: at } } };
     case "restore":
       return b.archived_at ? { stmt: archiveStmt(db, b.id, false), detail: "restore (bulk)",
         snap: { id: b.id, kind: "archived", before: { archived_at: b.archived_at }, after: { archived_at: null } } } : null;
+    case "star":
+      return b.starred_at ? null : { stmt: starStmt(db, b.id, at), detail: "star (bulk)",
+        snap: { id: b.id, kind: "starred", before: { starred_at: null }, after: { starred_at: at } } };
+    case "unstar":
+      return b.starred_at ? { stmt: starStmt(db, b.id, null), detail: "unstar (bulk)",
+        snap: { id: b.id, kind: "starred", before: { starred_at: b.starred_at }, after: { starred_at: null } } } : null;
     case "tag": {
       if (b.tags.includes(op.tag) || b.tags.length >= MAX_TAGS) return null;
       const tags = [...b.tags, op.tag];
@@ -227,9 +251,10 @@ function bulkChange(db: D1Database, b: Business, op: BulkOp, at: string): { stmt
 /**
  * Applies one action to many leads in a single batch: the changes, one `bulk` activity row per changed lead, and an undo
  * snapshot. Unknown ids are ignored; leads already as asked (or at the tag cap) are counted in `skipped` and left alone.
+ * A bulk archive also leaves starred leads alone; those are counted in `skipped` and again in `keptStarred`.
  * `tag` must already be normalized.
  */
-export async function applyBulk(db: D1Database, ids: string[], op: BulkOp): Promise<{ updated: number; skipped: number; undoToken: string | null }> {
+export async function applyBulk(db: D1Database, ids: string[], op: BulkOp): Promise<{ updated: number; skipped: number; keptStarred: number; undoToken: string | null }> {
   const now = new Date();
   await db.prepare(`DELETE FROM bulk_undo WHERE created_at < ?`).bind(new Date(now.getTime() - UNDO_WINDOW_MS).toISOString()).run();
   const found = await businessesByIds(db, [...new Set(ids)]);
@@ -242,11 +267,12 @@ export async function applyBulk(db: D1Database, ids: string[], op: BulkOp): Prom
     stmts.push(change.stmt, activityStmt(db, b.id, "bulk", change.detail));
   }
   const skipped = found.size - snapshot.length;
-  if (!snapshot.length) return { updated: 0, skipped, undoToken: null };
+  const keptStarred = op.action === "archive" ? [...found.values()].filter((b) => b.starred_at && !b.archived_at).length : 0;
+  if (!snapshot.length) return { updated: 0, skipped, keptStarred, undoToken: null };
   const undoToken = crypto.randomUUID();
   stmts.push(db.prepare(`INSERT INTO bulk_undo (token, snapshot, created_at) VALUES (?,?,?)`).bind(undoToken, JSON.stringify(snapshot), now.toISOString()));
   await db.batch(stmts);
-  return { updated: snapshot.length, skipped, undoToken };
+  return { updated: snapshot.length, skipped, keptStarred, undoToken };
 }
 
 /** True while the lead still holds exactly what the bulk action wrote to the columns it touched. */
@@ -255,6 +281,7 @@ function stillAsBulkLeftIt(b: Business, s: BulkSnapshot): boolean {
     case "status": return b.lead_status === s.after.lead_status && b.contacted_at === s.after.contacted_at;
     case "archived": return b.archived_at === s.after.archived_at;
     case "tags": return JSON.stringify(b.tags) === JSON.stringify(s.after.tags);
+    case "starred": return b.starred_at === s.after.starred_at;
   }
 }
 
@@ -268,6 +295,8 @@ function restoreStmt(db: D1Database, s: BulkSnapshot): D1PreparedStatement {
       return db.prepare(`UPDATE businesses SET archived_at = ? WHERE id = ? AND archived_at IS ?`).bind(s.before.archived_at, s.id, s.after.archived_at);
     case "tags":
       return db.prepare(`UPDATE businesses SET tags = ? WHERE id = ? AND tags = ?`).bind(JSON.stringify(s.before.tags), s.id, JSON.stringify(s.after.tags));
+    case "starred":
+      return db.prepare(`UPDATE businesses SET starred_at = ? WHERE id = ? AND starred_at IS ?`).bind(s.before.starred_at, s.id, s.after.starred_at);
   }
 }
 

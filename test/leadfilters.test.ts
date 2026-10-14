@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { applyLeadFilters, defaultFilters, NOT_CRAWLED, platformOptions, type LeadFilters } from "../src/client/leadFilters";
+import { applyLeadFilters, defaultFilters, NOT_CRAWLED, platformOptions, starredFirst, type LeadFilters } from "../src/client/leadFilters";
 import type { FitResult, LeadRow } from "../src/client/types";
 
 let n = 0;
 const NO_FIT: FitResult = { fit: null, profile: null, matched: [], missing: [] };
-const row = (o: Partial<Omit<LeadRow, "business">> & { status?: string } = {}): LeadRow => {
-  const { status, ...rest } = o;
+const row = (o: Partial<Omit<LeadRow, "business">> & { status?: string; starred?: boolean } = {}): LeadRow => {
+  const { status, starred, ...rest } = o;
   const flat = { rating: 4, reviewCount: 10, ...rest }; // business row mirrors the flat fields, as leadRows builds them
   return { business: { id: `b${n++}`, name: "N", category: null, address: null, phone: null, website_url: null, maps_url: null,
     lead_status: (status ?? "new") as any, notes: null, contacted_at: null, last_error: null, rating: flat.rating, review_count: flat.reviewCount,
-    archived_at: null, follow_up_at: null, deal_value: null, created_at: "2026-10-03T00:00:00.000Z", scan_stage: "full", tags: [] },
+    archived_at: null, follow_up_at: null, deal_value: null, created_at: "2026-10-03T00:00:00.000Z", scan_stage: "full", tags: [], starred_at: starred ? "2026-10-01T00:00:00.000Z" : null },
   score: 50, health: null, niche: null, poc: null, topFinding: null, offer: "care_plan", bestContact: null, hasEmail: false, partial: false, platform: "wix", fit: NO_FIT, scan_stage: "full", ...flat };
 };
 const f = (o: Partial<LeadFilters> = {}): LeadFilters => ({ ...defaultFilters, ...o });
@@ -82,5 +82,37 @@ describe("platformOptions", () => {
   it("lists distinct non-null platforms, sorted", () => {
     expect(platformOptions([row({ platform: "wix" }), row({ platform: null }), row({ platform: "godaddy" }), row({ platform: "wix" })])).toEqual(["godaddy", "wix"]);
     expect(platformOptions([])).toEqual([]);
+  });
+});
+
+describe("starred leads and the quality filters", () => {
+  it("a starred lead ignores hide-skipped and the opportunity, reviews and rating limits", () => {
+    const s = row({ starred: true, status: "skip", score: 5, reviewCount: 1, rating: 4.9 });
+    const plain = row({ status: "skip", score: 5, reviewCount: 1, rating: 4.9 });
+    const strict = f({ hideSkipped: true, minScore: 60, minReviews: 20, maxRating: 4 });
+    expect(applyLeadFilters([s, plain], strict)).toEqual([s]);
+  });
+  it("a starred lead with no review count or rating still passes those limits", () => {
+    const s = row({ starred: true, reviewCount: null, rating: null });
+    expect(applyLeadFilters([s], f({ minReviews: 50, maxRating: 3 }))).toEqual([s]);
+  });
+  it("search-style filters still apply to a starred lead: offer, platform and email", () => {
+    const s = row({ starred: true, offer: "care_plan", platform: "wix", hasEmail: false });
+    expect(applyLeadFilters([s], f({ offer: "new_site" }))).toEqual([]);
+    expect(applyLeadFilters([s], f({ platform: "shopify" }))).toEqual([]);
+    expect(applyLeadFilters([s], f({ emailOnly: true }))).toEqual([]);
+  });
+});
+
+describe("starredFirst", () => {
+  it("moves starred rows above the rest and keeps each group's own order", () => {
+    const [a, b, c, d] = [row(), row({ starred: true }), row(), row({ starred: true })];
+    expect(ids(starredFirst([a, b, c, d]))).toEqual(ids([b, d, a, c]));
+  });
+  it("returns an equal list when nothing is starred, and does not mutate its input", () => {
+    const rows = [row(), row()];
+    const copy = [...rows];
+    expect(starredFirst(rows)).toEqual(copy);
+    expect(rows).toEqual(copy);
   });
 });
