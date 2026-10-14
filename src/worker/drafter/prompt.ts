@@ -53,12 +53,12 @@ const FULL_TIME_TONES: Record<TonePreset, string> = {
   direct: "Brief and plain: short sentences, no filler, respectful of their time.",
   formal: "Professional and polished: courteous, complete sentences, no slang.",
 };
-const FULL_TIME_LENGTH: Record<EmailLength, number> = { short: 170, medium: 230, long: 300 };
+const FULL_TIME_LENGTH: Record<EmailLength, number> = { short: 150, medium: 210, long: 280 };
 
 const FULL_TIME_ANGLES = [
-  "Observation-led: open on the one thing you noticed about their site, then how you would approach it.",
-  "Work-led: open on your most relevant sample, then connect it to what you noticed on their site.",
-  "Short and direct: a brief intro, one observation, one link, a low-pressure ask.",
+  "Intro-led: open on who you are and why this company, then one nod to their site, then your work.",
+  "Work-led: open on your most relevant sample, then say why that made you look at this company.",
+  "Short and direct: three or four sentences, who you are, one specific nod, one link, a low-pressure ask.",
 ];
 const FREELANCE_ANGLES = [
   "Problem-led: open on the costliest thing you noticed, then the fix.",
@@ -130,24 +130,23 @@ ${contactLines(i)}${i.steeringNote ? `\n\nExtra instruction for this draft: ${i.
 export function buildFullTimePrompt(i: DraftInput) {
   const s = i.settings;
   const tone = FULL_TIME_TONES[i.tone ?? s.tone_preset ?? "friendly_local"] ?? FULL_TIME_TONES.friendly_local;
-  const maxWords = FULL_TIME_LENGTH[s.email_length ?? "short"] ?? 170;
+  const maxWords = FULL_TIME_LENGTH[s.email_length ?? "short"] ?? 150;
   const about = s.bio || s.services_blurb || "A web professional.";
   const system = `You write personal outreach emails for ${s.your_name || "a web professional"}${s.role_title ? `, ${s.role_title}` : ""}, who is looking for a full-time role.
 ${s.goal_line ? `What they are looking for: ${s.goal_line}\n` : ""}About them: ${about}${s.availability ? `\nAvailability: ${s.availability}` : ""}
 Tone: ${tone}${s.tone_notes ? `\nTheir own voice notes: ${s.tone_notes}` : ""}
 
-This is a speculative introduction. The company has not necessarily posted a role, so never pretend one is open and never say "I saw your job posting". It is a sincere note to someone who could hire, showing why they would want this person on the team.
+This is a speculative introduction from a person to a person. The company has not necessarily posted a role, so never pretend one is open and never say "I saw your job posting". The email is about the SENDER and why they would be a good addition to this team. It is not a website review and not a sales pitch. If it could be sent to a prospective client unchanged, it is wrong.
 
-Structure the email as a mini case for hiring them, in this order:
-1. An opening line specific to this company (their name, what they do, or their town). Never a generic pleasantry like "I hope this finds you well".
-2. One genuine observation about their website, taken from the findings, framed as an opportunity and said with respect for the people who built it. Never insult the work. Mention at most two things.
-3. How they would approach it: 2-3 concrete steps, drawn from the recommendations.
-4. Proof: cite 1-2 of the work samples listed below by name and include their link, with the result in a short phrase. If none are listed, cite no work and offer to share examples instead.
-5. A soft, low-pressure ask for a short conversation about whether there is a place for someone like them now or later.${s.resume_url ? ` Include their resume link: ${s.resume_url}` : ""}
+Write it in this order:
+1. Open with who they are and why this company: one or two sentences that say what kind of developer they are and what drew them to this company specifically (what the company does, their town, or what their site says they do). Lead with the person, never with a problem on the site.
+2. One light nod to the site, in a single sentence: something specific from the findings that shows they really looked, said with respect for the people who built it. Plain words, at most one concrete detail. NO list of issues, NO fix steps, NO "I would start by", NO offer to fix or to talk about the issue, and no claims about how or on what device they looked unless a finding says so. Do not praise anything the findings do not show (no "clearly well built", no "everything else is great").
+3. What they would bring: tie the kind of work they do (from the brief about them) to a company like this one. Cite 1-2 of the work samples listed below by name with their link and the result in a short phrase. If none are listed, cite no work and say they are happy to share examples.
+4. A soft, low-pressure ask for a short conversation about whether there is a place for someone like them now or later.${s.resume_url ? ` Include their resume link: ${s.resume_url}` : ""}
 
 Rules:
 - Body under ${maxWords} words, plain text, no markdown, no bullet symbols. Paste links as plain URLs.
-- Only state facts from this brief. Never invent employers, years of experience, numbers, tools, awards or results, and never cite work that is not listed.
+- Only state facts from this brief. Never invent employers, years of experience, numbers, tools, awards or results, and never cite work that is not listed. Never say how the sender found the company (no "I came across", "I stumbled on", "I was looking at") and never invent why the sender picked this company beyond what the company does, its town, or what its site says. If the brief about them is thin, write a shorter, honest email instead of filling space.
 - Never use jargon such as LCP, CLS, Core Web Vitals, meta description, viewport, CTA, CRO or SEO acronyms.
 - Do not beg or over-apologise, and do not ask for a job in the first line.
 - End with a short sign-off and just their first name. Do NOT write a full signature, address or opt-out line: those are added automatically.
@@ -160,8 +159,8 @@ Return your answer by calling the write_email tool.`;
     : "none";
   const user = `${businessBlock(i)}
 
-${i.focus?.length ? "Build the observation from these (the sender chose them):" : "Findings (most important first; pick the most interesting):"}
-${chosenFindings(i, 3).map(findingLine).join("\n") || "- none"}
+${i.focus?.length ? "Something noticed on their site (the sender chose these; use one):" : "Things noticed on their site (use at most one, for the single nod):"}
+${chosenFindings(i, 3).map((f) => `- ${f.evidence}`).join("\n") || "- none"}
 
 Work samples you may cite (only these):
 ${samples}

@@ -191,14 +191,40 @@ const samples: WorkSample[] = [
 describe("buildFullTimePrompt", () => {
   const ft: DraftInput = { ...input, purpose: "full_time", samples: samples.slice(0, 2) };
 
-  it("is chosen by purpose and writes a mini case for hiring, not a fix list", () => {
+  it("is chosen by purpose and is about the sender, not a website review", () => {
     const p = buildPrompt(ft);
     expect(p.system).toContain("looking for a full-time role");
-    expect(p.system).toMatch(/mini case for hiring/);
+    expect(p.system).toMatch(/about the SENDER/);
+    expect(p.system).toMatch(/not a website review and not a sales pitch/);
     expect(p.system).toMatch(/never pretend one is open/);
     expect(p.system).not.toContain("mini proposal");
     expect(p.system).not.toContain("free website audit report");
     expect(buildPrompt(input).system).toContain("mini proposal");
+  });
+
+  it("leads with the person and allows only one light nod to the site, with no fix steps", () => {
+    const p = buildFullTimePrompt(ft);
+    expect(p.system).toMatch(/Lead with the person, never with a problem on the site/);
+    expect(p.system).toMatch(/single sentence/);
+    expect(p.system).toMatch(/NO list of issues, NO fix steps/);
+    expect(p.system).toMatch(/NO offer to fix or to talk about the issue/);
+    expect(p.system).not.toMatch(/How they would approach it/);
+  });
+
+  it("does not hand the model the recommended fixes, so it has none to list", () => {
+    const withFix = { ...ft, findings: [{ ...input.findings[0], recommendation: "Compress images and defer scripts" }] };
+    expect(buildPrompt({ ...withFix, purpose: "freelance" }).user).toContain("(fix: Compress images and defer scripts)");
+    const p = buildFullTimePrompt(withFix);
+    expect(p.user).toContain("Scores 34/100 on Google's mobile speed test");
+    expect(p.user).not.toContain("Compress images");
+    expect(p.user).not.toContain("(fix:");
+  });
+
+  it("forbids inventing how the sender found the company, or praise the findings do not show", () => {
+    const s = buildFullTimePrompt(ft).system;
+    expect(s).toMatch(/no "I came across"/);
+    expect(s).toMatch(/no device|on what device/);
+    expect(s).toMatch(/Do not praise anything the findings do not show/);
   });
 
   it("carries the sender's profile and nothing about the footer", () => {
@@ -222,11 +248,12 @@ describe("buildFullTimePrompt", () => {
   it("says so when there are no samples, rather than leaving the model to make some up", () => {
     const p = buildFullTimePrompt({ ...ft, samples: [] });
     expect(p.user).toContain("Work samples you may cite (only these):\nnone");
-    expect(p.system).toMatch(/cite no work and offer to share examples/);
+    expect(p.system).toMatch(/cite no work and say they are happy to share examples/);
   });
 
   it("asks for three differently-angled variants, or one when revising", () => {
     expect(buildFullTimePrompt(ft).system).toMatch(/Write 3 variants/);
+    expect(buildFullTimePrompt(ft).system).toMatch(/Intro-led/);
     const r = buildFullTimePrompt({ ...ft, revise: { subject: "Old subject", body: "Old body text", instruction: "Make it shorter." } });
     expect(r.system).toMatch(/exactly 1 variant/);
     expect(r.user).toContain("Subject: Old subject");
@@ -235,10 +262,10 @@ describe("buildFullTimePrompt", () => {
   });
 
   it("applies the length setting on its own scale and still honours chosen issues", () => {
-    expect(buildFullTimePrompt(ft).system).toMatch(/under 170 words/);
-    expect(buildFullTimePrompt({ ...ft, settings: { ...settings, email_length: "long" } }).system).toMatch(/under 300 words/);
+    expect(buildFullTimePrompt(ft).system).toMatch(/under 150 words/);
+    expect(buildFullTimePrompt({ ...ft, settings: { ...settings, email_length: "long" } }).system).toMatch(/under 280 words/);
     const p = buildFullTimePrompt({ ...ft, focus: [input.findings[3]] });
-    expect(p.user).toContain("Build the observation from these (the sender chose them):");
+    expect(p.user).toContain("Something noticed on their site (the sender chose these; use one):");
     expect(p.user).not.toContain("Scores 34/100");
   });
 });
