@@ -143,12 +143,31 @@ export interface ContactInput {
 }
 export interface Contact extends ContactInput { id: string; business_id: string; }
 
+export type Purpose = "full_time" | "freelance";
+export const PURPOSES: readonly Purpose[] = ["full_time", "freelance"];
+
 export interface Draft {
   id: string; business_id: string; audit_id: string | null; to_contact_id: string | null;
   recipient_reason: string; subject: string; body: string; offer: Offer;
   steering_note: string | null; edited: boolean; created_at: string;
+  purpose: Purpose; angle: string; include_footer: boolean;
+  variant_group: string | null; variant_index: number;
 }
-export type DraftInsert = Omit<Draft, "id" | "created_at" | "edited">;
+export type DraftInsert = Omit<Draft, "id" | "created_at" | "edited" | "purpose" | "angle" | "include_footer" | "variant_group" | "variant_index">
+  & Partial<Pick<Draft, "purpose" | "angle" | "include_footer" | "variant_group" | "variant_index">> & { created_at?: string };
+
+export interface WorkSample { id: string; title: string; url: string; result_line: string; tags: string; created_at: string }
+
+/** The signature builder's data. Rendered to email-safe HTML and plain text by email/signature.ts. */
+export interface Signature {
+  name: string; title: string; email: string; phone: string; website: string;
+  links: { label: string; url: string }[];
+  /** https URL of a logo or headshot; "" for none. */
+  image_url: string;
+  /** Where clicking the image goes; "" for nowhere. */
+  image_link: string;
+  image_width: number;
+}
 
 export interface Settings {
   your_name: string; business_name: string; contact_email: string; services_blurb: string;
@@ -156,6 +175,10 @@ export interface Settings {
   monthly_spend_limit_usd: number; tone_preset: TonePreset; email_length: EmailLength; cta_style: CtaStyle;
   /** https URL (or "") of the sender's logo, shown on public report pages. */
   logo_url: string;
+  role_title: string; bio: string; availability: string; resume_url: string; goal_line: string;
+  /** JSON of a Signature, or "" to use the plain-text `signature`. */
+  signature_json: string;
+  default_purpose: Purpose;
 }
 export type TonePreset = "friendly_local" | "consultative" | "direct" | "formal";
 export type EmailLength = "short" | "medium" | "long";

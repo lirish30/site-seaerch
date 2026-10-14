@@ -4,7 +4,6 @@ import { saveSettings } from "../src/worker/db/settings";
 import { createSearch } from "../src/worker/db/searches";
 import { upsertBusiness } from "../src/worker/db/businesses";
 import { MAX_RADARS } from "../src/worker/db/radar";
-import { MISSING_MAILING_SETTINGS } from "../src/worker/routes/compliance";
 
 let cookie = "";
 const api = (path: string, init: RequestInit = {}) =>
@@ -110,14 +109,11 @@ describe("POST /api/radar", () => {
     expect(await searchCount()).toBe(0);
   });
 
-  it("runNow rejects with the manual route's 400 when mailing settings are missing", async () => {
-    await saveSettings(env.DB, { physical_address: "" });
+  it("runNow does not need a mailing address or opt-out line", async () => {
+    await saveSettings(env.DB, { physical_address: "", opt_out_line: "" });
     const r = await post("/api/radar", { ...OK, runNow: true });
-    expect(r.status).toBe(400);
-    expect(await r.json()).toEqual({ error: MISSING_MAILING_SETTINGS });
-    expect(await env.DB.prepare(`SELECT COUNT(*) AS n FROM radars`).first<any>()).toEqual({ n: 0 });
-    // Without runNow nothing is spent, so the radar can still be saved.
-    expect((await post("/api/radar", OK)).status).toBe(201);
+    expect(r.status).toBe(201);
+    expect(created).toHaveLength(1);
   });
 
   it("runNow on a duplicate market is a 409 and does not spend", async () => {
@@ -264,13 +260,12 @@ describe("POST /api/radar/:id/run", () => {
     expect((await post(`/api/radar/${r.id}/run`)).status).toBe(409); // claimed_at stays set: can't be hammered
   });
 
-  it("400 when mailing settings are missing", async () => {
+  it("runs without a mailing address or opt-out line", async () => {
     const r = await addRadar();
     await saveSettings(env.DB, { opt_out_line: "" });
     const res = await post(`/api/radar/${r.id}/run`);
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: MISSING_MAILING_SETTINGS });
-    expect(created).toEqual([]);
+    expect(res.ok).toBe(true);
+    expect(created).toHaveLength(1);
   });
 
   it("502 when the workflow cannot start", async () => {

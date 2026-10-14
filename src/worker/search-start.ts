@@ -3,7 +3,6 @@ import type { Search } from "./types";
 import type { Env } from "./env";
 import { createSearch, runningMaxResultsSince, setSearchStatus } from "./db/searches";
 import { checkSpend, estimateSearchCost } from "./cost";
-import { mailingSettingsMissing, MISSING_MAILING_SETTINGS } from "./routes/compliance";
 
 export const NewSearch = z.object({
   location: z.string().trim().min(2),
@@ -18,7 +17,6 @@ export type SearchInput = z.infer<typeof NewSearch>;
 export type SpendCheck = Awaited<ReturnType<typeof checkSpend>>;
 export type StartFailure =
   | { ok: false; kind: "invalid"; error: string }
-  | { ok: false; kind: "compliance"; error: string }
   | { ok: false; kind: "spend"; spend: SpendCheck }
   | { ok: false; kind: "start_failed"; error: string };
 export type StartResult = { ok: true; search: Search } | StartFailure;
@@ -42,7 +40,6 @@ export async function checkSearchGuards(db: D1Database, input: unknown):
   Promise<{ ok: true; data: SearchInput } | Exclude<StartFailure, { kind: "start_failed" }>> {
   const parsed = NewSearch.safeParse(input);
   if (!parsed.success) return { ok: false, kind: "invalid", error: parsed.error.issues.map((i) => i.message).join("; ") };
-  if (await mailingSettingsMissing(db)) return { ok: false, kind: "compliance", error: MISSING_MAILING_SETTINGS };
   const spend = await checkSpend(db, estimateSearchCost(parsed.data.maxResults) + (await inFlightUsd(db)));
   if (!spend.ok) return { ok: false, kind: "spend", spend };
   return { ok: true, data: parsed.data };

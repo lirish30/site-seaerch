@@ -17,13 +17,14 @@ import { scoreFit } from "../scoring/fit";
 import { rankPromising } from "../scoring/promising";
 import { bestOffer } from "../services/best-offer";
 import { listContacts, contactsFor } from "../db/contacts";
-import { latestDraft, updateDraftBody, listDrafts } from "../db/drafts";
+import { latestDraft, updateDraftBody, listDrafts, selectDraft, variantsOf } from "../db/drafts";
 import { activeReportFor, createReport, otherActiveCount, revokeReports, type ReportRow } from "../db/reports";
 import { pickRecipient } from "../recipient";
-import { regenerateDraft } from "../pipeline/lead";
+import { regenerateDraft, TWEAKS, type Tweak } from "../pipeline/lead";
 import { depsFromEnv } from "../workflows";
 import { checkSpend, PER_LEAD_COST } from "../cost";
-import { mailingSettingsMissing, MISSING_MAILING_SETTINGS } from "./compliance";
+import { getSettings } from "../db/settings";
+import { composeEmail } from "../email/render";
 import { reportFor, reportFileName } from "../report/data";
 import { htmlToPdf } from "../render/render";
 import { renderDoc } from "../report/html";
@@ -151,12 +152,13 @@ leadRoutes.get("/:id", async (c) => {
   }
   const hit = await leadSuppression(c.env.DB, business);
   const toContact = draft?.to_contact_id ? contacts.find((x) => x.id === draft.to_contact_id) ?? null : null;
+  const variants = draft ? await variantsOf(c.env.DB, draft) : [];
   // `stale` is derived per request (it depends on now), so it rides on the response, never on the stored finding.
   const now = new Date();
   const shown = audit && { ...audit, findings: audit.findings.map((f) => ({ ...f, stale: isStale(f, audit.created_at, now) })) };
   // Matched on the stale-flagged findings so `because` carries each finding's `stale` for the evidence badge.
   const best_offer = shown ? bestOffer(shown.findings, await listServices(c.env.DB, { activeOnly: true }), shown.offer) : null;
-  return c.json({ business, audit: shown, contacts, draft, toContact, people, activity, changes, urgency: audit ? urgencyOf(audit.findings) : 0, best_offer,
+  return c.json({ business, audit: shown, contacts, draft, variants, toContact, people, activity, changes, urgency: audit ? urgencyOf(audit.findings) : 0, best_offer,
     fit: scoreFit(business, audit, profiles), suppressed: hit ? { reason: hit.reason, note: hit.note } : null });
 });
 
@@ -212,7 +214,8 @@ leadRoutes.post("/:id/gmail-draft", (c) => exportGuard(c, async () => {
     const r = await reportFor(c.env, id);
     if (r) attachment = { name: reportFileName(r.data.business.name, "pdf"), bytes: await htmlToPdf(c.env.BROWSER, r.html) };
   }
-  const g = await createGmailDraft(fetch, token, buildMime({ to, subject: draft.subject, body: draft.body, attachment }));
+  const email = composeEmail(await getSettings(c.env.DB), draft);
+  const g = await createGmailDraft(fetch, token, buildMime({ to, subject: email.subject, body: email.text, html: email.html, attachment }));
   await logActivity(c.env.DB, id, "export", `Gmail draft${attachment ? " with audit PDF" : ""}${to ? ` to ${to}` : ""}`);
   return c.json({ ok: true, url: g.url });
 }));
@@ -228,8 +231,9 @@ leadRoutes.post("/:id/drive", (c) => exportGuard(c, async () => {
   if (folder !== row.folder_id) await setGoogleFolder(c.env.DB, folder);
   const name = r.data.business.name;
   const draft = await latestDraft(c.env.DB, id);
+  const email = draft ? composeEmail(await getSettings(c.env.DB), draft) : null;
   const doc = await uploadFile(fetch, token, { name: `${name} – website audit & proposal`, parents: [folder], mimeType: "application/vnd.google-apps.document" },
-    { type: "text/html", bytes: renderDoc(r.data, draft ? { subject: draft.subject, body: draft.body } : null) });
+    { type: "text/html", bytes: renderDoc(r.data, email ? { subject: email.subject, body: email.text } : null) });
   let pdfUrl: string | null = null;
   if (c.env.BROWSER) {
     const pdf = await uploadFile(fetch, token, { name: reportFileName(name, "pdf"), parents: [folder] },
@@ -321,7 +325,7 @@ leadRoutes.patch("/:id/people/:pid", async (c) => {
 leadRoutes.delete("/:id/people/:pid", async (c) =>
   (await deletePerson(c.env.DB, c.req.param("id"), c.req.param("pid"))) ? c.json({ ok: true }) : c.json({ error: "not found" }, 404));
 
-const PatchDraft = z.object({ subject: z.string().min(1).max(300), body: z.string().min(1).max(5000) });
+const PatchDraft = z.object({ subject: z.string().min(1).max(300), body: z.string().min(1).max(5000), include_footer: z.boolean().optional() });
 leadRoutes.patch("/:id/draft", async (c) => {
   const p = PatchDraft.safeParse(await c.req.json().catch(() => ({})));
   if (!p.success) return c.json({ error: "invalid" }, 400);
@@ -331,24 +335,47 @@ leadRoutes.patch("/:id/draft", async (c) => {
   return c.json({ ok: true });
 });
 
+// The email exactly as it would be saved to Gmail: body, signature, optional footer. Stateless, so the editor can preview unsaved edits.
+leadRoutes.post("/:id/draft/preview", async (c) => {
+  const p = PatchDraft.safeParse(await c.req.json().catch(() => ({})));
+  if (!p.success) return c.json({ error: "invalid" }, 400);
+  return c.json(composeEmail(await getSettings(c.env.DB), { include_footer: true, ...p.data }));
+});
+
+// Picking a variant (or an earlier version) makes it the lead's current draft.
+leadRoutes.post("/:id/draft/select", async (c) => {
+  const { draftId } = await c.req.json<{ draftId?: string }>().catch(() => ({ draftId: undefined }));
+  if (!draftId) return c.json({ error: "invalid" }, 400);
+  const id = c.req.param("id");
+  const d = await selectDraft(c.env.DB, id, draftId);
+  if (!d) return c.json({ error: "not found" }, 404);
+  return c.json({ ...d, variants: await variantsOf(c.env.DB, d) });
+});
+
 const Regenerate = z.object({
   steeringNote: z.string().max(1000).optional(),
   focus: z.array(z.number().int().min(0).max(200)).max(10).optional(),
   croFocus: z.array(z.string().min(1).max(64)).max(10).optional(),
   tone: z.enum(["friendly_local", "consultative", "direct", "formal"]).nullable().optional(),
+  purpose: z.enum(["full_time", "freelance"]).optional(),
+  tweak: z.enum(Object.keys(TWEAKS) as [Tweak, ...Tweak[]]).optional(),
+  sampleIds: z.array(z.string().min(1).max(64)).max(5).optional(),
 });
 leadRoutes.post("/:id/regenerate", async (c) => {
   const blocked = await suppressedResponse(c, c.req.param("id"));
   if (blocked) return blocked;
-  if (await mailingSettingsMissing(c.env.DB)) return c.json({ error: MISSING_MAILING_SETTINGS }, 400);
   const p = Regenerate.safeParse(await c.req.json().catch(() => ({})));
   if (!p.success) return c.json({ error: "invalid" }, 400);
   const id = c.req.param("id");
   try {
-    const d = await regenerateDraft(depsFromEnv(c.env), id, { steeringNote: p.data.steeringNote?.trim() || null, focus: p.data.focus, croFocus: p.data.croFocus, tone: p.data.tone });
+    const d = await regenerateDraft(depsFromEnv(c.env), id, {
+      steeringNote: p.data.steeringNote?.trim() || null, focus: p.data.focus, croFocus: p.data.croFocus, tone: p.data.tone,
+      purpose: p.data.purpose, tweak: p.data.tweak, sampleIds: p.data.sampleIds,
+    });
     const picked = (p.data.focus?.length ?? 0) + (p.data.croFocus?.length ?? 0);
-    await logActivity(c.env.DB, id, "draft", picked ? `Regenerated around ${picked} chosen issue(s)` : "Regenerated");
-    return c.json(d);
+    await logActivity(c.env.DB, id, "draft", p.data.tweak ? `Rewrote the draft (${p.data.tweak.replace("_", " ")})`
+      : picked ? `Regenerated around ${picked} chosen issue(s)` : "Regenerated");
+    return c.json({ ...d, variants: await variantsOf(c.env.DB, d) });
   } catch (e) {
     return c.json({ error: (e as Error).message }, 400);
   }
@@ -359,7 +386,6 @@ leadRoutes.get("/:id/drafts", async (c) => c.json(await listDrafts(c.env.DB, c.r
 leadRoutes.post("/:id/reaudit", async (c) => {
   const id = c.req.param("id");
   if (!(await getBusiness(c.env.DB, id))) return c.json({ error: "not found" }, 404);
-  if (await mailingSettingsMissing(c.env.DB)) return c.json({ error: MISSING_MAILING_SETTINGS }, 400);
   const { reason } = await c.req.json<{ reason?: string }>().catch(() => ({ reason: undefined }));
   const spend = await checkSpend(c.env.DB, PER_LEAD_COST);
   if (!spend.ok) return c.json({ error: "spend limit", ...spend }, 402);
@@ -373,7 +399,6 @@ leadRoutes.post("/:id/reaudit", async (c) => {
 leadRoutes.post("/:id/full-scan", async (c) => {
   const id = c.req.param("id");
   if (!(await getBusiness(c.env.DB, id))) return c.json({ error: "not found" }, 404);
-  if (await mailingSettingsMissing(c.env.DB)) return c.json({ error: MISSING_MAILING_SETTINGS }, 400);
   const spend = await checkSpend(c.env.DB, PER_LEAD_COST);
   if (!spend.ok) return c.json({ error: "spend limit", ...spend }, 402);
   try {

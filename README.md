@@ -10,15 +10,15 @@ Personal tool: find local businesses, audit their websites, draft outreach email
 5. `npm run db:migrate:local && npm run dev`
 
 ## Deploy
-1. `npm run db:migrate:remote`. Always run this BEFORE `npm run deploy`. Migrations are applied by name in filename order: 0002-0006 (audit v2, CRM, email voice, Google, CRO) and 0007-0013 (platform, Lighthouse scores, report links + `settings.logo_url`, radar, `radars.claimed_at`, `audits.mail_warning`, `searches.new_only`). All are additive, so the old worker keeps running on the new schema, but the new worker writes columns the old schema lacks. Deploy it first and every audit insert, settings read for reports and every Radar claim fails.
+1. `npm run db:migrate:remote`. Always run this BEFORE `npm run deploy`. Migrations are applied by name in filename order: 0002-0006 (audit v2, CRM, email voice, Google, CRO) and 0007-0013 (platform, Lighthouse scores, report links + `settings.logo_url`, radar, `radars.claimed_at`, `audits.mail_warning`, `searches.new_only`). 0020-0021 (job-search profile, work samples, signature JSON, draft purpose and variants) are additive too. All are additive, so the old worker keeps running on the new schema, but the new worker writes columns the old schema lacks. Deploy it first and every audit insert, settings read for reports and every Radar claim fails.
 2. Set secrets: `npx wrangler secret put APP_PASSWORD` (repeat for SESSION_SECRET, BRIGHTDATA_API_KEY, BRIGHTDATA_SERP_ZONE, PAGESPEED_API_KEY, ANTHROPIC_API_KEY). `BRIGHTDATA_SERP_ZONE` is required: the SERP API will not run without it.
    - `APP_PASSWORD` is the only thing guarding the app: use a long random value, at least 20 characters (e.g. `openssl rand -base64 24`). `SESSION_SECRET` should be similarly long and random.
    - Login attempts are throttled by the `LOGIN_LIMITER` Workers Rate Limiting binding in `wrangler.jsonc` (10 attempts per minute per client IP; over the limit `/api/login` returns 429). Its `namespace_id` (`1001`) just needs to be unique among rate limiters on your account.
 3. `npm run deploy` (only after step 1 has succeeded; the cron trigger in `wrangler.jsonc` is registered by this deploy)
-4. Sign in, fill in Settings (address + opt-out are required for CAN-SPAM; searches, re-audits and draft regeneration are refused until both are set), paste tone notes from `scripts/tone-notes.txt`.
+4. Sign in and fill in Settings: your profile and job-search details (role, short bio, what you're looking for, resume link), a few work samples, and your email signature (the builder takes a graphic and links). Paste tone notes from `scripts/tone-notes.txt`. The mailing address and opt-out line are optional: they only go on an email when you turn the footer on for it (off by default for full-time emails, on for freelance).
 5. The Bright Data test fixture (`test/fixtures/brightdata-maps.json`) is a trimmed live capture from 2026-10-03. If Bright Data changes its response shape and results come back empty or misread, re-capture it and update `mapBrightDataItem`.
 
-Optional voice check before relying on drafts: `ANTHROPIC_API_KEY=... TONE="$(cat scripts/tone-notes.txt)" npm run prompt-check` (writes `scripts/out/prompt-check.md`).
+Optional voice check before relying on drafts: `ANTHROPIC_API_KEY=... TONE="$(cat scripts/tone-notes.txt)" npm run prompt-check` for full-time emails, and again with `PURPOSE=freelance` (writes `scripts/out/prompt-check-<purpose>.md`). It checks length, that no footer or signature is in the body, and that a full-time email links only to your work samples.
 
 ## Keys
 - Bright Data: SERP API zone + API key.

@@ -6,14 +6,21 @@ const b64 = (s: string | Uint8Array) => Buffer.from(typeof s === "string" ? te.e
 const encWord = (s: string) => (/^[\x20-\x7e]*$/.test(s) ? s : `=?UTF-8?B?${b64(s)}?=`);
 const wrap76 = (s: string) => s.replace(/.{1,76}/g, "$&\r\n").trimEnd();
 
-/** Builds an RFC 2822 message: plain-text body plus an optional PDF attachment. */
-export function buildMime(m: { to: string | null; subject: string; body: string; attachment?: { name: string; bytes: Uint8Array } }): string {
+/** Builds an RFC 2822 message: a plain-text body (plus an HTML alternative when given) and an optional PDF attachment. */
+export function buildMime(m: { to: string | null; subject: string; body: string; html?: string; attachment?: { name: string; bytes: Uint8Array } }): string {
   const head = [...(m.to ? [`To: ${m.to}`] : []), `Subject: ${encWord(m.subject)}`, "MIME-Version: 1.0"];
   const textPart = ['Content-Type: text/plain; charset="UTF-8"', "Content-Transfer-Encoding: base64", "", wrap76(b64(m.body))];
-  if (!m.attachment) return [...head, ...textPart].join("\r\n");
+  // Text first, HTML last: clients show the last alternative they understand.
+  const content = (): string[] => {
+    if (m.html === undefined) return textPart;
+    const alt = `ss_alt_${crypto.randomUUID().replace(/-/g, "")}`;
+    const htmlPart = ['Content-Type: text/html; charset="UTF-8"', "Content-Transfer-Encoding: base64", "", wrap76(b64(m.html))];
+    return [`Content-Type: multipart/alternative; boundary="${alt}"`, "", `--${alt}`, ...textPart, "", `--${alt}`, ...htmlPart, "", `--${alt}--`];
+  };
+  if (!m.attachment) return [...head, ...content()].join("\r\n");
   const boundary = `ss_${crypto.randomUUID().replace(/-/g, "")}`;
   return [...head, `Content-Type: multipart/mixed; boundary="${boundary}"`, "",
-    `--${boundary}`, ...textPart, "",
+    `--${boundary}`, ...content(), "",
     `--${boundary}`, `Content-Type: application/pdf; name="${encWord(m.attachment.name)}"`,
     `Content-Disposition: attachment; filename="${encWord(m.attachment.name)}"`, "Content-Transfer-Encoding: base64", "",
     wrap76(b64(m.attachment.bytes)), `--${boundary}--`, ""].join("\r\n");

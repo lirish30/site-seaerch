@@ -23,7 +23,7 @@ describe("CRO focus in drafts", () => {
     const { b, item } = await setup();
     const other = await setup();
     let user = "";
-    const d = await regenerateDraft(leadDeps((u) => { user = u; }), b.id, { croFocus: [item.id, other.item.id] });
+    const d = await regenerateDraft(leadDeps((u) => { user = u; }), b.id, { croFocus: [item.id, other.item.id], purpose: "freelance" });
     expect(user).toContain("Lead with these issues (the sender chose them):");
     expect(user).toContain("- Your header has no quote button (fix: Add a Get a Quote button)");
     expect(user.match(/Your header has no quote button/g)).toHaveLength(1);
@@ -35,7 +35,7 @@ describe("CRO focus in drafts", () => {
     const { b, item } = await setup();
     await updateCroItem(env.DB, item.id, { included: false });
     let user = "";
-    const d = await regenerateDraft(leadDeps((u) => { user = u; }), b.id, { croFocus: [item.id] });
+    const d = await regenerateDraft(leadDeps((u) => { user = u; }), b.id, { croFocus: [item.id], purpose: "freelance" });
     expect(user).not.toContain("Your header has no quote button");
     expect(d.offer).toBe("seo_basics");
   });

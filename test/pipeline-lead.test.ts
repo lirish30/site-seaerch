@@ -188,7 +188,7 @@ describe("runLead", () => {
     await runLead(d, step, { businessId: b.id, searchId: s.id, forceDraft: true });
     const a = (await latestAudit(env.DB, b.id))!;
     await createPerson(env.DB, b.id, { name: "Ann Lee", role: "Owner", email: "ann@ace.com", is_poc: true });
-    const dr = await regenerateDraft(d, b.id, { focus: [a.findings.length - 1] });
+    const dr = await regenerateDraft(d, b.id, { focus: [a.findings.length - 1], purpose: "freelance" });
     expect(lastUser).toContain("Lead with these issues");
     expect(lastUser).toContain(a.findings.at(-1)!.evidence);
     expect(lastUser).toContain("Address the email to: Ann Lee (Owner)");

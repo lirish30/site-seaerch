@@ -1,4 +1,4 @@
-import type { Business, Contact, CtaStyle, EmailLength, Finding, Offer, Settings, TonePreset } from "../types";
+import type { Business, Contact, CtaStyle, EmailLength, Finding, Offer, Purpose, Settings, TonePreset, WorkSample } from "../types";
 import { NICHES } from "../audit/rubrics";
 
 export interface DraftInput {
@@ -11,7 +11,16 @@ export interface DraftInput {
   valueProposition?: string | null;
   /** The lead's chosen point of contact, addressed by name. */
   poc?: { name: string; role: string | null } | null;
+  /** Why the email is being written. Defaults to a freelance pitch. */
+  purpose?: Purpose;
+  /** The work the sender may cite; the model must not mention any other. */
+  samples?: WorkSample[];
+  /** Rewrite this draft with one change instead of writing fresh variants. */
+  revise?: { subject: string; body: string; instruction: string };
 }
+
+/** How many differently-angled emails one call writes. */
+export const VARIANT_COUNT = 3;
 
 const OFFER_TEXT: Record<Offer, string> = {
   new_site: "a new, simple, mobile-friendly website",
@@ -37,9 +46,51 @@ const CTA: Record<CtaStyle, string> = {
   proposal: "offer to send a short written proposal with options and prices",
 };
 
+
+const FULL_TIME_TONES: Record<TonePreset, string> = {
+  friendly_local: "Warm and genuine, like a thoughtful note from a peer who did their homework. Human, never salesy.",
+  consultative: "Confident and thoughtful, a craftsperson explaining how they would approach a real problem.",
+  direct: "Brief and plain: short sentences, no filler, respectful of their time.",
+  formal: "Professional and polished: courteous, complete sentences, no slang.",
+};
+const FULL_TIME_LENGTH: Record<EmailLength, number> = { short: 170, medium: 230, long: 300 };
+
+const FULL_TIME_ANGLES = [
+  "Observation-led: open on the one thing you noticed about their site, then how you would approach it.",
+  "Work-led: open on your most relevant sample, then connect it to what you noticed on their site.",
+  "Short and direct: a brief intro, one observation, one link, a low-pressure ask.",
+];
+const FREELANCE_ANGLES = [
+  "Problem-led: open on the costliest thing you noticed, then the fix.",
+  "Offer-led: open on what you could do for them, backed by what you noticed.",
+  "Question-led: open with a short, specific question about their site that invites a reply.",
+];
+
 const SEVERITY_RANK: Record<Finding["severity"], number> = { critical: 0, important: 1, nice: 2 };
 
-export function buildPrompt(i: DraftInput) {
+const chosenFindings = (i: DraftInput, n: number) => i.focus?.length ? i.focus
+  : [...i.findings].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || b.points - a.points).slice(0, n);
+const findingLine = (f: Finding) => `- ${f.evidence}${f.recommendation ? ` (fix: ${f.recommendation})` : ""}`;
+const contactLines = (i: DraftInput) => i.contacts.length
+  ? i.contacts.map((c) => `${c.id}: ${c.value} (${c.type}${c.person_name ? `, ${c.person_name}` : ""}${c.role ? `, ${c.role}` : ""})`).join("\n")
+  : "none";
+
+const variantRules = (i: DraftInput, angles: string[]) => i.revise
+  ? "Return exactly 1 variant: the revised draft."
+  : `Write ${VARIANT_COUNT} variants, each taking a different angle, and label each with a short angle name:\n${angles.map((a, n) => `${n + 1}. ${a}`).join("\n")}`;
+
+const reviseBlock = (i: DraftInput) => i.revise
+  ? `\n\nCurrent draft to revise:\nSubject: ${i.revise.subject}\n\n${i.revise.body}\n\nChange requested: ${i.revise.instruction}\nKeep everything in it that is still true and wanted.` : "";
+
+const businessBlock = (i: DraftInput) => {
+  const niche = i.niche && NICHES[i.niche] ? NICHES[i.niche] : null;
+  return `Business: ${i.business.name}
+Category: ${i.business.category ?? "unknown"}${niche ? `\nIndustry: ${niche.label}; their website's job is ${niche.goal.toLowerCase()}` : ""}
+Location: ${i.business.address ?? "unknown"}
+Website: ${i.business.website_url ?? "none"}${i.valueProposition ? `\nWhat their site says they do: ${i.valueProposition}` : ""}${i.poc ? `\nAddress the email to: ${i.poc.name}${i.poc.role ? ` (${i.poc.role})` : ""}` : ""}`;
+};
+
+export function buildFreelancePrompt(i: DraftInput) {
   const s = i.settings;
   const tone = TONES[i.tone ?? s.tone_preset ?? "friendly_local"] ?? TONES.friendly_local;
   const maxWords = LENGTH[s.email_length ?? "short"] ?? 120;
@@ -55,35 +106,72 @@ Structure the email as a mini proposal, in this order:
 4. One call to action only: ${cta}.
 
 Rules:
-- Body under ${maxWords} words before the footer, plain text, no markdown, no bullet symbols.
+- Body under ${maxWords} words, plain text, no markdown, no bullet symbols.
 - Use the evidence given; never claim anything that is not in the findings. You may acknowledge one strength if it helps credibility.
 - Never use jargon such as LCP, CLS, Core Web Vitals, meta description, viewport, CTA, CRO or SEO acronyms.
-- End the body with exactly these lines, copied verbatim:
-${s.signature}
-${s.physical_address}
-${s.opt_out_line}
+- End with a short sign-off and just their first name. Do NOT write a full signature, address or opt-out line: those are added automatically.
+- ${variantRules(i, FREELANCE_ANGLES)}
 - Choose to_contact_id only from the contact ids listed. Use null if no email contact is suitable.
 Return your answer by calling the write_email tool.`;
 
-  const chosen = i.focus?.length ? i.focus
-    : [...i.findings].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || b.points - a.points).slice(0, 3);
-  const line = (f: Finding) => `- ${f.evidence}${f.recommendation ? ` (fix: ${f.recommendation})` : ""}`;
-  const niche = i.niche && NICHES[i.niche] ? NICHES[i.niche] : null;
-  const contactLines = i.contacts.length
-    ? i.contacts.map((c) => `${c.id}: ${c.value} (${c.type}${c.person_name ? `, ${c.person_name}` : ""}${c.role ? `, ${c.role}` : ""})`).join("\n")
-    : "none";
-  const user = `Business: ${i.business.name}
-Category: ${i.business.category ?? "unknown"}${niche ? `\nIndustry: ${niche.label}; their website's job is ${niche.goal.toLowerCase()}` : ""}
-Location: ${i.business.address ?? "unknown"}
-Website: ${i.business.website_url ?? "none"}${i.valueProposition ? `\nWhat their site says they do: ${i.valueProposition}` : ""}${i.poc ? `\nAddress the email to: ${i.poc.name}${i.poc.role ? ` (${i.poc.role})` : ""}` : ""}
+  const user = `${businessBlock(i)}
 
 ${i.focus?.length ? "Lead with these issues (the sender chose them):" : "Findings (most important first):"}
-${chosen.map(line).join("\n") || "- none"}
+${chosenFindings(i, 3).map(findingLine).join("\n") || "- none"}
 
 Offer to lead with: ${i.offer} — ${OFFER_TEXT[i.offer]}
 
 Contacts:
-${contactLines}${i.steeringNote ? `\n\nExtra instruction for this draft: ${i.steeringNote}` : ""}`;
+${contactLines(i)}${i.steeringNote ? `\n\nExtra instruction for this draft: ${i.steeringNote}` : ""}${reviseBlock(i)}`;
 
   return { system, user };
+}
+
+export function buildFullTimePrompt(i: DraftInput) {
+  const s = i.settings;
+  const tone = FULL_TIME_TONES[i.tone ?? s.tone_preset ?? "friendly_local"] ?? FULL_TIME_TONES.friendly_local;
+  const maxWords = FULL_TIME_LENGTH[s.email_length ?? "short"] ?? 170;
+  const about = s.bio || s.services_blurb || "A web professional.";
+  const system = `You write personal outreach emails for ${s.your_name || "a web professional"}${s.role_title ? `, ${s.role_title}` : ""}, who is looking for a full-time role.
+${s.goal_line ? `What they are looking for: ${s.goal_line}\n` : ""}About them: ${about}${s.availability ? `\nAvailability: ${s.availability}` : ""}
+Tone: ${tone}${s.tone_notes ? `\nTheir own voice notes: ${s.tone_notes}` : ""}
+
+This is a speculative introduction. The company has not necessarily posted a role, so never pretend one is open and never say "I saw your job posting". It is a sincere note to someone who could hire, showing why they would want this person on the team.
+
+Structure the email as a mini case for hiring them, in this order:
+1. An opening line specific to this company (their name, what they do, or their town). Never a generic pleasantry like "I hope this finds you well".
+2. One genuine observation about their website, taken from the findings, framed as an opportunity and said with respect for the people who built it. Never insult the work. Mention at most two things.
+3. How they would approach it: 2-3 concrete steps, drawn from the recommendations.
+4. Proof: cite 1-2 of the work samples listed below by name and include their link, with the result in a short phrase. If none are listed, cite no work and offer to share examples instead.
+5. A soft, low-pressure ask for a short conversation about whether there is a place for someone like them now or later.${s.resume_url ? ` Include their resume link: ${s.resume_url}` : ""}
+
+Rules:
+- Body under ${maxWords} words, plain text, no markdown, no bullet symbols. Paste links as plain URLs.
+- Only state facts from this brief. Never invent employers, years of experience, numbers, tools, awards or results, and never cite work that is not listed.
+- Never use jargon such as LCP, CLS, Core Web Vitals, meta description, viewport, CTA, CRO or SEO acronyms.
+- Do not beg or over-apologise, and do not ask for a job in the first line.
+- End with a short sign-off and just their first name. Do NOT write a full signature, address or opt-out line: those are added automatically.
+- ${variantRules(i, FULL_TIME_ANGLES)}
+- Choose to_contact_id only from the contact ids listed. Prefer a founder, owner or hiring lead over a generic inbox. Use null if no email contact is suitable.
+Return your answer by calling the write_email tool.`;
+
+  const samples = i.samples?.length
+    ? i.samples.map((w) => `- ${w.title}: ${w.url}${w.result_line ? ` (${w.result_line})` : ""}`).join("\n")
+    : "none";
+  const user = `${businessBlock(i)}
+
+${i.focus?.length ? "Build the observation from these (the sender chose them):" : "Findings (most important first; pick the most interesting):"}
+${chosenFindings(i, 3).map(findingLine).join("\n") || "- none"}
+
+Work samples you may cite (only these):
+${samples}
+
+Contacts:
+${contactLines(i)}${i.steeringNote ? `\n\nExtra instruction for this draft: ${i.steeringNote}` : ""}${reviseBlock(i)}`;
+
+  return { system, user };
+}
+
+export function buildPrompt(i: DraftInput) {
+  return i.purpose === "full_time" ? buildFullTimePrompt(i) : buildFreelancePrompt(i);
 }
