@@ -17,6 +17,7 @@ import { todayRoutes } from "./routes/today";
 import { workSampleRoutes } from "./routes/workSamples";
 import { runDueRadars } from "./radar-run";
 import { searchWorkflowStarter } from "./search-start";
+import { jobDeps, runJobWatch } from "./jobs/run";
 
 const app = new Hono<{ Bindings: Env }>();
 app.use("/api/*", requireAuth);
@@ -37,10 +38,17 @@ app.route("/api/work-samples", workSampleRoutes);
 // Mounted last at /api: /api/leads/:id/cro-audit(s), /api/cro-items/:id, /api/cro-audits/:id/... (all behind requireAuth).
 app.route("/api", croRoutes);
 
+// Radars keep their daily cron; the job watcher runs every six hours on its own.
+export const JOB_WATCH_CRON = "37 */6 * * *";
+
 export default {
   fetch: app.fetch,
-  // Cron Trigger: unattended spend, so a crash here must be logged, never thrown into a retry loop.
-  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+  // Cron Trigger: unattended work, so a crash here must be logged, never thrown into a retry loop.
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    if (controller.cron === JOB_WATCH_CRON) {
+      ctx.waitUntil(jobDeps(env).then(runJobWatch).then((s) => console.log("job watch", JSON.stringify(s)), (e) => console.error("job watch failed", e)));
+      return;
+    }
     ctx.waitUntil(
       runDueRadars({
         db: env.DB, now: () => new Date(), startWorkflow: searchWorkflowStarter(env),
