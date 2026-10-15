@@ -24,9 +24,12 @@ describe("classifyRole", () => {
     ["Product Marketing Manager", "marketing"],
     ["Paid Media Manager", "marketing"],
     ["PPC Specialist", "marketing"],
+    ["Software Engineer, Full Stack", "web_dev"],
+    ["Senior Software Engineer (Full-Stack)", "web_dev"],
+    ["Web Development Manager", "web_dev"],
   ] as const)("%s -> %s", (title, kind) => expect(classifyRole(title)).toBe(kind));
 
-  it.each(["Backend Engineer", "Senior Software Engineer", "Account Executive", "Crop Scientist", "Registered Nurse", "Accounts Payable Clerk", ""])(
+  it.each(["Backend Engineer", "Senior Software Engineer", "Account Executive", "Crop Scientist", "Registered Nurse", "Accounts Payable Clerk", "Chief Revenue Officer (CRO)", "Clinical Trial Manager, CRO", ""])(
     "%s is outside the field", (title) => expect(classifyRole(title)).toBeNull());
 
   it("prefers the more specific kind when a title fits several", () => {
