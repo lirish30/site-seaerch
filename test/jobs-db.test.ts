@@ -100,6 +100,16 @@ describe("reads", () => {
     expect(await closeAll(env.DB, b.id, T2)).toBe(0);
   });
 
+  it("listPostingsForLead keeps an older in-field role when more than 50 newer off-field roles are open", async () => {
+    const b = await lead();
+    const rows = Array.from({ length: 60 }, (_, i) => row(`off${i}`, `Welder ${i}`, null, "2026-10-10T00:00:00.000Z"));
+    await applySync(env.DB, b.id, [...rows, row("seo", "SEO Manager", "seo", "2026-01-01T00:00:00.000Z")], T0, false);
+    const list = await listPostingsForLead(env.DB, b.id);
+    expect(list).toHaveLength(50);
+    expect(list.map((p) => p.external_id)).toContain("seo");
+    expect(list[0].external_id).toBe("seo");
+  });
+
   it("openRelevantByBusiness returns only open roles with a role kind", async () => {
     const a = await lead("Acme"), c = await lead("Beta");
     await applySync(env.DB, a.id, [row("1", "SEO", "seo"), row("2", "Welder"), row("3", "Gone", "cro")], T0, false);

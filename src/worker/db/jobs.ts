@@ -85,9 +85,9 @@ export async function closeAll(db: D1Database, businessId: string, nowIso: strin
   return (await db.prepare(`UPDATE job_postings SET closed_at = ? WHERE business_id = ? AND closed_at IS NULL`).bind(nowIso, businessId).run()).meta.changes ?? 0;
 }
 
-/** Open roles first, then closed ones, each newest first. */
+/** Open roles first (in-field before off-field, so the limit never drops an in-field role), then closed ones, each newest first. */
 export async function listPostingsForLead(db: D1Database, businessId: string, limit = 50): Promise<JobPosting[]> {
-  return (await db.prepare(`SELECT * FROM job_postings WHERE business_id = ? ORDER BY closed_at IS NOT NULL, COALESCE(posted_at, first_seen_at) DESC LIMIT ?`)
+  return (await db.prepare(`SELECT * FROM job_postings WHERE business_id = ? ORDER BY closed_at IS NOT NULL, role_kind IS NULL, COALESCE(posted_at, first_seen_at) DESC, id LIMIT ?`)
     .bind(businessId, limit).all<PostingRow>()).results.map(toPosting);
 }
 
