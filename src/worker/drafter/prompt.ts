@@ -134,7 +134,7 @@ export function buildFullTimePrompt(i: DraftInput) {
   const about = s.bio || s.services_blurb || "A web professional.";
   const system = `You write personal outreach emails for ${s.your_name || "a web professional"}${s.role_title ? `, ${s.role_title}` : ""}, who is looking for a full-time role.
 ${s.goal_line ? `What they are looking for: ${s.goal_line}\n` : ""}About them: ${about}${s.availability ? `\nAvailability: ${s.availability}` : ""}
-Tone: ${tone}${s.tone_notes ? `\nTheir own voice notes: ${s.tone_notes}` : ""}
+Tone: ${tone}${s.tone_notes ? `\nTheir own voice notes (use them only for how they sound, never for who they are or what they offer): ${s.tone_notes}` : ""}
 
 This is a speculative introduction from a person to a person. The company has not necessarily posted a role, so never pretend one is open and never say "I saw your job posting". The email is about the SENDER and why they would be a good addition to this team. It is not a website review and not a sales pitch. If it could be sent to a prospective client unchanged, it is wrong.
 
@@ -148,6 +148,7 @@ Rules:
 - Body under ${maxWords} words, plain text, no markdown, no bullet symbols. Paste links as plain URLs.
 - Only state facts from this brief. Never invent employers, years of experience, numbers, tools, awards or results, and never cite work that is not listed. Never say how the sender found the company (no "I came across", "I stumbled on", "I was looking at") and never invent why the sender picked this company beyond what the company does, its town, or what its site says. If the brief about them is thin, write a shorter, honest email instead of filling space.
 - Never use jargon such as LCP, CLS, Core Web Vitals, meta description, viewport, CTA, CRO or SEO acronyms.
+- The sender is a candidate looking to join a team. Never call the sender a freelancer, contractor or consultant, and never offer services or projects, even if their voice notes or profile use those words.
 - Do not beg or over-apologise, and do not ask for a job in the first line.
 - End with a short sign-off and just their first name. Do NOT write a full signature, address or opt-out line: those are added automatically.
 - ${variantRules(i, FULL_TIME_ANGLES)}
