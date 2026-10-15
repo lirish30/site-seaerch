@@ -22,6 +22,14 @@ export async function latestDraft(db: D1Database, businessId: string): Promise<D
   return r ? fromRow(r) : null;
 }
 
+/** The current draft of every lead that has one (the newest group's first variant, same rule as `latestDraft`). */
+export async function latestDraftsByBusiness(db: D1Database): Promise<Map<string, Draft>> {
+  const { results } = await db.prepare(
+    `SELECT * FROM (SELECT d.*, ROW_NUMBER() OVER (PARTITION BY business_id ORDER BY created_at DESC, variant_index ASC) AS rn FROM drafts d) WHERE rn = 1`,
+  ).all<Row & { rn: number }>();
+  return new Map(results.map((r) => [r.business_id, fromRow(r)]));
+}
+
 /** Which of these leads have at least one draft (for the "Drafts ready" view). */
 export async function draftedIds(db: D1Database, ids: string[]): Promise<Set<string>> {
   const out = new Set<string>();

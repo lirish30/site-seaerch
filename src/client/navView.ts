@@ -12,7 +12,8 @@ export function sectionOf(pathname: string): Section {
 }
 
 /** Only list-style pages get a contextual sidebar; a lead's own page, Home and Settings use the full width. */
-export function sidebarOf(pathname: string): "leads" | "find" | null {
+export function sidebarOf(pathname: string): "leads" | "find" | "outreach" | null {
+  if (pathname === "/outreach") return "outreach";
   if (pathname === "/leads" || pathname === "/promising" || pathname === "/import") return "leads";
   if (pathname === "/" || pathname === "/radar") return "find";
   return null;

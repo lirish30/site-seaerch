@@ -10,6 +10,7 @@ import Radar from "./pages/Radar";
 import Promising from "./pages/Promising";
 import Import from "./pages/Import";
 import Today from "./pages/Today";
+import Outreach from "./pages/Outreach";
 import Shell, { Legacy } from "./components/Shell";
 
 // Routes are unchanged. Redesigned pages (All leads, a lead) draw their own header inside the panel; the rest are wrapped in `Legacy` until their slice lands.
@@ -28,6 +29,7 @@ export default function App() {
             <Route path="/leads/:id" element={<LeadDetail />} />
             <Route path="/promising" element={<Legacy><Promising /></Legacy>} />
             <Route path="/import" element={<Legacy><Import /></Legacy>} />
+            <Route path="/outreach" element={<Outreach />} />
             <Route path="/radar" element={<Legacy><Radar /></Legacy>} />
             <Route path="/settings" element={<Legacy><Settings /></Legacy>} />
           </Routes>

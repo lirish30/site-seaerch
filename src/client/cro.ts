@@ -116,3 +116,23 @@ export const rebuildVisible = (parsed: Parsed<AssumptionOverrides>, rebuildOwed:
 
 /** A rebuild-only retry has nothing new to save, so it skips the assumptions PATCH. */
 export const rebuildNeedsPatch = (o: AssumptionOverrides): boolean => Object.keys(o).length > 0;
+
+// ---------- Display helpers for the Conversion plan tab ----------
+
+/** Badge tone for each recommendation mode: green for a quick fix, blue when it's measured, amber for tests and strategy. */
+export const MODE_TONE: Record<RecMode, "positive" | "info" | "warning"> = { fix: "positive", fix_measure: "info", test: "warning", strategic: "warning" };
+/** Short names for the business-model picker (the full names are long prompt labels). */
+export const MODEL_SHORT: Record<BizModelKey, string> = {
+  lead_gen_phone: "Phone & quote-led", appointment: "Appointment booking", walk_in: "Walk-in & ordering",
+  ecommerce: "Online store", b2b_consultative: "Consultative service", membership: "Membership",
+};
+/** "Oct 13, 2:40 pm" in the viewer's time zone. */
+export function auditStamp(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).replace(/[\s ]([AP])M$/, (_, p: string) => ` ${p.toLowerCase()}m`);
+}
+/** Joins the customer jobs into one sentence: "get a leak fixed, or book an install." */
+export const customerJobsLine = (jobs: string[]): string => `${jobs.join(", or ")}.`;
+/** "high" -> "High" for the impact and effort tag. */
+export const levelWord = (l: string): string => l.charAt(0).toUpperCase() + l.slice(1);

@@ -99,3 +99,7 @@ export interface SavedFilter { id: string; name: string; query: string; created_
 export type TodayKind = "follow_up_due" | "draft_unsent" | "stalled_deal" | "starred_idle" | "promising_quick_scan";
 /** One thing to do today (GET /api/today). `id` is `${kind}:${businessId}`; `due` is set for follow-ups only. */
 export interface TodayItem { id: string; kind: TodayKind; businessId: string; businessName: string; reason: string; due: string | null; priority: number; }
+
+/** GET /api/outreach: the leads in one outreach queue with each one's current draft, and the size of every queue. */
+export interface OutreachCounts { drafts: number; followups: number; contacted: number; replied: number; full_time: number; freelance: number }
+export type OutreachView = "drafts" | "followups" | "contacted" | "replied";

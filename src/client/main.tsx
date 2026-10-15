@@ -3,5 +3,6 @@ import { BrowserRouter } from "react-router-dom";
 import App from "./App";
 import "./styles.css";
 import "./ui.css";
+import "./cro.css";
 
 createRoot(document.getElementById("root")!).render(<BrowserRouter><App /></BrowserRouter>);

@@ -171,7 +171,8 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
     ...sampleChoices.map((w) => ({ id: `s:${w.id}`, label: w.title, on: pickIds.has(w.id), disabled: !pickIds.has(w.id) && pickIds.size >= 2,
       toggle: () => setPickIds((s) => { const n = new Set(s); if (n.has(w.id)) n.delete(w.id); else if (n.size < 2) n.add(w.id); return n; }), kind: "sample" as const })),
   ];
-  const shownChips = showAllChips ? chips : chips.slice(0, 8);
+  // Picked chips always stay visible, even past the first eight.
+  const shownChips = showAllChips ? chips : chips.filter((c, i) => i < 8 || c.on);
   const picked = focus.size + croFocus.size + pickIds.size;
   const toName = toContact?.person_name ?? null;
 
@@ -285,7 +286,7 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
                 {c.on && <Icon name="check" size={12} />}{c.label}
               </button>
             ))}
-            {chips.length > 8 && <button className="chip-pick more" onClick={() => setShowAllChips((x) => !x)}>{showAllChips ? "Show fewer" : `+${chips.length - 8} more`}</button>}
+            {chips.length > shownChips.length || showAllChips ? <button className="chip-pick more" onClick={() => setShowAllChips((x) => !x)}>{showAllChips ? "Show fewer" : `+${chips.length - shownChips.length} more`}</button> : null}
           </div>
         )}
         <InlineError message={error} />
