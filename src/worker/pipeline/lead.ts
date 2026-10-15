@@ -90,9 +90,10 @@ async function draftFor(deps: LeadDeps, businessId: string, o: DraftOptions = {}
     ? matchSamples(allSamples, { category: business.category, niche: audit.niche, findings: audit.findings }, { pickIds: o.sampleIds, excludeIds: used })
     : [];
   // Only a role the board showed us in the last 48 hours; the prompt may cite it, so it must still be true when the email is read.
+  // A rewrite of a vetted draft keeps the role only if that draft already names it, so a tweak never adds a claim the user did not approve.
   const open = o.usePosting === false ? null : await bestOpenPosting(deps.db, businessId, deps.now().toISOString());
   const openAt = open ? Date.parse(open.posted_at ?? (open.baseline ? "" : open.first_seen_at)) : NaN;
-  const posting = open ? { title: open.title, url: open.url, openDays: Number.isFinite(openAt) ? Math.max(0, Math.floor((deps.now().getTime() - openAt) / 86_400_000)) : null } : null;
+  const posting = open && !(o.tweak && !current?.body.toLowerCase().includes(open.title.toLowerCase())) ? { title: open.title, url: open.url, openDays: Number.isFinite(openAt) ? Math.max(0, Math.floor((deps.now().getTime() - openAt) / 86_400_000)) : null } : null;
   const d = await generateDraft({
     settings, business, findings: audit.findings, offer, contacts, steeringNote, focus, tone: o.tone ?? null,
     niche: audit.niche, valueProposition: audit.ai_review?.value_proposition ?? null, poc: poc ? { name: poc.name, role: poc.role } : null,
