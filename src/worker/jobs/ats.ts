@@ -14,8 +14,8 @@ const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? 
 // Role links are rendered as <a href> and quoted in an AI prompt: only https, and no whitespace or control characters (real URLs are percent-encoded).
 const link = (v: unknown): string | null => { const s = str(v); return s && /^https:\/\//i.test(s) && !/[\s\x00-\x1f\x7f]/.test(s) ? s : null; };
 const why = (e: unknown): string => (e instanceof Error ? `${e.name}: ${e.message}` : String(e)).replace(/\s+/g, " ").slice(0, 100);
-// Titles are third-party text that ends up in an AI prompt: one line, bounded.
-const title = (v: unknown): string | null => { const s = str(v)?.replace(/\s+/g, " ").trim().slice(0, MAX_TITLE).trim(); return s || null; };
+// Titles are third-party text that ends up in an AI prompt: one line, bounded, no hidden characters (controls, zero-width, bidi overrides); whitespace is flattened first so a newline stays a word break.
+const title = (v: unknown): string | null => { const s = str(v)?.replace(/\s+/g, " ").replace(/[\p{Cc}\p{Cf}]/gu, "").replace(/\s+/g, " ").trim().slice(0, MAX_TITLE).trim(); return s || null; };
 const iso = (v: unknown): string | null => {
   const t = typeof v === "number" ? v : typeof v === "string" ? Date.parse(v) : NaN;
   return Number.isFinite(t) && t > 0 ? new Date(t).toISOString() : null;

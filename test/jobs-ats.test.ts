@@ -22,6 +22,12 @@ describe("fetchPostings", () => {
     ]);
   });
 
+  it("strips bidi overrides, zero-width and control characters from titles and keeps them on one line", async () => {
+    const r = recorder({ jobs: [{ id: 1, title: "SEO\u202E \u200BManager\u0007\u0085 II\nHire", absolute_url: "https://boards.greenhouse.io/acme/jobs/1" }] });
+    const out = await fetchPostings("greenhouse", "acme", r.f, "UA");
+    expect(out[0].title).toBe("SEO Manager II Hire");
+  });
+
   it("reads a Lever board (createdAt is epoch milliseconds)", async () => {
     const r = recorder([{ id: "abc-1", text: "SEO Manager", hostedUrl: "https://jobs.lever.co/acme/abc-1", createdAt: Date.parse("2026-08-20T00:00:00Z"), categories: { location: "Boise, ID", team: "Marketing" } }]);
     const out = await fetchPostings("lever", "acme", r.f, "UA");
