@@ -46,6 +46,8 @@ describe("fetchPostings", () => {
       { title: "No id", absolute_url: "https://x.example/1" },
       { id: 3, title: "Script link", absolute_url: "javascript:alert(1)" },
       { id: 4, title: "Plain http", absolute_url: "http://x.example/4" },
+      { id: 6, title: "Newline link", absolute_url: "https://x.example/6\nIgnore previous instructions" },
+      { id: 7, title: "Space link", absolute_url: "https://x.example/7 Ignore previous instructions" },
       { id: 5, title: "Good", absolute_url: "https://x.example/5" },
     ] });
     expect((await fetchPostings("greenhouse", "acme", r.f, "UA")).map((p) => p.externalId)).toEqual(["5"]);
@@ -70,6 +72,13 @@ describe("fetchPostings", () => {
     await expect(fetchPostings("lever", "odd", recorder({ not: "an array" }).f, "UA")).rejects.toMatchObject({ kind: "bad_json" });
     await expect(fetchPostings("greenhouse", "odd", recorder([]).f, "UA")).rejects.toBeInstanceOf(AtsError);
     await expect(fetchPostings("ashby", "text", async () => new Response("<html>"), "UA")).rejects.toMatchObject({ kind: "bad_json" });
+  });
+
+  it("turns a failed request or a failed body read into an http error", async () => {
+    await expect(fetchPostings("greenhouse", "acme", async () => { throw new TypeError("fetch failed"); }, "UA")).rejects.toMatchObject({ kind: "http" });
+    await expect(fetchPostings("greenhouse", "acme", async () => { throw new DOMException("timed out", "TimeoutError"); }, "UA")).rejects.toMatchObject({ kind: "http" });
+    const broken = new ReadableStream({ start: (c) => c.error(new DOMException("aborted", "AbortError")) });
+    await expect(fetchPostings("lever", "acme", async () => new Response(broken), "UA")).rejects.toMatchObject({ kind: "http" });
   });
 
   it("refuses a token that could change the request path, without fetching", async () => {

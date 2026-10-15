@@ -11,8 +11,9 @@ const MAX_POSTINGS = 500, MAX_TITLE = 120;
 
 const rec = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
 const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
-// Role links are rendered as <a href>; anything but https (javascript:, data:, plain http) is dropped.
-const link = (v: unknown): string | null => { const s = str(v); return s && /^https:\/\//i.test(s) ? s : null; };
+// Role links are rendered as <a href> and quoted in an AI prompt: only https, and no whitespace or control characters (real URLs are percent-encoded).
+const link = (v: unknown): string | null => { const s = str(v); return s && /^https:\/\//i.test(s) && !/[\s\x00-\x1f\x7f]/.test(s) ? s : null; };
+const why = (e: unknown): string => (e instanceof Error ? `${e.name}: ${e.message}` : String(e)).replace(/\s+/g, " ").slice(0, 100);
 // Titles are third-party text that ends up in an AI prompt: one line, bounded.
 const title = (v: unknown): string | null => { const s = str(v)?.replace(/\s+/g, " ").trim().slice(0, MAX_TITLE).trim(); return s || null; };
 const iso = (v: unknown): string | null => {
@@ -54,10 +55,15 @@ const PARSE: Record<Ats, (json: unknown) => RawPosting[]> = { greenhouse, lever,
 /** Every public role on a board. Throws AtsError: not_found (no such board), http (any other failure), bad_json (not the shape we expect). */
 export async function fetchPostings(ats: Ats, token: string, f: Fetcher, userAgent: string): Promise<RawPosting[]> {
   if (!TOKEN_RE.test(token)) throw new AtsError("not_found", "not a valid board name");
-  const res = await f(ENDPOINT[ats](token), { headers: { "user-agent": userAgent, accept: "application/json" }, signal: AbortSignal.timeout(10_000) });
+  let res: Response;
+  try { res = await f(ENDPOINT[ats](token), { headers: { "user-agent": userAgent, accept: "application/json" }, signal: AbortSignal.timeout(10_000) }); }
+  catch (e) { throw new AtsError("http", `${ats} request failed: ${why(e)}`); }
   if (res.status === 404) { await res.body?.cancel().catch(() => {}); throw new AtsError("not_found", `${ats} board "${token}" not found`); }
   if (!res.ok) { await res.body?.cancel().catch(() => {}); throw new AtsError("http", `${ats} answered ${res.status}`); }
+  // Reading the body can time out or drop (http); a body that arrives but does not parse is bad_json.
+  let text: string;
+  try { text = await res.text(); } catch (e) { throw new AtsError("http", `${ats} body read failed: ${why(e)}`); }
   let json: unknown;
-  try { json = await res.json(); } catch { throw new AtsError("bad_json", `${ats} did not return JSON`); }
+  try { json = JSON.parse(text); } catch { throw new AtsError("bad_json", `${ats} did not return JSON`); }
   return PARSE[ats](json).slice(0, MAX_POSTINGS);
 }
