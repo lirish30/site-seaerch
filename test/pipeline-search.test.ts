@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { describe, it, expect } from "vitest";
 import { runSearch } from "../src/worker/pipeline/search";
 import { FakeListingSource } from "../src/worker/listings/fake";
-import { RetryableError } from "../src/worker/listings/source";
+import { RateLimitedError, RetryableError } from "../src/worker/listings/source";
 import { createSearch, getSearch } from "../src/worker/db/searches";
 import { listBusinessesForSearch, upsertBusiness, updateLead, setBusinessError } from "../src/worker/db/businesses";
 import { insertDraft, updateDraftBody } from "../src/worker/db/drafts";
@@ -91,6 +91,59 @@ describe("runSearch", () => {
     const after = (await getSearch(env.DB, s.id))!;
     expect(after.status).toBe("failed");
     expect(after.error).toMatch(/503/);
+  });
+
+  it("a retryable failure is counted and its reason kept while the search is still running; success clears it", async () => {
+    const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 50 });
+    let calls = 0;
+    const flaky = { search: async () => { if (++calls < 3) throw new RetryableError("Bright Data HTTP 502 (maps_ajax_failed)"); return { listings: [L("RETRY-1")], requests: 1 }; } };
+    const states: { attempts: number; error: string | null; status: string }[] = [];
+    // Behaves like Workflows: re-run a throwing step, looking at the row between attempts.
+    const step: StepLike = { do: async (_n, fn) => {
+      for (;;) {
+        try { return await fn(); } catch (e) {
+          const row = (await getSearch(env.DB, s.id))!;
+          states.push({ attempts: row.fetch_attempts, error: row.error, status: row.status });
+          if (states.length > 5) throw e;
+        }
+      }
+    }, sleep: async () => {} };
+    await runSearch({ db: env.DB, source: flaky, startLead: async () => {} }, step, s.id);
+    expect(states).toEqual([
+      { attempts: 1, error: "Bright Data HTTP 502 (maps_ajax_failed)", status: "running" },
+      { attempts: 2, error: "Bright Data HTTP 502 (maps_ajax_failed)", status: "running" },
+    ]);
+    const after = (await getSearch(env.DB, s.id))!;
+    expect(after.status).toBe("done");
+    expect(after.error).toBeNull();
+    expect(after.fetch_attempts).toBe(2);
+  });
+
+  it("a 429 is not retried in seconds: the workflow sleeps minutes, then fetches again under a new step name", async () => {
+    const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 50 });
+    let calls = 0;
+    const source = { search: async () => { if (++calls < 3) throw new RateLimitedError("Bright Data HTTP 429 (bucket_rate_limit)"); return { listings: [L("RL-1")], requests: 1 }; } };
+    const names: string[] = []; const sleeps: [string, number][] = [];
+    const step: StepLike = { do: (n, fn) => { names.push(n); return fn(); }, sleep: async (n, ms) => { sleeps.push([n, ms]); } };
+    await runSearch({ db: env.DB, source, startLead: async () => {} }, step, s.id);
+    expect(names.slice(0, 3)).toEqual(["fetch-listings", "fetch-listings-1", "fetch-listings-2"]);
+    expect(sleeps.filter(([n]) => n.startsWith("rate-limit-wait"))).toEqual([["rate-limit-wait-1", 120_000], ["rate-limit-wait-2", 300_000]]);
+    const after = (await getSearch(env.DB, s.id))!;
+    expect(after.status).toBe("done");
+    expect(after.fetch_attempts).toBe(2);
+    expect(after.error).toBeNull();
+  });
+
+  it("a 429 that never clears fails the search with the 429 message after the last wait", async () => {
+    const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 50 });
+    const sleeps: string[] = [];
+    const step: StepLike = { do: (_n, fn) => fn(), sleep: async (n) => { sleeps.push(n); } };
+    await runSearch({ db: env.DB, source: new FakeListingSource(new RateLimitedError("Bright Data HTTP 429 (bucket_rate_limit)")), startLead: async () => {} }, step, s.id);
+    expect(sleeps).toEqual(["rate-limit-wait-1", "rate-limit-wait-2", "rate-limit-wait-3"]);
+    const after = (await getSearch(env.DB, s.id))!;
+    expect(after.status).toBe("failed");
+    expect(after.error).toMatch(/429/);
+    expect(after.fetch_attempts).toBe(4);
   });
 
   it("non-retryable listing errors are not rethrown: the step returns ok:false and marks failed", async () => {

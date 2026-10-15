@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { BrightDataListingSource, mapBrightDataItem } from "../src/worker/listings/brightdata";
-import { isRetryable } from "../src/worker/listings/source";
+import { isRateLimited, isRetryable } from "../src/worker/listings/source";
 import fixture from "./fixtures/brightdata-maps.json";
 
 describe("mapBrightDataItem", () => {
@@ -75,6 +75,7 @@ describe("BrightDataListingSource", () => {
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toContain(String(status));
     expect(isRetryable(err)).toBe(true);
+    expect(isRateLimited(err)).toBe(status === 429); // only 429 gets the long wait
   });
 
   // Live-captured: Bright Data reports an upstream Google Maps failure as HTTP 200 + empty body, with the real

@@ -60,7 +60,8 @@ export interface Listing {
 
 export interface Search {
   id: string; location: string; business_type: string; radius_km: number; max_results: number;
-  status: "running" | "done" | "failed"; error: string | null;
+  status: "running" | "done" | "failed"; error: string | null; // while running, error is the last listing-fetch failure being retried
+  fetch_attempts: number; // listing-fetch attempts that failed and were retried
   found_count: number; processed_count: number; created_at: string;
   new_only: 0 | 1; // Radar-started: only businesses never audited get the per-lead pipeline
   quick_scan: 0 | 1; // its leads run the quick stage (no render, PageSpeed, AI review or draft); Radar searches never set it

@@ -34,7 +34,7 @@ export function depsFromEnv(env: Env): LeadDeps {
 export function adaptStep(step: WorkflowStep): StepLike {
   return {
     // A refusal or 4xx fails the step at once instead of being retried (and paid for) three more times.
-    do: (name, fn) => step.do(name, name === "fetch-listings" ? LISTING_RETRY : AI_STEP.test(name) ? AI_RETRY : RETRY,
+    do: (name, fn) => step.do(name, /^fetch-listings(-\d+)?$/.test(name) ? LISTING_RETRY : AI_STEP.test(name) ? AI_RETRY : RETRY,
       (async () => { try { return await fn(); } catch (e) { throw e instanceof CroFatalError ? new NonRetryableError(e.message) : e; } }) as any) as any,
     sleep: (name, ms) => step.sleep(name, ms),
   };

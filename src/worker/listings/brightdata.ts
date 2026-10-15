@@ -1,6 +1,6 @@
 import type { Listing } from "../types";
 import type { Fetcher } from "../crawler/crawl";
-import { RetryableError, type ListingQuery, type ListingSource } from "./source";
+import { RateLimitedError, RetryableError, type ListingQuery, type ListingSource } from "./source";
 
 export const BRIGHTDATA_PAGE_SIZE = 20;
 const MAX_PAGES = 10;
@@ -72,7 +72,7 @@ export class BrightDataListingSource implements ListingSource {
       if (!res.ok || status >= 400) {
         const code = res.headers.get("x-brd-error-code");
         const msg = `Bright Data HTTP ${status}${code ? ` (${code})` : ""}: ${body.slice(0, 200) || res.headers.get("x-brd-error") || "no body"}`;
-        throw status === 429 || status >= 500 ? new RetryableError(msg) : new Error(msg);
+        throw status === 429 ? new RateLimitedError(msg) : status >= 500 ? new RetryableError(msg) : new Error(msg);
       }
       if (!body.trim()) throw new RetryableError("Bright Data returned an empty response");
       let json: unknown;
