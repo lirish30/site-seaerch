@@ -15,6 +15,7 @@ import { suppressionRoutes } from "./routes/suppressions";
 import { importRoutes } from "./routes/import";
 import { todayRoutes } from "./routes/today";
 import { workSampleRoutes } from "./routes/workSamples";
+import { jobRoutes } from "./routes/jobs";
 import { runDueRadars } from "./radar-run";
 import { searchWorkflowStarter } from "./search-start";
 import { jobDeps, runJobWatch } from "./jobs/run";
@@ -35,6 +36,7 @@ app.route("/api/suppressions", suppressionRoutes);
 app.route("/api/import", importRoutes);
 app.route("/api/today", todayRoutes);
 app.route("/api/work-samples", workSampleRoutes);
+app.route("/api/jobs", jobRoutes);
 // Mounted last at /api: /api/leads/:id/cro-audit(s), /api/cro-items/:id, /api/cro-audits/:id/... (all behind requireAuth).
 app.route("/api", croRoutes);
 
