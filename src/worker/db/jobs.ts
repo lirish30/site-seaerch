@@ -60,7 +60,7 @@ export async function applySync(db: D1Database, businessId: string, rows: Postin
     seen.add(r.external_id);
     if (known.has(r.external_id)) {
       stmts.push(db.prepare(
-        `UPDATE job_postings SET title = ?, url = ?, location = ?, department = ?, role_kind = ?, posted_at = COALESCE(?, posted_at), last_seen_at = ?, closed_at = NULL
+        `UPDATE job_postings SET title = ?, url = ?, location = ?, department = ?, role_kind = ?, posted_at = COALESCE(?, posted_at), last_seen_at = MAX(last_seen_at, ?), closed_at = NULL
          WHERE business_id = ? AND external_id = ?`,
       ).bind(r.title, r.url, r.location, r.department, r.role_kind, r.posted_at, nowIso, businessId, r.external_id));
     } else {
@@ -68,13 +68,15 @@ export async function applySync(db: D1Database, businessId: string, rows: Postin
       added.push(p);
       stmts.push(db.prepare(
         `INSERT INTO job_postings (id, business_id, external_id, title, url, location, department, role_kind, posted_at, first_seen_at, last_seen_at, closed_at, baseline)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,NULL,?)`,
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,NULL,?)
+         ON CONFLICT(business_id, external_id) DO UPDATE SET title = excluded.title, url = excluded.url, location = excluded.location, department = excluded.department,
+           role_kind = excluded.role_kind, posted_at = COALESCE(excluded.posted_at, posted_at), last_seen_at = MAX(last_seen_at, excluded.last_seen_at), closed_at = NULL`,
       ).bind(p.id, businessId, r.external_id, r.title, r.url, r.location, r.department, r.role_kind, r.posted_at, nowIso, nowIso, baseline ? 1 : 0));
     }
   }
   for (const part of chunks(stmts, 50)) await db.batch(part);
-  // Everything seen above now has last_seen_at = nowIso, so anything open with a different value was missing from this sync.
-  const closed = (await db.prepare(`UPDATE job_postings SET closed_at = ? WHERE business_id = ? AND closed_at IS NULL AND last_seen_at <> ?`)
+  // Everything seen above now has last_seen_at >= nowIso; "<" (not "<>") so a sync that finished later is never undone by an overlapping older one.
+  const closed = (await db.prepare(`UPDATE job_postings SET closed_at = ? WHERE business_id = ? AND closed_at IS NULL AND last_seen_at < ?`)
     .bind(nowIso, businessId, nowIso).run()).meta.changes ?? 0;
   return { added, closed };
 }

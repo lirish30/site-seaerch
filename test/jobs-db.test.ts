@@ -62,6 +62,36 @@ describe("applySync", () => {
   });
 });
 
+describe("applySync overlapping syncs of one board", () => {
+  it("a stale sync neither moves last_seen_at backwards nor closes anything", async () => {
+    const b = await lead();
+    await applySync(env.DB, b.id, [row("1", "SEO", "seo"), row("2", "Web", "web_dev")], T0, true);
+    await applySync(env.DB, b.id, [row("1", "SEO", "seo"), row("2", "Web", "web_dev")], T2, false); // the later sync finishes first
+    const stale = await applySync(env.DB, b.id, [row("1", "SEO", "seo"), row("2", "Web", "web_dev")], T1, false);
+    expect(stale.closed).toBe(0);
+    expect((await listPostingsForLead(env.DB, b.id)).map((p) => [p.last_seen_at, p.closed_at])).toEqual([[T2, null], [T2, null]]);
+  });
+
+  it("a stale sync whose list lacks a role the later sync just refreshed does not close it", async () => {
+    const b = await lead();
+    await applySync(env.DB, b.id, [row("1", "SEO", "seo"), row("2", "Web", "web_dev")], T0, true);
+    await applySync(env.DB, b.id, [row("1", "SEO", "seo"), row("2", "Web", "web_dev")], T2, false);
+    const stale = await applySync(env.DB, b.id, [row("2", "Web", "web_dev")], T1, false);
+    expect(stale.closed).toBe(0);
+    const by = Object.fromEntries((await listPostingsForLead(env.DB, b.id)).map((p) => [p.external_id, p]));
+    expect([by["1"].closed_at, by["1"].last_seen_at, by["2"].last_seen_at]).toEqual([null, T2, T2]);
+  });
+
+  it("two syncs inserting the same new role do not collide and leave one open role seen at the later time", async () => {
+    const b = await lead();
+    await Promise.all([applySync(env.DB, b.id, [row("1", "SEO", "seo")], T0, true), applySync(env.DB, b.id, [row("1", "SEO II", "seo")], T1, false)]);
+    const all = await listPostingsForLead(env.DB, b.id);
+    expect(all).toHaveLength(1);
+    expect(all[0].closed_at).toBeNull();
+    expect(all[0].last_seen_at).toBe(T1);
+  });
+});
+
 describe("reads", () => {
   it("closeAll closes every open role and counts them", async () => {
     const b = await lead();
