@@ -1,7 +1,10 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
-import { FindingsList } from "./AuditPanel";
+import Icon from "./Icon";
+import ParagraphEditor from "./ParagraphEditor";
+import { initials } from "../scoreView";
+import { findingChip } from "../evidenceView";
 import { EmailFrame } from "./SignatureBuilder";
 import InlineError from "./InlineError";
 import type { CroItem, CroResponse } from "../cro";
@@ -28,8 +31,14 @@ interface Props {
   onChanged: () => Promise<void>;
   onMessage: (m: string) => void;
   onMarkContacted: () => Promise<boolean>;
+  /** The issues picked to build the email on. Controlled by the lead page so the Website issues tab's "Use in email" boxes share it. */
+  focus?: Set<string>; onFocusChange?: React.Dispatch<React.SetStateAction<Set<string>>>;
+  /** Saves the draft to Gmail (the lead page owns that request). */
+  onGmailDraft?: () => void; gmailBusy?: boolean;
 }
 
+/** The opening "Hi Dana," line is skipped in a card's preview so the snippet starts with what the email says. */
+const withoutGreeting = (b: string) => b.replace(/^\s*(hi|hello|hey|dear)\b[^\n]{0,40},?\s*\n+/i, "");
 const toggle = <T,>(set: React.Dispatch<React.SetStateAction<Set<T>>>, key: T) =>
   set((p) => { const n = new Set(p); if (n.has(key)) n.delete(key); else if (n.size < MAX_PICKS) n.add(key); return n; });
 
@@ -48,8 +57,12 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
   const [versions, setVersions] = useState<Draft[]>([]);
   const [croItems, setCroItems] = useState<CroItem[]>([]);
   const [tone, setTone] = useState(""); const [steer, setSteer] = useState("");
-  const [focus, setFocus] = useState<Set<string>>(new Set()); const [croFocus, setCroFocus] = useState<Set<string>>(new Set()); const [pickIds, setPickIds] = useState<Set<string>>(new Set());
+  const [ownFocus, setOwnFocus] = useState<Set<string>>(new Set());
+  const focus = p.focus ?? ownFocus; const setFocus = p.onFocusChange ?? setOwnFocus;
+  const [croFocus, setCroFocus] = useState<Set<string>>(new Set()); const [pickIds, setPickIds] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(""); const [error, setError] = useState("");
+  const [showAllChips, setShowAllChips] = useState(false); const [versionsOpen, setVersionsOpen] = useState(false);
+  const previewDialog = useRef<HTMLDialogElement>(null);
 
   const saved = useRef({ subject: draft?.subject ?? "", body: draft?.body ?? "", footer: draft?.include_footer ?? false });
   const latest = useRef({ subject, body, footer, draftId: draft?.id ?? null });
@@ -150,115 +163,133 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
   const switchNotice = draft ? purposeSwitchNotice(draft.purpose, eff) : null;
   const sampleChoices = eff === "full_time" ? samples ?? [] : [];
 
+  const ranked = p.findings.map((f, i) => ({ f, key: `${f.code}:${i}` }))
+    .sort((a, b) => ({ critical: 0, important: 1, nice: 2 }[a.f.severity] - { critical: 0, important: 1, nice: 2 }[b.f.severity]) || b.f.points - a.f.points);
+  const chips: { id: string; label: string; on: boolean; disabled: boolean; toggle: () => void; kind: "finding" | "cro" | "sample" }[] = [
+    ...ranked.map(({ f, key }) => ({ id: `f:${key}`, label: findingChip(f), on: focus.has(key), disabled: !focus.has(key) && focus.size >= MAX_PICKS, toggle: () => toggle(setFocus, key), kind: "finding" as const })),
+    ...croItems.map((i) => ({ id: `c:${i.id}`, label: i.title.length > 32 ? `${i.title.slice(0, 31)}…` : i.title, on: croFocus.has(i.id), disabled: !croFocus.has(i.id) && croFocus.size >= MAX_PICKS, toggle: () => toggle(setCroFocus, i.id), kind: "cro" as const })),
+    ...sampleChoices.map((w) => ({ id: `s:${w.id}`, label: w.title, on: pickIds.has(w.id), disabled: !pickIds.has(w.id) && pickIds.size >= 2,
+      toggle: () => setPickIds((s) => { const n = new Set(s); if (n.has(w.id)) n.delete(w.id); else if (n.size < 2) n.add(w.id); return n; }), kind: "sample" as const })),
+  ];
+  const shownChips = showAllChips ? chips : chips.slice(0, 8);
+  const picked = focus.size + croFocus.size + pickIds.size;
+  const toName = toContact?.person_name ?? null;
+
   return (
-    <div className="card composer">
-      <div className="composer-top">
-        <div className="segmented" role="group" aria-label="What is this email for?">
+    <div className="composer">
+      <div className="purpose-row">
+        <div className="purpose-seg" role="group" aria-label="What is this email for?">
           {(["full_time", "freelance"] as Purpose[]).map((x) => (
-            <button key={x} className={eff === x ? "on" : ""} aria-pressed={eff === x} onClick={() => setPurpose(x)}>{PURPOSE_LABEL[x]}</button>
+            <button key={x} className={eff === x ? "on" : ""} aria-pressed={eff === x} onClick={() => setPurpose(x)}><Icon name={x === "full_time" ? "briefcase" : "zap"} size={14} />{PURPOSE_LABEL[x]}</button>
           ))}
         </div>
-        <p className="muted small">{PURPOSE_HINT[eff]}</p>
-        {switchNotice && <p className="hint">{switchNotice}</p>}
-        {gaps && <p className="hint">{gaps} <Link to="/settings">Open Settings</Link></p>}
+        <p>{PURPOSE_HINT[eff]}</p>
       </div>
+      {switchNotice && <p className="hint">{switchNotice}</p>}
+      {gaps && <p className="hint">{gaps} <Link to="/settings">Open Settings</Link></p>}
 
       {variants.length > 1 && <section aria-label="Options" className="variants">
-        <h3>Pick a starting point</h3>
+        <p className="kicker">Pick a starting point</p>
         <div className="variant-grid">
-          {variants.map((v, i) => (
-            <button key={v.id} className={`variant${v.id === draft?.id ? " on" : ""}`} aria-pressed={v.id === draft?.id} onClick={() => void pick(v)}>
-              <strong>{variantTitle(v, i)}</strong>
-              <span className="small">{v.id === draft?.id ? subject : v.subject}</span>
-              <span className="muted small">{snippet(v.id === draft?.id ? body : v.body)}</span>
-            </button>
-          ))}
+          {variants.map((v, i) => {
+            const on = v.id === draft?.id;
+            return (
+              <button key={v.id} className={`variant${on ? " on" : ""}`} aria-pressed={on} onClick={() => void pick(v)}>
+                <span className="v-top"><span className="v-angle">{variantTitle(v, i)}</span>{on && <Icon name="check" size={14} />}</span>
+                <span className="v-subject">{on ? subject : v.subject}</span>
+                <span className="v-snip">{snippet(withoutGreeting(on ? body : v.body), 90)}</span>
+              </button>
+            );
+          })}
         </div>
       </section>}
 
-      <div className="email-grid">
-        <div>
-          {draft ? <>
-            <p><strong>To:</strong> {toContact?.value ?? "—"} <span className="muted">({draft.recipient_reason})</span></p>
-            <label htmlFor="subj">Subject</label>
+      {draft ? (
+        <section className="compose-card" aria-label="Email">
+          <div className="c-row c-to">
+            <span className="c-label">To</span>
+            {toContact
+              ? <span className="to-chip"><span className="avatar-xs" aria-hidden="true">{initials(toName ?? toContact.value)}</span>{toName ? `${toName} <${toContact.value}>` : toContact.value}</span>
+              : <span className="c-none">No email address found. Add a point of contact.</span>}
+            <span className="grow" />
+            <span className="c-reason">{draft.recipient_reason}</span>
+          </div>
+          <div className="c-row c-subject">
+            <label className="c-label" htmlFor="subj">Subject</label>
             <input id="subj" value={subject} onChange={(e) => setSubject(e.target.value)} onBlur={() => void save()} />
-            <label htmlFor="body">Message</label>
-            <textarea id="body" style={{ minHeight: 320 }} value={body} onChange={(e) => setBody(e.target.value)} onBlur={() => void save()} />
-            <p className="muted small">{words} words · your signature is added automatically</p>
-            <label className="check"><input type="checkbox" checked={footer} onChange={(e) => setFooter(e.target.checked)} /> Add my mailing address and opt-out line</label>
-            <div className="tweaks" role="group" aria-label="Quick rewrites">
-              <span className="muted small">Quick rewrite</span>
-              {TWEAK_BUTTONS.filter((t) => !t.fullTimeOnly || draft.purpose === "full_time").map((t) => (
-                <button key={t.key} onClick={() => tweak(t.key, t.label)} disabled={!!busy || suppressed || !!switchNotice}
-                  title={suppressed ? "Suppressed: drafting is turned off" : switchNotice ?? ""}>{busy === t.key ? "Rewriting…" : t.label}</button>
-              ))}
-            </div>
-            <p className="row">
-              <button onClick={() => void copy()}>Copy email</button>
-              {mailto && !suppressed && <a href={mailto} onClick={() => void save()}><button>Open in mail app</button></a>}
-              <button className="primary" onClick={() => void copyAndMark()} disabled={suppressed}>Copy & mark contacted</button>
-            </p>
-          </> : <p className="muted">No email yet{p.lowPriority ? " (low priority lead)" : ""}. Choose what it's for, then write the options.</p>}
-
-          {versions.length > 1 && <>
-            <h3>Earlier versions</h3>
-            <ul className="versions">{versions.map((v) => (
-              <li key={v.id} className={v.id === draft?.id ? "current" : ""}>
-                <span>{new Date(v.created_at).toLocaleString()} · {v.subject}{v.steering_note && <span className="muted"> · “{v.steering_note}”</span>}</span>
-                {v.id !== draft?.id && <button className="link-btn" onClick={() => void pick(v)}>Use</button>}
-              </li>
-            ))}</ul>
-          </>}
-        </div>
-
-        <div>
-          {draft && <div className="segmented side-tabs" role="group" aria-label="Side panel">
-            <button className={tab === "preview" ? "on" : ""} aria-pressed={tab === "preview"} onClick={() => setSide("preview")}>Preview</button>
-            <button className={tab === "write" ? "on" : ""} aria-pressed={tab === "write"} onClick={() => setSide("write")}>Write new options</button>
-          </div>}
-
-          {tab === "preview" && draft && <div className="preview-pane">
-            <p className="small"><span className="muted">Subject:</span> <strong>{subject || "—"}</strong></p>
+          </div>
+          <ParagraphEditor value={body} onChange={setBody} onBlur={() => void save()} />
+          <div className="c-meta">
+            <span>{words} words · signature added automatically</span>
+            <span className="grow" />
+            <label className="switch sm"><input type="checkbox" role="switch" checked={footer} onChange={(e) => setFooter(e.target.checked)} /><i aria-hidden="true" /><span>Mailing address & opt-out line</span></label>
+          </div>
+          <div className="c-row c-tweaks" role="group" aria-label="Quick rewrites">
+            <Icon name="sparkles" size={14} className="spark" /><b>Quick rewrite</b>
+            {TWEAK_BUTTONS.filter((t) => !t.fullTimeOnly || draft.purpose === "full_time").map((t) => (
+              <button key={t.key} className="pill" onClick={() => tweak(t.key, t.label)} disabled={!!busy || suppressed || !!switchNotice}
+                title={suppressed ? "Suppressed: drafting is turned off" : switchNotice ?? ""}>{busy === t.key ? "Rewriting…" : t.label}</button>
+            ))}
+          </div>
+          <div className="c-row c-actions">
+            <button className="btn" onClick={() => void copy()}><Icon name="copy" size={16} />Copy email</button>
+            {mailto && !suppressed && <a className="btn" href={mailto} onClick={() => void save()}><Icon name="external" size={16} />Open in mail app</a>}
+            <button className="btn icon-only" onClick={() => previewDialog.current?.showModal()} disabled={!preview} aria-label="Preview the email" title="Preview the email as it will appear"><Icon name="eye" size={16} /></button>
+            {versions.length > 1 && (
+              <span className="versions-wrap">
+                <button className="btn-plain" aria-expanded={versionsOpen} onClick={() => setVersionsOpen((o) => !o)}><Icon name="clock" size={16} />Earlier versions ({versions.length - 1})</button>
+                {versionsOpen && (
+                  <div className="popover versions-pop" role="dialog" aria-label="Earlier versions">
+                    {versions.map((v) => (
+                      <div key={v.id} className={`ver${v.id === draft.id ? " current" : ""}`}>
+                        <span><b>{v.subject}</b><small>{new Date(v.created_at).toLocaleString()}{v.steering_note && ` · “${v.steering_note}”`}</small></span>
+                        {v.id === draft.id ? <small>Current</small> : <button className="link-btn" onClick={() => { setVersionsOpen(false); void pick(v); }}>Use</button>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </span>
+            )}
+            <span className="grow" />
+            {p.onGmailDraft && <button className="btn" onClick={p.onGmailDraft} disabled={p.gmailBusy || suppressed}><Icon name="mail" size={16} />{p.gmailBusy ? "Saving…" : "Create Gmail draft"}</button>}
+            <button className="btn primary" onClick={() => void copyAndMark()} disabled={suppressed}><Icon name="check" size={16} />Copy & mark contacted</button>
+          </div>
+          <dialog ref={previewDialog} className="preview-dialog" onClick={(e) => { if (e.target === previewDialog.current) previewDialog.current?.close(); }}>
+            <div className="pd-head"><b>Email preview</b><span className="muted small">Subject: {subject || "—"}</span><span className="grow" /><button className="btn sm" onClick={() => previewDialog.current?.close()}>Close</button></div>
             {preview ? <EmailFrame html={preview.html} title="Email preview" height={460} /> : <p className="muted small">The preview appears as you type.</p>}
             <p className="muted small">This is how it will look in the Gmail draft. Nothing is ever sent from here.</p>
-          </div>}
+          </dialog>
+        </section>
+      ) : <p className="muted">No email yet{p.lowPriority ? " (low priority lead)" : ""}. Choose what it's for, then write the options.</p>}
 
-          {tab === "write" && <div>
-            <h3>{draft ? "Write new options" : "Write the email"}</h3>
-            <label htmlFor="tone">Tone for this email</label>
-            <select id="tone" value={tone} onChange={(e) => setTone(e.target.value)}>
-              {TONE_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-            </select>
-            <label htmlFor="steer">Extra instruction (optional)</label>
-            <input id="steer" placeholder="mention I'm local / ask about their summer rush" value={steer} onChange={(e) => setSteer(e.target.value)} />
-            {sampleChoices.length > 0 && <>
-              <label>Work to mention <span className="muted small">(optional; none = the best fit)</span></label>
-              <div className="picker-box">{sampleChoices.map((w) => (
-                <label key={w.id} className="row small check"><input type="checkbox" checked={pickIds.has(w.id)} disabled={!pickIds.has(w.id) && pickIds.size >= 2}
-                  onChange={() => setPickIds((s) => { const n = new Set(s); if (n.has(w.id)) n.delete(w.id); else if (n.size < 2) n.add(w.id); return n; })} />{w.title}</label>
-              ))}</div>
-            </>}
-            {p.findings.length > 0 && <>
-              <label>Site issues to build on <span className="muted small">(pick up to {MAX_PICKS}; none = the most important)</span></label>
-              <div className="picker-box"><FindingsList findings={p.findings} selectable selected={focus} onToggle={(k) => toggle(setFocus, k)} /></div>
-            </>}
-            {croItems.length > 0 && <>
-              <label>CRO opportunities <span className="muted small">(from the CRO audit; pick up to {MAX_PICKS})</span></label>
-              <div className="picker-box">{croItems.map((i) => (
-                <label key={i.id} className="row small check"><input type="checkbox" checked={croFocus.has(i.id)} disabled={!croFocus.has(i.id) && croFocus.size >= MAX_PICKS}
-                  onChange={() => toggle(setCroFocus, i.id)} />{i.title}</label>
-              ))}</div>
-            </>}
-            <p className="row" style={{ marginTop: 12 }}>
-              <button className="primary" onClick={writeOptions} disabled={!!busy || suppressed} title={suppressed ? "Suppressed: drafting is turned off" : ""}>
-                {busy === "write" ? "Writing…" : draft ? "Write new options" : "Write options"}
-              </button>
-              {focus.size + croFocus.size > 0 && <button className="link-btn" onClick={() => { setFocus(new Set()); setCroFocus(new Set()); }}>Clear {focus.size + croFocus.size} selected</button>}
-            </p>
-          </div>}
-          <InlineError message={error} />
+      <section className="write-card" aria-label="Write new options">
+        <div className="w-head">
+          <Icon name="refresh" size={15} /><h3>{draft ? "Write new options" : "Write the email"}</h3>
+          <span className="grow" />
+          {picked > 0 && <button className="link-btn" onClick={() => { setFocus(new Set()); setCroFocus(new Set()); setPickIds(new Set()); }}>Clear {picked} selected</button>}
+          <button className="btn primary sm" onClick={writeOptions} disabled={!!busy || suppressed} title={suppressed ? "Suppressed: drafting is turned off" : ""}>
+            <Icon name="sparkles" size={14} />{busy === "write" ? "Writing…" : draft ? "Write 3 options" : "Write options"}
+          </button>
         </div>
-      </div>
+        <div className="w-fields">
+          <div><label htmlFor="tone">Tone</label>
+            <span className="field"><select id="tone" value={tone} onChange={(e) => setTone(e.target.value)}>{TONE_OPTIONS.map(([v, l]) => <option key={v} value={v}>{v === "" ? "Friendly local (default)" : l}</option>)}</select><Icon name="chevron-down" size={14} className="chev" /></span></div>
+          <div><label htmlFor="steer">Extra instruction</label>
+            <span className="field"><input id="steer" placeholder="e.g. mention I’m local, ask about their winter rush" value={steer} onChange={(e) => setSteer(e.target.value)} /></span></div>
+        </div>
+        {chips.length > 0 && (
+          <div className="w-chips" role="group" aria-label="Build the options on">
+            <span className="c-lbl">Build on</span>
+            {shownChips.map((c) => (
+              <button key={c.id} className={`chip-pick${c.on ? " on" : ""}`} aria-pressed={c.on} disabled={c.disabled} title={c.disabled ? `Up to ${c.kind === "sample" ? 2 : MAX_PICKS} can be picked` : undefined} onClick={c.toggle}>
+                {c.on && <Icon name="check" size={12} />}{c.label}
+              </button>
+            ))}
+            {chips.length > 8 && <button className="chip-pick more" onClick={() => setShowAllChips((x) => !x)}>{showAllChips ? "Show fewer" : `+${chips.length - 8} more`}</button>}
+          </div>
+        )}
+        <InlineError message={error} />
+      </section>
     </div>
   );
 });

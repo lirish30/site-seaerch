@@ -1,74 +1,26 @@
-import type { ReactNode } from "react";
+import { ICON_MARKUP, type IconName } from "./iconMarkup";
 
-/** Line icons on a 24px grid with a 1.75 stroke, matching the Figma icon set (Lucide-style). */
-const P = (d: string) => <path d={d} />;
-const C = (cx: number, cy: number, r: number) => <circle cx={cx} cy={cy} r={r} />;
-const R = (x: number, y: number, w: number, h: number, rx: number) => <rect x={x} y={y} width={w} height={h} rx={rx} />;
+export type { IconName };
 
-const ICONS = {
-  home: <>{P("M3 9.5 12 3l9 6.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z")}</>,
-  users: <>{P("M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2")}{C(9, 7, 4)}{P("M22 21v-2a4 4 0 0 0-3-3.87")}{P("M16 3.13a4 4 0 0 1 0 7.75")}</>,
-  radar: <>{P("M19.07 4.93A10 10 0 0 0 6.99 3.34")}{P("M4 6h.01")}{P("M2.29 9.62A10 10 0 1 0 21.31 8.35")}{P("M16.24 7.76A6 6 0 1 0 8.23 16.67")}{P("M12 18h.01")}{P("M17.99 11.66A6 6 0 0 1 15.77 16.67")}{C(12, 12, 2)}{P("m13.41 10.59 5.66-5.66")}</>,
-  mail: <>{R(2, 4, 20, 16, 2)}{P("m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7")}</>,
-  bell: <>{P("M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9")}{P("M10.3 21a1.94 1.94 0 0 0 3.4 0")}</>,
-  sliders: <>{P("M10 5H3")}{P("M12 19H3")}{P("M14 3v4")}{P("M16 17v4")}{P("M21 12h-9")}{P("M21 19h-5")}{P("M21 5h-7")}{P("M8 10v4")}{P("M8 12H3")}</>,
-  search: <>{C(11, 11, 8)}{P("m21 21-4.3-4.3")}</>,
-  plus: <>{P("M5 12h14")}{P("M12 5v14")}</>,
-  "chevron-down": P("m6 9 6 6 6-6"),
-  "chevron-right": P("m9 18 6-6-6-6"),
-  "chevron-left": P("m15 18-6-6 6-6"),
-  info: <>{C(12, 12, 10)}{P("M12 16v-4")}{P("M12 8h.01")}</>,
-  "arrow-right": <>{P("M5 12h14")}{P("m12 5 7 7-7 7")}</>,
-  "arrow-up-right": <>{P("M7 7h10v10")}{P("M7 17 17 7")}</>,
-  star: P("M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"),
-  tag: <>{P("M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z")}{P("M7.5 7.5h.01")}</>,
-  copy: <>{R(8, 8, 14, 14, 2)}{P("M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2")}</>,
-  kanban: <>{P("M6 5v11")}{P("M12 5v6")}{P("M18 5v14")}</>,
-  check: P("M20 6 9 17l-5-5"),
-  x: <>{P("M18 6 6 18")}{P("m6 6 12 12")}</>,
-  globe: <>{C(12, 12, 10)}{P("M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20")}{P("M2 12h20")}</>,
-  pin: <>{P("M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0")}{C(12, 10, 3)}</>,
-  phone: P("M13.832 16.568a1 1 0 0 0 1.213-.303l.355-.465A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.468.351a1 1 0 0 0-.292 1.233 14 14 0 0 0 6.392 6.384"),
-  briefcase: <>{P("M16 20V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16")}{R(2, 6, 20, 14, 2)}</>,
-  list: <>{P("M3 12h.01")}{P("M3 18h.01")}{P("M3 6h.01")}{P("M8 12h13")}{P("M8 18h13")}{P("M8 6h13")}</>,
-  user: <>{P("M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2")}{C(12, 7, 4)}</>,
-  link: <>{P("M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71")}{P("M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71")}</>,
-  send: <>{P("M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z")}{P("m21.854 2.147-10.94 10.939")}</>,
-  clock: <>{C(12, 12, 10)}{P("M12 6v6l4 2")}</>,
-  calendar: <>{P("M8 2v4")}{P("M16 2v4")}{R(3, 4, 18, 18, 2)}{P("M3 10h18")}</>,
-  eye: <>{P("M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0")}{C(12, 12, 3)}</>,
-  "file-text": <>{P("M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z")}{P("M14 2v4a2 2 0 0 0 2 2h4")}{P("M10 9H8")}{P("M16 13H8")}{P("M16 17H8")}</>,
-  layout: <>{R(3, 3, 18, 7, 1)}{R(3, 14, 9, 7, 1)}{R(16, 14, 5, 7, 1)}</>,
-  target: <>{C(12, 12, 10)}{C(12, 12, 6)}{C(12, 12, 2)}</>,
-  smartphone: <>{R(5, 2, 14, 20, 2)}{P("M12 18h.01")}</>,
-  gauge: <>{P("m12 14 4-4")}{P("M3.34 19a10 10 0 1 1 17.32 0")}</>,
-  code: <>{P("m16 18 6-6-6-6")}{P("m8 6-6 6 6 6")}</>,
-  sparkles: <>{P("M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z")}{P("M20 3v4")}{P("M22 5h-4")}{P("M4 17v2")}{P("M5 18H3")}</>,
-  more: <>{C(5, 12, 1)}{C(12, 12, 1)}{C(19, 12, 1)}</>,
-  upload: <>{P("M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4")}{P("m17 8-5-5-5 5")}{P("M12 3v12")}</>,
-  refresh: <>{P("M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8")}{P("M21 3v5h-5")}</>,
-  alert: <>{P("m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3")}{P("M12 9v4")}{P("M12 17h.01")}</>,
-  inbox: <>{P("M22 12h-6l-2 3h-4l-2-3H2")}{P("M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z")}</>,
-} satisfies Record<string, ReactNode>;
-
-export type IconName = keyof typeof ICONS;
-
+/**
+ * Line icons exported from the Figma icon set: a 16px grid with a 1.75px stroke that stays 1.75px at every size
+ * (`vector-effect: non-scaling-stroke` in styles.css), as in the design. The markup is a fixed, trusted constant.
+ */
 export default function Icon({ name, size = 16, className }: { name: IconName; size?: number; className?: string }) {
   return (
-    <svg className={`icon${className ? ` ${className}` : ""}`} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
-      strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
-      {ICONS[name]}
-    </svg>
+    <svg className={`icon${className ? ` ${className}` : ""}`} width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor"
+      strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"
+      dangerouslySetInnerHTML={{ __html: ICON_MARKUP[name] }} />
   );
 }
 
-/** The brand mark: an ink tile with a white bar and one Signal dot. */
+/** The brand mark: an ink tile with a white bar and one Signal dot (Figma "Logo", 30x30). */
 export function LogoMark({ size = 30 }: { size?: number }) {
   return (
     <svg className="logo-mark" width={size} height={size} viewBox="0 0 30 30" role="img" aria-label="Site Search">
-      <rect width="30" height="30" rx="8.4" fill="var(--bg-inverse)" />
-      <rect x="5.3" y="13.8" width="10.8" height="2.4" rx="1.2" fill="#fff" />
-      <circle cx="21.4" cy="15" r="3.3" fill="var(--signal)" />
+      <rect width="30" height="30" rx="8.4" fill="#17171a" />
+      <rect x="5.3" y="13.8" width="10.8" height="2.4" rx="1" fill="#fff" />
+      <circle cx="21.4" cy="15" r="3.3" fill="#ff5b23" />
     </svg>
   );
 }

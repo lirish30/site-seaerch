@@ -7,7 +7,9 @@ export interface Business { id: string; name: string; category: string | null; a
   starred_at: string | null; }
 /** 'quick' = crawled and scored only; 'full' = also screenshots, PageSpeed, AI review and a draft. */
 export type ScanStage = "quick" | "full";
-export interface LeadRow { business: Business; score: number | null; health: number | null; niche: string | null; topFinding: string | null; offer: string | null;
+export interface LeadRow { business: Business; score: number | null; health: number | null; niche: string | null; topFinding: string | null;
+  /** Severity and category of `topFinding` (the audit's first finding), null when there is no audit. */
+  topSeverity: Severity | null; topCategory: AuditCategory | "site" | null; hasDraft: boolean; offer: string | null;
   bestContact: string | null; hasEmail: boolean; partial: boolean; poc: { name: string; email: string | null } | null;
   platform: string | null; rating: number | null; reviewCount: number | null; fit: FitResult; scan_stage: ScanStage; }
 

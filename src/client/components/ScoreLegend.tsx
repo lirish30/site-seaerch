@@ -3,30 +3,33 @@ import { HealthBar, LeadScore } from "./Score";
 import Icon from "./Icon";
 import { HOT_AT, SCORE_HELP, WARM_AT } from "../scoreView";
 
-/** The plain-English key above the leads table: what each of the three numbers means. */
+/**
+ * The plain-English key above the leads table: what each of the three numbers means.
+ * The ⓘ opens "How scores work"; the same link also sits at the end of the row when the panel is wide enough to hold it.
+ */
 export default function ScoreLegend() {
   const [open, setOpen] = useState(false);
   return (
     <section className="score-legend" aria-label="What the scores mean">
       <div className="legend-row">
-        <Icon name="info" size={16} className="legend-info" />
-        <div className="legend-item">
+        <button type="button" className="legend-info" aria-label="How scores work" aria-expanded={open} onClick={() => setOpen((o) => !o)}><Icon name="info" size={16} /></button>
+        <div className="legend-item g1">
           <span className="pills">
-            <LeadScore score={null} legend={`${HOT_AT}+`} label="Hot" />
-            <LeadScore score={null} legend={`${WARM_AT}+`} label="Warm" />
-            <LeadScore score={null} legend={`<${WARM_AT}`} label="Cool" />
+            <LeadScore score={null} legend={`${HOT_AT}+`} label="Hot" tier="hot" />
+            <LeadScore score={null} legend={`${WARM_AT}+`} label="Warm" tier="warm" />
+            <LeadScore score={null} legend={`<${WARM_AT}`} label="Cool" tier="cool" />
           </span>
-          <span><strong>Lead score</strong><br />{SCORE_HELP.lead}</span>
+          <span className="txt"><b>Lead score</b><span>{SCORE_HELP.lead}</span></span>
         </div>
-        <div className="legend-item">
+        <div className="legend-item g2">
           <HealthBar value={35} />
-          <span><strong>Site health</strong><br />{SCORE_HELP.health}</span>
+          <span className="txt"><b>Site health</b><span>{SCORE_HELP.health}</span></span>
         </div>
-        <div className="legend-item">
-          <span className="mono fit-sample">80</span>
-          <span><strong>Fit</strong><br />{SCORE_HELP.fit}</span>
+        <div className="legend-item g3">
+          <span className="fit-sample">80</span>
+          <span className="txt"><b>Fit</b><span>{SCORE_HELP.fit}</span></span>
         </div>
-        <button type="button" className="link-btn legend-more" aria-expanded={open} onClick={() => setOpen((o) => !o)}>How scores work <Icon name={open ? "chevron-down" : "arrow-right"} size={12} /></button>
+        <button type="button" className="legend-more" aria-expanded={open} onClick={() => setOpen((o) => !o)}>How scores work<Icon name="arrow-right" size={12} /></button>
       </div>
       {open && (
         <div className="legend-detail">

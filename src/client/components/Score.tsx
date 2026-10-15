@@ -1,14 +1,14 @@
 import type { ReactNode } from "react";
-import { healthWord, leadTier, SEVERITY_BARS, SEVERITY_LABEL, TIER_LABEL } from "../scoreView";
+import { healthWord, leadTier, SEVERITY_BARS, SEVERITY_LABEL, TIER_LABEL, type LeadTier } from "../scoreView";
 import type { Severity } from "../types";
 
 /**
  * The lead score pill: the only score with color. Hot 60+, Warm 25-59, Cool under 25.
  * `legend` shows a threshold ("60+") in the chip instead of a score, for the table legend.
  */
-export function LeadScore({ score, legend, label }: { score: number | null; legend?: string; label?: string }) {
+export function LeadScore({ score, legend, label, tier: forced }: { score: number | null; legend?: string; label?: string; tier?: LeadTier }) {
   if (score === null && !legend) return <span className="lead-score pending" title="Still being scored">…</span>;
-  const tier = leadTier(score ?? 0);
+  const tier = forced ?? leadTier(score ?? 0);
   const word = label ?? TIER_LABEL[tier];
   return (
     <span className={`lead-score ${tier}`} title={legend ? undefined : `Lead score ${score} of 100: ${word}`} aria-label={legend ? undefined : `Lead score ${score}, ${word}`}>

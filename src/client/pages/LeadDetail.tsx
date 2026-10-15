@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { safeHttpUrl } from "../links";
@@ -7,8 +7,10 @@ import BestOfferCard from "../components/BestOfferCard";
 import Icon, { type IconName } from "../components/Icon";
 import { NicheChecklist, Scorecard, TopProblems } from "../components/LeadOverview";
 import { Badge } from "../components/Score";
+import { announceLeadsChanged } from "../components/Shell";
 import { followUpLabel, followUpTone, STAGE_LABEL } from "../leadView";
 import { initials, leadTier, TIER_LABEL } from "../scoreView";
+import ActivityTab from "../components/ActivityTab";
 import PeoplePanel from "../components/PeoplePanel";
 import StarToggle from "../components/StarToggle";
 import CroPanel from "../components/CroPanel";
@@ -18,7 +20,8 @@ import { isSpendLimit, SPEND_LIMIT_REACHED } from "../spend";
 import EmailComposer, { type ComposerHandle } from "../components/EmailComposer";
 import InlineError from "../components/InlineError";
 import type { Draft } from "../emailView";
-import { OFFER_LABEL, STATUSES, type Activity, type Audit, type AuditChanges, type BestOffer, type Business, type Contact, type FitResult, type LeadStatus, type LeadSuppression, type Person, type SuppressionReason } from "../types";
+import type { CroResponse } from "../cro";
+import { NICHE_LABEL, OFFER_LABEL, STATUSES, type Activity, type Audit, type AuditChanges, type BestOffer, type Business, type Contact, type FitProfile, type FitResult, type LeadStatus, type LeadSuppression, type Person, type SuppressionReason } from "../types";
 
 interface ShareReport { token: string; url: string; expiresAt: string; }
 interface Data { business: Business; audit: Audit | null; contacts: Contact[]; draft: Draft | null; variants: Draft[]; toContact: Contact | null; people: Person[]; activity: Activity[]; changes: AuditChanges | null; urgency: number; best_offer: BestOffer | null; fit: FitResult; suppressed: LeadSuppression | null; }
@@ -27,15 +30,15 @@ const LINK_LABEL: Record<string, string> = {
   contact: "Contact page", careers: "Careers / jobs", menu: "Menu", services: "Services", about: "About", team: "Team",
   booking: "Booking", pricing: "Pricing", locations: "Locations", portfolio: "Portfolio", testimonials: "Reviews", blog: "Blog", shop: "Shop",
 };
-
-const PLATFORM_LABEL: Record<string, string> = { wordpress: "WordPress", godaddy: "GoDaddy", wix: "Wix", squarespace: "Squarespace", weebly: "Weebly", shopify: "Shopify", webflow: "Webflow" };
-
 const LINK_ICON: Record<string, IconName> = {
   contact: "mail", careers: "briefcase", menu: "list", services: "list", about: "info", team: "users", booking: "calendar", pricing: "tag",
   locations: "pin", portfolio: "layout", testimonials: "star", blog: "file-text", shop: "tag",
 };
+const PLATFORM_LABEL: Record<string, string> = { wordpress: "WordPress", godaddy: "GoDaddy", wix: "Wix", squarespace: "Squarespace", weebly: "Weebly", shopify: "Shopify", webflow: "Webflow" };
+const SOCIAL_NAME: [RegExp, string][] = [[/facebook|fb\.com/, "Facebook"], [/instagram/, "Instagram"], [/linkedin/, "LinkedIn"], [/twitter|x\.com/, "X"], [/youtube/, "YouTube"], [/tiktok/, "TikTok"], [/yelp/, "Yelp"]];
 
 const ACTIVITY_LABEL: Record<string, string> = {
+  note: "Note",
   status: "Status", archived: "Archived", restored: "Restored", website: "Website changed", reaudit: "Re-audit",
   score_flagged: "Score flagged", export: "Exported", draft: "Draft", cro_audit: "CRO audit", suppressed: "Suppressed", import: "Imported", bulk: "Bulk change",
   today_done: "Marked done in Today", snoozed: "Snoozed in Today", starred: "Starred", unstarred: "Unstarred",
@@ -43,8 +46,9 @@ const ACTIVITY_LABEL: Record<string, string> = {
 
 const TABS = ["overview", "issues", "plan", "email", "activity"] as const;
 type Tab = (typeof TABS)[number];
+const dayLabel = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
-/** "Since the Sep 2 audit: 2 new issues, 1 resolved, 9 unchanged", with the lists behind a toggle. */
+/** "Since the Sep 2 audit  [2 new issues] [1 resolved]  9 unchanged", with the lists behind a toggle. */
 function ChangesBar({ changes }: { changes: AuditChanges }) {
   const [open, setOpen] = useState(false);
   const list = (items: Audit["findings"]) => <ul>{items.map((f, i) => <li key={`${f.code}:${i}`}>{f.evidence}</li>)}</ul>;
@@ -52,13 +56,13 @@ function ChangesBar({ changes }: { changes: AuditChanges }) {
   return (
     <>
       <div className="changes-bar" role="region" aria-label="Changes since last audit">
-        <Icon name="refresh" size={14} />
-        <b>Since the {new Date(changes.since).toLocaleDateString(undefined, { month: "short", day: "numeric" })} audit</b>
-        {none ? <span className="muted">No change in findings</span> : <>
+        <Icon name="refresh" size={15} />
+        <b>Since the {dayLabel(changes.since)} audit</b>
+        {none ? <span className="meta">No change in findings</span> : <>
           {changes.added.length > 0 && <Badge tone="critical" dot>{changes.added.length} new {changes.added.length === 1 ? "issue" : "issues"}</Badge>}
           {changes.resolved.length > 0 && <Badge tone="positive" dot>{changes.resolved.length} resolved</Badge>}
         </>}
-        <span className="muted">{changes.unchangedCount} unchanged</span>
+        <span className="meta">{changes.unchangedCount} unchanged</span>
         <span className="grow" />
         {!none && <button className="link-btn" aria-expanded={open} onClick={() => setOpen((o) => !o)}>{open ? "Hide changes" : "Show changes"} <Icon name="chevron-down" size={14} className={open ? "flip" : undefined} /></button>}
       </div>
@@ -73,15 +77,24 @@ function ChangesBar({ changes }: { changes: AuditChanges }) {
 }
 
 /** A collapsible section of the properties panel. */
-function PropSection({ icon, title, children, open = true, count }: { icon: IconName; title: string; children: React.ReactNode; open?: boolean; count?: number }) {
+function PropSection({ icon, title, children, open = true }: { icon: IconName; title: string; children: ReactNode; open?: boolean }) {
   return (
     <details className="prop-sec" open={open}>
-      <summary><Icon name={icon} size={15} /><span className="grow">{title}{count !== undefined && <span className="muted"> · {count}</span>}</span><Icon name="chevron-down" size={14} className="chev" /></summary>
+      <summary><Icon name={icon} size={15} /><span className="grow">{title}</span><Icon name="chevron-down" size={14} className="chev" /></summary>
       <div className="prop-body">{children}</div>
     </details>
   );
 }
 const closeMenu = (e: React.MouseEvent<HTMLElement>) => e.currentTarget.closest("details")?.removeAttribute("open");
+
+/** The leads the user was looking at when they opened this one (saved by the list), so the page can offer previous / next. */
+function listContext(id: string | undefined) {
+  try {
+    const ids: string[] = JSON.parse(sessionStorage.getItem("leads:order") ?? "[]");
+    const at = ids.indexOf(id ?? "");
+    return { ids, at, back: sessionStorage.getItem("leads:list") ?? "/leads" };
+  } catch { return { ids: [] as string[], at: -1, back: "/leads" }; }
+}
 
 export default function LeadDetail() {
   const { id } = useParams();
@@ -97,7 +110,14 @@ export default function LeadDetail() {
   const [attachPdf, setAttachPdf] = useState(true);
   const [exportLink, setExportLink] = useState<{ label: string; url: string }[]>([]);
   const [report, setReport] = useState<ShareReport | null>(null); const [otherActive, setOtherActive] = useState(0); const [shareMsg, setShareMsg] = useState("");
+  const [profiles, setProfiles] = useState<FitProfile[]>([]);
+  const [croCount, setCroCount] = useState<number | null>(null);
+  const [focus, setFocus] = useState<Set<string>>(new Set());
+  const [managePeople, setManagePeople] = useState(false);
+  const [dealText, setDealText] = useState<string | null>(null);
+  const [userName, setUserName] = useState("");
   const linkInput = useRef<HTMLInputElement>(null);
+  const dateInput = useRef<HTMLInputElement>(null);
   // Serialises saves and lets other actions wait for in-flight ones.
   const pending = useRef<Promise<unknown>>(Promise.resolve());
   const composer = useRef<ComposerHandle>(null);
@@ -107,8 +127,14 @@ export default function LeadDetail() {
     const x = await api.get<Data>(`/leads/${id}`);
     savedNotes.current = x.business.notes ?? "";
     setD(x); setNotes(savedNotes.current);
+    announceLeadsChanged();
   }
-  useEffect(() => { load().catch((e) => setMsg((e as Error).message)); }, [id]);
+  useEffect(() => { setFocus(new Set()); setManagePeople(false); load().catch((e) => setMsg((e as Error).message)); }, [id]);
+  useEffect(() => { api.get<{ settings: { your_name: string } }>("/settings").then((r) => setUserName(r.settings.your_name ?? "")).catch(() => {}); }, []);
+  useEffect(() => { api.get<FitProfile[]>("/fit-profiles").then(setProfiles).catch(() => setProfiles([])); }, []);
+  useEffect(() => {
+    api.get<CroResponse>(`/leads/${id}/cro-audit`).then((r) => setCroCount(r.audit?.status === "done" ? r.items.filter((i) => i.included).length : null)).catch(() => setCroCount(null));
+  }, [id, tab === "plan"]);
   const hasAudit = !!d?.audit;
   useEffect(() => {
     let cancelled = false;
@@ -117,7 +143,8 @@ export default function LeadDetail() {
       .then((r) => { if (!cancelled) { setReport(r.report); setOtherActive(r.otherActive); } }).catch(() => {});
     return () => { cancelled = true; };
   }, [id, hasAudit, d?.audit?.created_at]);
-  if (!d) return <p>{msg || "Loading…"}</p>;
+  const ctx = useMemo(() => listContext(id), [id]);
+  if (!d) return <p className="page-body">{msg || "Loading…"}</p>;
   const b = d.business;
   const a = d.audit;
   const website = safeHttpUrl(b.website_url);
@@ -141,6 +168,7 @@ export default function LeadDetail() {
     try {
       const nb = await api.patch<Business>(`/leads/${id}`, body);
       setD((p) => (p ? { ...p, business: nb } : p));
+      announceLeadsChanged();
       return true;
     } catch (e) { fail(e); return false; }
   }
@@ -185,7 +213,7 @@ export default function LeadDetail() {
   }
   async function remove() {
     if (!window.confirm(`Permanently delete ${b.name} and its audit, drafts and notes? This can't be undone.`)) return;
-    try { await api.del(`/leads/${id}`); nav("/leads"); } catch (e) { fail(e); }
+    try { await api.del(`/leads/${id}`); announceLeadsChanged(); nav("/leads"); } catch (e) { fail(e); }
   }
   async function saveUrl() {
     if (editingUrl === null) return;
@@ -211,26 +239,41 @@ export default function LeadDetail() {
   const share = shareState(report, otherActive);
   const links = Object.entries(a?.site_links ?? {}).map(([k, u]) => [k, safeHttpUrl(u)] as const).filter((x): x is readonly [string, string] => !!x[1]);
   const otherContacts = d.contacts.filter((c) => !(c.type === "email" && c.person_name));
+  const savedEmails = new Set(d.people.map((p) => (p.email ?? "").toLowerCase()).filter(Boolean));
+  const foundPeople = d.contacts.filter((c) => c.type === "email" && c.person_name && !savedEmails.has(c.value.toLowerCase()));
+  const poc = d.people.find((p) => p.is_poc) ?? d.people[0] ?? null;
+  const profile = profiles.find((p) => p.id === d.fit.profile?.id) ?? null;
 
   const tier = a ? leadTier(a.score) : null;
   const followTone = followUpTone(b.follow_up_at);
-  const poc = d.people.find((p) => p.is_poc);
   const writeEmail = () => setTab("email");
   const issueCount = a?.findings.length ?? 0;
+  const niche = a?.niche ? NICHE_LABEL[a.niche] : null;
+  const category = [b.category, niche && niche !== b.category ? niche : null].filter(Boolean).join(" · ");
+  const go = (to: number) => { const t = ctx.ids[to]; if (t) nav(`/leads/${t}`); };
+  const pickFocus = (key: string) => setFocus((s) => { const n = new Set(s); if (n.has(key)) n.delete(key); else if (n.size < 5) n.add(key); return n; });
+  const socialName = (v: string) => SOCIAL_NAME.find(([re]) => re.test(v))?.[1] ?? "Social";
+  const hostOf = (v: string) => v.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "");
 
   return (
     <div className="lead-page">
       <header className="lead-header">
         <div className="crumbs">
-          <Link to="/leads"><Icon name="chevron-left" size={14} />All leads</Link>
-          {tier && <><span>/</span><span className="here">{TIER_LABEL[tier]}</span></>}
+          <Link to={ctx.back}><Icon name="chevron-left" size={14} />All leads</Link>
+          {tier && <><span className="sep">/</span><span>{TIER_LABEL[tier]}</span></>}
+          <span className="grow" />
+          {ctx.at >= 0 && <>
+            <span className="pos">{ctx.at + 1} of {ctx.ids.length}</span>
+            <button className="nav-sq" aria-label="Previous lead" disabled={ctx.at <= 0} onClick={() => go(ctx.at - 1)}><Icon name="chevron-left" size={14} /></button>
+            <button className="nav-sq" aria-label="Next lead" disabled={ctx.at >= ctx.ids.length - 1} onClick={() => go(ctx.at + 1)}><Icon name="chevron-right" size={14} /></button>
+          </>}
         </div>
         <div className="title-row">
           <div className="avatar-lg" aria-hidden="true">{initials(b.name)}</div>
           <div className="title-main">
             <h1>{b.name}<StarToggle on={b.starred_at !== null} name={b.name} busy={starBusy} onClick={() => void toggleStar()} size={18} />{b.archived_at && <span className="tag">Archived</span>}</h1>
             <div className="meta-line">
-              {b.category && <span><Icon name="briefcase" size={14} />{b.category}</span>}
+              {category && <span><Icon name="briefcase" size={14} />{category}</span>}
               {b.address && <span><Icon name="pin" size={14} />{b.address}</span>}
               {b.rating !== null && <span><Icon name="star" size={14} />{b.rating}{b.review_count !== null && ` · ${b.review_count.toLocaleString("en-US")} reviews`}</span>}
               {a?.platform && a.platform !== "other" && <span><Icon name="code" size={14} />{PLATFORM_LABEL[a.platform] ?? a.platform}</span>}
@@ -241,16 +284,17 @@ export default function LeadDetail() {
           <div className="title-actions">
             <button className="btn" onClick={() => reaudit()}><Icon name="refresh" size={16} />Re-audit</button>
             <details className="menu">
-              <summary className="btn btn-icon" aria-label="More actions" title="More actions"><Icon name="more" size={16} /></summary>
+              <summary className="btn icon-only" aria-label="More actions" title="More actions"><Icon name="more" size={16} /></summary>
               <div className="menu-list">
+                <button onClick={(e) => { closeMenu(e); setEditingUrl(b.website_url ?? ""); }}>{website ? "Edit website URL" : "Add website URL"}</button>
+                <button onClick={(e) => { closeMenu(e); void flagScore(); }} title="Tell us the audit got something wrong and re-run it">Score looks wrong</button>
                 {!d.suppressed && <>
+                  <hr />
                   <p className="menu-label">Mark as</p>
                   {REASONS.map((r) => <button key={r} onClick={(e) => { closeMenu(e); void suppress(r); }}>{reasonLabel(r)}</button>)}
-                  <hr />
                 </>}
-                <button onClick={(e) => { closeMenu(e); void flagScore(); }} title="Tell us the audit got something wrong and re-run it">Score looks wrong</button>
-                {b.archived_at ? <button onClick={(e) => { closeMenu(e); void archive(false); }}>Restore</button> : <button onClick={(e) => { closeMenu(e); void archive(true); }}>Archive</button>}
                 <hr />
+                {b.archived_at ? <button onClick={(e) => { closeMenu(e); void archive(false); }}>Restore</button> : <button onClick={(e) => { closeMenu(e); void archive(true); }}>Archive</button>}
                 <button className="danger" onClick={(e) => { closeMenu(e); void remove(); }}>Delete lead</button>
               </div>
             </details>
@@ -259,14 +303,13 @@ export default function LeadDetail() {
         </div>
         <div className="link-row">
           {editingUrl !== null ? (
-            <span className="row url-edit">
+            <span className="url-edit">
               <input value={editingUrl} onChange={(e) => setEditingUrl(e.target.value)} placeholder="example.com" aria-label="Website URL" autoFocus />
-              <button className="primary" onClick={saveUrl}>Save & re-audit</button><button onClick={() => setEditingUrl(null)}>Cancel</button>
+              <button className="btn primary sm" onClick={saveUrl}>Save & re-audit</button><button className="btn sm" onClick={() => setEditingUrl(null)}>Cancel</button>
             </span>
-          ) : <>
-            {website ? <a className="chip-link" href={website} target="_blank" rel="noreferrer"><Icon name="globe" size={13} />{website.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")}<Icon name="arrow-up-right" size={12} /></a> : <span className="chip-link">No website</span>}
-            <button className="link-btn" onClick={() => setEditingUrl(b.website_url ?? "")}>{website ? "Edit URL" : "Add URL"}</button>
-          </>}
+          ) : website
+            ? <a className="chip-link" href={website} target="_blank" rel="noreferrer"><Icon name="globe" size={13} />{hostOf(website)}<Icon name="arrow-up-right" size={12} /></a>
+            : <button className="chip-link" onClick={() => setEditingUrl("")}><Icon name="globe" size={13} />Add website</button>}
           {maps && <a className="chip-link" href={maps} target="_blank" rel="noreferrer"><Icon name="pin" size={13} />Google Maps<Icon name="arrow-up-right" size={12} /></a>}
           {b.phone && <a className="chip-link" href={`tel:${b.phone}`}><Icon name="phone" size={13} />{b.phone}</a>}
           {links.map(([k, u]) => <a key={k} className="chip-link" href={u} target="_blank" rel="noreferrer"><Icon name={LINK_ICON[k] ?? "link"} size={13} />{LINK_LABEL[k] ?? k}</a>)}
@@ -286,53 +329,46 @@ export default function LeadDetail() {
       <nav className="lead-tabs" role="tablist" aria-label="Lead sections">
         <button role="tab" aria-selected={tab === "overview"} onClick={() => setTab("overview")}>Overview</button>
         <button role="tab" aria-selected={tab === "issues"} onClick={() => setTab("issues")}>Website issues{a && <span className="count">{issueCount}</span>}</button>
-        <button role="tab" aria-selected={tab === "plan"} onClick={() => setTab("plan")}>Conversion plan</button>
+        <button role="tab" aria-selected={tab === "plan"} onClick={() => setTab("plan")}>Conversion plan{croCount ? <span className="count">{croCount}</span> : null}</button>
         <button role="tab" aria-selected={tab === "email"} onClick={() => setTab("email")}>Email draft{d.draft && <span className="count ready">Ready</span>}</button>
         <button role="tab" aria-selected={tab === "activity"} onClick={() => setTab("activity")}>Activity{d.activity.length > 0 && <span className="count">{d.activity.length}</span>}</button>
       </nav>
 
       <div className="lead-split">
-        <div className="lead-content" role="tabpanel">
+        <div className={`lead-content${tab === "issues" ? " tight" : ""}`} role="tabpanel">
           {tab === "overview" && (a ? <>
             {a.mail_warning && <div className="notice" role="status"><span><Icon name="alert" size={14} /> {a.mail_warning}</span></div>}
-            <Scorecard audit={a} business={b} fit={d.fit} urgency={d.urgency} />
+            <Scorecard audit={a} business={b} fit={d.fit} profile={profile} urgency={d.urgency} />
             <div className="pitch-row">
               <BestOfferCard offer={d.best_offer} fallbackName={OFFER_LABEL[a.offer] ?? a.offer} onWriteEmail={writeEmail} canWrite={!d.suppressed} />
               <NicheChecklist audit={a} />
             </div>
             <TopProblems audit={a} onSeeAll={() => setTab("issues")} />
             {(a.screenshots.desktop || a.screenshots.mobile) && <section className="section-card needs"><h3>Screenshots</h3><Screenshots leadId={b.id} audit={a} /></section>}
-            <p className="muted small">Audited {new Date(a.created_at).toLocaleString()}{a.pagespeed_mobile !== null && ` · Google mobile speed ${a.pagespeed_mobile}/100`}{a.seo_score != null && ` · Google SEO check ${a.seo_score}/100`}{a.accessibility_score != null && ` · Accessibility ${a.accessibility_score}/100`}</p>
           </> : <div className="section-card empty-state"><p>Audit in progress…</p><p className="muted small">Refresh in a minute or two.</p></div>)}
 
-          {tab === "issues" && (a ? <>
-            <div className="issues-bar">
-              <span className="grow" />
-              <span className="audited">Audited {new Date(a.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })} · {b.scan_stage === "quick" ? "quick scan" : "full scan"}</span>
-              <button className="link-btn" onClick={flagScore} title="Tell us the audit got something wrong and re-run it"><Icon name="alert" size={14} /> Score looks wrong?</button>
-            </div>
-            {d.changes && <ChangesBar changes={d.changes} />}
-            <FindingsList findings={a.findings} scores={a.category_scores} added={d.changes?.added} auditCreatedAt={a.created_at} />
-          </> : <div className="section-card empty-state"><p>Audit in progress…</p></div>)}
+          {tab === "issues" && (a
+            ? <FindingsList findings={a.findings} scores={a.category_scores} added={d.changes?.added} selected={focus} onToggle={pickFocus}
+                trailing={<>
+                  <span className="audited" title={[`Audited ${new Date(a.created_at).toLocaleString()}`, a.pagespeed_mobile !== null && `Google mobile speed ${a.pagespeed_mobile}/100`, a.seo_score != null && `Google SEO check ${a.seo_score}/100`, a.accessibility_score != null && `Accessibility ${a.accessibility_score}/100`].filter(Boolean).join(" · ")}>Audited {dayLabel(a.created_at)} · {b.scan_stage === "quick" ? "quick scan" : "full scan"}</span>
+                  <button className="btn-ghost-sm" onClick={flagScore} title="Tell us the audit got something wrong and re-run it"><Icon name="alert" size={16} />Score looks wrong?</button>
+                </>}
+                afterToolbar={d.changes ? <ChangesBar changes={d.changes} /> : null} />
+            : <div className="section-card empty-state"><p>Audit in progress…</p></div>)}
 
           {tab === "plan" && <CroPanel leadId={b.id} onError={setMsg} />}
 
           {tab === "email" && (
             <EmailComposer ref={composer} leadId={b.id} draft={d.draft} variants={d.variants ?? []} toContact={d.toContact} suppressed={!!d.suppressed}
               lowPriority={!!a && a.score < 25} findings={a?.findings ?? []} onChanged={load} onMessage={setMsg}
+              focus={focus} onFocusChange={setFocus} onGmailDraft={() => exportTo("gmail")} gmailBusy={busy === "gmail"}
               onMarkContacted={async () => { const ok = await setStatus("contacted"); return ok; }} />
           )}
 
           {tab === "activity" && (
-            <section className="section-card needs">
-              <h3>Activity</h3>
-              {d.activity.length ? (
-                <ul className="timeline">{d.activity.map((x) => (
-                  <li key={x.id}><span className="t-main">{ACTIVITY_LABEL[x.kind] ?? x.kind}{x.detail && `: ${x.detail}`}</span>
-                    <time dateTime={x.created_at}>{new Date(x.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</time></li>
-                ))}</ul>
-              ) : <p className="muted">Nothing yet. Status changes, exports and re-audits show up here.</p>}
-            </section>
+            <ActivityTab items={d.activity} userName={userName} followUp={b.follow_up_at}
+              onSetFollowUp={(day) => patchLead({ followUpAt: day })}
+              onAddNote={async (text) => { try { await api.post(`/leads/${id}/notes`, { text }); await load(); return true; } catch (e) { fail(e); return false; } }} />
           )}
         </div>
 
@@ -340,48 +376,83 @@ export default function LeadDetail() {
           <PropSection icon="kanban" title="Pipeline">
             <div className="prop-row">
               <label htmlFor="status">Stage</label>
-              <select id="status" value={b.lead_status} onChange={(e) => setStatus(e.target.value as LeadStatus)}>
-                {STATUSES.map((s) => <option key={s} value={s}>{STAGE_LABEL[s]}</option>)}
-              </select>
+              <span className="ctl">
+                <select id="status" value={b.lead_status} onChange={(e) => setStatus(e.target.value as LeadStatus)}>
+                  {STATUSES.map((s) => <option key={s} value={s}>{STAGE_LABEL[s]}</option>)}
+                </select><Icon name="chevron-down" size={12} className="chev" />
+              </span>
             </div>
             <div className="prop-row">
               <label htmlFor="follow">Follow up</label>
-              <input id="follow" type="date" value={b.follow_up_at ?? ""} onChange={(e) => patchLead({ followUpAt: e.target.value || null })} />
+              <span className={`ctl ${followTone === "overdue" ? "late" : followTone === "today" ? "today" : ""}`}>
+                <Icon name="calendar" size={13} />
+                <span className="date-text" onClick={() => dateInput.current?.showPicker?.()}>{b.follow_up_at ? followUpLabel(b.follow_up_at) : "Set a date"}</span>
+                <input id="follow" ref={dateInput} type="date" aria-label="Follow up date" value={b.follow_up_at ?? ""} onChange={(e) => patchLead({ followUpAt: e.target.value || null })} />
+                <Icon name="chevron-down" size={12} className="chev" />
+              </span>
             </div>
-            {b.follow_up_at && <p className={`prop-hint ${followTone}`}>{followUpLabel(b.follow_up_at)}</p>}
             <div className="prop-row">
-              <label htmlFor="deal">Deal value ($)</label>
-              <input id="deal" type="number" min={0} step={100} defaultValue={b.deal_value ?? ""}
-                onBlur={(e) => { const v = e.target.value === "" ? null : Number(e.target.value); if (v !== b.deal_value) patchLead({ dealValue: v }); }} />
+              <label htmlFor="deal">Deal value</label>
+              <span className="ctl">
+                <input id="deal" inputMode="numeric" placeholder="$0"
+                  value={dealText ?? (b.deal_value !== null ? `$${b.deal_value.toLocaleString("en-US")}` : "")}
+                  onFocus={() => setDealText(b.deal_value !== null ? String(b.deal_value) : "")}
+                  onChange={(e) => setDealText(e.target.value.replace(/[^\d]/g, ""))}
+                  onBlur={() => { const v = dealText === null || dealText === "" ? null : Number(dealText); setDealText(null); if (v !== b.deal_value) void patchLead({ dealValue: v }); }}
+                  onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
+                <Icon name="chevron-down" size={12} className="chev" />
+              </span>
             </div>
-            <textarea id="notes" aria-label="Notes" placeholder="Add a note…" value={notes} onChange={(e) => setNotes(e.target.value)} onBlur={saveNotes} />
+            <textarea id="notes" className="notes-box" aria-label="Notes" placeholder="Add a note…" value={notes} onChange={(e) => setNotes(e.target.value)} onBlur={saveNotes} />
           </PropSection>
 
           <PropSection icon="user" title="Point of contact">
-            <PeoplePanel leadId={b.id} people={d.people} contacts={d.contacts} onChange={() => load().catch(fail)} onError={setMsg} />
-            {poc === undefined && d.toContact && <p className="prop-note">Suggested: {d.toContact.value}</p>}
+            {poc ? (
+              <>
+                <div className="poc-head">
+                  <span className="avatar-sm" aria-hidden="true">{initials(poc.name)}</span>
+                  <span className="who">
+                    <span className="nm">{poc.name}{poc.is_poc && <Badge tone="signal">POC</Badge>}</span>
+                    {poc.role && <span className="role">{poc.role}</span>}
+                  </span>
+                </div>
+                {poc.email && <a className="contact-link" href={`mailto:${poc.email}`}><Icon name="mail" size={14} /><span>{poc.email}</span></a>}
+                {poc.phone && <a className="contact-link" href={`tel:${poc.phone}`}><Icon name="phone" size={14} /><span>{poc.phone}</span></a>}
+                {poc.linkedin && safeHttpUrl(poc.linkedin) && <a className="contact-link" href={safeHttpUrl(poc.linkedin)!} target="_blank" rel="noreferrer"><Icon name="link" size={14} /><span>LinkedIn</span></a>}
+              </>
+            ) : <p className="muted small">{d.toContact ? `No point of contact yet. Suggested: ${d.toContact.value}` : "No point of contact yet."}</p>}
+            {foundPeople.length > 0 && !managePeople && (
+              <div className="found-box"><Icon name="sparkles" size={14} /><span className="grow">{foundPeople.length} more {foundPeople.length === 1 ? "person" : "people"} found on their site</span><button onClick={() => setManagePeople(true)}>Review</button></div>
+            )}
+            {managePeople
+              ? <><PeoplePanel leadId={b.id} people={d.people} contacts={d.contacts} onChange={() => load().catch(fail)} onError={setMsg} /><button className="link-btn" style={{ alignSelf: "flex-start", padding: 0 }} onClick={() => setManagePeople(false)}>Done</button></>
+              : foundPeople.length === 0 && <button className="link-btn" style={{ alignSelf: "flex-start", padding: 0 }} onClick={() => setManagePeople(true)}>{d.people.length ? "Manage people" : "Add a person"}</button>}
           </PropSection>
 
           {a && <PropSection icon="send" title="Share & export">
-            <div className="btn-row">
-              <a className="btn" href={`/api/leads/${b.id}/report.html`} target="_blank" rel="noreferrer"><Icon name="eye" size={14} />Report</a>
-              <a className="btn" href={`/api/leads/${b.id}/report.pdf`}><Icon name="file-text" size={14} />PDF</a>
-              <button onClick={() => exportTo("gmail")} disabled={!d.draft || busy === "gmail" || !!d.suppressed} title={d.suppressed ? "Suppressed: exports are turned off" : d.draft ? "" : "Write a draft first"}><Icon name="mail" size={14} /> {busy === "gmail" ? "Saving…" : "Gmail draft"}</button>
-              <button onClick={() => exportTo("drive")} disabled={busy === "drive" || !!d.suppressed} title={d.suppressed ? "Suppressed: exports are turned off" : ""}>{busy === "drive" ? "Saving…" : "Save to Drive"}</button>
+            <div className="btn-row nowrap">
+              <a className="btn" href={`/api/leads/${b.id}/report.html`} target="_blank" rel="noreferrer"><Icon name="eye" size={16} />Report</a>
+              <a className="btn" href={`/api/leads/${b.id}/report.pdf`}><Icon name="file-text" size={16} />PDF</a>
+              <button className="btn" onClick={() => exportTo("gmail")} disabled={!d.draft || busy === "gmail" || !!d.suppressed} title={d.suppressed ? "Suppressed: exports are turned off" : d.draft ? "" : "Write a draft first"}><Icon name="mail" size={16} />{busy === "gmail" ? "Saving…" : "Gmail draft"}</button>
+              <details className="menu share-more">
+                <summary className="btn sm icon-only" aria-label="More export options" title="More export options"><Icon name="more" size={16} /></summary>
+                <div className="menu-list">
+                  <label className="menu-check"><input className="cb" type="checkbox" checked={attachPdf} onChange={(e) => setAttachPdf(e.target.checked)} />Attach the audit PDF to Gmail drafts</label>
+                  <button onClick={(e) => { closeMenu(e); void exportTo("drive"); }} disabled={busy === "drive" || !!d.suppressed} title={d.suppressed ? "Suppressed: exports are turned off" : ""}>{busy === "drive" ? "Saving to Drive…" : "Save to Google Drive"}</button>
+                  {share.canRevoke && <button className="danger" onClick={(e) => { closeMenu(e); void revokeReport(); }}>{share.revokeLabel}</button>}
+                </div>
+              </details>
             </div>
-            <label className="check"><input type="checkbox" checked={attachPdf} onChange={(e) => setAttachPdf(e.target.checked)} /> Attach the audit PDF to the Gmail draft</label>
-            <InlineError message={exportError} />
-            {exportLink.length > 0 && <p className="row">{exportLink.map((l) => <a key={l.url} href={l.url} target="_blank" rel="noreferrer">{l.label} ↗</a>)}</p>}
             {report ? (
               <div className="link-box"><Icon name="link" size={14} />
-                <input ref={linkInput} readOnly aria-label="Report link" value={location.origin + report.url} onFocus={(e) => e.currentTarget.select()} />
+                <input ref={linkInput} readOnly aria-label="Report link" value={location.host + report.url} onFocus={(e) => e.currentTarget.select()} />
                 <button onClick={copyLink} aria-label="Copy link" title="Copy link"><Icon name="copy" size={14} /></button>
               </div>
-            ) : <div className="btn-row"><button onClick={createReport} disabled={!!d.suppressed} title={d.suppressed ? "Suppressed: sharing is turned off" : ""}><Icon name="link" size={14} /> Create report link</button></div>}
-            {report && <p className="prop-note">Link expires {new Date(report.expiresAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })} · nothing is ever sent from here</p>}
-            {!report && <p className="prop-note">A public, read-only page of the findings. Expires after 30 days. Nothing is ever sent from here.</p>}
+            ) : <button className="link-box create" onClick={createReport} disabled={!!d.suppressed} title={d.suppressed ? "Suppressed: sharing is turned off" : "A public, read-only page of the findings"}><Icon name="link" size={14} /><span>Create a share link</span></button>}
+            <p className="prop-note">{report ? `Link expires ${dayLabel(report.expiresAt)} · nothing is ever sent from here` : "Public, read-only, expires after 30 days · nothing is ever sent from here"}</p>
+            <InlineError message={exportError} />
+            {exportLink.length > 0 && <p className="row" style={{ margin: 0 }}>{exportLink.map((l) => <a key={l.url} href={l.url} target="_blank" rel="noreferrer">{l.label} ↗</a>)}</p>}
             {share.olderText && <p className="prop-note">{share.olderText}</p>}
-            {share.canRevoke && <div className="btn-row"><button onClick={revokeReport}>{share.revokeLabel}</button></div>}
             {shareMsg && <p className="prop-note" role="status">{shareMsg}</p>}
           </PropSection>}
 
@@ -389,24 +460,25 @@ export default function LeadDetail() {
             {otherContacts.map((c) => {
               const src = safeHttpUrl(c.source_url);
               const v = c.type === "form" || c.type === "social" ? safeHttpUrl(c.value) : null;
+              const label = c.type === "social" ? socialName(c.value) : c.type === "form" ? "Form" : c.type[0].toUpperCase() + c.type.slice(1);
               return (
-                <div key={c.id} className="kv"><span className="k">{c.type}</span>
-                  <span className="v">{v ? <a href={v} target="_blank" rel="noreferrer">{v.replace(/^https?:\/\/(www\.)?/, "")}</a> : c.value}
-                    {src && c.type === "email" && <> · <a href={src} target="_blank" rel="noreferrer">source</a></>}</span></div>
+                <div key={c.id} className="kv"><span className="k">{label}</span>
+                  <span className="v">{v ? <a href={v} target="_blank" rel="noreferrer" title={v}>{c.type === "form" ? new URL(v).pathname : hostOf(v)}</a> : c.type === "email" ? <a href={`mailto:${c.value}`} title={c.value}>{c.value}</a> : <span title={c.value}>{c.value}</span>}
+                    {src && c.type === "email" && <a className="src-link" href={src} target="_blank" rel="noreferrer" title="The page this was found on" aria-label="The page this was found on"><Icon name="arrow-up-right" size={12} /></a>}</span></div>
               );
             })}
             {!otherContacts.length && <p className="muted small">None found</p>}
           </PropSection>
 
-          <PropSection icon="clock" title="Activity" open={d.activity.length > 0}>
-            {d.activity.length ? <>
+          <button className="prop-link" onClick={() => setTab("activity")}><Icon name="clock" size={15} /><span className="grow">Activity</span><Icon name="chevron-right" size={14} /></button>
+          {d.activity.length > 0 && (
+            <div className="prop-body" style={{ marginTop: -2 }}>
               <ul className="act-list">{d.activity.slice(0, 3).map((x) => (
                 <li key={x.id}><span>{ACTIVITY_LABEL[x.kind] ?? x.kind}{x.detail && `: ${x.detail}`}</span>
-                  <time dateTime={x.created_at}>{new Date(x.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</time></li>
+                  <time dateTime={x.created_at}>{dayLabel(x.created_at)}</time></li>
               ))}</ul>
-              {d.activity.length > 3 && <button className="link-btn" onClick={() => setTab("activity")}>See all {d.activity.length}</button>}
-            </> : <p className="muted small">Nothing yet</p>}
-          </PropSection>
+            </div>
+          )}
         </aside>
       </div>
     </div>

@@ -14,7 +14,7 @@ export default function BestOfferCard({ offer, fallbackName, onWriteEmail, canWr
       <div className="kick">
         <Icon name="sparkles" size={16} />
         <p className="kicker">Recommended pitch</p>
-        {because.length > 0 && <small>Picked from the weakest areas</small>}
+        {because.length > 0 && <small>Picked from the weakest area</small>}
       </div>
       <h2>{s?.name ?? fallbackName}</h2>
       {s?.summary && <p>{s.summary}</p>}
@@ -25,14 +25,14 @@ export default function BestOfferCard({ offer, fallbackName, onWriteEmail, canWr
         </div>
       )}
       {s && s.deliverables.length > 0 && <div className="mini-box"><span className="lbl">What you'd deliver</span><ul>{s.deliverables.map((x) => <li key={x}>{x}</li>)}</ul></div>}
-      <div className="why">
-        <p className="lbl">Why this pitch</p>
+      <>
+        <p className="why-lbl">Why this pitch</p>
         {because.length > 0
           ? because.map((f, i) => <div key={`${f.code}:${i}`} className="why-row"><Severity severity={f.severity} /><span>{f.evidence}</span></div>)
           : <p className="muted small">{offer ? "No single finding points here; this is the service the audit's overall pitch maps to." : "This is the offer the audit's overall pitch maps to."}</p>}
-      </div>
+      </>
       <div className="pitch-actions">
-        <button className="btn-ink" onClick={onWriteEmail} disabled={!canWrite} title={canWrite ? undefined : "Suppressed: drafting is turned off"}><Icon name="send" size={14} />Write email with this pitch</button>
+        <button className="btn primary" onClick={onWriteEmail} disabled={!canWrite} title={canWrite ? undefined : "Suppressed: drafting is turned off"}><Icon name="send" size={14} />Write email with this pitch</button>
         <Link className="btn-plain" to="/settings">Other services</Link>
       </div>
     </section>

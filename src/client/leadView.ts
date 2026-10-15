@@ -2,9 +2,9 @@ import type { LeadStatus } from "./types";
 
 export const STAGE_LABEL: Record<LeadStatus, string> = { new: "New", reviewed: "Reviewed", contacted: "Contacted", replied: "Replied", won: "Won", lost: "Lost", skip: "Skipped" };
 
-/** Stage badge tones: a quiet outline for New, blue once contacted, amber when they replied, green for won, grey for the rest. */
-export const STAGE_TONE: Record<LeadStatus, "outline" | "neutral" | "info" | "warning" | "positive"> = {
-  new: "outline", reviewed: "neutral", contacted: "info", replied: "warning", won: "positive", lost: "neutral", skip: "neutral",
+/** Stage badge tones: a quiet outline for New, blue once contacted, Signal when they replied, green for won, grey for the rest. */
+export const STAGE_TONE: Record<LeadStatus, "outline" | "neutral" | "info" | "signal" | "positive"> = {
+  new: "outline", reviewed: "neutral", contacted: "info", replied: "signal", won: "positive", lost: "neutral", skip: "neutral",
 };
 
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
