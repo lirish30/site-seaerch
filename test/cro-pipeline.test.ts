@@ -28,7 +28,7 @@ function fakeAi(o: { model?: unknown; page?: unknown; synth?: unknown } = {}) {
   const ai: CroCaller = async (r) => {
     calls.push(r);
     const input = r.stage === "model" ? ("model" in o ? o.model : model()) : r.stage === "pages" ? o.page ?? review : o.synth ?? roadmap();
-    return { input, costUsd: 0.01, model: "claude-haiku-4-5" };
+    return { input, costUsd: 0.01, model: "claude-haiku-5-5" };
   };
   return { ai, calls, count: (s: string) => calls.filter((c) => c.stage === s).length };
 }
@@ -58,7 +58,7 @@ describe("runCroAudit", () => {
     expect(r.page_reviews).toHaveLength(2);
     expect(r.scenario_inputs).toMatchObject({ visitors: 500, dealValue: 900 });
     expect(r.est_cost_usd).toBeCloseTo(0.04);
-    expect(r.models_used).toEqual({ model: "claude-haiku-4-5", pages: "claude-haiku-4-5", synthesize: "claude-haiku-4-5" });
+    expect(r.models_used).toEqual({ model: "claude-haiku-5-5", pages: "claude-haiku-5-5", synthesize: "claude-haiku-5-5" });
     expect([ai.count("model"), ai.count("pages"), ai.count("synthesize")]).toEqual([1, 2, 1]);
     const items = await listCroItems(env.DB, a.id);
     expect(items[0].area).toBe("tracking");
@@ -169,7 +169,7 @@ describe("runCroAudit", () => {
 
   it("records an AI refusal or API error as a failed audit at that step", async () => {
     const { a } = await start();
-    const ai: CroCaller = async (r) => { if (r.stage === "pages") throw new Error("Claude declined to review this site"); return { input: model(), costUsd: 0.01, model: "claude-haiku-4-5" }; };
+    const ai: CroCaller = async (r) => { if (r.stage === "pages") throw new Error("Claude declined to review this site"); return { input: model(), costUsd: 0.01, model: "claude-haiku-5-5" }; };
     await runCroWithErrorHandling(deps({ ai }).d, step, { auditId: a.id });
     expect(await getCroAudit(env.DB, a.id)).toMatchObject({ status: "failed", step: "pages", error: "Claude declined to review this site" });
   });
@@ -180,12 +180,12 @@ describe("runCroAudit", () => {
     const cta = { text: "Get a Quote", href: "/q", box: { x: 0, y: 0, w: 120, h: 40 }, aboveFold: true, inHeader: true, contrast: 5, fontPx: 16 };
     const idOf = async (match: string) => (await getCroAudit(env.DB, a.id))!.evidence.find((e) => e.fact.includes(match))!.id;
     const ai: CroCaller = async (r) => {
-      if (r.stage === "model") return { input: model(), costUsd: 0, model: "claude-haiku-4-5" };
+      if (r.stage === "model") return { input: model(), costUsd: 0, model: "claude-haiku-5-5" };
       const [btn, guar] = [await idOf("Desktop header button"), await idOf(codeFact)];
-      if (r.stage === "pages") return { costUsd: 0, model: "claude-haiku-4-5", input: { ...review, issues: [
+      if (r.stage === "pages") return { costUsd: 0, model: "claude-haiku-5-5", input: { ...review, issues: [
         { observation: "Button is clear", principle: "p", evidence_ids: [btn], quote: "Get a Quote" },
         { observation: "No promise made", principle: "p", evidence_ids: [guar], quote: codeFact }] } };
-      return { costUsd: 0, model: "claude-haiku-4-5", input: roadmap([
+      return { costUsd: 0, model: "claude-haiku-5-5", input: roadmap([
         rec({ title: "Keep the header button", observation: `The header button says "Get a Quote"`, evidence_ids: [btn] }),
         rec({ title: "Add a guarantee", observation: `Your site says "${codeFact}"`, evidence_ids: [guar] }),
         rec({ title: "Show reviews", observation: "No review widget", evidence_ids: [btn] }),
@@ -202,7 +202,7 @@ describe("runCroAudit", () => {
     const { a } = await start({ contact: "https://ace.com/contact" });
     const ai: CroCaller = async (r) => {
       if (r.stage === "pages" && JSON.stringify(r.content).includes("https://ace.com/contact")) throw new Error("HTTP 529");
-      return { input: r.stage === "model" ? model() : r.stage === "pages" ? review : roadmap(), costUsd: 0.01, model: "claude-haiku-4-5" };
+      return { input: r.stage === "model" ? model() : r.stage === "pages" ? review : roadmap(), costUsd: 0.01, model: "claude-haiku-5-5" };
     };
     await runCroWithErrorHandling(deps({ ai }).d, step, { auditId: a.id });
     const r = (await getCroAudit(env.DB, a.id))!;
@@ -214,7 +214,7 @@ describe("runCroAudit", () => {
 
   it("fails the pages stage with the first error when no page could be reviewed", async () => {
     const { a } = await start({ contact: "https://ace.com/contact" });
-    const ai: CroCaller = async (r) => { if (r.stage === "pages") throw new Error("HTTP 529"); return { input: model(), costUsd: 0.01, model: "claude-haiku-4-5" }; };
+    const ai: CroCaller = async (r) => { if (r.stage === "pages") throw new Error("HTTP 529"); return { input: model(), costUsd: 0.01, model: "claude-haiku-5-5" }; };
     await runCroWithErrorHandling(deps({ ai }).d, step, { auditId: a.id });
     expect(await getCroAudit(env.DB, a.id)).toMatchObject({ status: "failed", step: "pages", error: "HTTP 529" });
   });

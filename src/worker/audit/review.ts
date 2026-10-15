@@ -4,7 +4,7 @@ import type { AiReview } from "../types";
 import type { CrawlFacts } from "../scoring/scorer";
 import { NICHES, rubricText } from "./rubrics";
 
-export const REVIEW_MODEL = "claude-sonnet-5-5";
+export const REVIEW_MODEL = "claude-haiku-5-5";
 export interface ReviewInput {
   business: { name: string; category: string | null; address: string | null; website: string };
   facts: CrawlFacts | null;
@@ -107,9 +107,10 @@ export function anthropicReviewer(apiKey: string): ReviewCaller {
   const client = new Anthropic({ apiKey });
   return async ({ system, content }) => {
     const msg = await client.messages.create({
-      // Forced tool_choice is rejected on Sonnet 5.5; the system prompt asks for the tool instead.
-      model: REVIEW_MODEL, max_tokens: 8000,
-      output_config: { effort: "medium" },
+      // Forced tool_choice would skip thinking; the system prompt asks for the tool instead.
+      // High effort: these scores and findings drive the pitch, and Haiku 5.5 is cheap enough to think hard.
+      model: REVIEW_MODEL, max_tokens: 12000,
+      output_config: { effort: "high" },
       system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
       tools: [TOOL], tool_choice: { type: "auto" },
       messages: [{ role: "user", content }],
