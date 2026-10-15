@@ -14,7 +14,7 @@ type Stage = "model" | "pages" | "synthesize";
 export interface M { calls: number; schemaFails: number; errors: number; items: number; dropped: number; quoted: number; costUsd: number }
 type SiteOut = { model: BusinessModel | null; recs: Recommendation[] };
 
-export const MODELS: [CroModelId, CroModelId] = ["claude-haiku-4-5", "claude-sonnet-5-5"];
+export const MODELS: [CroModelId, CroModelId] = ["claude-haiku-5-5", "claude-sonnet-5-5"];
 const STAGES: Stage[] = ["model", "pages", "synthesize"];
 const GATE_POINTS = 10;
 
@@ -125,7 +125,7 @@ export async function runEval(fixtures: NamedFixture[], makeCaller: (m: CroModel
   const verdicts = { model: worse("model"), pages: worse("pages"), synthesize: worse("synthesize") };
   const verdictLine = (st: Stage) => `- **${st}**: ${verdicts[st]
     ? `Haiku is more than ${GATE_POINTS} points worse → set CRO_MODELS.${st} = "claude-sonnet-5-5"`
-    : "Haiku holds up on the numbers → keep claude-haiku-4-5"}`;
+    : "Haiku holds up on the numbers → keep claude-haiku-5-5"}`;
 
   const needed = Math.ceil((fixtures.length * 4) / 6);
   const md = [`# CRO eval · ${o.date} · ${fixtures.length} sites`, "",
