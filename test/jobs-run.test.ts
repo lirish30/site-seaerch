@@ -103,7 +103,7 @@ describe("jobDeps", () => {
 });
 
 describe("scheduled", () => {
-  it("the job-watch cron runs the watcher and leaves radars alone; any other cron still runs radars", async () => {
+  it("the job-watch cron leaves radars alone", async () => {
     await env.DB.prepare(
       `INSERT INTO radars (id, location, business_type, radius_km, max_results, interval_days, enabled, next_run_at, created_at) VALUES ('r1','Boise','plumber',15,50,30,1,'2000-01-01T00:00:00.000Z','2000-01-01T00:00:00.000Z')`).run();
     const ctx = createExecutionContext();
