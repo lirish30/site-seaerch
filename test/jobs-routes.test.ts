@@ -73,4 +73,10 @@ describe("jobs routes", () => {
     const r = await api("/api/jobs/run", { method: "POST" });
     expect([r.status, await r.json()]).toEqual([202, { started: true }]);
   });
+
+  it("POST /api/leads/:id/regenerate rejects a usePosting that is not a boolean, before doing any work", async () => {
+    const b = await seedBusiness();
+    const r = await api(`/api/leads/${b.id}/regenerate`, { method: "POST", body: JSON.stringify({ usePosting: "yes" }) });
+    expect(r.status).toBe(400);
+  });
 });

@@ -360,6 +360,7 @@ const Regenerate = z.object({
   purpose: z.enum(["full_time", "freelance"]).optional(),
   tweak: z.enum(Object.keys(TWEAKS) as [Tweak, ...Tweak[]]).optional(),
   sampleIds: z.array(z.string().min(1).max(64)).max(5).optional(),
+  usePosting: z.boolean().optional(),
 });
 leadRoutes.post("/:id/regenerate", async (c) => {
   const blocked = await suppressedResponse(c, c.req.param("id"));
@@ -371,6 +372,7 @@ leadRoutes.post("/:id/regenerate", async (c) => {
     const d = await regenerateDraft(depsFromEnv(c.env), id, {
       steeringNote: p.data.steeringNote?.trim() || null, focus: p.data.focus, croFocus: p.data.croFocus, tone: p.data.tone,
       purpose: p.data.purpose, tweak: p.data.tweak, sampleIds: p.data.sampleIds,
+      usePosting: p.data.usePosting,
     });
     const picked = (p.data.focus?.length ?? 0) + (p.data.croFocus?.length ?? 0);
     await logActivity(c.env.DB, id, "draft", p.data.tweak ? `Rewrote the draft (${p.data.tweak.replace("_", " ")})`
