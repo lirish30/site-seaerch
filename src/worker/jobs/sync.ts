@@ -59,30 +59,39 @@ export async function syncSource(deps: JobDeps, source: CareerSource): Promise<S
  * Returns null (and records nothing) for a lead that does not exist or has not been scanned, so a later tick tries again.
  */
 export async function discoverSource(deps: JobDeps, businessId: string): Promise<CareerSource | null> {
-  const [business, audit] = await Promise.all([getBusiness(deps.db, businessId), latestAudit(deps.db, businessId)]);
+  const [business, audit, existing] = await Promise.all([getBusiness(deps.db, businessId), latestAudit(deps.db, businessId), getCareerSource(deps.db, businessId)]);
   if (!business || !audit) return null;
   const now = deps.now(), nowIso = now.toISOString();
   const careers = audit.site_links.careers ?? null;
+  // The link comes from the prospect's own website, so it is held to the same public-https rule as imported addresses.
+  const safe = careers ? importUrl(careers) : null;
+  const careersUrl = safe?.ok ? safe.url : null;
+  // Parking must not forget what an earlier sync learned (board, last good look, streak), or a later rediscovery would baseline new roles.
   const park = async (status: "none" | "error", error: string | null, hours: number) => {
-    await saveCareerSource(deps.db, { business_id: businessId, status, careers_url: careers, checked_at: nowIso, next_check_at: later(now, hours), last_error: error });
+    await saveCareerSource(deps.db, { business_id: businessId, status, ats: existing?.ats, token: existing?.token, careers_url: careersUrl, checked_at: nowIso,
+      last_ok_at: existing?.last_ok_at, next_check_at: later(now, hours), empty_streak: existing?.empty_streak, last_error: error });
     return getCareerSource(deps.db, businessId);
   };
-  if (!careers) return park("none", null, NONE_RECHECK_DAYS * 24);
-  // The link comes from the prospect's own website, so it is held to the same public-https rule as imported addresses.
-  const safe = importUrl(careers);
-  if (!safe.ok || !safe.url.startsWith("https://")) return park("none", null, NONE_RECHECK_DAYS * 24);
+  if (!safe?.ok || !safe.url.startsWith("https://")) return park("none", null, NONE_RECHECK_DAYS * 24);
   let ref = detectBoard(safe.url);
   if (!ref) {
     try {
       const res = await deps.fetch(safe.url, { headers: { "user-agent": deps.userAgent, accept: "text/html" }, signal: AbortSignal.timeout(10_000) });
       if (res.ok) ref = detectBoard(await readText(res, MAX_PAGE_BYTES));
-      else await res.body?.cancel().catch(() => {});
+      else {
+        await res.body?.cancel().catch(() => {});
+        // Rate limits and server errors pass; a 401/403/404/410 is the site's answer, so it is parked like "no board".
+        if (res.status === 429 || res.status >= 500) return park("error", `careers page answered ${res.status}`, RETRY_HOURS);
+      }
     } catch (e) {
       return park("error", errText(e), RETRY_HOURS);
     }
   }
   if (!ref) return park("none", null, NONE_RECHECK_DAYS * 24);
-  await saveCareerSource(deps.db, { business_id: businessId, status: "active", ats: ref.ats, token: ref.token, careers_url: careers, checked_at: nowIso, next_check_at: nowIso });
+  // Only the same board keeps its sync state; a new board starts at zero so its first look is a baseline.
+  const same = existing?.ats === ref.ats && existing?.token === ref.token;
+  await saveCareerSource(deps.db, { business_id: businessId, status: "active", ats: ref.ats, token: ref.token, careers_url: careersUrl, checked_at: nowIso, next_check_at: nowIso,
+    last_ok_at: same ? existing.last_ok_at : null, empty_streak: same ? existing.empty_streak : 0 });
   await syncSource(deps, (await getCareerSource(deps.db, businessId))!);
   return getCareerSource(deps.db, businessId);
 }

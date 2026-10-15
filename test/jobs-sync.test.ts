@@ -77,14 +77,68 @@ describe("discoverSource", () => {
   it("does not fetch a careers link that is not a public https address", async () => {
     const b = await leadWithCareers("http://169.254.169.254/latest/meta-data");
     const n = net({});
-    expect((await discoverSource(deps(n.f, T0), b.id))!.status).toBe("none");
+    const s = (await discoverSource(deps(n.f, T0), b.id))!;
+    expect([s.status, s.careers_url]).toEqual(["none", null]);
     expect(n.hits).toHaveLength(0);
+  });
+
+  it("retries in 24h when the careers page answers 503 or 429, but a 403 is the site's answer and parks for 30 days", async () => {
+    for (const code of [503, 429]) {
+      const b = await leadWithCareers("https://acme.com/careers");
+      const s = (await discoverSource(deps(net({ "https://acme.com/careers": () => new Response("busy", { status: code }) }).f, T0), b.id))!;
+      expect([s.status, s.next_check_at]).toEqual(["error", at(24).toISOString()]);
+      expect(s.last_error).toContain(String(code));
+    }
+    const b = await leadWithCareers("https://acme.com/careers");
+    const s = (await discoverSource(deps(net({ "https://acme.com/careers": () => new Response("no", { status: 403 }) }).f, T0), b.id))!;
+    expect([s.status, s.last_error, s.next_check_at]).toEqual(["none", null, at(30 * 24).toISOString()]);
   });
 
   it("records 'none' when the board named by the page does not exist", async () => {
     const b = await leadWithCareers("https://boards.greenhouse.io/acme");
     const s = (await discoverSource(deps(net({}).f, T0), b.id))!; // GH answers 404
     expect(s.status).toBe("none");
+  });
+});
+
+describe("rediscovery", () => {
+  const board = "https://boards.greenhouse.io/acme";
+  /** A lead synced once (Welder as baseline) whose board then answered 404 and was parked 'none'. */
+  async function parkedAfter404() {
+    const b = await leadWithCareers(board);
+    await discoverSource(deps(net({ [GH]: ok(gh("Welder")) }).f, T0), b.id);
+    await syncSource(deps(net({}).f, at(12)), await source(b.id));
+    expect((await source(b.id)).status).toBe("none");
+    return b;
+  }
+
+  it("a board found again after a gap keeps its history, so a role that appeared meanwhile is announced", async () => {
+    const b = await parkedAfter404();
+    const s = (await discoverSource(deps(net({ [GH]: ok(gh("Welder", "SEO Manager")) }).f, at(30 * 24 + 12)), b.id))!;
+    expect(s.status).toBe("active");
+    const posts = await listPostingsForLead(env.DB, b.id);
+    expect(posts.find((p) => p.title === "SEO Manager")!.baseline).toBe(false);
+    expect((await listActivity(env.DB, b.id)).map((a) => [a.kind, a.detail])).toEqual([["job_found", "SEO Manager"]]);
+  });
+
+  it("a different board starts over: its roles are baseline and nothing is announced", async () => {
+    const b = await parkedAfter404();
+    await env.DB.prepare(`UPDATE audits SET site_links = ? WHERE business_id = ?`).bind(JSON.stringify({ careers: "https://boards.greenhouse.io/other" }), b.id).run();
+    const other = "https://boards-api.greenhouse.io/v1/boards/other/jobs";
+    const s = (await discoverSource(deps(net({ [other]: ok(gh("SEO Manager")) }).f, at(30 * 24 + 12)), b.id))!;
+    expect([s.token, s.last_ok_at]).toEqual(["other", at(30 * 24 + 12).toISOString()]);
+    expect((await listPostingsForLead(env.DB, b.id)).find((p) => p.title === "SEO Manager")!.baseline).toBe(true);
+    expect(await listActivity(env.DB, b.id)).toEqual([]);
+  });
+
+  it("parking a lead that already had a board keeps the board, the last good look and the streak", async () => {
+    const b = await parkedAfter404();
+    const before = await source(b.id);
+    await env.DB.prepare(`UPDATE career_sources SET empty_streak = 1 WHERE business_id = ?`).bind(b.id).run();
+    await env.DB.prepare(`UPDATE audits SET site_links = ? WHERE business_id = ?`).bind(JSON.stringify({ careers: "https://acme.com/careers" }), b.id).run();
+    const s = (await discoverSource(deps(net({ "https://acme.com/careers": () => new Response("busy", { status: 503 }) }).f, at(30 * 24 + 12)), b.id))!;
+    expect([s.status, s.ats, s.token, s.last_ok_at, s.empty_streak]).toEqual(["error", "greenhouse", "acme", before.last_ok_at, 1]);
+    expect(before.last_ok_at).toBe(T0.toISOString());
   });
 });
 
