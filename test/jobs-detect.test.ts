@@ -16,6 +16,18 @@ describe("detectBoard", () => {
     ["Join us: https://jobs.lever.co/acme.", { ats: "lever", token: "acme" }],
   ] as const)("%s", (text, want) => expect(detectBoard(text)).toEqual(want));
 
+  // Lever board names are case-sensitive (api.lever.co/v0/postings/Spotify is a 404), so a mixed-case link must keep its case.
+  it("keeps the case of a Lever board name", () => {
+    expect(detectBoard("https://jobs.lever.co/AcmeCo/abc")).toEqual({ ats: "lever", token: "AcmeCo" });
+  });
+
+  it("scans a hostile 400KB page in linear time", () => {
+    const hostile = "x/boards.greenhouse.io/embed/job_board?".repeat(10_300);
+    const t0 = performance.now();
+    expect(detectBoard(hostile)).toBeNull();
+    expect(performance.now() - t0).toBeLessThan(400);
+  });
+
   it("finds a board link inside a page of HTML", () => {
     const html = `<html><nav><a href="/about">About</a></nav><p>See <a href="https://jobs.lever.co/northwind">open roles</a></p></html>`;
     expect(detectBoard(html)).toEqual({ ats: "lever", token: "northwind" });
@@ -28,6 +40,10 @@ describe("detectBoard", () => {
     "https://www.indeed.com/cmp/acme/jobs",
     "https://jobs.lever.co/",
     "https://notjobs.lever.co.evil.example/acme",
+    "https://notjobs.lever.co/acme",
+    "https://evilboards.greenhouse.io/acme",
+    "https://x.jobs.ashbyhq.com/acme",
+    "https://jobs.lever.co/" + "a".repeat(81),
     "",
   ])("%s has no supported board", (text) => expect(detectBoard(text)).toBeNull());
 
