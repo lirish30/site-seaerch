@@ -13,7 +13,7 @@ const base = {
   your_name: "Logan Irish", business_name: "", contact_email: "", services_blurb: "", signature: "Logan Irish\nIrish Web",
   physical_address: "123 Main St, Boise, ID 83702", opt_out_line: "Reply 'no thanks' and I won't follow up.", tone_notes: "",
   monthly_spend_limit_usd: 25, tone_preset: "friendly_local", email_length: "short", cta_style: "mini_audit", logo_url: "",
-  role_title: "", bio: "", availability: "", resume_url: "", goal_line: "", signature_json: "", default_purpose: "full_time",
+  role_title: "", bio: "", availability: "", resume_url: "", goal_line: "", signature_json: "", default_purpose: "full_time", role_kind_order: "web_dev,cro,seo,design,marketing",
 } as Settings;
 const dec = (s: string) => Buffer.from(s.replace(/\r\n/g, ""), "base64").toString();
 

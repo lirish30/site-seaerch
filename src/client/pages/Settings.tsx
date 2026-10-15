@@ -6,6 +6,7 @@ import ServicesEditor from "../components/ServicesEditor";
 import SuppressionsEditor from "../components/SuppressionsEditor";
 import SignatureBuilder from "../components/SignatureBuilder";
 import WorkSamplesEditor from "../components/WorkSamplesEditor";
+import { kindOrder, moveKind, ROLE_KIND_LABEL } from "../jobsView";
 
 type S = Record<string, string | number>;
 // Fields that appear on the public shared report, with the help text shown under each.
@@ -102,6 +103,17 @@ export default function Settings() {
           <option value="freelance">Freelance work</option>
         </select>
         <p className="muted small">Scans and re-audits write their first draft this way. You can switch per lead.</p>
+        <h2 style={{ marginTop: 24 }}>Open role priority</h2>
+        <p className="muted small">When a company has several open roles, emails and the Today queue name the one that ranks highest here; among equals, the newest. Only roles their board showed in the last 2 days count.</p>
+        <ol className="kind-order">
+          {kindOrder(s.role_kind_order).map((k, i, all) => (
+            <li key={k} className="row">
+              <span>{ROLE_KIND_LABEL[k]}</span>
+              <button type="button" aria-label={`Move ${ROLE_KIND_LABEL[k]} up`} disabled={i === 0} onClick={() => set("role_kind_order", moveKind(all, i, -1).join(","))}>↑</button>
+              <button type="button" aria-label={`Move ${ROLE_KIND_LABEL[k]} down`} disabled={i === all.length - 1} onClick={() => set("role_kind_order", moveKind(all, i, 1).join(","))}>↓</button>
+            </li>
+          ))}
+        </ol>
         <h2 style={{ marginTop: 24 }}>Email signature</h2>
         <p className="muted small">Goes under every email, as a rich signature with your graphic and links. Save to apply it.</p>
         <SignatureBuilder value={String(s.signature_json ?? "")} onChange={(json) => set("signature_json", json)} />

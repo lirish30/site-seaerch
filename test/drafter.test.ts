@@ -10,7 +10,7 @@ const settings: Settings = {
   opt_out_line: "Reply 'no thanks' and I won't follow up.", tone_notes: "Plain, friendly, no hype.", monthly_spend_limit_usd: 25,
   tone_preset: "friendly_local", email_length: "short", cta_style: "mini_audit", logo_url: "",
   role_title: "Front-end developer", bio: "I build fast, accessible sites and care about the details.", availability: "Open to full-time roles from January",
-  resume_url: "https://logan.dev/resume.pdf", goal_line: "A full-time front-end or web developer role", signature_json: "", default_purpose: "full_time",
+  resume_url: "https://logan.dev/resume.pdf", goal_line: "A full-time front-end or web developer role", signature_json: "", default_purpose: "full_time", role_kind_order: "web_dev,cro,seo,design,marketing",
 };
 const business = { id: "b1", name: "Ace Plumbing", category: "Plumber", address: "Boise, ID", website_url: "https://ace.com" } as Business;
 const contacts: Contact[] = [

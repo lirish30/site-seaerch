@@ -152,9 +152,11 @@ export interface Draft {
   steering_note: string | null; edited: boolean; created_at: string;
   purpose: Purpose; angle: string; include_footer: boolean;
   variant_group: string | null; variant_index: number;
+  /** The job posting the text was written to cite ("I saw you're hiring for X"), or null when it claims none. */
+  posting_id: string | null;
 }
-export type DraftInsert = Omit<Draft, "id" | "created_at" | "edited" | "purpose" | "angle" | "include_footer" | "variant_group" | "variant_index">
-  & Partial<Pick<Draft, "purpose" | "angle" | "include_footer" | "variant_group" | "variant_index">> & { created_at?: string };
+export type DraftInsert = Omit<Draft, "id" | "created_at" | "edited" | "purpose" | "angle" | "include_footer" | "variant_group" | "variant_index" | "posting_id">
+  & Partial<Pick<Draft, "purpose" | "angle" | "include_footer" | "variant_group" | "variant_index" | "posting_id">> & { created_at?: string };
 
 export interface WorkSample { id: string; title: string; url: string; result_line: string; tags: string; created_at: string }
 
@@ -179,6 +181,8 @@ export interface Settings {
   /** JSON of a Signature, or "" to use the plain-text `signature`. */
   signature_json: string;
   default_purpose: Purpose;
+  /** Role kinds best first, comma separated (see parseKindOrder): which open role a draft and Today name when a lead has several. */
+  role_kind_order: string;
 }
 export type TonePreset = "friendly_local" | "consultative" | "direct" | "formal";
 export type EmailLength = "short" | "medium" | "long";
@@ -189,7 +193,8 @@ export type SuppressionReason = (typeof SUPPRESSION_REASONS)[number];
 export type SuppressionKind = "domain" | "place_id";
 export interface Suppression { id: string; kind: SuppressionKind; value: string; reason: SuppressionReason; note: string | null; created_at: string; }
 export type Ats = "greenhouse" | "lever" | "ashby";
-export type RoleKind = "web_dev" | "design" | "seo" | "cro" | "marketing";
+export const ROLE_KINDS = ["web_dev", "design", "seo", "cro", "marketing"] as const;
+export type RoleKind = (typeof ROLE_KINDS)[number];
 export type CareerStatus = "active" | "none" | "error";
 export interface CareerSource {
   business_id: string; status: CareerStatus; ats: Ats | null; token: string | null; careers_url: string | null;

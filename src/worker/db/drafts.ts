@@ -10,10 +10,10 @@ export async function insertDraft(db: D1Database, d: DraftInsert): Promise<Draft
   const id = crypto.randomUUID();
   await db.prepare(
     `INSERT INTO drafts (id, business_id, audit_id, to_contact_id, recipient_reason, subject, body, offer,
-     steering_note, purpose, angle, include_footer, variant_group, variant_index, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+     steering_note, purpose, angle, include_footer, variant_group, variant_index, posting_id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
   ).bind(id, d.business_id, d.audit_id, d.to_contact_id, d.recipient_reason, d.subject, d.body, d.offer,
     d.steering_note, d.purpose ?? "freelance", d.angle ?? "", (d.include_footer ?? true) ? 1 : 0, d.variant_group ?? null,
-    d.variant_index ?? 0, d.created_at ?? new Date().toISOString()).run();
+    d.variant_index ?? 0, d.posting_id ?? null, d.created_at ?? new Date().toISOString()).run();
   return fromRow((await db.prepare(`SELECT * FROM drafts WHERE id = ?`).bind(id).first<Row>())!);
 }
 
@@ -35,6 +35,9 @@ export async function updateDraftBody(db: D1Database, id: string, u: { subject: 
       .bind(u.subject, u.body, u.include_footer ? 1 : 0, id).run();
   }
 }
+
+/** The text no longer names the role, so the draft stops claiming it (the owner edited the sentence out). */
+export const clearDraftPosting = (db: D1Database, id: string) => db.prepare(`UPDATE drafts SET posting_id = NULL WHERE id = ?`).bind(id).run();
 
 /** Makes this draft the lead's current one (the newest), as picking a variant or an earlier version does. */
 export async function selectDraft(db: D1Database, businessId: string, id: string, now = new Date()): Promise<Draft | null> {

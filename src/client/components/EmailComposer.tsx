@@ -8,7 +8,7 @@ import type { CroItem, CroResponse } from "../cro";
 import type { Audit, Contact } from "../types";
 import {
   gapsMessage, mailtoHref, profileGaps, PURPOSE_HINT, PURPOSE_LABEL, snippet, TWEAK_BUTTONS, variantTitle, wordCount,
-  type Draft, type Purpose, type WorkSample,
+  type Draft, type DraftRole, type Purpose, type WorkSample,
 } from "../emailView";
 
 const TONE_OPTIONS: [string, string][] = [["", "Default tone (from Settings)"], ["friendly_local", "Friendly local"], ["consultative", "Consultative expert"], ["direct", "Direct & short"], ["formal", "Formal"]];
@@ -46,6 +46,7 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
   const [profile, setProfile] = useState<Profile | null>(null); const [samples, setSamples] = useState<WorkSample[] | null>(null);
   const [preview, setPreview] = useState<Composed | null>(null);
   const [versions, setVersions] = useState<Draft[]>([]);
+  const [role, setRole] = useState<DraftRole | null>(null); const [useRole, setUseRole] = useState(true);
   const [croItems, setCroItems] = useState<CroItem[]>([]);
   const [tone, setTone] = useState(""); const [steer, setSteer] = useState("");
   const [focus, setFocus] = useState<Set<string>>(new Set()); const [croFocus, setCroFocus] = useState<Set<string>>(new Set()); const [pickIds, setPickIds] = useState<Set<string>>(new Set());
@@ -74,6 +75,9 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
     }).catch(() => { setCroItems([]); setCroFocus(new Set()); });
   }, [leadId]);
   useEffect(() => { api.get<Draft[]>(`/leads/${leadId}/drafts`).then(setVersions).catch(() => setVersions([])); }, [leadId, draft?.id]);
+  // Which role the draft claims and whether that is still true. Reloaded after a save because deleting the sentence ends the claim.
+  const loadRole = () => api.get<DraftRole>(`/leads/${leadId}/draft-role`).then(setRole).catch(() => setRole(null));
+  useEffect(() => { void loadRole(); }, [leadId, draft?.id]);
 
   // The preview is the email as it will be saved to Gmail, so it reflects unsaved edits and the footer choice.
   useEffect(() => {
@@ -94,6 +98,7 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
     try {
       await api.patch(`/leads/${leadId}/draft`, { subject: l.subject, body: l.body, include_footer: l.footer });
       saved.current = { subject: l.subject, body: l.body, footer: l.footer };
+      void loadRole();
       return true;
     } catch (e) { p.onMessage((e as Error).message); return false; }
   }
@@ -119,6 +124,7 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
     void write({
       purpose: eff, steeringNote: steer, focus: focusIdx, croFocus: [...croFocus], tone: tone || null,
       ...(eff === "full_time" && pickIds.size ? { sampleIds: [...pickIds] } : {}),
+      ...(role?.next && !useRole ? { usePosting: false } : {}),
     }, picked ? `New options focused on ${picked} chosen issue(s).` : "New options written.");
     setSteer("");
   }
@@ -183,6 +189,9 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
             <input id="subj" value={subject} onChange={(e) => setSubject(e.target.value)} onBlur={() => void save()} />
             <label htmlFor="body">Message</label>
             <textarea id="body" style={{ minHeight: 320 }} value={body} onChange={(e) => setBody(e.target.value)} onBlur={() => void save()} />
+            {role?.cited && (role.cited.warning
+              ? <p className="hint" role="alert">{role.cited.warning} Edit that sentence out, or use a quick rewrite (it drops the claim) or write new options.</p>
+              : <p className="muted small">Mentions their open role: {role.cited.url ? <a href={role.cited.url} target="_blank" rel="noreferrer">{role.cited.title} ↗</a> : role.cited.title}</p>)}
             <p className="muted small">{words} words · your signature is added automatically</p>
             <label className="check"><input type="checkbox" checked={footer} onChange={(e) => setFooter(e.target.checked)} /> Add my mailing address and opt-out line</label>
             <div className="tweaks" role="group" aria-label="Quick rewrites">
@@ -230,6 +239,8 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
             </select>
             <label htmlFor="steer">Extra instruction (optional)</label>
             <input id="steer" placeholder="mention I'm local / ask about their summer rush" value={steer} onChange={(e) => setSteer(e.target.value)} />
+            {role?.next && <label className="row small check"><input type="checkbox" checked={useRole} onChange={(e) => setUseRole(e.target.checked)} />
+              Mention their open role: {role.next.title} <span className="muted">(seen on their board in the last 2 days)</span></label>}
             {sampleChoices.length > 0 && <>
               <label>Work to mention <span className="muted small">(optional; none = the best fit)</span></label>
               <div className="picker-box">{sampleChoices.map((w) => (

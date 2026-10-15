@@ -10,7 +10,7 @@ import type { Business, Settings } from "../src/worker/types";
 const settings = {
   your_name: "Logan Irish", business_name: "Irish Web", contact_email: "l@x.com", services_blurb: "I build sites.", signature: "", physical_address: "1 Main St",
   opt_out_line: "Reply no", tone_notes: "", monthly_spend_limit_usd: 25, tone_preset: "friendly_local", email_length: "short", cta_style: "mini_audit", logo_url: "",
-  role_title: "Front-end developer", bio: "I build fast sites.", availability: "", resume_url: "", goal_line: "A web role", signature_json: "", default_purpose: "full_time",
+  role_title: "Front-end developer", bio: "I build fast sites.", availability: "", resume_url: "", goal_line: "A web role", signature_json: "", default_purpose: "full_time", role_kind_order: "web_dev,cro,seo,design,marketing",
 } as Settings;
 const business = { id: "b1", name: "Acme", category: "Agency", address: "Boise, ID", website_url: "https://acme.com" } as Business;
 const base: DraftInput = { settings, business, contacts: [], offer: "performance", steeringNote: null, findings: [] };
