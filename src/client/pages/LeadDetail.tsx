@@ -16,6 +16,7 @@ import { REASONS, reasonLabel, suppressedMessage } from "../suppressionView";
 import { isSpendLimit, SPEND_LIMIT_REACHED } from "../spend";
 import EmailComposer, { type ComposerHandle } from "../components/EmailComposer";
 import InlineError from "../components/InlineError";
+import JobsPanel from "../components/JobsPanel";
 import type { Draft } from "../emailView";
 import { NICHE_LABEL, OFFER_LABEL, STATUSES, type Activity, type Audit, type AuditChanges, type BestOffer, type Business, type Contact, type FitResult, type LeadStatus, type LeadSuppression, type Person, type SuppressionReason } from "../types";
 
@@ -30,7 +31,7 @@ const LINK_LABEL: Record<string, string> = {
 const ACTIVITY_LABEL: Record<string, string> = {
   status: "Status", archived: "Archived", restored: "Restored", website: "Website changed", reaudit: "Re-audit",
   score_flagged: "Score flagged", export: "Exported", draft: "Draft", cro_audit: "CRO audit", suppressed: "Suppressed", import: "Imported", bulk: "Bulk change",
-  today_done: "Marked done in Today", snoozed: "Snoozed in Today", starred: "Starred", unstarred: "Unstarred",
+  today_done: "Marked done in Today", snoozed: "Snoozed in Today", starred: "Starred", unstarred: "Unstarred", job_found: "New role spotted",
 };
 
 function ChangesBlock({ changes }: { changes: AuditChanges }) {
@@ -197,6 +198,7 @@ export default function LeadDetail() {
             {b.phone && <a className="chip-link" href={`tel:${b.phone}`}>{b.phone}</a>}
             {links.map(([k, u]) => <a key={k} className={`chip-link${k === "careers" ? " hi" : ""}`} href={u} target="_blank" rel="noreferrer">{LINK_LABEL[k] ?? k} ↗</a>)}
           </div>
+          <JobsPanel businessId={b.id} />
         </div>
         <div className="lead-actions">
           {!d.suppressed && (

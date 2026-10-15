@@ -372,6 +372,7 @@ table.leads tbody tr.starred { background:color-mix(in srgb, var(--warn) 7%, tra
 .chip-toggle { padding:6px 12px; font-size:13px; border-radius:var(--pill); white-space:nowrap; }
 .chip-toggle.on { background:var(--warn); border-color:var(--warn); color:#fff; }
 .today-kind.starred_idle { border-color:var(--warn); color:var(--warn); }
+.today-kind.open_role { border-color:var(--ok); color:var(--ok); }
 
 /* Email composer */
 .composer-top { margin-bottom: 12px; }
