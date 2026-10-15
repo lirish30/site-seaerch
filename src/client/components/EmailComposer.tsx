@@ -7,7 +7,7 @@ import InlineError from "./InlineError";
 import type { CroItem, CroResponse } from "../cro";
 import type { Audit, Contact } from "../types";
 import {
-  gapsMessage, mailtoHref, profileGaps, PURPOSE_HINT, PURPOSE_LABEL, snippet, TWEAK_BUTTONS, variantTitle, wordCount,
+  gapsMessage, mailtoHref, profileGaps, PURPOSE_HINT, PURPOSE_LABEL, purposeSwitchNotice, snippet, TWEAK_BUTTONS, variantTitle, wordCount,
   type Draft, type Purpose, type WorkSample,
 } from "../emailView";
 
@@ -147,6 +147,7 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
   async function copyAndMark() { if (await copy() && await p.onMarkContacted()) p.onMessage("Copied and marked contacted"); }
 
   const mailto = toContact && preview ? mailtoHref(toContact.value, subject, preview.text) : null;
+  const switchNotice = draft ? purposeSwitchNotice(draft.purpose, eff) : null;
   const sampleChoices = eff === "full_time" ? samples ?? [] : [];
 
   return (
@@ -158,7 +159,7 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
           ))}
         </div>
         <p className="muted small">{PURPOSE_HINT[eff]}</p>
-        {draft && draft.purpose !== eff && <p className="muted small">The email below was written for {PURPOSE_LABEL[draft.purpose].toLowerCase()}. Write new options to switch.</p>}
+        {switchNotice && <p className="hint">{switchNotice}</p>}
         {gaps && <p className="hint">{gaps} <Link to="/settings">Open Settings</Link></p>}
       </div>
 
@@ -188,8 +189,8 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
             <div className="tweaks" role="group" aria-label="Quick rewrites">
               <span className="muted small">Quick rewrite</span>
               {TWEAK_BUTTONS.filter((t) => !t.fullTimeOnly || draft.purpose === "full_time").map((t) => (
-                <button key={t.key} onClick={() => tweak(t.key, t.label)} disabled={!!busy || suppressed}
-                  title={suppressed ? "Suppressed: drafting is turned off" : ""}>{busy === t.key ? "Rewriting…" : t.label}</button>
+                <button key={t.key} onClick={() => tweak(t.key, t.label)} disabled={!!busy || suppressed || !!switchNotice}
+                  title={suppressed ? "Suppressed: drafting is turned off" : switchNotice ?? ""}>{busy === t.key ? "Rewriting…" : t.label}</button>
               ))}
             </div>
             <p className="row">

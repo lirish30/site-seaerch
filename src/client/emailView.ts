@@ -69,6 +69,11 @@ export const snippet = (s: string, max = 120) => {
 
 export const variantTitle = (v: { angle: string }, i: number) => v.angle.trim() || `Option ${i + 1}`;
 
+/** Quick rewrites keep the draft's purpose, so a toggle that disagrees with the draft needs fresh options instead. */
+export const purposeSwitchNotice = (draftPurpose: Purpose, chosen: Purpose): string | null =>
+  draftPurpose === chosen ? null
+    : `This email was written for ${PURPOSE_LABEL[draftPurpose].toLowerCase()}. Quick rewrites keep that. Write new options to switch it to ${PURPOSE_LABEL[chosen].toLowerCase()}.`;
+
 export const TWEAK_BUTTONS: { key: "shorter" | "warmer" | "more_direct" | "swap_samples"; label: string; fullTimeOnly?: boolean }[] = [
   { key: "shorter", label: "Shorter" }, { key: "warmer", label: "Warmer" }, { key: "more_direct", label: "More direct" },
   { key: "swap_samples", label: "Different work sample", fullTimeOnly: true },

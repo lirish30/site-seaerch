@@ -227,6 +227,12 @@ describe("buildFullTimePrompt", () => {
     expect(s).toMatch(/Do not praise anything the findings do not show/);
   });
 
+  it("keeps freelance voice notes from turning a full-time email into a freelance pitch", () => {
+    const s = buildFullTimePrompt({ ...ft, settings: { ...settings, tone_notes: "I am a local freelance website developer." } }).system;
+    expect(s).toMatch(/Never call the sender a freelancer, contractor or consultant/);
+    expect(s).toMatch(/voice notes .* only for how they sound/i);
+  });
+
   it("carries the sender's profile and nothing about the footer", () => {
     const p = buildFullTimePrompt(ft);
     for (const t of ["Front-end developer", "I build fast, accessible sites", "Open to full-time roles from January", "A full-time front-end or web developer role", "https://logan.dev/resume.pdf"]) {

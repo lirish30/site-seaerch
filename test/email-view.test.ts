@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { emptySignature, gapsMessage, isBlankSignature, mailtoHref, profileGaps, readSignature, snippet, variantTitle, wordCount, writeSignature } from "../src/client/emailView";
+import { emptySignature, gapsMessage, isBlankSignature, mailtoHref, profileGaps, purposeSwitchNotice, readSignature, snippet, variantTitle, wordCount, writeSignature } from "../src/client/emailView";
 
 describe("signature editing", () => {
   it("reads nothing, junk and partial data as a usable empty or partial signature", () => {
@@ -53,5 +53,19 @@ describe("small helpers", () => {
   });
   it("encodes a mailto link", () => {
     expect(mailtoHref("a@b.com", "Hi & bye", "Line 1\nLine 2")).toBe("mailto:a@b.com?subject=Hi%20%26%20bye&body=Line%201%0ALine%202");
+  });
+});
+
+describe("purposeSwitchNotice", () => {
+  it("says nothing while the draft matches the chosen purpose", () => {
+    expect(purposeSwitchNotice("full_time", "full_time")).toBeNull();
+    expect(purposeSwitchNotice("freelance", "freelance")).toBeNull();
+  });
+  it("explains that quick rewrites keep the draft's purpose and how to switch", () => {
+    const n = purposeSwitchNotice("freelance", "full_time")!;
+    expect(n).toContain("freelance work");
+    expect(n).toContain("full-time role");
+    expect(n).toMatch(/Quick rewrites keep that/);
+    expect(n).toMatch(/Write new options/);
   });
 });
