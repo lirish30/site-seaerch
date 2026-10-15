@@ -94,6 +94,27 @@ describe("discoverSource", () => {
     expect([s.status, s.last_error, s.next_check_at]).toEqual(["none", null, at(30 * 24).toISOString()]);
   });
 
+  it("parks job-board and unsupported-ATS links as 'none' without fetching them, matching the host or a subdomain only", async () => {
+    for (const link of ["https://www.indeed.com/cmp/acme/jobs", "https://acme.workable.com/", "https://indeed.com/"]) {
+      const b = await leadWithCareers(link);
+      const n = net({});
+      const s = (await discoverSource(deps(n.f, T0), b.id))!;
+      expect([s.status, s.next_check_at]).toEqual(["none", at(30 * 24).toISOString()]);
+      expect(n.hits).toHaveLength(0);
+    }
+    const b = await leadWithCareers("https://notindeed.com/careers");
+    const n = net({ "https://notindeed.com/careers": html("<p>Email us your CV</p>") });
+    expect((await discoverSource(deps(n.f, T0), b.id))!.status).toBe("none");
+    expect(n.hits.map((h) => h.url)).toEqual(["https://notindeed.com/careers"]);
+  });
+
+  it("a board named directly in the link still works when the host is otherwise unremarkable", async () => {
+    const b = await leadWithCareers("https://boards.greenhouse.io/acme");
+    const n = net({ [GH]: ok(gh("SEO Manager")) });
+    expect((await discoverSource(deps(n.f, T0), b.id))!.status).toBe("active");
+    expect(n.hits.map((h) => h.url)).toEqual([GH]);
+  });
+
   it("records 'none' when the board named by the page does not exist", async () => {
     const b = await leadWithCareers("https://boards.greenhouse.io/acme");
     const s = (await discoverSource(deps(net({}).f, T0), b.id))!; // GH answers 404

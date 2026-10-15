@@ -14,6 +14,10 @@ export interface SyncResult { added: number; relevantAdded: number; closed: numb
 
 export const CHECK_EVERY_HOURS = 12, NONE_RECHECK_DAYS = 30, RETRY_HOURS = 24, EMPTY_STREAK_TO_CLOSE = 2;
 const MAX_PAGE_BYTES = 400_000;
+// Never fetched: sites we must not scrape (LinkedIn, Indeed, Glassdoor...) and boards for ATSes we do not read, so a link to them can only waste a request.
+const SKIPPED_HOSTS = ["indeed.com", "linkedin.com", "glassdoor.com", "ziprecruiter.com", "monster.com", "workable.com", "bamboohr.com", "jobvite.com",
+  "smartrecruiters.com", "recruitee.com", "breezy.hr", "teamtailor.com", "icims.com", "myworkdayjobs.com"];
+const skipped = (url: string) => { const h = new URL(url).hostname.toLowerCase(); return SKIPPED_HOSTS.some((d) => h === d || h.endsWith("." + d)); };
 
 const later = (now: Date, hours: number) => new Date(now.getTime() + hours * 3_600_000).toISOString();
 const errText = (e: unknown) => String((e as Error)?.message ?? e).slice(0, 300);
@@ -74,6 +78,7 @@ export async function discoverSource(deps: JobDeps, businessId: string): Promise
   };
   if (!safe?.ok || !safe.url.startsWith("https://")) return park("none", null, NONE_RECHECK_DAYS * 24);
   let ref = detectBoard(safe.url);
+  if (!ref && skipped(safe.url)) return park("none", null, NONE_RECHECK_DAYS * 24);
   if (!ref) {
     try {
       const res = await deps.fetch(safe.url, { headers: { "user-agent": deps.userAgent, accept: "text/html" }, signal: AbortSignal.timeout(10_000) });
