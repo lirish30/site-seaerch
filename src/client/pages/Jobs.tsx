@@ -23,7 +23,7 @@ export default function Jobs() {
   return (
     <div>
       <div className="row between page-head"><h2>Jobs</h2><button onClick={runNow}>Check boards now</button></div>
-      <p className="muted">Open roles in web, design, SEO, CRO and marketing at your leads, read from their own job boards (Greenhouse, Lever, Ashby). Boards are checked every six hours.</p>
+      <p className="muted">Open roles in web, design, SEO, CRO and marketing at your leads, read from their own job boards (Greenhouse, Lever, Ashby). The check runs every six hours and each board is re-read about every 12 hours.</p>
       {err && <p className="error" role="alert">{err}</p>}
       {msg && <p role="status">{msg}</p>}
       {!jobs ? (err ? null : <p role="status">Loading…</p>) : jobs.length === 0 ? (
