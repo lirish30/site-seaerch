@@ -1,23 +1,41 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api";
+import Icon from "../components/Icon";
 import SavedFilters from "../components/SavedFilters";
 import { defaultView, parseView, serializeView, type LeadView } from "../savedFilters";
-import { STATUSES, type LeadRow, type LeadStatus } from "../types";
-import { isStarred, type TableFilters } from "../leadFilters";
+import type { LeadRow } from "../types";
+import type { TableFilters } from "../leadFilters";
 import LeadTable from "./LeadTable";
 
+const STAGE_TITLE: Record<string, string> = { new: "New", reviewed: "Reviewed", contacted: "Contacted", replied: "Replied", won: "Won", lost: "Lost", skip: "Skipped" };
+
+/**
+ * The status, archived and starred views live in the URL (the Leads sidebar links to them, e.g. /leads?status=new), so a link or a reload
+ * opens the same list. The tag filter and the table's own filters stay in page state.
+ */
 export default function AllLeads() {
-  const [view, setView] = useState<LeadView>(defaultView);
-  const { status, archived, tag, starred } = view;
+  const [params, setParams] = useSearchParams();
+  const [tag, setTagState] = useState("");
+  const [table, setTable] = useState<TableFilters>(defaultView.table);
+  const fromUrl = useMemo(() => parseView(params.toString()), [params]);
+  const view: LeadView = { status: fromUrl.status, archived: fromUrl.archived, starred: fromUrl.starred, tag, table };
+  const { status, archived, starred } = view;
   // The tag box is typed into freely; it only becomes the filter on Enter or blur, so each keystroke doesn't refetch.
   const [tagDraft, setTagDraft] = useState("");
   const [rows, setRows] = useState<LeadRow[] | null>(null);
   const [err, setErr] = useState("");
   const [reloads, setReloads] = useState(0);
   const loadedFor = useRef("");
-  const patch = (p: Partial<LeadView>) => setView((v) => ({ ...v, ...p }));
-  const setTable = (table: TableFilters) => patch({ table });
-  const applyTag = (t: string) => { const n = t.trim().toLowerCase(); setTagDraft(n); patch({ tag: n }); };
+
+  const setSlice = (p: Pick<LeadView, "status" | "archived" | "starred">) => {
+    const q = new URLSearchParams();
+    if (p.status) q.set("status", p.status);
+    if (p.archived) q.set("archived", "1");
+    if (p.starred) q.set("starred", "1");
+    setParams(q);
+  };
+  const applyTag = (t: string) => { const n = t.trim().toLowerCase(); setTagDraft(n); setTagState(n); };
 
   useEffect(() => {
     let cancelled = false; // ignore responses for a filter the user has already changed away from
@@ -33,36 +51,38 @@ export default function AllLeads() {
   }, [status, archived, tag, starred, reloads]);
   const reload = useCallback(() => setReloads((n) => n + 1), []);
 
-  // Counted from the loaded rows (the server lists starred leads first, so they are all in them), so it follows the status and tag filters.
-  const starredCount = useMemo(() => (rows ?? []).filter(isStarred).length, [rows]);
   const tags = useMemo(() => [...new Set((rows ?? []).flatMap((r) => r.business.tags))].sort(), [rows]);
   const current = serializeView(view);
-  const apply = (query: string) => { const v = parseView(query); setView(v); setTagDraft(v.tag); };
+  const apply = (query: string) => { const v = parseView(query); setSlice(v); setTable(v.table); applyTag(v.tag); };
 
+  const title = archived ? "Archived leads" : starred ? "Starred" : status ? STAGE_TITLE[status] : "All leads";
   return (
-    <div>
-      <div className="row between page-head">
-        <h2>{archived ? "Archived leads" : "All leads"}</h2>
-        <div className="row">
-          <SavedFilters current={current} onApply={apply} />
-          <select className="auto" value={status} onChange={(e) => patch({ status: e.target.value as LeadStatus | "" })} aria-label="Status">
-            <option value="">All statuses</option>{STATUSES.map((s) => <option key={s}>{s}</option>)}
-          </select>
-          <input className="tag-filter" list="lead-tags" value={tagDraft} placeholder="Tag" aria-label="Tag filter" maxLength={32}
-            onChange={(e) => setTagDraft(e.target.value)} onBlur={() => applyTag(tagDraft)}
-            onKeyDown={(e) => { if (e.key === "Enter") applyTag(tagDraft); }} />
-          <datalist id="lead-tags">{tags.map((t) => <option key={t} value={t} />)}</datalist>
-          <button className={`chip-toggle${starred ? " on" : ""}`} aria-pressed={starred} onClick={() => patch({ starred: !starred })}
-            title={starred ? "Showing only starred leads. Click to show all." : "Show only starred leads"}>★ Starred{rows ? ` (${starredCount})` : ""}</button>
-          <div className="segmented small-seg" role="group" aria-label="Show">
-            <button className={!archived ? "on" : ""} aria-pressed={!archived} onClick={() => patch({ archived: false })}>Active</button>
-            <button className={archived ? "on" : ""} aria-pressed={archived} onClick={() => patch({ archived: true })}>Archived</button>
-          </div>
+    <div className="leads-page">
+      <header className="page-header">
+        <div>
+          <h1>{title}</h1>
+          <p className="muted">{rows ? `${rows.length} ${rows.length === 1 ? "lead" : "leads"} · sorted by lead score, starred first` : "Loading…"}</p>
         </div>
+        <div className="header-actions">
+          <Link to="/import" className="btn"><Icon name="upload" size={16} />Import</Link>
+          <Link to="/" className="btn primary"><Icon name="plus" size={16} />New search</Link>
+        </div>
+      </header>
+      <div className="panel-body">
+        {err && <p className="error" role="alert">{err}</p>}
+        {rows ? (
+          <LeadTable rows={rows} filters={table} onFiltersChange={setTable} bulk={{ onChanged: reload, archivedView: archived }} onTagClick={applyTag}
+            moreFilters={<>
+              <label className="check">Tag
+                <input className="tag-filter" list="lead-tags" value={tagDraft} placeholder="Any tag" aria-label="Tag filter" maxLength={32}
+                  onChange={(e) => setTagDraft(e.target.value)} onBlur={() => applyTag(tagDraft)}
+                  onKeyDown={(e) => { if (e.key === "Enter") applyTag(tagDraft); }} />
+              </label>
+              <datalist id="lead-tags">{tags.map((t) => <option key={t} value={t} />)}</datalist>
+              <SavedFilters current={current} onApply={apply} />
+            </>} />
+        ) : !err && <p className="muted">Loading…</p>}
       </div>
-      {err && <p className="error" role="alert">{err}</p>}
-      {rows ? <LeadTable rows={rows} filters={view.table} onFiltersChange={setTable} bulk={{ onChanged: reload, archivedView: archived }} onTagClick={applyTag} />
-        : !err && <p>Loading…</p>}
     </div>
   );
 }
