@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { createSearch } from "../src/worker/db/searches";
 import { upsertBusiness, deleteBusiness } from "../src/worker/db/businesses";
 import {
-  applySync, bestOpenPosting, closeAll, getCareerSource, listDueSources, listPostingsForLead, listUndiscovered, openRelevantByBusiness, saveCareerSource,
+  applySync, bestOpenPosting, closeAll, getCareerSource, listDueSources, listOpenRelevantWithBusiness, listPostingsForLead, listUndiscovered, openRelevantByBusiness, saveCareerSource,
   type PostingWrite,
 } from "../src/worker/db/jobs";
 
@@ -79,6 +79,21 @@ describe("reads", () => {
     expect(m.get(a.id)!.map((p) => p.external_id)).toEqual(["1"]);
     expect(m.get(c.id)!.map((p) => p.external_id)).toEqual(["9"]);
     expect(m.has("missing")).toBe(false);
+  });
+
+  it("listOpenRelevantWithBusiness joins the lead, skips archived/closed/off-field roles and lists newest first", async () => {
+    const b = await lead("Acme"), arch = await lead("Archived");
+    await applySync(env.DB, b.id, [row("c", "CRO Analyst", "cro", "2026-10-16T00:00:00.000Z"), row("gone", "Old", "seo"), row("w", "Welder")], T0, false);
+    // second sync (T1): "a" first seen at T1 with no posted date, "b" posted long ago; "gone" closes
+    await applySync(env.DB, b.id, [row("c", "CRO Analyst", "cro", "2026-10-16T00:00:00.000Z"), row("a", "SEO Manager", "seo"), row("b", "Designer", "design", "2026-09-01T00:00:00.000Z"), row("w", "Welder")], T1, false);
+    await applySync(env.DB, arch.id, [row("x", "Web Developer", "web_dev")], T1, false);
+    await env.DB.prepare(`UPDATE businesses SET archived_at = ? WHERE id = ?`).bind(T0, arch.id).run();
+    const rows = await listOpenRelevantWithBusiness(env.DB, 10);
+    expect(rows.map((r) => r.external_id)).toEqual(["c", "a", "b"]);
+    expect(rows[0]).toMatchObject({ business_id: b.id, title: "CRO Analyst", business_name: "Acme", domain: b.domain, place_id: b.place_id, website_url: "https://acme.com", baseline: false });
+    expect(b.domain).toBeTruthy();
+    expect(b.place_id).toBeTruthy();
+    expect(await listOpenRelevantWithBusiness(env.DB, 2)).toHaveLength(2);
   });
 
   it("bestOpenPosting ignores roles not seen in the last 48 hours and roles outside the field", async () => {
