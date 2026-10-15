@@ -154,18 +154,30 @@ describe("sources", () => {
   });
 
   it("lists only active sources that are due, oldest first", async () => {
-    await saveCareerSource(env.DB, { ...src, business_id: "late", next_check_at: "2026-10-14T10:00:00.000Z" });
-    await saveCareerSource(env.DB, { ...src, business_id: "early", next_check_at: "2026-10-14T09:00:00.000Z" });
-    await saveCareerSource(env.DB, { ...src, business_id: "future", next_check_at: T2 });
-    await saveCareerSource(env.DB, { ...src, business_id: "none", status: "none", next_check_at: "2026-10-14T08:00:00.000Z" });
-    expect((await listDueSources(env.DB, T0, 10)).map((s) => s.business_id)).toEqual(["early", "late"]);
+    const [late, early, future, none] = [await lead("Late"), await lead("Early"), await lead("Future"), await lead("None")];
+    await saveCareerSource(env.DB, { ...src, business_id: late.id, next_check_at: "2026-10-14T10:00:00.000Z" });
+    await saveCareerSource(env.DB, { ...src, business_id: early.id, next_check_at: "2026-10-14T09:00:00.000Z" });
+    await saveCareerSource(env.DB, { ...src, business_id: future.id, next_check_at: T2 });
+    await saveCareerSource(env.DB, { ...src, business_id: none.id, status: "none", next_check_at: "2026-10-14T08:00:00.000Z" });
+    expect((await listDueSources(env.DB, T0, 10)).map((s) => s.business_id)).toEqual([early.id, late.id]);
     expect(await listDueSources(env.DB, T0, 1)).toHaveLength(1);
   });
 
-  it("listUndiscovered returns scanned leads with no source, or a none/error source that is due", async () => {
+  it("does not list a due source whose lead is archived or no longer exists", async () => {
+    const live = await lead("Live"), archived = await lead("Archived");
+    await env.DB.prepare(`UPDATE businesses SET archived_at = ? WHERE id = ?`).bind(T0, archived.id).run();
+    for (const id of [live.id, archived.id, "gone"]) await saveCareerSource(env.DB, { ...src, business_id: id, next_check_at: "2026-10-14T09:00:00.000Z" });
+    expect((await listDueSources(env.DB, T0, 10)).map((s) => s.business_id)).toEqual([live.id]);
+  });
+
+  const scan = (businessId: string, links: Record<string, string>, createdAt = T0) =>
+    env.DB.prepare(`INSERT INTO audits (id, business_id, created_at, site_status, partial, score, offer, findings, site_links) VALUES (?,?,?,?,?,?,?,?,?)`)
+      .bind(crypto.randomUUID(), businessId, createdAt, "ok", 1, 10, "care_plan", "[]", JSON.stringify(links)).run();
+  const careers = { careers: "https://boards.greenhouse.io/acme" };
+
+  it("listUndiscovered returns scanned leads with a careers link and no source, or a none/error source that is due", async () => {
     const fresh = await lead("Fresh"), unscanned = await lead("Unscanned"), retry = await lead("Retry"), settled = await lead("Settled"), archived = await lead("Archived");
-    for (const b of [fresh, retry, settled, archived])
-      await env.DB.prepare(`INSERT INTO audits (id, business_id, created_at, site_status, partial, score, offer, findings) VALUES (?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(), b.id, T0, "ok", 1, 10, "care_plan", "[]").run();
+    for (const b of [fresh, retry, settled, archived]) await scan(b.id, careers);
     await env.DB.prepare(`UPDATE businesses SET archived_at = ? WHERE id = ?`).bind(T0, archived.id).run();
     await saveCareerSource(env.DB, { ...src, business_id: retry.id, status: "error", next_check_at: "2026-10-14T00:00:00.000Z" });
     await saveCareerSource(env.DB, { ...src, business_id: settled.id, status: "none", next_check_at: T2 });
@@ -175,6 +187,25 @@ describe("sources", () => {
     expect(ids).not.toContain(unscanned.id);
     expect(ids).not.toContain(settled.id);
     expect(ids).not.toContain(archived.id);
+  });
+
+  it("listUndiscovered skips a lead whose latest scan found no careers link", async () => {
+    const none = await lead("NoLink"), emptyLink = await lead("EmptyLink"), moved = await lead("Moved"), linked = await lead("Linked");
+    await scan(none.id, {}); await scan(emptyLink.id, { careers: "" });
+    await scan(moved.id, careers, "2026-10-01T00:00:00.000Z"); await scan(moved.id, {}, "2026-10-10T00:00:00.000Z"); // the newest scan lost the link
+    await scan(linked.id, {}, "2026-10-01T00:00:00.000Z"); await scan(linked.id, careers, "2026-10-10T00:00:00.000Z");
+    expect((await listUndiscovered(env.DB, T0, 10)).map((r) => r.id)).toEqual([linked.id]);
+  });
+
+  it("listUndiscovered puts never-checked leads first, newest first, then due rechecks oldest first", async () => {
+    const older = await lead("Older"), newer = await lead("Newer"), retryOld = await lead("RetryOld"), retryNew = await lead("RetryNew");
+    for (const [b, created] of [[older, "2026-10-01T00:00:00.000Z"], [newer, "2026-10-05T00:00:00.000Z"], [retryOld, "2026-09-01T00:00:00.000Z"], [retryNew, "2026-09-02T00:00:00.000Z"]] as const) {
+      await env.DB.prepare(`UPDATE businesses SET created_at = ? WHERE id = ?`).bind(created, b.id).run();
+      await scan(b.id, careers);
+    }
+    await saveCareerSource(env.DB, { ...src, business_id: retryNew.id, status: "none", next_check_at: "2026-10-13T00:00:00.000Z" });
+    await saveCareerSource(env.DB, { ...src, business_id: retryOld.id, status: "error", next_check_at: "2026-10-12T00:00:00.000Z" });
+    expect((await listUndiscovered(env.DB, T0, 10)).map((r) => r.id)).toEqual([newer.id, older.id, retryOld.id, retryNew.id]);
   });
 });
 

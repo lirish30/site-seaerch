@@ -39,7 +39,7 @@ describe("runJobWatch", () => {
 
   it("discovers no more than DISCOVER_PER_TICK leads in a tick", async () => {
     expect(DISCOVER_PER_TICK).toBe(15);
-    for (let i = 0; i < 17; i++) await seedLeadAudit((await seedBusiness()).id);
+    for (let i = 0; i < 17; i++) await seedLeadAudit((await seedBusiness()).id, { careers: "https://boards.greenhouse.io/acme" });
     expect((await runJobWatch(deps(empty))).discovered).toBe(15);
   });
 
@@ -80,7 +80,7 @@ describe("runJobWatch poison pills", () => {
   });
 
   it("parks a lead whose discovery throws as an error for a day so it stops heading the queue", async () => {
-    const lead = await seedBusiness(); await seedLeadAudit(lead.id);
+    const lead = await seedBusiness(); await seedLeadAudit(lead.id, { careers: "https://boards.greenhouse.io/acme" });
     expect(await listUndiscovered(env.DB, NOW.toISOString(), 5)).toEqual([{ id: lead.id }]);
     const r = await runJobWatch({ ...deps(empty), db: flaky({ prepare: /SELECT \* FROM audits/ }) });
     expect(r).toEqual({ synced: 0, discovered: 0, failed: 1 });

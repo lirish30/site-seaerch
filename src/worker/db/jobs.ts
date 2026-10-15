@@ -25,20 +25,27 @@ export async function saveCareerSource(db: D1Database, s: SourceWrite) {
     s.next_check_at, s.empty_streak ?? 0, s.last_error ?? null, s.checked_at).run();
 }
 
+/** Active boards that are due, for leads that still exist and are not archived. */
 export async function listDueSources(db: D1Database, nowIso: string, limit: number): Promise<CareerSource[]> {
-  return (await db.prepare(`SELECT * FROM career_sources WHERE status = 'active' AND next_check_at <= ? ORDER BY next_check_at, business_id LIMIT ?`)
-    .bind(nowIso, limit).all<CareerSource>()).results;
+  return (await db.prepare(
+    `SELECT s.* FROM career_sources s JOIN businesses b ON b.id = s.business_id
+     WHERE s.status = 'active' AND s.next_check_at <= ? AND b.archived_at IS NULL ORDER BY s.next_check_at, s.business_id LIMIT ?`,
+  ).bind(nowIso, limit).all<CareerSource>()).results;
 }
 
-/** Scanned, non-archived leads with a website that have no board record yet, or whose "none"/"error" record is due for another look. */
+/**
+ * Scanned, non-archived leads with a website whose latest scan found a careers link (without one discovery would only park "none" and waste a slot;
+ * "Check now" still works) and that have no board record yet, or whose "none"/"error" record is due for another look.
+ * Never-checked leads come first, newest first, so a long backlog cannot starve fresh imports; then due rechecks, oldest first.
+ */
 export async function listUndiscovered(db: D1Database, nowIso: string, limit: number): Promise<{ id: string }[]> {
   return (await db.prepare(
-    `SELECT b.id FROM businesses b
+    `SELECT b.id FROM businesses b LEFT JOIN career_sources s ON s.business_id = b.id
      WHERE b.archived_at IS NULL AND b.website_url IS NOT NULL
-       AND EXISTS (SELECT 1 FROM audits a WHERE a.business_id = b.id)
-       AND (NOT EXISTS (SELECT 1 FROM career_sources s WHERE s.business_id = b.id)
-            OR EXISTS (SELECT 1 FROM career_sources s WHERE s.business_id = b.id AND s.status IN ('none','error') AND s.next_check_at <= ?))
-     ORDER BY b.created_at, b.id LIMIT ?`,
+       AND COALESCE((SELECT CASE WHEN json_valid(a.site_links) THEN json_extract(a.site_links, '$.careers') END
+                     FROM audits a WHERE a.business_id = b.id ORDER BY a.created_at DESC LIMIT 1), '') <> ''
+       AND (s.business_id IS NULL OR (s.status IN ('none','error') AND s.next_check_at <= ?))
+     ORDER BY s.business_id IS NOT NULL, CASE WHEN s.business_id IS NULL THEN b.created_at END DESC, s.next_check_at, b.id LIMIT ?`,
   ).bind(nowIso, limit).all<{ id: string }>()).results;
 }
 
