@@ -8,6 +8,10 @@ export const atsLabel = (a: Ats | null) => (a ? ATS_LABEL[a] : "");
 /** How old a role is, in words. A role found on the first look at a board has no known age unless the board dated it (same rule as the Today queue). */
 export function ageLabel(p: Pick<JobPosting, "posted_at" | "first_seen_at" | "baseline">, now: Date): string {
   const days = (iso: string) => Math.max(0, Math.floor((now.getTime() - Date.parse(iso)) / DAY));
+  // A date we can't read must not print as "NaN days" or "Invalid Date".
+  const ok = (iso: string) => Number.isFinite(Date.parse(iso));
+  if (p.posted_at && !ok(p.posted_at)) return "Age unknown";
+  if (!p.posted_at && !ok(p.first_seen_at)) return "Age unknown";
   if (p.posted_at) { const d = days(p.posted_at); return d === 0 ? "Posted today" : `Posted ${plural(d, "day")} ago`; }
   if (p.baseline) return `Age unknown (on their board since at least ${new Date(p.first_seen_at).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })})`;
   const d = days(p.first_seen_at);

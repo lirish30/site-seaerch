@@ -198,7 +198,6 @@ export default function LeadDetail() {
             {b.phone && <a className="chip-link" href={`tel:${b.phone}`}>{b.phone}</a>}
             {links.map(([k, u]) => <a key={k} className={`chip-link${k === "careers" ? " hi" : ""}`} href={u} target="_blank" rel="noreferrer">{LINK_LABEL[k] ?? k} ↗</a>)}
           </div>
-          <JobsPanel businessId={b.id} />
         </div>
         <div className="lead-actions">
           {!d.suppressed && (
@@ -222,6 +221,7 @@ export default function LeadDetail() {
         {b.last_error && <p className="error">⚠ {b.last_error}</p>}
         {msg && <p className="muted" role="status">{msg}</p>}
       </header>
+      <JobsPanel key={b.id} businessId={b.id} />
 
       <div className="lead-grid">
         <div className="lead-main">

@@ -23,6 +23,11 @@ describe("ageLabel", () => {
   it("does not claim an age for a role found on the first look at a board", () => {
     expect(ageLabel(p({ baseline: true, first_seen_at: day(3) }), NOW)).toBe("Age unknown (on their board since at least Oct 11)");
   });
+  it("says the age is unknown when the date it would use does not parse", () => {
+    expect(ageLabel(p({ posted_at: "garbage" }), NOW)).toBe("Age unknown");
+    expect(ageLabel(p({ baseline: true, first_seen_at: "garbage" }), NOW)).toBe("Age unknown");
+    expect(ageLabel(p({ first_seen_at: "garbage" }), NOW)).toBe("Age unknown");
+  });
 });
 
 describe("sourceLine", () => {

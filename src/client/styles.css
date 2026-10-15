@@ -110,6 +110,7 @@ h4.sub { margin:14px 0 6px; font-size:12px; text-transform:uppercase; letter-spa
 ul.plain { list-style:none; padding:0; margin:0; } ul.plain li { padding:4px 0; word-break:break-word; }
 
 .lead-head { display:grid; grid-template-columns:1fr auto; gap:12px 16px; margin-bottom:16px; }
+.jobs-panel { margin-bottom:16px; }
 .lead-head h2 { margin:0 0 2px; } .lead-head p { margin:0; }
 .lead-head .error, .lead-head [role=status] { grid-column:1 / -1; }
 .lead-actions { display:flex; gap:8px; flex-wrap:wrap; align-items:flex-start; justify-content:flex-end; }

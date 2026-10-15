@@ -28,9 +28,9 @@ export default function JobsPanel({ businessId }: { businessId: string }) {
   // Only roles the board showed recently count as open, same as the server routes and drafts.
   const open = data?.postings.filter((p) => !p.closed_at && p.role_kind && seenRecently(p, now)) ?? [];
   return (
-    <section className="card" aria-label="Open roles">
+    <section className="card jobs-panel" aria-label="Open roles">
       <div className="row between"><h3>Open roles</h3><button onClick={check} disabled={busy}>{busy ? "Checking…" : "Check now"}</button></div>
-      <p className="muted small">{data ? sourceLine(data.source) : "Loading…"}</p>
+      <p className="muted small">{data ? sourceLine(data.source) : err ? "Couldn't load their open roles." : "Loading…"}</p>
       {err && <p className="error" role="alert">{err}</p>}
       {data && data.source?.status === "active" && open.length === 0 && <p className="muted">No open roles in web, design, SEO, CRO or marketing right now.</p>}
       {open.length > 0 && (
