@@ -31,7 +31,7 @@ describe("cro-eval", () => {
     expect(r.metrics[S].pages).toMatchObject({ calls: 2, items: 2, dropped: 0, quoted: 2 });
     expect(r.metrics[H].synthesize).toMatchObject({ items: 4, dropped: 2, quoted: 0 });
     expect(r.metrics[S].synthesize).toMatchObject({ items: 4, dropped: 0, quoted: 2 });
-    expect(r.md).toContain("| claude-haiku-4-5 | pages | 2 | 0% | 0 | 100% | 0% |");
+    expect(r.md).toContain("| claude-haiku-5-5 | pages | 2 | 0% | 0 | 100% | 0% |");
     expect(r.verdicts).toEqual({ model: false, pages: true, synthesize: true });
     expect(r.md).toContain("Business-model agreement: 2/2");
     expect(r.md).toContain('set CRO_MODELS.pages = "claude-sonnet-5-5"');

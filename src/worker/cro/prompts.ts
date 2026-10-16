@@ -76,7 +76,7 @@ export const SYNTH_TOOL: Anthropic.Tool = { name: "submit_roadmap", description:
 }) };
 
 // ---- system prompts (stable, marked for caching) ----
-// Caching only engages when the cached prefix reaches the model's minimum (Haiku 4.5: 4,096 tokens). We do not measure or
+// Caching only engages when the cached prefix reaches the model's minimum (Haiku 5.5's minimum is not measured here). We do not measure or
 // guarantee that today; cache_control stays in place so it applies whenever the prefix is long enough.
 const KNOWLEDGE = `CONVERSION PRINCIPLES (apply them as concrete checks; never name the frameworks to the business owner):
 - Value proposition (LIFT): within 5 seconds can a visitor tell what this business does, for whom, where, and why them over others?

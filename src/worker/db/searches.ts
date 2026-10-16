@@ -26,6 +26,16 @@ export async function setSearchStatus(db: D1Database, id: string, status: Search
   await db.prepare(`UPDATE searches SET status = ?, error = ? WHERE id = ?`).bind(status, error, id).run();
 }
 
+/** A listing fetch attempt failed and Workflows will retry it: count it and keep the reason where the progress card can show it. */
+export async function recordFetchRetry(db: D1Database, id: string, error: string) {
+  await db.prepare(`UPDATE searches SET fetch_attempts = fetch_attempts + 1, error = ? WHERE id = ?`).bind(error.slice(0, 500), id).run();
+}
+
+/** The fetch got through: forget the retry error (the attempt count stays as history). */
+export async function clearFetchRetryError(db: D1Database, id: string) {
+  await db.prepare(`UPDATE searches SET error = NULL WHERE id = ? AND status = 'running'`).bind(id).run();
+}
+
 export async function setFoundCount(db: D1Database, id: string, n: number) {
   await db.prepare(`UPDATE searches SET found_count = ? WHERE id = ?`).bind(n, id).run();
 }

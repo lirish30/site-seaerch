@@ -1,9 +1,14 @@
 import type { Listing } from "../types";
 import type { Fetcher } from "../crawler/crawl";
-import { RetryableError, type ListingQuery, type ListingSource } from "./source";
+import { RateLimitedError, RetryableError, type ListingQuery, type ListingSource } from "./source";
 
 export const BRIGHTDATA_PAGE_SIZE = 20;
 const MAX_PAGES = 10;
+// Bright Data sometimes holds a connection open for minutes before a 524. Without a per-request limit the workflow step
+// hits its own timeout, which is enforced from outside the step, so no failure is recorded and the progress card just
+// spins. Abort each request, and stop paging once the whole search has used its time, well inside the step timeout.
+export const REQUEST_TIMEOUT_MS = 45_000;
+export const SEARCH_DEADLINE_MS = 120_000;
 const PLACE_ARRAYS = ["organic", "maps", "local_results", "places", "results"];
 
 const pick = (o: Record<string, unknown>, keys: string[]) => {
@@ -50,29 +55,43 @@ function itemsOf(json: unknown): Record<string, unknown>[] {
 }
 
 export class BrightDataListingSource implements ListingSource {
-  constructor(private o: { apiKey: string; zone: string; fetch: Fetcher }) {}
+  constructor(private o: { apiKey: string; zone: string; fetch: Fetcher; requestTimeoutMs?: number; deadlineMs?: number }) {}
 
   async search(q: ListingQuery) {
     const seen = new Set<string>();
     const listings: Listing[] = [];
     let requests = 0;
     const term = encodeURIComponent(`${q.businessType} in ${q.location}`);
+    const timeoutMs = this.o.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
+    const startedAt = Date.now();
     for (let p = 0; p < MAX_PAGES && listings.length < q.maxResults; p++) {
+      // Out of time: keep the pages already fetched rather than risk the step timing out and discarding them.
+      if (p > 0 && Date.now() - startedAt >= (this.o.deadlineMs ?? SEARCH_DEADLINE_MS)) break;
       const url = `https://www.google.com/maps/search/${term}/?brd_json=1&gl=us&hl=en${p ? `&start=${p * BRIGHTDATA_PAGE_SIZE}` : ""}`;
-      const res = await this.o.fetch("https://api.brightdata.com/request", {
-        method: "POST",
-        headers: { authorization: `Bearer ${this.o.apiKey}`, "content-type": "application/json" },
-        body: JSON.stringify({ zone: this.o.zone, url, format: "raw" }),
-      });
+      let res: Response;
+      let body: string;
       requests++;
-      const body = await res.text();
+      try {
+        // The signal stays live while the body is read, so a stalled response is cut off as well.
+        res = await this.o.fetch("https://api.brightdata.com/request", {
+          method: "POST",
+          headers: { authorization: `Bearer ${this.o.apiKey}`, "content-type": "application/json" },
+          body: JSON.stringify({ zone: this.o.zone, url, format: "raw" }),
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        body = await res.text();
+      } catch (e) {
+        const name = (e as { name?: string } | null)?.name;
+        if (name === "TimeoutError" || name === "AbortError") throw new RetryableError(`Bright Data request timed out after ${Math.round(timeoutMs / 1000)}s`);
+        throw e;
+      }
       // Bright Data reports an upstream (Google Maps) failure as HTTP 200 with an empty body and the real
       // status in x-brd-status-code, so res.ok alone is not enough.
       const status = Number(res.headers.get("x-brd-status-code")) || res.status;
       if (!res.ok || status >= 400) {
         const code = res.headers.get("x-brd-error-code");
         const msg = `Bright Data HTTP ${status}${code ? ` (${code})` : ""}: ${body.slice(0, 200) || res.headers.get("x-brd-error") || "no body"}`;
-        throw status === 429 || status >= 500 ? new RetryableError(msg) : new Error(msg);
+        throw status === 429 ? new RateLimitedError(msg) : status >= 500 ? new RetryableError(msg) : new Error(msg);
       }
       if (!body.trim()) throw new RetryableError("Bright Data returned an empty response");
       let json: unknown;

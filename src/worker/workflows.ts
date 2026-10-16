@@ -15,8 +15,11 @@ import { CroFatalError, anthropicCroCaller } from "./cro/ai";
 import { puppeteerCroBrowser } from "./cro/capture";
 
 const RETRY = { retries: { limit: 3, delay: "10 seconds" as const, backoff: "exponential" as const }, timeout: "5 minutes" as const };
-// Bright Data's Maps scraper fails in bursts (HTTP 502 maps_ajax_failed), so the listing fetch backs off longer: ~15 min of retries.
-const LISTING_RETRY = { retries: { limit: 5, delay: "30 seconds" as const, backoff: "exponential" as const }, timeout: "5 minutes" as const };
+// Bright Data's Maps scraper fails in bursts (HTTP 502 maps_ajax_failed / no_ready_cookies), but a search that is still
+// failing after a few minutes is not going to recover on its own: retry 3 times (20s, 40s, 80s apart), then fail with the
+// real error so the user can re-run it. The step timeout sits above BrightDataListingSource's own deadline (120s + one
+// 45s request), so the source gives up first and the failure is recorded rather than the engine killing the step silently.
+export const LISTING_RETRY = { retries: { limit: 3, delay: "20 seconds" as const, backoff: "exponential" as const }, timeout: "4 minutes" as const };
 
 // The CRO AI steps run up to four sequential long calls (the roadmap) or one big call per page, so they get longer than the default.
 const AI_RETRY = { ...RETRY, timeout: "10 minutes" as const };
@@ -34,7 +37,7 @@ export function depsFromEnv(env: Env): LeadDeps {
 export function adaptStep(step: WorkflowStep): StepLike {
   return {
     // A refusal or 4xx fails the step at once instead of being retried (and paid for) three more times.
-    do: (name, fn) => step.do(name, name === "fetch-listings" ? LISTING_RETRY : AI_STEP.test(name) ? AI_RETRY : RETRY,
+    do: (name, fn) => step.do(name, /^fetch-listings(-\d+)?$/.test(name) ? LISTING_RETRY : AI_STEP.test(name) ? AI_RETRY : RETRY,
       (async () => { try { return await fn(); } catch (e) { throw e instanceof CroFatalError ? new NonRetryableError(e.message) : e; } }) as any) as any,
     sleep: (name, ms) => step.sleep(name, ms),
   };

@@ -1,12 +1,15 @@
 import type { CroStage } from "./types";
 
-export type CroModelId = "claude-haiku-4-5" | "claude-sonnet-5-5";
+export type CroModelId = "claude-haiku-5-5" | "claude-sonnet-5-5";
 // Per-stage model. Haiku by default; a stage moves to Sonnet 5.5 only where scripts/cro-eval.ts shows Haiku falls short.
-export const CRO_MODELS: Record<CroStage, CroModelId> = { model: "claude-haiku-4-5", pages: "claude-haiku-4-5", synthesize: "claude-haiku-4-5" };
+export const CRO_MODELS: Record<CroStage, CroModelId> = { model: "claude-haiku-5-5", pages: "claude-haiku-5-5", synthesize: "claude-haiku-5-5" };
+// Thinking depth per stage. Classifying the business is simple; reading pages and writing the roadmap are judgement calls.
+export type CroEffort = "low" | "medium" | "high";
+export const CRO_EFFORT: Record<CroStage, CroEffort> = { model: "low", pages: "medium", synthesize: "high" };
 
-/** USD per million tokens. */
-export const MODEL_PRICES: Record<CroModelId, { in: number; out: number }> = {
-  "claude-haiku-4-5": { in: 1, out: 5 },
+/** USD per million tokens. `long` is the rate when the whole prompt (uncached + cached) exceeds `longOver` tokens. */
+export const MODEL_PRICES: Record<CroModelId, { in: number; out: number; longOver?: number; long?: { in: number; out: number } }> = {
+  "claude-haiku-5-5": { in: 0.1, out: 0.5, longOver: 100_000, long: { in: 0.5, out: 2.5 } },
   "claude-sonnet-5-5": { in: 2, out: 10 },
 };
 
