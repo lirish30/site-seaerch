@@ -3,7 +3,7 @@ import type { IconName } from "./components/iconMarkup";
 import type { TodayItem, TodayKind } from "./types";
 
 export const TODAY_KIND_LABEL: Record<TodayKind, string> = {
-  follow_up_due: "Follow-up", draft_unsent: "Unsent draft", stalled_deal: "Stalled deal", starred_idle: "Saved", promising_quick_scan: "Promising",
+  follow_up_due: "Follow-up", draft_unsent: "Unsent draft", stalled_deal: "Stalled deal", starred_idle: "Saved", promising_quick_scan: "Promising", open_role: "Hiring",
 };
 
 /** The Snooze buttons, in days. The API accepts 1 to 30. */

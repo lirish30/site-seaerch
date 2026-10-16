@@ -25,6 +25,7 @@ import Usage from "./pages/settings/Usage";
 import Footer from "./pages/settings/Footer";
 import Scores from "./pages/settings/Scores";
 import Shell from "./components/Shell";
+import Jobs from "./pages/Jobs";
 
 // Every page draws its own header and `.page-body` inside the panel.
 export default function App() {
@@ -39,6 +40,7 @@ export default function App() {
             <Route path="/searches" element={<SearchHistory />} />
             <Route path="/searches/:id" element={<SearchDetail />} />
             <Route path="/today" element={<Today />} />
+            <Route path="/jobs" element={<Jobs />} />
             <Route path="/leads" element={<AllLeads />} />
             <Route path="/leads/:id" element={<LeadDetail />} />
             <Route path="/promising" element={<Promising />} />

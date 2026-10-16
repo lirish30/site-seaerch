@@ -114,7 +114,7 @@ export type TodayCandidate = Business & { latest_draft_at: string | null; latest
 
 /**
  * Non-archived leads that could produce a Today item as of `nowIso`, from one query: a due follow-up, a new/reviewed lead with a draft,
- * a contacted/replied lead with a deal value, a starred open lead, or a quick-scanned lead whose latest audit scores at least `minQuickScore`.
+ * a contacted/replied lead with a deal value, a starred open lead, a quick-scanned lead whose latest audit scores at least `minQuickScore`, or a new/reviewed lead with an open role in the field.
  * The draft time and latest score are sub-selects so no per-lead query is needed; the caller applies the finer rules.
  */
 export async function listTodayCandidates(db: D1Database, nowIso: string, minQuickScore: number): Promise<TodayCandidate[]> {
@@ -127,6 +127,7 @@ export async function listTodayCandidates(db: D1Database, nowIso: string, minQui
       OR (lead_status IN ('contacted','replied') AND deal_value IS NOT NULL)
       OR (starred_at IS NOT NULL AND ${open})
       OR (scan_stage = 'quick' AND ${open} AND ${latestScore} >= ?)
+      OR (lead_status IN ('new','reviewed') AND EXISTS (SELECT 1 FROM job_postings j WHERE j.business_id = businesses.id AND j.closed_at IS NULL AND j.role_kind IS NOT NULL))
     ) ORDER BY created_at, id`;
   const res = (await db.prepare(sql).bind(nowIso, minQuickScore).all<BusinessRow & { latest_draft_at: string | null; latest_score: number | null }>()).results;
   return res.map((r) => ({ ...fromBusinessRow(r), latest_draft_at: r.latest_draft_at ?? null, latest_score: r.latest_score ?? null }));
@@ -153,7 +154,7 @@ export async function setArchived(db: D1Database, id: string, archived: boolean)
 export async function deleteBusiness(db: D1Database, id: string) {
   await db.batch([
     db.prepare(`DELETE FROM cro_items WHERE cro_audit_id IN (SELECT id FROM cro_audits WHERE business_id = ?)`).bind(id),
-    ...["search_results", "audits", "contacts", "drafts", "people", "activity", "cro_audits", "audit_reports"].map((t) =>
+    ...["search_results", "audits", "contacts", "drafts", "people", "activity", "cro_audits", "audit_reports", "job_postings", "career_sources"].map((t) =>
       db.prepare(`DELETE FROM ${t} WHERE business_id = ?`).bind(id)),
     db.prepare(`DELETE FROM businesses WHERE id = ?`).bind(id),
   ]);

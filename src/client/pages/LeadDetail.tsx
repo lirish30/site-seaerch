@@ -19,6 +19,7 @@ import { REASONS, reasonLabel, suppressedMessage } from "../suppressionView";
 import { isSpendLimit, SPEND_LIMIT_REACHED } from "../spend";
 import EmailComposer, { type ComposerHandle } from "../components/EmailComposer";
 import InlineError from "../components/InlineError";
+import JobsPanel from "../components/JobsPanel";
 import type { Draft } from "../emailView";
 import type { CroResponse } from "../cro";
 import { NICHE_LABEL, OFFER_LABEL, STATUSES, type Activity, type Audit, type AuditChanges, type BestOffer, type Business, type Contact, type FitProfile, type FitResult, type LeadStatus, type LeadSuppression, type Person, type SuppressionReason } from "../types";
@@ -41,7 +42,7 @@ const ACTIVITY_LABEL: Record<string, string> = {
   note: "Note",
   status: "Status", archived: "Archived", restored: "Restored", website: "Website changed", reaudit: "Re-audit",
   score_flagged: "Score flagged", export: "Exported", draft: "Draft", cro_audit: "CRO audit", suppressed: "Suppressed", import: "Imported", bulk: "Bulk change",
-  today_done: "Marked done in Today", snoozed: "Snoozed in Today", starred: "Starred", unstarred: "Unstarred",
+  today_done: "Marked done in Today", snoozed: "Snoozed in Today", starred: "Starred", unstarred: "Unstarred", job_found: "New role spotted",
 };
 
 const TABS = ["overview", "issues", "plan", "email", "activity"] as const;
@@ -327,6 +328,7 @@ export default function LeadDetail() {
           {msg && <p className="muted" role="status">{msg}</p>}
         </div>}
       </header>
+      <JobsPanel key={b.id} businessId={b.id} />
 
       <nav className="lead-tabs" role="tablist" aria-label="Lead sections">
         <button role="tab" aria-selected={tab === "overview"} onClick={() => setTab("overview")}>Overview</button>

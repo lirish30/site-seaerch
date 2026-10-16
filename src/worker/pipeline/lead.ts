@@ -11,6 +11,7 @@ import { pocFor } from "../db/people";
 import { insertAudit, latestAudit } from "../db/audits";
 import { insertDraft, latestDraft } from "../db/drafts";
 import { listWorkSamples } from "../db/workSamples";
+import { bestOpenPosting } from "../db/jobs";
 import { matchSamples } from "../drafter/samples";
 import { getSettings } from "../db/settings";
 import { incrementProcessed } from "../db/searches";
@@ -41,6 +42,8 @@ export interface DraftOptions {
   tweak?: Tweak;
   /** Cite exactly these work samples. */
   sampleIds?: string[];
+  /** Mention the lead's verified open role when there is one. On by default. */
+  usePosting?: boolean;
 }
 
 export interface StepLike {
@@ -86,10 +89,15 @@ async function draftFor(deps: LeadDeps, businessId: string, o: DraftOptions = {}
   const samples = purpose === "full_time"
     ? matchSamples(allSamples, { category: business.category, niche: audit.niche, findings: audit.findings }, { pickIds: o.sampleIds, excludeIds: used })
     : [];
+  // Only a role the board showed us in the last 48 hours; the prompt may cite it, so it must still be true when the email is read.
+  // A rewrite of a vetted draft keeps the role only if that draft already names it, so a tweak never adds a claim the user did not approve.
+  const open = o.usePosting === false ? null : await bestOpenPosting(deps.db, businessId, deps.now().toISOString());
+  const openAt = open ? Date.parse(open.posted_at ?? (open.baseline ? "" : open.first_seen_at)) : NaN;
+  const posting = open && !(o.tweak && !current?.body.toLowerCase().includes(open.title.toLowerCase())) ? { title: open.title, url: open.url, openDays: Number.isFinite(openAt) ? Math.max(0, Math.floor((deps.now().getTime() - openAt) / 86_400_000)) : null } : null;
   const d = await generateDraft({
     settings, business, findings: audit.findings, offer, contacts, steeringNote, focus, tone: o.tone ?? null,
     niche: audit.niche, valueProposition: audit.ai_review?.value_proposition ?? null, poc: poc ? { name: poc.name, role: poc.role } : null,
-    purpose, samples,
+    purpose, samples, posting,
     revise: o.tweak && current ? { subject: current.subject, body: current.body, instruction: TWEAKS[o.tweak] } : undefined,
   }, deps.claude, pocContact?.id ?? null);
   await recordUsage(deps.db, "claude", 1, PRICES.claudePerDraft);
