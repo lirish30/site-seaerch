@@ -4,6 +4,8 @@ import { failureMessage, startSearchRun, type StartFailure, type StartResult } f
 
 // Bounds an unattended burst: one cron tick starts at most this many searches; the rest wait for the next tick.
 export const DEFAULT_MAX_PER_RUN = 3;
+// When the daily cron tick runs (UTC); must match `triggers.crons` in wrangler.jsonc (a test checks it).
+export const RADAR_CHECK_UTC = { hour: 13, minute: 17 } as const;
 // A blocked or failed radar retries tomorrow rather than skipping a whole interval.
 export const RETRY_DAYS = 1;
 

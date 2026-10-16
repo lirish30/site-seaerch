@@ -1,0 +1,146 @@
+/* New search (Figma "Find — New search"): numbered form steps on the left, a sticky Summary card on the right. Everything is scoped under .ns. */
+.ns-body { display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:24px; align-items:start; padding:28px; }
+.ns-steps { display:flex; flex-direction:column; gap:16px; min-width:0; }
+.ns button:focus-visible, .ns input:focus-visible, .ns select:focus-visible, .ns .ns-scan:has(input:focus-visible) { outline:2px solid var(--border-focus); outline-offset:2px; }
+.ns .ns-sr { position:absolute; opacity:0; width:0; height:0; margin:0; padding:0; border:0; pointer-events:none; }
+
+/* Step card */
+.ns .ns-step { display:flex; flex-direction:column; gap:16px; padding:22px; border:1px solid var(--border); border-radius:14px; background:var(--bg-surface); }
+.ns .ns-step-head { display:flex; align-items:center; gap:12px; min-height:42px; }
+.ns .ns-num { flex:none; display:grid; place-items:center; width:26px; height:26px; border-radius:50%; background:var(--bg-inverse); color:var(--text-inverse); font:500 12px/16px var(--font); }
+.ns .ns-step-title { flex:1; min-width:0; }
+.ns .ns-step-title h2 { margin:0; font-size:15px; line-height:22px; font-weight:600; letter-spacing:-.1px; }
+.ns .ns-step-title p { margin:1px 0 0; font-size:13px; line-height:19px; color:var(--text-2); }
+.ns .ns-count { flex:none; }
+.ns .ns-label { display:block; margin:0; font:500 13px/19px var(--font); color:var(--text); }
+
+/* 1 Where */
+.ns .ns-where { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:16px; align-items:end; }
+.ns .ns-field { display:flex; flex-direction:column; gap:6px; min-width:0; }
+.ns .ns-input { display:flex; align-items:center; gap:8px; height:38px; padding:0 12px; border:1px solid var(--border-strong); border-radius:8px; background:var(--bg-surface); color:var(--text-2); }
+.ns .ns-input:focus-within { border-color:var(--border-focus); }
+.ns .ns-input input, .ns .ns-search input { flex:1; min-width:0; width:100%; height:100%; margin:0; padding:0; border:0; border-radius:0; background:none; outline:none; color:var(--text); font:400 14px/21px var(--font); }
+.ns .ns-input input::placeholder, .ns .ns-search input::placeholder { color:var(--text-3); }
+.ns .ns-seg { display:flex; align-items:center; gap:2px; height:38px; padding:3px; border-radius:8px; background:var(--bg-muted); }
+.ns .ns-seg button, .ns .ns-seg input { flex:none; height:32px; margin:0; padding:6px 12.3px; border:0; border-radius:6px; background:none; color:var(--text-2); font:500 13px/19px var(--font); text-align:center; cursor:pointer; }
+.ns .ns-seg button:hover:not(:disabled) { background:none; color:var(--text); }
+.ns .ns-seg .on, .ns .ns-seg button.on:hover:not(:disabled) { background:var(--bg-surface); color:var(--text); box-shadow:var(--shadow-card); }
+.ns .ns-seg input { width:72px; cursor:text; outline:none; }
+.ns .ns-seg input:focus-visible { outline:2px solid var(--border-focus); outline-offset:0; }
+.ns .ns-seg input::placeholder { color:var(--text-3); }
+
+/* 2 What kind of businesses */
+.ns .ns-picker-wrap { display:flex; flex-direction:column; gap:16px; min-width:0; }
+.ns .ns-filter-row { display:flex; align-items:center; gap:8px; }
+.ns .ns-search { flex:1; min-width:0; display:flex; align-items:center; gap:8px; height:36px; margin:0; padding:0 12px; border:1px solid var(--border); border-radius:8px; background:var(--bg-surface); color:var(--text-3); font-weight:400; }
+.ns .ns-search:focus-within { border-color:var(--border-focus); }
+/* 13px in the filter box, 14px in the location box */
+.ns .ns-search input { font:400 13px/19px var(--font); }
+.ns .ns-search input::-webkit-search-cancel-button { display:none; }
+.ns .ns-hint { margin:-8px 0 0; font-size:12px; line-height:16px; font-weight:500; color:var(--text-3); }
+.ns .ns-selected { display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
+.ns .ns-selected-label { font:500 12px/16px var(--font); color:var(--text-3); }
+.ns .ns-pill { display:inline-flex; align-items:center; gap:6px; height:26px; padding:0 10px; border:0; border-radius:13px; background:var(--bg-inverse); color:var(--text-inverse); font:500 13px/19px var(--font); cursor:pointer; }
+.ns .ns-pill .icon { color:var(--text-3); }
+.ns .ns-filter-row .btn .icon { color:var(--text-2); }
+.ns .ns-pill:hover:not(:disabled) { background:var(--bg-inverse); opacity:.88; }
+.ns .ns-link { display:inline-flex; align-items:center; border:0; border-radius:4px; background:none; padding:0; color:var(--link); font:500 12px/16px var(--font); cursor:pointer; }
+.ns .ns-link:hover:not(:disabled) { background:none; text-decoration:underline; }
+.ns .ns-picker { display:flex; height:390px; border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+.ns .ns-groups { flex:none; width:250px; display:flex; flex-direction:column; gap:2px; padding:8px; border-right:1px solid var(--border); background:var(--bg-sidebar); overflow-y:auto; }
+.ns .ns-group { flex:none; display:flex; align-items:center; gap:8px; width:100%; height:32px; padding:0 10px; border:0; border-radius:7px; background:none; color:var(--text-2); font:400 13px/19px var(--font); text-align:left; cursor:pointer; }
+.ns .ns-group:hover:not(:disabled) { background:var(--bg-hover); }
+.ns .ns-group.on, .ns .ns-group.on:hover:not(:disabled) { background:var(--bg-surface); color:var(--text); font-weight:500; box-shadow:var(--shadow-card); }
+.ns .ns-group-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ns .ns-group-picked { padding:1px 6px; border-radius:6px; background:var(--signal); color:#fff; font:500 12px/16px var(--font); font-variant-numeric:tabular-nums; }
+.ns .ns-group-count { font:500 12px/16px var(--font); color:var(--text-3); font-variant-numeric:tabular-nums; }
+.ns .ns-types { flex:1; min-width:0; display:flex; flex-direction:column; gap:12px; padding:18px; }
+.ns .ns-types-head { flex:none; display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.ns .ns-types-head h3 { margin:0; font:500 13px/19px var(--font); color:var(--text); }
+.ns .ns-chips { flex:1; min-height:0; display:flex; flex-wrap:wrap; align-content:flex-start; gap:8px; overflow-y:auto; }
+.ns .ns-chip { flex:none; display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 12px; border:1px solid var(--border); border-radius:8px; background:var(--bg-surface); color:var(--text); font:400 13px/19px var(--font); cursor:pointer; }
+.ns .ns-chip:hover:not(:disabled) { background:var(--bg-muted); }
+.ns .ns-chip.on, .ns .ns-chip.on:hover:not(:disabled) { border-color:var(--signal); background:var(--signal-soft); color:var(--signal-strong); }
+.ns .ns-none { display:flex; flex-direction:column; align-items:flex-start; gap:8px; font-size:13px; line-height:19px; color:var(--text-2); }
+.ns .ns-none p { margin:0; }
+
+/* 3 How deep to look */
+.ns .ns-scans { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.ns .ns-scan { position:relative; display:flex; flex-direction:column; gap:8px; margin:0; padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--bg-surface); font-weight:400; cursor:pointer; }
+.ns .ns-scan:hover { border-color:var(--border-strong); }
+.ns .ns-scan.on, .ns .ns-scan.on:hover { padding:16.5px; border-color:var(--bg-inverse); background:var(--bg-muted); box-shadow:inset 0 0 0 .5px var(--bg-inverse); }
+.ns .ns-scan-top { display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; min-height:22px; }
+.ns .ns-scan-top b { font:500 14px/21px var(--font); color:var(--text); white-space:nowrap; }
+.ns .ns-radio { flex:none; width:18px; height:18px; border:1px solid var(--border-strong); border-radius:50%; background:var(--bg-surface); }
+.ns .ns-scan.on .ns-radio { border:5px solid var(--bg-inverse); }
+.ns .ns-scan-text { font-size:13px; line-height:19px; color:var(--text-2); }
+.ns .ns-scan-cost { color:var(--text-2); }
+
+/* 4 Keep watching */
+.ns .ns-repeat { display:flex; align-items:center; gap:8px; min-height:30px; font-size:13px; line-height:19px; color:var(--text-2); }
+.ns .ns-repeat label { margin:0; font-weight:400; }
+.ns .ns-select { position:relative; display:inline-flex; align-items:center; gap:6px; height:30px; padding:0 10px; border:1px solid var(--border); border-radius:8px; background:var(--bg-surface); color:var(--text-3); }
+.ns .ns-select:focus-within { outline:2px solid var(--border-focus); outline-offset:1px; }
+.ns .ns-select select { appearance:none; -webkit-appearance:none; width:auto; margin:0; padding:0; border:0; border-radius:0; background:none; outline:none; color:var(--text); font:500 13px/19px var(--font); cursor:pointer; field-sizing:content; }
+.ns .ns-select select:disabled { cursor:default; }
+.ns .ns-select .icon { pointer-events:none; }
+.ns .ns-repeat.off .ns-select { opacity:.55; }
+.ns .ns-repeat-hint { color:var(--text-3); }
+
+/* Summary */
+.ns .ns-summary { position:sticky; top:28px; border:1px solid var(--border); border-radius:14px; background:var(--bg-surface); box-shadow:var(--shadow-card); overflow:hidden; }
+.ns .ns-sum-head { margin:0; padding:16px 20px; border-bottom:1px solid var(--border); font-size:15px; line-height:22px; font-weight:600; letter-spacing:-.1px; }
+.ns .ns-rows { display:flex; flex-direction:column; gap:12px; margin:0; padding:16px 20px; }
+.ns .ns-row { display:flex; align-items:center; gap:8px; font-size:13px; line-height:19px; }
+.ns .ns-row .icon { color:var(--text-3); }
+.ns .ns-row dt { flex:1; min-width:0; color:var(--text-2); }
+.ns .ns-row dd { margin:0; max-width:60%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:500; color:var(--text); text-align:right; }
+.ns .ns-est { display:flex; flex-direction:column; gap:6px; padding:16px 20px; background:var(--bg-muted); }
+.ns .ns-est-label { font:500 12px/16px var(--font); color:var(--text-3); }
+.ns .ns-est-amount { display:flex; align-items:flex-end; gap:8px; }
+.ns .ns-est-amount strong { font-size:36px; line-height:44px; font-weight:600; letter-spacing:-1.2px; font-variant-numeric:tabular-nums; }
+.ns .ns-est-amount span { font-size:13px; line-height:19px; color:var(--text-3); }
+.ns .ns-est-time { font-size:13px; line-height:19px; color:var(--text-2); }
+.ns .ns-month { display:flex; flex-direction:column; gap:8px; padding:16px 20px; }
+.ns .ns-month-top { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:13px; line-height:19px; color:var(--text-2); }
+.ns .ns-month-top b { color:var(--text-2); }
+.ns .ns-meter { display:flex; height:6px; border-radius:3px; background:var(--bg-hover); overflow:hidden; }
+.ns .ns-meter .spent { background:var(--bg-inverse); }
+.ns .ns-meter .flight { background:var(--signal); }
+.ns .ns-month p { margin:0; font:500 12px/16px var(--font); color:var(--text-3); }
+.ns .ns-month p.over { color:var(--critical); }
+.ns .ns-act { display:flex; flex-direction:column; gap:10px; padding:0 20px 20px; }
+.ns .ns-go { width:100%; height:40px; border-radius:8px; }
+.ns .ns-go:disabled { opacity:.45; cursor:not-allowed; }
+.ns .ns-go .spinner { margin-right:2px; }
+.ns .ns-safe { display:flex; align-items:flex-start; gap:6px; margin:0; font:500 12px/16px var(--font); color:var(--text-3); }
+.ns .ns-safe .icon { margin-top:1.5px; }
+.ns .ns-note { margin:0; padding:8px 10px; border-radius:8px; font-size:13px; line-height:19px; }
+.ns .ns-note.ok { background:var(--positive-soft); color:var(--positive); }
+.ns .ns-note.err { background:var(--critical-soft); color:var(--critical); }
+
+/* Narrow: one column, the Summary (and its button) after the form */
+@media (max-width: 1100px) {
+  .ns-body { grid-template-columns:minmax(0,1fr); }
+  .ns .ns-summary { position:static; }
+}
+@media (max-width: 900px) {
+  .ns-body { padding:16px; gap:16px; }
+  .ns .ns-step { padding:16px; }
+}
+@media (max-width: 700px) {
+  .ns .ns-where { grid-template-columns:minmax(0,1fr); }
+  .ns .ns-seg button, .ns .ns-seg input { flex:1; padding-left:0; padding-right:0; min-width:0; }
+  .ns .ns-seg input { width:auto; }
+  .ns .ns-scans { grid-template-columns:minmax(0,1fr); }
+  .ns .ns-filter-row { flex-wrap:wrap; }
+  .ns .ns-search { flex-basis:100%; }
+  .ns .ns-picker { flex-direction:column; height:auto; }
+  .ns .ns-groups { width:auto; flex-direction:row; border-right:0; border-bottom:1px solid var(--border); overflow-x:auto; }
+  .ns .ns-group { width:auto; white-space:nowrap; }
+  .ns .ns-types { height:300px; }
+  .ns .ns-repeat { flex-wrap:wrap; }
+}
+
+/* Find sidebar: the Recent / Running now label sits 16px under Import leads (12px spacer between 2px gaps in the Figma) */
+.sidebar .side-head.find-label { margin-top:14px; }

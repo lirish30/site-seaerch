@@ -5,7 +5,8 @@ import {
   MAX_RADARS, addDays, countRadars, createRadar, deleteRadar, getRadar, isDuplicateMarket, listRadars, radarExists, updateRadar,
 } from "../db/radar";
 import { checkSearchGuards, failureResponse, searchWorkflowStarter } from "../search-start";
-import { runRadar, type RadarDeps } from "../radar-run";
+import { runRadar, DEFAULT_MAX_PER_RUN, RADAR_CHECK_UTC, type RadarDeps } from "../radar-run";
+import { checkSpend } from "../cost";
 
 const NewRadar = z.object({
   location: z.string().trim().min(2),
@@ -15,8 +16,10 @@ const NewRadar = z.object({
   intervalDays: z.number().int().min(7).max(90).default(30),
   runNow: z.boolean().default(false),
 });
-const PatchRadar = z.object({ enabled: z.boolean().optional(), intervalDays: z.number().int().min(7).max(90).optional() })
-  .refine((v) => v.enabled !== undefined || v.intervalDays !== undefined, { message: "nothing to update" });
+const PatchRadar = z.object({
+  enabled: z.boolean().optional(), intervalDays: z.number().int().min(7).max(90).optional(),
+  radiusKm: z.number().min(1).max(100).optional(), maxResults: z.number().int().min(1).max(200).optional(),
+}).refine((v) => Object.values(v).some((x) => x !== undefined), { message: "nothing to update" });
 
 const DUPLICATE = "a radar for this location and business type already exists";
 
@@ -27,6 +30,12 @@ const deps = (env: Env): RadarDeps => ({
 export const radarRoutes = new Hono<{ Bindings: Env }>();
 
 radarRoutes.get("/", async (c) => c.json(await listRadars(c.env.DB)));
+
+/** The fixed rules the Radar page states: how many radars, how many start per daily check, when it runs, and the monthly limit each run obeys. */
+radarRoutes.get("/info", async (c) => {
+  const { limit } = await checkSpend(c.env.DB, 0);
+  return c.json({ maxRadars: MAX_RADARS, maxPerDay: DEFAULT_MAX_PER_RUN, checkAtUtc: RADAR_CHECK_UTC, monthlyLimitUsd: limit });
+});
 
 radarRoutes.post("/", async (c) => {
   const parsed = NewRadar.safeParse(await c.req.json().catch(() => ({})));
@@ -60,7 +69,7 @@ radarRoutes.patch("/:id", async (c) => {
   if (!parsed.success) return c.json({ error: parsed.error.issues.map((i) => i.message).join("; ") }, 400);
   const radar = await getRadar(c.env.DB, c.req.param("id"));
   if (!radar) return c.json({ error: "not found" }, 404);
-  const { enabled, intervalDays } = parsed.data;
+  const { enabled, intervalDays, radiusKm, maxResults } = parsed.data;
   const now = new Date();
   const interval = intervalDays ?? radar.interval_days;
   let nextRunAt: string | undefined;
@@ -68,7 +77,7 @@ radarRoutes.patch("/:id", async (c) => {
   if (enabled === true && !radar.enabled) nextRunAt = addDays(now, interval);
   // A shorter interval pulls the next run in; a longer one never postpones it.
   else if (intervalDays !== undefined && addDays(now, interval) < radar.next_run_at) nextRunAt = addDays(now, interval);
-  await updateRadar(c.env.DB, radar.id, { enabled, intervalDays, nextRunAt });
+  await updateRadar(c.env.DB, radar.id, { enabled, intervalDays, nextRunAt, radiusKm, maxResults });
   return c.json((await getRadar(c.env.DB, radar.id))!);
 });
 

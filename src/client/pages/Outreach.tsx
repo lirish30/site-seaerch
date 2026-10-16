@@ -66,7 +66,7 @@ export default function Outreach() {
     try { await fn(); } catch (e) { setErr(e instanceof ApiError ? e.message : (e as Error).message || "That didn't work."); } finally { setBusy(""); }
   }
   const gmail = (it: Item) => run("gmail", async () => {
-    await api.post(`/leads/${it.row.business.id}/gmail-draft`, { attachReport: true });
+    await api.post(`/leads/${it.row.business.id}/gmail-draft`, {});
     setNote("Saved to your Gmail drafts. It hasn't been sent.");
   });
   const copyMark = (it: Item) => run("copy", async () => {

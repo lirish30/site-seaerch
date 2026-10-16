@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../env";
 import { getSettings, saveSettings } from "../db/settings";
-import { monthUsage } from "../db/usage";
+import { monthlySpend, monthUsage } from "../db/usage";
 import { parseSignature, renderSignatureHtml, renderSignatureText, safeImageUrl, safeUrl } from "../email/signature";
 
 // The logo is embedded in a public page, so only a plain https URL (or none) is accepted.
@@ -34,6 +34,7 @@ const S = z.object({
   role_title: z.string().max(200), bio: z.string().max(2000), availability: z.string().max(300),
   resume_url: optionalUrl, goal_line: z.string().max(500), signature_json: signatureJson,
   default_purpose: z.enum(["full_time", "freelance"]),
+  footer_freelance: z.number().int().min(0).max(1), footer_full_time: z.number().int().min(0).max(1), attach_audit_pdf: z.number().int().min(0).max(1),
 }).partial();
 
 export const settingsRoutes = new Hono<{ Bindings: Env }>();
@@ -41,6 +42,9 @@ export const settingsRoutes = new Hono<{ Bindings: Env }>();
 settingsRoutes.get("/", async (c) => c.json({
   settings: await getSettings(c.env.DB), usage: await monthUsage(c.env.DB, new Date().toISOString().slice(0, 7)),
 }));
+
+// Estimated spend for each of the last six months, for the Usage chart.
+settingsRoutes.get("/usage-history", async (c) => c.json({ months: await monthlySpend(c.env.DB, new Date().toISOString().slice(0, 7)) }));
 
 settingsRoutes.put("/", async (c) => {
   const p = S.safeParse(await c.req.json().catch(() => ({})));

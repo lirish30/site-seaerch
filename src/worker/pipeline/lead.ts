@@ -101,7 +101,7 @@ async function draftFor(deps: LeadDeps, businessId: string, o: DraftOptions = {}
     const row = await insertDraft(deps.db, {
       business_id: businessId, audit_id: audit.id, offer, steering_note: steeringNote, to_contact_id: d.to_contact_id,
       recipient_reason: d.recipient_reason, subject: v.subject, body: v.body, purpose, angle: v.angle,
-      include_footer: current && o.tweak ? current.include_footer : purpose === "freelance", variant_group: group, variant_index: n, created_at: at,
+      include_footer: current && o.tweak ? current.include_footer : (purpose === "freelance" ? settings.footer_freelance ?? 1 : settings.footer_full_time ?? 0) === 1, variant_group: group, variant_index: n, created_at: at,
     });
     first ??= row;
   }
