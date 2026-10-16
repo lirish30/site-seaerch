@@ -9,6 +9,7 @@ import Radar from "./pages/Radar";
 import Promising from "./pages/Promising";
 import Import from "./pages/Import";
 import Today from "./pages/Today";
+import Jobs from "./pages/Jobs";
 import Outreach from "./pages/Outreach";
 import SearchHistory from "./pages/SearchHistory";
 import SettingsHome from "./pages/settings/SettingsHome";
@@ -25,7 +26,6 @@ import Usage from "./pages/settings/Usage";
 import Footer from "./pages/settings/Footer";
 import Scores from "./pages/settings/Scores";
 import Shell from "./components/Shell";
-import Jobs from "./pages/Jobs";
 
 // Every page draws its own header and `.page-body` inside the panel.
 export default function App() {

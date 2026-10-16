@@ -31,13 +31,12 @@ const STAGES: { key: "new" | "reviewed" | "contacted" | "replied" | "won" | "los
 
 /** Everything the Leads sidebar counts. Loaded when the sidebar appears and again whenever a lead changes. */
 function useSidebarData() {
-  const [data, setData] = useState<{ rows: LeadRow[]; archived: number; promising: number; jobs: number | undefined; filters: SavedFilter[] } | null>(null);
+  const [data, setData] = useState<{ rows: LeadRow[]; archived: number; promising: number; filters: SavedFilter[] } | null>(null);
   const load = useCallback(() => {
     Promise.all([
       api.get<LeadRow[]>("/leads?limit=500"), api.get<LeadRow[]>("/leads?limit=500&archived=1"),
       api.get<LeadRow[]>("/leads/promising").catch(() => [] as LeadRow[]), api.get<SavedFilter[]>("/leads/filters").catch(() => [] as SavedFilter[]),
-      api.get<{ jobs: unknown[] }>("/jobs").then((r) => r.jobs.length).catch(() => undefined),
-    ]).then(([rows, arch, promising, filters, jobs]) => setData({ rows, archived: arch.length, promising: promising.length, jobs, filters })).catch(() => setData(null));
+    ]).then(([rows, arch, promising, filters]) => setData({ rows, archived: arch.length, promising: promising.length, filters })).catch(() => setData(null));
   }, []);
   useEffect(() => {
     load();
@@ -61,7 +60,6 @@ function LeadsSidebar() {
       <SideItem to="/leads" icon="users" label="All leads" count={counts?.all} active={plain} />
       <SideItem to="/leads?starred=1" icon="star" label="Starred" count={counts?.starred} active={onLeads && current === "starred=1"} />
       <SideItem to="/promising" icon="sparkles" label="Needs full scan" count={d?.promising} active={pathname === "/promising"} />
-      <SideItem to="/jobs" icon="briefcase" label="Jobs" count={d?.jobs} active={pathname === "/jobs"} />
       <SideItem to="/leads?drafts=1" icon="mail" label="Drafts ready" count={d ? d.rows.filter(isDraftReady).length : undefined} active={onLeads && current === "drafts=1"} />
       <SideGroup id="stages" title="Stages">
         {STAGES.map((s) => <SideItem key={s.key} to={`/leads?status=${s.key}`} icon={s.icon} label={s.label} count={counts?.byStatus[s.key]} active={onLeads && current === `status=${s.key}`} />)}

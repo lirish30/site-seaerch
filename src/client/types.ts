@@ -100,10 +100,6 @@ export type TodayKind = "follow_up_due" | "draft_unsent" | "stalled_deal" | "sta
 /** One thing to do today (GET /api/today). `id` is `${kind}:${businessId}`; `due` is set for follow-ups only. */
 export interface TodayItem { id: string; kind: TodayKind; businessId: string; businessName: string; reason: string; due: string | null; priority: number; }
 
-/** GET /api/outreach: the leads in one outreach queue with each one's current draft, and the size of every queue. */
-export interface OutreachCounts { drafts: number; followups: number; contacted: number; replied: number; full_time: number; freelance: number }
-export type OutreachView = "drafts" | "followups" | "contacted" | "replied";
-
 export type Ats = "greenhouse" | "lever" | "ashby";
 export interface CareerSource {
   business_id: string; status: "active" | "none" | "error"; ats: Ats | null; token: string | null; careers_url: string | null;
@@ -114,3 +110,7 @@ export interface JobPosting {
   role_kind: "web_dev" | "design" | "seo" | "cro" | "marketing" | null; posted_at: string | null; first_seen_at: string; last_seen_at: string; closed_at: string | null; baseline: boolean;
 }
 export type OpenRole = JobPosting & { business_name: string };
+
+/** GET /api/outreach: the leads in one outreach queue with each one's current draft, and the size of every queue. */
+export interface OutreachCounts { drafts: number; followups: number; contacted: number; replied: number; full_time: number; freelance: number }
+export type OutreachView = "drafts" | "followups" | "contacted" | "replied";

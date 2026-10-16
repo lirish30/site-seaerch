@@ -47,8 +47,8 @@ export const KIND_VIEW: Record<TodayKind, { label: string; icon: IconName; tone:
   starred_idle: { label: "Saved", icon: "star", tone: "neutral", pill: "Saved", action: "Open" },
   open_role: { label: "Hiring", icon: "briefcase", tone: "signal", pill: "Hiring", action: "Open" },
 };
-/** The filter pills in display order. "Saved" and "Hiring" only show when there is something to show, so the row matches the design for everyone else. */
-export const FILTER_ORDER: TodayKind[] = ["follow_up_due", "draft_unsent", "stalled_deal", "open_role", "promising_quick_scan", "starred_idle"];
+/** The filter pills in display order. "Saved" and "Hiring" only show when there is something under them, so the row matches the design for everyone else. */
+export const FILTER_ORDER: TodayKind[] = ["follow_up_due", "draft_unsent", "stalled_deal", "promising_quick_scan", "starred_idle", "open_role"];
 
 export function filterPills(items: readonly TodayItem[]): { key: KindFilter; label: string; count: number }[] {
   const count = (k: TodayKind) => items.filter((i) => i.kind === k).length;
