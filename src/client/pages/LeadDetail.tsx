@@ -332,8 +332,6 @@ export default function LeadDetail() {
           {msg && <p className="muted" role="status">{msg}</p>}
         </div>}
       </header>
-      <JobsPanel key={b.id} businessId={b.id} />
-
       <nav className="lead-tabs" role="tablist" aria-label="Lead sections">
         <button role="tab" aria-selected={tab === "overview"} onClick={() => setTab("overview")}>Overview</button>
         <button role="tab" aria-selected={tab === "issues"} onClick={() => setTab("issues")}>Website issues{a && <span className="count">{issueCount}</span>}</button>
@@ -347,13 +345,17 @@ export default function LeadDetail() {
           {tab === "overview" && (a ? <>
             {a.mail_warning && <div className="notice" role="status"><span><Icon name="alert" size={14} /> {a.mail_warning}</span></div>}
             <Scorecard audit={a} business={b} fit={d.fit} profile={profile} urgency={d.urgency} />
+            <JobsPanel key={b.id} businessId={b.id} />
             <div className="pitch-row">
               <BestOfferCard offer={d.best_offer} fallbackName={OFFER_LABEL[a.offer] ?? a.offer} onWriteEmail={writeEmail} canWrite={!d.suppressed} />
               <NicheChecklist audit={a} />
             </div>
             <TopProblems audit={a} onSeeAll={() => setTab("issues")} />
             {(a.screenshots.desktop || a.screenshots.mobile) && <section className="section-card needs"><h3>Screenshots</h3><Screenshots leadId={b.id} audit={a} /></section>}
-          </> : <div className="section-card empty-state"><p>Audit in progress…</p><p className="muted small">Refresh in a minute or two.</p></div>)}
+          </> : <>
+            <JobsPanel key={b.id} businessId={b.id} />
+            <div className="section-card empty-state"><p>Audit in progress…</p><p className="muted small">Refresh in a minute or two.</p></div>
+          </>)}
 
           {tab === "issues" && (a
             ? <FindingsList findings={a.findings} scores={a.category_scores} added={d.changes?.added} selected={focus} onToggle={pickFocus}
