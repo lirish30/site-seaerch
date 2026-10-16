@@ -11,7 +11,8 @@ import { pocFor } from "../db/people";
 import { insertAudit, latestAudit } from "../db/audits";
 import { insertDraft, latestDraft } from "../db/drafts";
 import { listWorkSamples } from "../db/workSamples";
-import { bestOpenPosting } from "../db/jobs";
+import { bestOpenPosting, postingsByIds } from "../db/jobs";
+import { isCitable, parseKindOrder } from "../jobs/select";
 import { matchSamples } from "../drafter/samples";
 import { getSettings } from "../db/settings";
 import { incrementProcessed } from "../db/searches";
@@ -33,6 +34,10 @@ export const TWEAKS = {
   swap_samples: "Cite different work samples than the current draft does, if others are listed. Keep everything else.",
 } as const;
 export type Tweak = keyof typeof TWEAKS;
+// Added to a rewrite whose draft names a role that can no longer be claimed. No title is passed in: it is board text, and "remove" needs none.
+const DROP_ROLE = " The draft says they are hiring for a specific role, which is no longer open: remove that claim and every mention of the role (and of them hiring), then keep the rest.";
+/** Does the written text name the role? The prompt requires the exact title, so this is the same test the draft is held to later. */
+export const mentions = (v: { subject: string; body: string }, title: string) => `${v.subject}\n${v.body}`.toLowerCase().includes(title.toLowerCase());
 
 export interface DraftOptions {
   steeringNote?: string | null; focus?: number[]; tone?: TonePreset | null; croFocus?: string[];
@@ -90,15 +95,22 @@ async function draftFor(deps: LeadDeps, businessId: string, o: DraftOptions = {}
     ? matchSamples(allSamples, { category: business.category, niche: audit.niche, findings: audit.findings }, { pickIds: o.sampleIds, excludeIds: used })
     : [];
   // Only a role the board showed us in the last 48 hours; the prompt may cite it, so it must still be true when the email is read.
-  // A rewrite of a vetted draft keeps the role only if that draft already names it, so a tweak never adds a claim the user did not approve.
-  const open = o.usePosting === false ? null : await bestOpenPosting(deps.db, businessId, deps.now().toISOString());
+  // A fresh draft cites the shared pick (the same role Today names). A rewrite never adds a claim the user did not approve: it keeps
+  // the role its draft cites while that is still citable, and otherwise (closed, unseen, or usePosting off) is told to drop the claim.
+  const nowMs = deps.now().getTime();
+  const prior = o.tweak && current?.posting_id ? (await postingsByIds(deps.db, [current.posting_id])).get(current.posting_id) ?? null : null;
+  const dropClaim = !!(o.tweak && current?.posting_id) && (o.usePosting === false || !prior || !isCitable(prior, nowMs));
+  const open = o.tweak ? (dropClaim ? null : prior)
+    : o.usePosting === false ? null : await bestOpenPosting(deps.db, businessId, deps.now().toISOString(), parseKindOrder(settings.role_kind_order));
   const openAt = open ? Date.parse(open.posted_at ?? (open.baseline ? "" : open.first_seen_at)) : NaN;
-  const posting = open && !(o.tweak && !current?.body.toLowerCase().includes(open.title.toLowerCase())) ? { title: open.title, url: open.url, openDays: Number.isFinite(openAt) ? Math.max(0, Math.floor((deps.now().getTime() - openAt) / 86_400_000)) : null } : null;
+  const posting = open ? { title: open.title, url: open.url, openDays: Number.isFinite(openAt) ? Math.max(0, Math.floor((nowMs - openAt) / 86_400_000)) : null } : null;
+  // The role to check each variant for. After a drop the old role is still checked, so a rewrite that kept naming it stays flagged.
+  const claimable = open ?? (dropClaim ? prior : null);
   const d = await generateDraft({
     settings, business, findings: audit.findings, offer, contacts, steeringNote, focus, tone: o.tone ?? null,
     niche: audit.niche, valueProposition: audit.ai_review?.value_proposition ?? null, poc: poc ? { name: poc.name, role: poc.role } : null,
     purpose, samples, posting,
-    revise: o.tweak && current ? { subject: current.subject, body: current.body, instruction: TWEAKS[o.tweak] } : undefined,
+    revise: o.tweak && current ? { subject: current.subject, body: current.body, instruction: TWEAKS[o.tweak] + (dropClaim ? DROP_ROLE : "") } : undefined,
   }, deps.claude, pocContact?.id ?? null);
   await recordUsage(deps.db, "claude", 1, PRICES.claudePerDraft);
   // Variants share a timestamp, so the first-written leads; a full-time note goes without the mailing footer unless asked.
@@ -110,6 +122,7 @@ async function draftFor(deps: LeadDeps, businessId: string, o: DraftOptions = {}
       business_id: businessId, audit_id: audit.id, offer, steering_note: steeringNote, to_contact_id: d.to_contact_id,
       recipient_reason: d.recipient_reason, subject: v.subject, body: v.body, purpose, angle: v.angle,
       include_footer: current && o.tweak ? current.include_footer : (purpose === "freelance" ? settings.footer_freelance ?? 1 : settings.footer_full_time ?? 0) === 1, variant_group: group, variant_index: n, created_at: at,
+      posting_id: claimable && mentions(v, claimable.title) ? claimable.id : null,
     });
     first ??= row;
   }

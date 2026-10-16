@@ -19,7 +19,7 @@ const settings: Settings = {
   email_length: (process.env.EMAIL_LENGTH as Settings["email_length"]) ?? "short", cta_style: "mini_audit", logo_url: "",
   role_title: "Front-end developer", bio: "I build fast, accessible websites and care about the details. I have shipped sites for dental, trades and food businesses.",
   availability: "Open to full-time roles", resume_url: "https://example.com/resume.pdf",
-  goal_line: "A full-time front-end or web developer role", signature_json: "", default_purpose: purpose,
+  goal_line: "A full-time front-end or web developer role", signature_json: "", default_purpose: purpose, role_kind_order: "web_dev,cro,seo,design,marketing",
 };
 // Fixture work: the check fails if an email links to anything that is not one of these (or the resume).
 const SAMPLES: WorkSample[] = [

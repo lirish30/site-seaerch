@@ -1,0 +1,49 @@
+/* Job Watch: the lead page's Open roles card (.jc-), the Jobs page (.jb-), the composer's cited-role note and Settings' role priority list. */
+
+/* ---------- Open roles card ---------- */
+.jobs-card { padding:18px 22px; display:flex; flex-direction:column; gap:10px; }
+.jc-head { display:flex; align-items:center; gap:8px; min-height:28px; }
+.jc-head h3 { margin:0; font-size:15px; line-height:22px; font-weight:600; letter-spacing:-.1px; }
+.jc-icon { color:var(--signal-strong); }
+.jc-count { min-width:20px; padding:0 6px; border-radius:var(--pill); background:var(--signal-soft); color:var(--signal-strong); font:600 12px/20px var(--font); text-align:center; }
+.jc-sub { margin:0; font-size:12px; line-height:16px; font-weight:500; color:var(--text-3); }
+.jc-empty { margin:0; font-size:13px; line-height:19px; color:var(--text-2); }
+.jobs-card .error { margin:0; display:flex; align-items:center; gap:6px; }
+.jc-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; }
+.jc-list li { display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; column-gap:12px; padding:10px 0; border-top:1px solid var(--border); font-size:13px; line-height:19px; }
+.jc-list li:first-child { border-top:0; padding-top:4px; }
+.jc-title { display:inline-flex; align-items:center; gap:4px; min-width:0; color:var(--text); font-weight:500; text-decoration:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.jc-title:hover { color:var(--signal-strong); text-decoration:underline; }
+.jc-title .icon { flex:none; color:var(--text-3); }
+.jc-meta { color:var(--text-3); font-size:12px; line-height:16px; font-weight:500; }
+@media (max-width: 640px) { .jc-list li { grid-template-columns:minmax(0,1fr) auto; } .jc-meta { grid-column:1 / -1; grid-row:2; } }
+
+/* ---------- Jobs page ---------- */
+.jb-note { margin:0; max-width:760px; font-size:13px; line-height:19px; color:var(--text-2); }
+.jb-scroll { overflow-x:auto; border:1px solid var(--border); border-radius:12px; background:var(--bg-surface); flex:none; }
+.jb-table { min-width:880px; font-size:13px; line-height:19px; }
+.jb-row { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(0,1fr) 140px minmax(0,1.7fr) minmax(0,1fr); column-gap:12px; align-items:center; box-sizing:border-box; min-height:48px; padding:10px 16px; border-bottom:1px solid var(--border); }
+.jb-row:last-child { border-bottom-color:transparent; }
+.jb-row:not(.jb-head):hover { background:var(--bg-muted); }
+.jb-head { min-height:36px; padding-top:0; padding-bottom:0; background:var(--bg-muted); font:500 12px/16px var(--font); color:var(--text-2); }
+.jb-role a { display:inline-flex; align-items:center; gap:4px; max-width:100%; color:var(--text); font-weight:500; text-decoration:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.jb-role a:hover { color:var(--signal-strong); text-decoration:underline; }
+.jb-role .icon { flex:none; color:var(--text-3); }
+.jb-co a { color:var(--text-2); text-decoration:none; } .jb-co a:hover { color:var(--text); text-decoration:underline; }
+.jb-muted { color:var(--text-3); font-size:12px; line-height:16px; font-weight:500; }
+
+/* ---------- Composer: the role a draft cites, and the toggle for naming one ---------- */
+.c-role { display:flex; align-items:flex-start; gap:8px; margin:0; font-size:13px; line-height:19px; color:var(--text-2); }
+.c-role .icon { flex:none; margin-top:2px; color:var(--signal-strong); }
+.c-role a { color:var(--text); font-weight:500; }
+.c-role.warn { padding:10px 12px; border-radius:10px; background:var(--warning-soft, var(--bg-muted)); color:var(--text); }
+.c-role.warn .icon { color:var(--warning, currentColor); }
+.w-role { align-self:flex-start; }
+.w-role small { color:var(--text-3); font-size:12px; }
+
+/* ---------- Settings: open role priority ---------- */
+.kind-order { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+.kind-order li { display:flex; align-items:center; gap:8px; padding:8px 12px; border-top:1px solid var(--border); font-size:13px; line-height:19px; }
+.kind-order li:first-child { border-top:0; }
+.kind-order .ko-n { width:18px; color:var(--text-3); font-weight:600; font-variant-numeric:tabular-nums; }
+.kind-order .ko-l { flex:1; font-weight:500; }

@@ -30,3 +30,21 @@ export function sourceLine(s: CareerSource | null): string {
   if (s.status === "error") return `Couldn't read their careers page${s.last_error ? `: ${s.last_error}` : ""}`;
   return `Watching their ${atsLabel(s.ats)} board${s.last_error ? `. Last check failed: ${s.last_error}` : ""}`;
 }
+
+export const ROLE_KIND_LABEL = { web_dev: "Web development", cro: "Conversion (CRO)", seo: "SEO", design: "Web / UX design", marketing: "Marketing & growth" } as const;
+export type RoleKindKey = keyof typeof ROLE_KIND_LABEL;
+
+/** The stored comma list as a full ranking (unknown or repeated kinds dropped, missing ones last); mirrors parseKindOrder on the server. */
+export function kindOrder(csv: unknown): RoleKindKey[] {
+  const all = Object.keys(ROLE_KIND_LABEL) as RoleKindKey[];
+  const given = (typeof csv === "string" ? csv.split(",") : []).map((k) => k.trim()).filter((k, i, a): k is RoleKindKey => k in ROLE_KIND_LABEL && a.indexOf(k) === i);
+  return [...given, ...all.filter((k) => !given.includes(k))];
+}
+
+/** Moves one entry up (-1) or down (+1); out-of-range moves change nothing. */
+export function moveKind(order: RoleKindKey[], i: number, by: -1 | 1): RoleKindKey[] {
+  const j = i + by, out = [...order];
+  if (j < 0 || j >= out.length) return out;
+  [out[i], out[j]] = [out[j], out[i]];
+  return out;
+}

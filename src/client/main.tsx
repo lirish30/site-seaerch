@@ -10,6 +10,7 @@ import "./find-b.css";
 import "./find-c.css";
 import "./settings.css";
 import "./settings-b.css";
+import "./jobs.css";
 import "./public.css";
 
 createRoot(document.getElementById("root")!).render(<BrowserRouter><App /></BrowserRouter>);
