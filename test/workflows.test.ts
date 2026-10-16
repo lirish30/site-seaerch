@@ -32,7 +32,7 @@ describe("adaptStep retry config", () => {
       expect(listing.retries.limit).toBe(3);
       expect(listing.retries.delay).toBe("20 seconds");
       expect(listing.retries.backoff).toBe("exponential");
-      expect(listing.timeout).toBe("4 minutes");
+      expect(listing.timeout).toBe("5 minutes");
     }
     const other = await configFor("pagespeed");
     expect(other.retries.limit).toBe(3);

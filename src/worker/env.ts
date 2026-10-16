@@ -11,6 +11,8 @@ export interface Env {
   SESSION_SECRET: string;
   BRIGHTDATA_API_KEY: string;
   BRIGHTDATA_SERP_ZONE: string;
+  /** Optional: Google Places API (New) key. When set, listings come from Places first and Bright Data is the fallback. */
+  GOOGLE_PLACES_API_KEY?: string;
   PAGESPEED_API_KEY: string;
   ANTHROPIC_API_KEY: string;
   /** Optional: Google OAuth client for Gmail drafts and Drive export. */

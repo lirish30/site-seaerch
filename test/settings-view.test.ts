@@ -52,6 +52,7 @@ describe("usage page", () => {
     expect(usageRows([{ service: "claude_cro", units: 2, est_cost_usd: 0.5 }]).map((r) => r.service)).toContain("claude_cro");
     expect(usageRows([{ service: "newthing", units: 1, est_cost_usd: 1 }]).at(-1)?.service).toBe("newthing");
     expect(usageTotal(rows)).toEqual({ calls: 210, cost: 36.5 });
+    expect(usageRows([{ service: "places", units: 9, est_cost_usd: 0.3 }]).find((r) => r.service === "places")?.label).toBe("Google Maps listings (Places API)");
   });
   it("formats dollars and the share of the limit, uncapped", () => {
     expect(usd(41.2)).toBe("$41.20"); expect(usd(1234.5)).toBe("$1,234.50");

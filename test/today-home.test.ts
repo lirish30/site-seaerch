@@ -79,6 +79,7 @@ describe("Home numbers", () => {
       { service: "browser", units: 1, est_cost_usd: 4.7 }, { service: "newthing", units: 1, est_cost_usd: 1 }], 150);
     expect(v.rows.map((r) => [r.label, +r.usd.toFixed(2)])).toEqual([["Google Maps listings", 12.4], ["AI reviews & drafts", 24.1], ["Browser checks", 5.7]]);
     expect(+v.total.toFixed(2)).toBe(42.2);
+    expect(spendView([{ service: "brightdata", units: 1, est_cost_usd: 1 }, { service: "places", units: 1, est_cost_usd: 2 }], 150).rows[0]).toMatchObject({ label: "Google Maps listings", usd: 3 });
     expect(v.pct).toBeCloseTo(28.13, 1);
     expect(v.over).toBe(false);
     expect(spendView([{ service: "claude", units: 1, est_cost_usd: 200 }], 150)).toMatchObject({ pct: 100, over: true });

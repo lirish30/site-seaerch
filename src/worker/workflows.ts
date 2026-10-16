@@ -10,6 +10,8 @@ import { incrementProcessed } from "./db/searches";
 import { runSearch } from "./pipeline/search";
 import type { ScanStage } from "./types";
 import { BrightDataListingSource } from "./listings/brightdata";
+import { GooglePlacesListingSource } from "./listings/places";
+import { FallbackListingSource } from "./listings/fallback";
 import { runCroWithErrorHandling, type CroDeps, type CroParams } from "./cro/pipeline";
 import { CroFatalError, anthropicCroCaller } from "./cro/ai";
 import { puppeteerCroBrowser } from "./cro/capture";
@@ -17,9 +19,10 @@ import { puppeteerCroBrowser } from "./cro/capture";
 const RETRY = { retries: { limit: 3, delay: "10 seconds" as const, backoff: "exponential" as const }, timeout: "5 minutes" as const };
 // Bright Data's Maps scraper fails in bursts (HTTP 502 maps_ajax_failed / no_ready_cookies), but a search that is still
 // failing after a few minutes is not going to recover on its own: retry 3 times (20s, 40s, 80s apart), then fail with the
-// real error so the user can re-run it. The step timeout sits above BrightDataListingSource's own deadline (120s + one
-// 45s request), so the source gives up first and the failure is recorded rather than the engine killing the step silently.
-export const LISTING_RETRY = { retries: { limit: 3, delay: "20 seconds" as const, backoff: "exponential" as const }, timeout: "4 minutes" as const };
+// real error so the user can re-run it. The step timeout sits above the listing sources' own deadlines (each stops paging at 120s and
+// aborts a request at 45s, and the Places-then-Bright Data fallback can run both), so a source gives up first and the failure is
+// recorded rather than the engine killing the step silently.
+export const LISTING_RETRY = { retries: { limit: 3, delay: "20 seconds" as const, backoff: "exponential" as const }, timeout: "5 minutes" as const };
 
 // The CRO AI steps run up to four sequential long calls (the roadmap) or one big call per page, so they get longer than the default.
 const AI_RETRY = { ...RETRY, timeout: "10 minutes" as const };
@@ -84,7 +87,11 @@ export async function startLeadIdempotent(
 export class SearchWorkflow extends WorkflowEntrypoint<Env, SearchParams> {
   async run(event: WorkflowEvent<SearchParams>, step: WorkflowStep) {
     const env = this.env;
-    const source = new BrightDataListingSource({ apiKey: env.BRIGHTDATA_API_KEY, zone: env.BRIGHTDATA_SERP_ZONE, fetch: (u, i) => fetch(u, i) });
+    const brightData = new BrightDataListingSource({ apiKey: env.BRIGHTDATA_API_KEY, zone: env.BRIGHTDATA_SERP_ZONE, fetch: (u, i) => fetch(u, i) });
+    // Places is Google's own API, so it goes first; Bright Data (a Maps scrape that has been failing in bursts) is the fallback.
+    const source = env.GOOGLE_PLACES_API_KEY
+      ? new FallbackListingSource([new GooglePlacesListingSource({ apiKey: env.GOOGLE_PLACES_API_KEY, fetch: (u, i) => fetch(u, i) }), brightData])
+      : brightData;
     await runSearch({
       db: env.DB, source,
       startLead: (p) => startLeadIdempotent(env.LEAD_WORKFLOW, p),

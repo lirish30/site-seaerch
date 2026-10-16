@@ -9,6 +9,7 @@ import { insertDraft, updateDraftBody } from "../src/worker/db/drafts";
 import { insertAudit } from "../src/worker/db/audits";
 import type { StepLike } from "../src/worker/pipeline/lead";
 import type { Listing } from "../src/worker/types";
+import { PRICES } from "../src/worker/cost";
 
 const L = (id: string): Listing => ({ placeId: id, name: `B${id}`, category: null, address: null, phone: null, websiteUrl: null, mapsUrl: null, rating: null, reviewCount: null });
 
@@ -144,6 +145,15 @@ describe("runSearch", () => {
     expect(after.status).toBe("failed");
     expect(after.error).toMatch(/429/);
     expect(after.fetch_attempts).toBe(3);
+  });
+
+  it("records listing usage under the provider that served it, at that provider's price", async () => {
+    const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 50 });
+    const source = { search: async () => ({ listings: [L("PR-1")], requests: 3, provider: "places" as const }) };
+    const { step } = recorder();
+    await runSearch({ db: env.DB, source, startLead: async () => {} }, step, s.id);
+    const row = await env.DB.prepare(`SELECT units, est_cost_usd FROM usage WHERE service = 'places' ORDER BY created_at DESC LIMIT 1`).first<{ units: number; est_cost_usd: number }>();
+    expect(row).toEqual({ units: 3, est_cost_usd: 3 * PRICES.placesPerRequest });
   });
 
   it("non-retryable listing errors are not rethrown: the step returns ok:false and marks failed", async () => {
