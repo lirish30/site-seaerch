@@ -117,4 +117,38 @@ describe("BrightDataListingSource", () => {
     const err = await src.search({ location: "x", businessType: "y", radiusKm: 1, maxResults: 5 }).catch((e) => e);
     expect(isRetryable(err)).toBe(false);
   });
+  // Live incident (2026-10-15): Bright Data sometimes holds the connection open for minutes before a 524. With no
+  // per-request timeout the step ran to its own timeout, which the workflow engine kills from outside, so nothing
+  // was recorded and the progress card never said the fetch was failing.
+  const hangUntilAborted: (u: string, init?: RequestInit) => Promise<Response> = (_u, init) =>
+    new Promise((_res, rej) => init!.signal!.addEventListener("abort", () => rej(init!.signal!.reason)));
+
+  it("a request that hangs is aborted and surfaces as a retryable timeout error", async () => {
+    const src = new BrightDataListingSource({ apiKey: "K", zone: "Z", fetch: hangUntilAborted, requestTimeoutMs: 20 });
+    const err = await src.search({ location: "x", businessType: "y", radiusKm: 1, maxResults: 5 }).catch((e) => e);
+    expect(isRetryable(err)).toBe(true);
+    expect(isRateLimited(err)).toBe(false);
+    expect(err.message).toMatch(/timed out/i);
+  });
+
+  it("a hanging body read is aborted too", async () => {
+    const hangingBody = (_u: string, init?: RequestInit) => Promise.resolve(new Response(new ReadableStream({
+      start(c) { init!.signal!.addEventListener("abort", () => c.error(init!.signal!.reason)); },
+    })));
+    const src = new BrightDataListingSource({ apiKey: "K", zone: "Z", fetch: hangingBody, requestTimeoutMs: 20 });
+    const err = await src.search({ location: "x", businessType: "y", radiusKm: 1, maxResults: 5 }).catch((e) => e);
+    expect(isRetryable(err)).toBe(true);
+    expect(err.message).toMatch(/timed out/i);
+  });
+
+  it("stops paging at the overall deadline and returns what it has instead of running past the step timeout", async () => {
+    let calls = 0;
+    const page = (ids: string[]) => ({ organic: ids.map((id) => ({ title: `B${id}`, fid: id })) });
+    const src = new BrightDataListingSource({ apiKey: "K", zone: "Z", deadlineMs: 30, fetch: async () => {
+      await new Promise((r) => setTimeout(r, 40)); calls++; return Response.json(page([`p${calls}a`, `p${calls}b`]));
+    } });
+    const r = await src.search({ location: "x", businessType: "y", radiusKm: 1, maxResults: 100 });
+    expect(calls).toBe(1);
+    expect(r.listings).toHaveLength(2);
+  });
 });

@@ -87,7 +87,7 @@ describe("Home numbers", () => {
 });
 
 describe("Home sidebar", () => {
-  const search = (o: Partial<Search>): Search => ({ id: "s", location: "Boise, ID", business_type: "plumber", max_results: 50, status: "running", error: null, found_count: 0, processed_count: 0, created_at: new Date(1_000_000_000_000).toISOString(), new_only: 0, quick_scan: 0, ...o });
+  const search = (o: Partial<Search>): Search => ({ id: "s", location: "Boise, ID", business_type: "plumber", max_results: 50, status: "running", error: null, fetch_attempts: 0, found_count: 0, processed_count: 0, created_at: new Date(1_000_000_000_000).toISOString(), new_only: 0, quick_scan: 0, ...o });
   it("shows a search with no listings yet as finding listings at a small bar", () => {
     expect(runningCard(search({}), 1_000_000_020_000)).toEqual({ title: "Plumber in Boise, ID", status: "Finding listings on Google Maps…", pct: 15, finding: true });
   });

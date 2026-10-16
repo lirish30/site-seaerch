@@ -12,8 +12,8 @@ import { PRICES } from "../cost";
 export const LEAD_BATCH_SIZE = 5;
 export const LEAD_BATCH_DELAY_MS = 20_000;
 // After a 429 the fetch step stops retrying (30s apart would just hit the same limit) and the workflow sleeps this long
-// before trying the whole fetch again: 2, 5, then 10 minutes, then the search fails with the 429 message.
-export const RATE_LIMIT_WAITS_MS = [120_000, 300_000, 600_000];
+// before trying the whole fetch again: 1 then 3 minutes, then the search fails with the 429 message.
+export const RATE_LIMIT_WAITS_MS = [60_000, 180_000];
 
 export interface SearchDeps {
   db: D1Database; source: ListingSource; startLead: (p: { businessId: string; searchId: string; stage: ScanStage }) => Promise<void>;

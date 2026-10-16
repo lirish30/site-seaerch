@@ -8,7 +8,7 @@ import type { LeadRow, Radar, Search } from "../src/client/types";
 
 const NOW = new Date(2026, 9, 15, 12, 0, 0); // Oct 15 2026, local noon
 const at = (m: number, d: number, h = 9, min = 12) => new Date(2026, m, d, h, min).toISOString();
-const search = (o: Partial<Search> = {}): Search => ({ id: "s", location: "Boise, ID", business_type: "plumber", max_results: 50, status: "done", error: null, found_count: 50, processed_count: 50,
+const search = (o: Partial<Search> = {}): Search => ({ id: "s", location: "Boise, ID", business_type: "plumber", max_results: 50, status: "done", error: null, fetch_attempts: 0, found_count: 50, processed_count: 50,
   created_at: at(9, 15), new_only: 0, quick_scan: 0, ...o });
 const lead = (o: { score?: number | null; err?: string | null; site?: string | null; stage?: "quick" | "full"; name?: string }): LeadRow => ({
   business: { id: o.name ?? "x", name: o.name ?? "x", website_url: o.site === undefined ? "https://x.com" : o.site, last_error: o.err ?? null } as LeadRow["business"],

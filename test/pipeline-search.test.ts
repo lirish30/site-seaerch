@@ -127,7 +127,7 @@ describe("runSearch", () => {
     const step: StepLike = { do: (n, fn) => { names.push(n); return fn(); }, sleep: async (n, ms) => { sleeps.push([n, ms]); } };
     await runSearch({ db: env.DB, source, startLead: async () => {} }, step, s.id);
     expect(names.slice(0, 3)).toEqual(["fetch-listings", "fetch-listings-1", "fetch-listings-2"]);
-    expect(sleeps.filter(([n]) => n.startsWith("rate-limit-wait"))).toEqual([["rate-limit-wait-1", 120_000], ["rate-limit-wait-2", 300_000]]);
+    expect(sleeps.filter(([n]) => n.startsWith("rate-limit-wait"))).toEqual([["rate-limit-wait-1", 60_000], ["rate-limit-wait-2", 180_000]]);
     const after = (await getSearch(env.DB, s.id))!;
     expect(after.status).toBe("done");
     expect(after.fetch_attempts).toBe(2);
@@ -139,11 +139,11 @@ describe("runSearch", () => {
     const sleeps: string[] = [];
     const step: StepLike = { do: (_n, fn) => fn(), sleep: async (n) => { sleeps.push(n); } };
     await runSearch({ db: env.DB, source: new FakeListingSource(new RateLimitedError("Bright Data HTTP 429 (bucket_rate_limit)")), startLead: async () => {} }, step, s.id);
-    expect(sleeps).toEqual(["rate-limit-wait-1", "rate-limit-wait-2", "rate-limit-wait-3"]);
+    expect(sleeps).toEqual(["rate-limit-wait-1", "rate-limit-wait-2"]);
     const after = (await getSearch(env.DB, s.id))!;
     expect(after.status).toBe("failed");
     expect(after.error).toMatch(/429/);
-    expect(after.fetch_attempts).toBe(4);
+    expect(after.fetch_attempts).toBe(3);
   });
 
   it("non-retryable listing errors are not rethrown: the step returns ok:false and marks failed", async () => {
