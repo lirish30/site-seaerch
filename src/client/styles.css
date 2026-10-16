@@ -127,6 +127,7 @@ h4.sub { margin:14px 0 6px; font-size:11px; font-weight:600; text-transform:uppe
 ul.plain { list-style:none; padding:0; margin:0; } ul.plain li { padding:4px 0; word-break:break-word; }
 .kicker { margin:0; font-size:11px; line-height:14px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--text-3); }
 
+.jobs-panel { margin-bottom:16px; }
 /* Small shared pieces still used by older pages */
 .small { font-size:13px; }
 .tag { display:inline-block; padding:0 7px; border-radius:var(--pill); border:1px solid var(--border); background:var(--bg-muted); color:var(--text-2); font-size:11px; line-height:18px; font-weight:500; vertical-align:middle; }
@@ -233,6 +234,7 @@ button.tag { cursor:pointer; } button.tag:hover { border-color:var(--accent); }
 .chip-toggle { padding:6px 12px; font-size:13px; border-radius:var(--pill); white-space:nowrap; }
 .chip-toggle.on { background:var(--warn); border-color:var(--warn); color:#fff; }
 .today-kind.starred_idle { border-color:var(--warn); color:var(--warn); }
+.today-kind.open_role { border-color:var(--ok); color:var(--ok); }
 
 /* Email preview frame */
 .email-frame { display:block; width:100%; border:1px solid var(--line); border-radius:6px; background:#fff; }
