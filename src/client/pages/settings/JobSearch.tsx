@@ -1,4 +1,6 @@
 import SettingsPage, { Callout, Card, Count, Field, Row, Segmented } from "../../components/SettingsPage";
+import Icon from "../../components/Icon";
+import { kindOrder, moveKind, ROLE_KIND_LABEL } from "../../jobsView";
 import { useSettingsDoc } from "../../settingsData";
 
 const BIO_MAX = 400;
@@ -32,6 +34,17 @@ export default function JobSearch() {
       <Card title="Default purpose" sub="You can switch per email on the lead page.">
         <Segmented label="Write emails for" value={v("default_purpose") === "freelance" ? "freelance" : "full_time"} onChange={(p) => set("default_purpose", p)}
           options={[{ value: "full_time", label: "A full-time role", icon: "briefcase" }, { value: "freelance", label: "Freelance work", icon: "zap" }]} />
+      </Card>
+      <Card title="Open role priority" sub="When a company has several open roles, emails and Today name the one that ranks highest here, then the newest. Only roles their board showed in the last 2 days count.">
+        <ol className="kind-order">
+          {kindOrder(v("role_kind_order")).map((k, i, all) => (
+            <li key={k}>
+              <span className="ko-n">{i + 1}</span><span className="ko-l">{ROLE_KIND_LABEL[k]}</span>
+              <button type="button" className="btn icon-only sm" aria-label={`Move ${ROLE_KIND_LABEL[k]} up`} disabled={i === 0} onClick={() => set("role_kind_order", moveKind(all, i, -1).join(","))}><Icon name="chevron-up" size={14} /></button>
+              <button type="button" className="btn icon-only sm" aria-label={`Move ${ROLE_KIND_LABEL[k]} down`} disabled={i === all.length - 1} onClick={() => set("role_kind_order", moveKind(all, i, 1).join(","))}><Icon name="chevron-down" size={14} /></button>
+            </li>
+          ))}
+        </ol>
       </Card>
     </SettingsPage>
   );

@@ -1,5 +1,6 @@
 import { env } from "cloudflare:test";
 import { describe, it, expect, beforeEach } from "vitest";
+import { DEFAULT_KIND_ORDER as ORDER } from "../src/worker/jobs/select";
 import { createSearch } from "../src/worker/db/searches";
 import { upsertBusiness, deleteBusiness } from "../src/worker/db/businesses";
 import {
@@ -139,8 +140,8 @@ describe("reads", () => {
   it("bestOpenPosting ignores roles not seen in the last 48 hours and roles outside the field", async () => {
     const b = await lead();
     await applySync(env.DB, b.id, [row("1", "SEO", "seo"), row("2", "Welder")], T0, false);
-    expect((await bestOpenPosting(env.DB, b.id, "2026-10-15T11:00:00.000Z"))?.external_id).toBe("1");
-    expect(await bestOpenPosting(env.DB, b.id, "2026-10-17T00:00:00.000Z")).toBeNull();
+    expect((await bestOpenPosting(env.DB, b.id, "2026-10-15T11:00:00.000Z", ORDER))?.external_id).toBe("1");
+    expect(await bestOpenPosting(env.DB, b.id, "2026-10-17T00:00:00.000Z", ORDER)).toBeNull();
   });
 });
 

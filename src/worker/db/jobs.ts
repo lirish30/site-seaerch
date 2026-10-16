@@ -1,8 +1,8 @@
 import type { CareerSource, JobPosting, RoleKind } from "../types";
 import { chunks } from "./chunks";
+import { pickRole, postingState, SEEN_WITHIN_HOURS, type PostingState } from "../jobs/select";
 
-/** A board is only trusted for what it showed us recently: a role not seen for this long is not "open" for outreach purposes. */
-export const SEEN_WITHIN_HOURS = 48;
+export { SEEN_WITHIN_HOURS };
 
 type PostingRow = Omit<JobPosting, "baseline"> & { baseline: number };
 const toPosting = (r: PostingRow): JobPosting => ({ ...r, baseline: r.baseline === 1 });
@@ -123,12 +123,31 @@ export async function listOpenRelevantWithBusiness(db: D1Database, limit: number
   ).bind(limit).all<PostingRow & Pick<OpenRole, "business_name" | "domain" | "place_id" | "website_url">>()).results.map((r) => ({ ...toPosting(r), business_name: r.business_name, domain: r.domain, place_id: r.place_id, website_url: r.website_url }));
 }
 
-/** The newest open role in the field that the board showed us in the last SEEN_WITHIN_HOURS, or null. */
-export async function bestOpenPosting(db: D1Database, businessId: string, nowIso: string): Promise<JobPosting | null> {
+/** The role a draft may cite for this lead (see pickRole): open, in the field, seen within SEEN_WITHIN_HOURS, best kind first. */
+export async function bestOpenPosting(db: D1Database, businessId: string, nowIso: string, order: RoleKind[]): Promise<JobPosting | null> {
   const since = new Date(Date.parse(nowIso) - SEEN_WITHIN_HOURS * 3_600_000).toISOString();
-  const r = await db.prepare(
-    `SELECT * FROM job_postings WHERE business_id = ? AND closed_at IS NULL AND role_kind IS NOT NULL AND last_seen_at >= ?
-     ORDER BY COALESCE(posted_at, first_seen_at) DESC, id LIMIT 1`,
-  ).bind(businessId, since).first<PostingRow>();
-  return r ? toPosting(r) : null;
+  const rows = (await db.prepare(`SELECT * FROM job_postings WHERE business_id = ? AND closed_at IS NULL AND role_kind IS NOT NULL AND last_seen_at >= ?`)
+    .bind(businessId, since).all<PostingRow>()).results.map(toPosting);
+  return pickRole(rows, order, Date.parse(nowIso));
+}
+
+/** Postings by id, for rechecking what drafts cite. An id with no row (the lead was rebuilt, say) is simply absent. */
+export async function postingsByIds(db: D1Database, ids: string[]): Promise<Map<string, JobPosting>> {
+  const out = new Map<string, JobPosting>();
+  for (const part of chunks([...new Set(ids)]))
+    for (const r of (await db.prepare(`SELECT * FROM job_postings WHERE id IN (${part.map(() => "?").join(",")})`).bind(...part).all<PostingRow>()).results) out.set(r.id, toPosting(r));
+  return out;
+}
+
+/** The role a draft cites and whether it can still be claimed. `warning` is set exactly when it cannot, worded for the owner. */
+export interface CitedRole { id: string; title: string | null; url: string | null; state: PostingState; warning: string | null }
+
+export async function citedRole(db: D1Database, d: { posting_id: string | null }, nowMs: number): Promise<CitedRole | null> {
+  if (!d.posting_id) return null;
+  const p = (await postingsByIds(db, [d.posting_id])).get(d.posting_id) ?? null;
+  const state = p ? postingState(p, nowMs) : "closed", name = p ? `"${p.title}"` : "a role";
+  const warning = state === "open" ? null
+    : state === "closed" ? `This draft says they're hiring for ${name}, but that role has closed.`
+    : `This draft says they're hiring for ${name}, but their board hasn't shown it in the last ${SEEN_WITHIN_HOURS} hours, so it may be closed.`;
+  return { id: d.posting_id, title: p?.title ?? null, url: p?.url ?? null, state, warning };
 }

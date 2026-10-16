@@ -11,7 +11,7 @@ import type { CroItem, CroResponse } from "../cro";
 import type { Audit, Contact } from "../types";
 import {
   gapsMessage, mailtoHref, profileGaps, PURPOSE_HINT, PURPOSE_LABEL, purposeSwitchNotice, snippet, TWEAK_BUTTONS, variantTitle, wordCount,
-  type Draft, type Purpose, type WorkSample,
+  type Draft, type DraftRole, type Purpose, type WorkSample,
 } from "../emailView";
 
 const TONE_OPTIONS: [string, string][] = [["", "Default tone (from Settings)"], ["friendly_local", "Friendly local"], ["consultative", "Consultative expert"], ["direct", "Direct & short"], ["formal", "Formal"]];
@@ -55,6 +55,7 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
   const [profile, setProfile] = useState<Profile | null>(null); const [samples, setSamples] = useState<WorkSample[] | null>(null);
   const [preview, setPreview] = useState<Composed | null>(null);
   const [versions, setVersions] = useState<Draft[]>([]);
+  const [role, setRole] = useState<DraftRole | null>(null); const [useRole, setUseRole] = useState(true);
   const [croItems, setCroItems] = useState<CroItem[]>([]);
   const [tone, setTone] = useState(""); const [steer, setSteer] = useState("");
   const [ownFocus, setOwnFocus] = useState<Set<string>>(new Set());
@@ -87,6 +88,9 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
     }).catch(() => { setCroItems([]); setCroFocus(new Set()); });
   }, [leadId]);
   useEffect(() => { api.get<Draft[]>(`/leads/${leadId}/drafts`).then(setVersions).catch(() => setVersions([])); }, [leadId, draft?.id]);
+  // Which role the draft claims and whether that is still true. Reloaded after a save because deleting the sentence ends the claim.
+  const loadRole = () => api.get<DraftRole>(`/leads/${leadId}/draft-role`).then(setRole).catch(() => setRole(null));
+  useEffect(() => { void loadRole(); }, [leadId, draft?.id]);
 
   // The preview is the email as it will be saved to Gmail, so it reflects unsaved edits and the footer choice.
   useEffect(() => {
@@ -107,6 +111,7 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
     try {
       await api.patch(`/leads/${leadId}/draft`, { subject: l.subject, body: l.body, include_footer: l.footer });
       saved.current = { subject: l.subject, body: l.body, footer: l.footer };
+      void loadRole();
       return true;
     } catch (e) { p.onMessage((e as Error).message); return false; }
   }
@@ -132,6 +137,7 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
     void write({
       purpose: eff, steeringNote: steer, focus: focusIdx, croFocus: [...croFocus], tone: tone || null,
       ...(eff === "full_time" && pickIds.size ? { sampleIds: [...pickIds] } : {}),
+      ...(role?.next && !useRole ? { usePosting: false } : {}),
     }, picked ? `New options focused on ${picked} chosen issue(s).` : "New options written.");
     setSteer("");
   }
@@ -220,6 +226,9 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
             <input id="subj" value={subject} onChange={(e) => setSubject(e.target.value)} onBlur={() => void save()} />
           </div>
           <ParagraphEditor value={body} onChange={setBody} onBlur={() => void save()} />
+          {role?.cited && (role.cited.warning
+            ? <p className="c-role warn" role="alert"><Icon name="alert" size={14} />{role.cited.warning} Edit that sentence out, or use a quick rewrite (it drops the claim) or write new options.</p>
+            : <p className="c-role"><Icon name="briefcase" size={14} />Mentions their open role: {role.cited.url ? <a href={role.cited.url} target="_blank" rel="noreferrer">{role.cited.title} ↗</a> : role.cited.title}</p>)}
           <div className="c-meta">
             <span>{words} words · signature added automatically</span>
             <span className="grow" />
@@ -278,6 +287,9 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
           <div><label htmlFor="steer">Extra instruction</label>
             <span className="field"><input id="steer" placeholder="e.g. mention I’m local, ask about their winter rush" value={steer} onChange={(e) => setSteer(e.target.value)} /></span></div>
         </div>
+        {role?.next && (
+          <label className="switch sm w-role"><input type="checkbox" role="switch" checked={useRole} onChange={(e) => setUseRole(e.target.checked)} /><i aria-hidden="true" /><span>Mention their open role: <b>{role.next.title}</b> <small>(seen on their board in the last 2 days)</small></span></label>
+        )}
         {chips.length > 0 && (
           <div className="w-chips" role="group" aria-label="Build the options on">
             <span className="c-lbl">Build on</span>

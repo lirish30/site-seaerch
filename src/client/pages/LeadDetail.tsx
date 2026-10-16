@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { api } from "../api";
+import { api, ApiError } from "../api";
 import { safeHttpUrl } from "../links";
 import { FindingsList, Screenshots } from "../components/AuditPanel";
 import BestOfferCard from "../components/BestOfferCard";
@@ -181,18 +181,22 @@ export default function LeadDetail() {
     try { if (await patchLead({ starred: !d!.business.starred_at })) await load(); } finally { setStarBusy(false); }
   };
   const setStatus = (s: LeadStatus) => patchLead({ leadStatus: s }).then(async (ok) => { if (ok) await load(); return ok; });
-  async function exportTo(kind: "gmail" | "drive") {
+  async function exportTo(kind: "gmail" | "drive", allowStaleRole = false) {
     await composer.current?.save(); await flush(); setBusy(kind); setMsg(""); setExportLink([]); setExportError("");
     try {
       if (kind === "gmail") {
-        const r = await api.post<{ url: string }>(`/leads/${id}/gmail-draft`, { attachReport: attachPdf });
+        const r = await api.post<{ url: string }>(`/leads/${id}/gmail-draft`, { attachReport: attachPdf, allowStaleRole });
         setExportLink([{ label: "Open Gmail draft", url: r.url }]); setMsg("Saved to your Gmail drafts. It hasn't been sent.");
       } else {
-        const r = await api.post<{ docUrl: string; pdfUrl: string | null }>(`/leads/${id}/drive`);
+        const r = await api.post<{ docUrl: string; pdfUrl: string | null }>(`/leads/${id}/drive`, { allowStaleRole });
         setExportLink([{ label: "Google Doc", url: r.docUrl }, ...(r.pdfUrl ? [{ label: "PDF in Drive", url: r.pdfUrl }] : [])]); setMsg("Saved to Google Drive.");
       }
       await load();
-    } catch (e) { setExportError((e as Error).message); } finally { setBusy(""); }
+    } catch (e) {
+      // The draft names a role that has closed (or stopped showing on their board): the owner decides, since they may have edited around it.
+      if (e instanceof ApiError && e.code === "stale_role" && window.confirm(`${e.message}\n\nExport it anyway?`)) { setBusy(""); return exportTo(kind, true); }
+      setExportError((e as Error).message);
+    } finally { setBusy(""); }
   }
   async function reaudit(reason?: string) {
     await flush();

@@ -45,14 +45,15 @@ export const KIND_VIEW: Record<TodayKind, { label: string; icon: IconName; tone:
   stalled_deal: { label: "Stalled deal", icon: "trending", tone: "warning", pill: "Deals", action: "Open" },
   promising_quick_scan: { label: "Worth a full scan", icon: "sparkles", tone: "signal", pill: "Scans", action: "Run full scan" },
   starred_idle: { label: "Saved", icon: "star", tone: "neutral", pill: "Saved", action: "Open" },
+  open_role: { label: "Hiring", icon: "briefcase", tone: "signal", pill: "Hiring", action: "Open" },
 };
-/** The filter pills in display order. "Saved" only shows when there is something saved, so the row matches the design for everyone else. */
-export const FILTER_ORDER: TodayKind[] = ["follow_up_due", "draft_unsent", "stalled_deal", "promising_quick_scan", "starred_idle"];
+/** The filter pills in display order. "Saved" and "Hiring" only show when there is something to show, so the row matches the design for everyone else. */
+export const FILTER_ORDER: TodayKind[] = ["follow_up_due", "draft_unsent", "stalled_deal", "open_role", "promising_quick_scan", "starred_idle"];
 
 export function filterPills(items: readonly TodayItem[]): { key: KindFilter; label: string; count: number }[] {
   const count = (k: TodayKind) => items.filter((i) => i.kind === k).length;
   return [{ key: "all", label: "All", count: items.length },
-    ...FILTER_ORDER.filter((k) => k !== "starred_idle" || count(k) > 0).map((k) => ({ key: k as KindFilter, label: KIND_VIEW[k].pill, count: count(k) }))];
+    ...FILTER_ORDER.filter((k) => (k !== "starred_idle" && k !== "open_role") || count(k) > 0).map((k) => ({ key: k as KindFilter, label: KIND_VIEW[k].pill, count: count(k) }))];
 }
 export const filterItems = (items: readonly TodayItem[], f: KindFilter) => (f === "all" ? [...items] : items.filter((i) => i.kind === f));
 
