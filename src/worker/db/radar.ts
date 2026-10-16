@@ -67,11 +67,13 @@ export async function recordRadarBlocked(db: D1Database, id: string, error: stri
   await db.prepare(`UPDATE radars SET last_error = ?, next_run_at = ? WHERE id = ?`).bind(error.slice(0, 500), nextRunAt, id).run();
 }
 
-export async function updateRadar(db: D1Database, id: string, p: { enabled?: boolean; intervalDays?: number; nextRunAt?: string }) {
+export async function updateRadar(db: D1Database, id: string, p: { enabled?: boolean; intervalDays?: number; nextRunAt?: string; radiusKm?: number; maxResults?: number }) {
   const sets: string[] = []; const vals: unknown[] = [];
   if (p.enabled !== undefined) { sets.push("enabled = ?"); vals.push(p.enabled ? 1 : 0); }
   if (p.intervalDays !== undefined) { sets.push("interval_days = ?"); vals.push(p.intervalDays); }
   if (p.nextRunAt !== undefined) { sets.push("next_run_at = ?"); vals.push(p.nextRunAt); }
+  if (p.radiusKm !== undefined) { sets.push("radius_km = ?"); vals.push(p.radiusKm); }
+  if (p.maxResults !== undefined) { sets.push("max_results = ?"); vals.push(p.maxResults); }
   if (sets.length) await db.prepare(`UPDATE radars SET ${sets.join(", ")} WHERE id = ?`).bind(...vals, id).run();
 }
 

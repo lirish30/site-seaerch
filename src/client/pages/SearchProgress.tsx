@@ -9,7 +9,7 @@ const STEPS: { key: Exclude<Stage, "failed">; label: string }[] = [
 ];
 
 /** Ticks once a second while `active`, so elapsed time keeps moving between polls. */
-function useNow(active: boolean): number {
+export function useNow(active: boolean): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!active) return;

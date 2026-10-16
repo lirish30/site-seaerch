@@ -1,9 +1,9 @@
-import { defaultFilters, defaultTableFilters, OFFERS, type TableFilters } from "./leadFilters";
-import { STATUSES, type LeadStatus } from "./types";
+import { defaultFilters, defaultTableFilters, filterLeadRows, isDraftReady, OFFERS, type TableFilters } from "./leadFilters";
+import { STATUSES, type LeadRow, type LeadStatus } from "./types";
 
-/** The leads page's filter state. `status`, `archived`, `tag` and `starred` are fetched server-side; `table` filters what was loaded. */
-export interface LeadView { status: LeadStatus | ""; archived: boolean; tag: string; starred: boolean; table: TableFilters }
-export const defaultView: LeadView = { status: "", archived: false, tag: "", starred: false, table: defaultTableFilters };
+/** The leads page's filter state. `status`, `archived`, `tag` and `starred` are fetched server-side; `drafts` and `table` filter what was loaded. */
+export interface LeadView { status: LeadStatus | ""; archived: boolean; tag: string; starred: boolean; drafts: boolean; table: TableFilters }
+export const defaultView: LeadView = { status: "", archived: false, tag: "", starred: false, drafts: false, table: defaultTableFilters };
 
 const clampNum = (v: string | null, min: number, max: number): number | null => {
   if (v === null || v.trim() === "") return null;
@@ -17,6 +17,7 @@ export function serializeView(v: LeadView): string {
   if (v.status) p.set("status", v.status);
   if (v.archived) p.set("archived", "1");
   if (v.starred) p.set("starred", "1");
+  if (v.drafts) p.set("drafts", "1");
   if (v.tag.trim()) p.set("tag", v.tag.trim().toLowerCase());
   if (v.table.q.trim()) p.set("q", v.table.q.trim());
   if (v.table.niche) p.set("niche", v.table.niche);
@@ -38,6 +39,7 @@ export function parseView(query: string): LeadView {
     status: status && STATUSES.includes(status) ? status : "",
     archived: p.get("archived") === "1",
     starred: p.get("starred") === "1",
+    drafts: p.get("drafts") === "1",
     tag: (p.get("tag") ?? "").slice(0, 32),
     table: {
       q: (p.get("q") ?? "").slice(0, 200),
@@ -53,4 +55,12 @@ export function parseView(query: string): LeadView {
       },
     },
   };
+}
+
+/** The rows a view shows, worked out from every loaded lead (used for the sidebar's counts; the page itself asks the server for status, tag, starred and archived). */
+export function viewRows(rows: LeadRow[], v: LeadView): LeadRow[] {
+  const tag = v.tag.trim().toLowerCase();
+  const scoped = rows.filter((r) => (!v.status || r.business.lead_status === v.status)
+    && (!v.starred || r.business.starred_at !== null) && (!tag || r.business.tags.includes(tag)) && (!v.drafts || isDraftReady(r)));
+  return filterLeadRows(scoped, v.table);
 }

@@ -1,4 +1,5 @@
 import type { Finding } from "../types";
+import { businessDomain } from "./businesses";
 
 export const REPORT_TTL_DAYS = 30;
 const DAY_MS = 86_400_000;
@@ -34,7 +35,7 @@ export async function revokeReports(db: D1Database, businessId: string): Promise
 }
 
 export interface PublicReport {
-  businessName: string; auditedAt: string; counts: { high: number; medium: number; low: number };
+  businessName: string; /** Host of the audited site (e.g. "acme.com"), "" when unknown; shown to the recipient, who owns it. */ website: string; auditedAt: string; counts: { high: number; medium: number; low: number };
   findings: { severity: PublicSeverity; evidence: string }[]; partial: boolean;
   sender: { name: string; businessName: string; email: string; logoUrl: string }; expiresAt: string;
 }
@@ -50,18 +51,18 @@ const PUBLIC_SEVERITY: Record<string, PublicSeverity> = {
 /** The ONLY shape exposed publicly. Fields are copied one by one so nothing else can leak in by accident. */
 export async function publicReport(db: D1Database, token: string, now = new Date()): Promise<PublicReport | null> {
   const r = await db.prepare(
-    `SELECT b.name AS business_name, a.created_at AS audited_at, a.partial AS partial, a.findings AS findings, r.expires_at AS expires_at,
+    `SELECT b.name AS business_name, b.domain AS domain, b.website_url AS website_url, a.created_at AS audited_at, a.partial AS partial, a.findings AS findings, r.expires_at AS expires_at,
             s.your_name AS your_name, s.business_name AS sender_business, s.contact_email AS contact_email, s.logo_url AS logo_url
      FROM audit_reports r JOIN audits a ON a.id = r.audit_id AND a.business_id = r.business_id JOIN businesses b ON b.id = r.business_id JOIN settings s ON s.id = 1
      WHERE r.token = ? AND r.revoked = 0 AND r.expires_at > ?`,
-  ).bind(token, now.toISOString()).first<{ business_name: string; audited_at: string; partial: number; findings: string; expires_at: string;
+  ).bind(token, now.toISOString()).first<{ business_name: string; domain: string | null; website_url: string | null; audited_at: string; partial: number; findings: string; expires_at: string;
     your_name: string; sender_business: string; contact_email: string; logo_url: string }>();
   if (!r) return null;
   const all = (JSON.parse(r.findings) as Pick<Finding, "severity" | "evidence">[]).filter((f) => typeof f?.evidence === "string" && f.evidence);
   const findings = SEVERITIES.flatMap((sev) => all.filter((f) => PUBLIC_SEVERITY[f.severity] === sev).map((f) => ({ severity: sev, evidence: f.evidence })));
   const count = (sev: string) => findings.filter((f) => f.severity === sev).length;
   return {
-    businessName: r.business_name, auditedAt: r.audited_at, counts: { high: count("high"), medium: count("medium"), low: count("low") },
+    businessName: r.business_name, website: businessDomain({ domain: r.domain, website_url: r.website_url }) ?? "", auditedAt: r.audited_at, counts: { high: count("high"), medium: count("medium"), low: count("low") },
     findings, partial: r.partial === 1,
     sender: { name: r.your_name, businessName: r.sender_business, email: r.contact_email, logoUrl: r.logo_url.startsWith("https://") ? r.logo_url : "" },
     expiresAt: r.expires_at,
