@@ -22,7 +22,7 @@ export default function FindSidebar() {
       <SideItem to="/import" icon="upload" label="Import leads" active={pathname === "/import"} />
       {list.length > 0 && <p className="side-head static find-label">{onNew ? "Recent" : "Running now"}</p>}
       {list.map((s) => (
-        <Link key={s.id} to={`/searches/${s.id}`} className={`side-item${pathname === `/searches/${s.id}` ? " active" : ""}`}>
+        <Link key={s.id} to={`/searches/${s.id}`} className={`side-item${pathname === `/searches/${s.id}` ? " active" : ""}`} title={shortName(s)}>
           <Icon name={icon(s)} size={16} /><span className="label">{shortName(s)}</span>
           <span className="count">{s.status === "running" ? (s.found_count ? `${s.processed_count}/${s.found_count}` : "…") : s.status === "done" ? s.found_count : "—"}</span>
         </Link>

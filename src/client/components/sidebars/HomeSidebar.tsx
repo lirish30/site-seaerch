@@ -57,7 +57,7 @@ export default function HomeSidebar() {
       {(radars?.length ?? 0) > 0 && (
         <SideGroup id="home-radar" title="Radar">
           {radars!.slice(0, 5).map((r) => (
-            <Link key={r.id} to="/radar" className="side-item"><Icon name="radar" size={16} /><span className="label">{shortName(r)}</span><span className="count">{radarNext(r, now)}</span></Link>
+            <Link key={r.id} to="/radar" className="side-item" title={shortName(r)}><Icon name="radar" size={16} /><span className="label">{shortName(r)}</span><span className="count">{radarNext(r, now)}</span></Link>
           ))}
         </SideGroup>
       )}

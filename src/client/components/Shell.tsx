@@ -8,7 +8,7 @@ import { isDraftReady } from "../leadFilters";
 import { TODAY_KIND_LABEL } from "../todayView";
 import type { LeadRow, OutreachCounts, SavedFilter, TodayItem } from "../types";
 import Icon, { LogoMark, type IconName } from "./Icon";
-import { SideGroup, SideItem } from "./sidebars/parts";
+import { SideGroup, SideItem, SideTitle, SidebarCollapse } from "./sidebars/parts";
 import FindSidebar from "./sidebars/FindSidebar";
 import HomeSidebar from "./sidebars/HomeSidebar";
 import SettingsSidebar from "./sidebars/SettingsSidebar";
@@ -56,7 +56,7 @@ function LeadsSidebar() {
   const plain = onLeads && current === "";
   return (
     <>
-      <div className="side-title"><h2>Leads</h2><Link to="/" className="icon-btn" aria-label="New search" title="New search"><Icon name="plus" size={16} /></Link></div>
+      <SideTitle title="Leads" action={<Link to="/" className="icon-btn" aria-label="New search" title="New search"><Icon name="plus" size={16} /></Link>} />
       <SideItem to="/leads" icon="users" label="All leads" count={counts?.all} active={plain} />
       <SideItem to="/leads?starred=1" icon="star" label="Starred" count={counts?.starred} active={onLeads && current === "starred=1"} />
       <SideItem to="/promising" icon="sparkles" label="Needs full scan" count={d?.promising} active={pathname === "/promising"} />
@@ -94,7 +94,7 @@ function OutreachSidebar() {
   const drafts = view === "drafts" && !purpose;
   return (
     <>
-      <div className="side-title"><h2>Outreach</h2></div>
+      <SideTitle title="Outreach" />
       <SideItem to="/outreach" icon="mail" label="Drafts ready" count={counts?.drafts} active={drafts} />
       <SideItem to="/outreach?view=followups" icon="clock" label="Follow-ups due" count={counts?.followups} active={view === "followups"} />
       <SideItem to="/outreach?view=contacted" icon="send" label="Contacted" count={counts?.contacted} active={view === "contacted"} />
@@ -176,6 +176,20 @@ function Account() {
   );
 }
 
+const COLLAPSE_KEY = "shell:sidebar-collapsed";
+
+/** The sidebar's collapsed state, remembered per browser; Cmd/Ctrl + \ flips it. */
+function useSidebarCollapse() {
+  const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem(COLLAPSE_KEY) === "1"; } catch { return false; } });
+  const toggle = useCallback(() => setCollapsed((c) => { try { localStorage.setItem(COLLAPSE_KEY, c ? "0" : "1"); } catch { /* storage unavailable */ } return !c; }), []);
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key === "\\") { e.preventDefault(); toggle(); } };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [toggle]);
+  return { collapsed, toggle };
+}
+
 const SIDEBAR_LABEL = { leads: "Leads views", outreach: "Outreach", find: "Find", home: "Home", settings: "Settings" } as const;
 
 /** Icon rail, the section's sidebar (where it has one) and the floating white content panel. */
@@ -183,8 +197,9 @@ export default function Shell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
   const section = sectionOf(pathname);
   const sidebar = sidebarOf(pathname);
+  const collapse = useSidebarCollapse();
   return (
-    <div className="app">
+    <div className={`app${sidebar && collapse.collapsed ? " sb-collapsed" : ""}`}>
       <nav className="rail" aria-label="Sections">
         <Link to="/today" className="rail-logo" aria-label="Site Search home"><LogoMark /></Link>
         {RAIL.map((r) => (
@@ -199,7 +214,14 @@ export default function Shell({ children }: { children: ReactNode }) {
         </NavLink>
         <Account />
       </nav>
-      {sidebar && <aside className="sidebar" aria-label={SIDEBAR_LABEL[sidebar]}>{sidebar === "leads" ? <LeadsSidebar /> : sidebar === "outreach" ? <OutreachSidebar /> : sidebar === "home" ? <HomeSidebar /> : sidebar === "settings" ? <SettingsSidebar /> : <FindSidebar />}</aside>}
+      {sidebar && (
+        <SidebarCollapse.Provider value={collapse}>
+          <div className="sb-wrap">
+            <aside className="sidebar" aria-label={SIDEBAR_LABEL[sidebar]}>{sidebar === "leads" ? <LeadsSidebar /> : sidebar === "outreach" ? <OutreachSidebar /> : sidebar === "home" ? <HomeSidebar /> : sidebar === "settings" ? <SettingsSidebar /> : <FindSidebar />}</aside>
+            <button type="button" className="sb-edge" tabIndex={-1} aria-hidden="true" title={collapse.collapsed ? "Expand sidebar" : "Collapse sidebar"} onClick={collapse.toggle} />
+          </div>
+        </SidebarCollapse.Provider>
+      )}
       <main className={`panel${section === "outreach" ? " fixed" : ""}`}>{children}</main>
     </div>
   );
