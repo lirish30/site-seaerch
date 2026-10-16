@@ -79,6 +79,27 @@ describe("db", () => {
     expect(b.place_id).toBe("p-np");
   });
 
+  // Bright Data ids look like "0x54aeff4c:0x23720b81"; Google Places ids look like "ChIJ...". The same business has one of each,
+  // so a lead found via Bright Data must not come back as a duplicate (and be contacted twice) once Places serves the search.
+  it("merges a Places id into a business first stored with a Bright Data id when the domain matches", async () => {
+    const s = await createSearch(env.DB, { location: "A", businessType: "b", radiusKm: 1, maxResults: 5 });
+    const a = await upsertBusiness(env.DB, listing({ placeId: "0x54aeff4cb0b24461:0x23720b81e2bed658", websiteUrl: "https://xprov.com" }), s.id);
+    const b = await upsertBusiness(env.DB, listing({ placeId: "ChIJ-xprov", websiteUrl: "https://xprov.com" }), s.id);
+    expect(b.id).toBe(a.id);
+    expect(b.place_id).toBe("0x54aeff4cb0b24461:0x23720b81e2bed658"); // keeps the original id
+    expect((await upsertBusiness(env.DB, listing({ placeId: "ChIJ-xprov", websiteUrl: "https://xprov.com" }), s.id)).id).toBe(a.id);
+  });
+
+  it("still keeps two Places ids on one domain separate, and two Bright Data ids too", async () => {
+    const s = await createSearch(env.DB, { location: "A", businessType: "b", radiusKm: 1, maxResults: 5 });
+    const p1 = await upsertBusiness(env.DB, listing({ placeId: "ChIJ-b1", websiteUrl: "https://xchain.com" }), s.id);
+    const p2 = await upsertBusiness(env.DB, listing({ placeId: "ChIJ-b2", websiteUrl: "https://xchain.com" }), s.id);
+    expect(p2.id).not.toBe(p1.id);
+    const d1 = await upsertBusiness(env.DB, listing({ placeId: "0x1:0x1", websiteUrl: "https://xchain2.com" }), s.id);
+    const d2 = await upsertBusiness(env.DB, listing({ placeId: "0x2:0x2", websiteUrl: "https://xchain2.com" }), s.id);
+    expect(d2.id).not.toBe(d1.id);
+  });
+
   it("re-upsert does not reset lead status; skip hides from search list", async () => {
     const s = await createSearch(env.DB, { location: "A", businessType: "b", radiusKm: 1, maxResults: 5 });
     const a = await upsertBusiness(env.DB, listing({ placeId: "p-skip" }), s.id);

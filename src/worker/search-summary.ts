@@ -12,7 +12,7 @@ export const HOT_SCORE = 60;
  */
 export function searchCostUsd(s: Pick<Search, "business_type" | "max_results" | "found_count" | "processed_count" | "quick_scan">): number {
   if (s.found_count === 0 || s.business_type === "import") return 0; // an import runs no listing fetch and no paid lead steps
-  const listings = Math.ceil(s.max_results / BRIGHTDATA_PAGE_SIZE) * PRICES.brightdataPerRequest;
+  const listings = Math.ceil(s.max_results / BRIGHTDATA_PAGE_SIZE) * PRICES.listingPerRequest;
   const leads = s.quick_scan === 1 ? 0 : s.processed_count * PER_LEAD_COST;
   return Math.round((listings + leads) * 100) / 100;
 }

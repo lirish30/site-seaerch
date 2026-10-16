@@ -63,6 +63,7 @@ export function suppressionBadge(rows: { kind: string }[]) {
 
 export const USAGE_SERVICES: { key: string; label: string; always: boolean }[] = [
   { key: "brightdata", label: "Google Maps listings (Bright Data)", always: true },
+  { key: "places", label: "Google Maps listings (Places API)", always: false },
   { key: "claude", label: "AI reviews & drafts (Claude)", always: true },
   { key: "claude_cro", label: "Conversion plan audits (Claude)", always: false },
   { key: "browser", label: "Browser checks", always: true },

@@ -33,7 +33,7 @@ describe("GET /api/searches/estimate agrees with the POST guard", () => {
 
   it("quickUsd is the listing pages only, so a quick scan is far cheaper than the full estimate", async () => {
     const e = await estimate();
-    expect(e.quickUsd).toBeCloseTo(3 * PRICES.brightdataPerRequest);
+    expect(e.quickUsd).toBeCloseTo(3 * PRICES.listingPerRequest);
     expect(e.quickUsd).toBeLessThan(e.estUsd / 10);
   });
 

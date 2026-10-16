@@ -6,7 +6,7 @@ import { insertAudit } from "../src/worker/db/audits";
 import { recordUsage } from "../src/worker/db/usage";
 import { HOT_SCORE, searchCostUsd } from "../src/worker/search-summary";
 import { STOPPED_ERROR } from "../src/worker/search-stop";
-import { PER_LEAD_COST } from "../src/worker/cost";
+import { PER_LEAD_COST, PRICES } from "../src/worker/cost";
 import { HOT_AT } from "../src/client/scoreView";
 
 let cookie = "";
@@ -31,8 +31,8 @@ describe("search summary", () => {
 
   it("estimates cost: nothing before listings arrive, listings only for a quick scan, plus each finished lead for a full scan", () => {
     expect(searchCostUsd({ business_type: "plumber", max_results: 50, found_count: 0, processed_count: 0, quick_scan: 0 })).toBe(0);
-    expect(searchCostUsd({ business_type: "plumber", max_results: 50, found_count: 50, processed_count: 50, quick_scan: 1 })).toBe(0); // 3 pages at $0.0015 rounds to cents
-    expect(searchCostUsd({ business_type: "plumber", max_results: 50, found_count: 50, processed_count: 20, quick_scan: 0 })).toBe(Math.round((3 * 0.0015 + 20 * PER_LEAD_COST) * 100) / 100);
+    expect(searchCostUsd({ business_type: "plumber", max_results: 50, found_count: 50, processed_count: 50, quick_scan: 1 })).toBe(Math.round(3 * PRICES.listingPerRequest * 100) / 100); // listings only
+    expect(searchCostUsd({ business_type: "plumber", max_results: 50, found_count: 50, processed_count: 20, quick_scan: 0 })).toBe(Math.round((3 * PRICES.listingPerRequest + 20 * PER_LEAD_COST) * 100) / 100);
   });
 
   it("charges an import nothing", () => expect(searchCostUsd({ business_type: "import", max_results: 1, found_count: 18, processed_count: 18, quick_scan: 0 })).toBe(0));

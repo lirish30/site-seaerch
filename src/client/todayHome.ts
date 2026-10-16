@@ -70,7 +70,7 @@ export function pipelineRows(p: Record<LeadStatus, number>) {
 }
 
 const SPEND_ROWS: { label: string; services: string[] }[] = [
-  { label: "Google Maps listings", services: ["brightdata"] },
+  { label: "Google Maps listings", services: ["brightdata", "places"] },
   { label: "AI reviews & drafts", services: ["claude", "claude_cro"] },
   { label: "Browser checks", services: ["browser", "pagespeed"] },
 ];
