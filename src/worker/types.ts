@@ -60,7 +60,8 @@ export interface Listing {
 
 export interface Search {
   id: string; location: string; business_type: string; radius_km: number; max_results: number;
-  status: "running" | "done" | "failed"; error: string | null;
+  status: "running" | "done" | "failed"; error: string | null; // while running, error is the last listing-fetch failure being retried
+  fetch_attempts: number; // listing-fetch attempts that failed and were retried
   found_count: number; processed_count: number; created_at: string;
   new_only: 0 | 1; // Radar-started: only businesses never audited get the per-lead pipeline
   quick_scan: 0 | 1; // its leads run the quick stage (no render, PageSpeed, AI review or draft); Radar searches never set it
@@ -115,7 +116,7 @@ export interface Person {
   linkedin: string | null; source: "manual" | "site"; is_poc: boolean; created_at: string;
 }
 
-export type ActivityKind = "status" | "archived" | "restored" | "website" | "reaudit" | "score_flagged" | "export" | "draft" | "cro_audit" | "suppressed" | "import" | "bulk" | "today_done" | "snoozed" | "starred" | "unstarred";
+export type ActivityKind = "status" | "archived" | "restored" | "website" | "reaudit" | "score_flagged" | "export" | "draft" | "cro_audit" | "suppressed" | "import" | "bulk" | "today_done" | "snoozed" | "starred" | "unstarred" | "note" | "job_found";
 export interface Activity { id: string; business_id: string; kind: ActivityKind; detail: string | null; created_at: string; }
 
 export interface Audit {
@@ -179,6 +180,8 @@ export interface Settings {
   /** JSON of a Signature, or "" to use the plain-text `signature`. */
   signature_json: string;
   default_purpose: Purpose;
+  /** 1/0: new freelance / full-time drafts carry the mailing footer; Gmail drafts attach the audit PDF unless the request says otherwise. */
+  footer_freelance?: number; footer_full_time?: number; attach_audit_pdf?: number;
 }
 export type TonePreset = "friendly_local" | "consultative" | "direct" | "formal";
 export type EmailLength = "short" | "medium" | "long";
@@ -188,3 +191,18 @@ export const SUPPRESSION_REASONS = ["client", "opt_out", "competitor", "active_d
 export type SuppressionReason = (typeof SUPPRESSION_REASONS)[number];
 export type SuppressionKind = "domain" | "place_id";
 export interface Suppression { id: string; kind: SuppressionKind; value: string; reason: SuppressionReason; note: string | null; created_at: string; }
+export type Ats = "greenhouse" | "lever" | "ashby";
+export type RoleKind = "web_dev" | "design" | "seo" | "cro" | "marketing";
+export type CareerStatus = "active" | "none" | "error";
+export interface CareerSource {
+  business_id: string; status: CareerStatus; ats: Ats | null; token: string | null; careers_url: string | null;
+  checked_at: string | null; last_ok_at: string | null; next_check_at: string; empty_streak: number; last_error: string | null; created_at: string;
+}
+export interface JobPosting {
+  id: string; business_id: string; external_id: string; title: string; url: string; location: string | null; department: string | null;
+  role_kind: RoleKind | null; posted_at: string | null; first_seen_at: string; last_seen_at: string; closed_at: string | null;
+  /** Found on the first look at the board: its age is unknown unless the board gave a posted date. */
+  baseline: boolean;
+}
+/** One role as a job board reports it, before it is stored. */
+export interface RawPosting { externalId: string; title: string; url: string; location: string | null; department: string | null; postedAt: string | null }

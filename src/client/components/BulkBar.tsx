@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { STAGE_LABEL } from "../leadView";
+import Icon from "./Icon";
 import { api, ApiError } from "../api";
 import { bulkSummary, normalizeTag, undoSummary, UNDO_VISIBLE_MS, type BulkRequest } from "../bulkView";
 import { STATUSES, type BulkResult, type LeadStatus, type UndoResult } from "../types";
@@ -10,14 +12,24 @@ const friendly = (e: unknown, fallback: string) => (e instanceof ApiError && e.s
  * The selection bar: set status, star/unstar, archive/restore, tag. After an action it keeps an Undo button for 10 seconds.
  * A failed request shows its error here and leaves the selection as it was. There is no delete action.
  */
-export default function BulkBar({ selected, archivedView = false, onClear, onDone }: {
-  selected: string[]; archivedView?: boolean; onClear: () => void;
+export default function BulkBar({ selected, archivedView = false, allStarred = false, onClear, onDone }: {
+  selected: string[]; archivedView?: boolean; allStarred?: boolean; onClear: () => void;
   /** Called after a change landed (or was undone) so the page can reload its rows. */
   onDone: () => void | Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [tag, setTag] = useState("");
+  const [menu, setMenu] = useState<"stage" | "tag" | null>(null);
+  const bar = useRef<HTMLDivElement>(null);
+  // The two small menus close on an outside click or Escape.
+  useEffect(() => {
+    if (!menu) return;
+    const down = (e: MouseEvent) => { if (bar.current && !bar.current.contains(e.target as Node)) setMenu(null); };
+    const key = (e: KeyboardEvent) => { if (e.key === "Escape") setMenu(null); };
+    document.addEventListener("mousedown", down); document.addEventListener("keydown", key);
+    return () => { document.removeEventListener("mousedown", down); document.removeEventListener("keydown", key); };
+  }, [menu]);
   const [note, setNote] = useState<{ text: string; token: string | null } | null>(null);
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
@@ -65,28 +77,41 @@ export default function BulkBar({ selected, archivedView = false, onClear, onDon
   return (
     <div className="bulk" role="region" aria-label="Bulk actions">
       {n > 0 && (
-        <div className="bulk-bar">
+        <div className="bulk-bar" ref={bar}>
+          <button className="bar-check" aria-label="Clear selection" onClick={() => { onClear(); setErr(""); setMenu(null); }}><Icon name="check" size={12} /></button>
           <strong>{n} selected</strong>
-          <select aria-label="Set status" value="" disabled={busy} onChange={(e) => { if (e.target.value) void run({ action: "status", status: e.target.value as LeadStatus }); }}>
-            <option value="">Set status…</option>{STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-          <button disabled={busy} onClick={() => run({ action: "star" })}>★ Star</button>
-          <button disabled={busy} onClick={() => run({ action: "unstar" })}>Unstar</button>
-          <button disabled={busy} title={archivedView ? undefined : "Starred leads are left alone. Unstar them first to archive them."} onClick={() => run({ action: archivedView ? "restore" : "archive" })}>{archivedView ? "Restore" : "Archive"}</button>
-          <form className="row nowrap" onSubmit={(e) => { e.preventDefault(); if (cleanTag) void run({ action: "tag", tag: cleanTag }); }}>
-            <input className="bulk-tag" value={tag} maxLength={40} placeholder="tag" aria-label="Tag" onChange={(e) => setTag(e.target.value)} disabled={busy} />
-            <button type="submit" disabled={busy || !cleanTag} title={tag.trim() && !cleanTag ? "A tag is up to 32 letters, numbers, spaces, - or _" : undefined}>Add tag</button>
-            <button type="button" disabled={busy || !cleanTag} onClick={() => cleanTag && run({ action: "untag", tag: cleanTag })}>Remove tag</button>
-          </form>
-          <button className="link-btn" disabled={busy} onClick={() => { onClear(); setErr(""); }}>Clear selection</button>
+          <span className="vr" aria-hidden="true" />
+          <span className="bulk-menu">
+            <button className="bulk-act" disabled={busy} aria-expanded={menu === "stage"} aria-haspopup="menu" onClick={() => setMenu(menu === "stage" ? null : "stage")}><Icon name="kanban" size={14} />Set stage</button>
+            {menu === "stage" && (
+              <div className="popover" role="menu" aria-label="Set stage">
+                {STATUSES.map((s) => <button key={s} className="pop-item" role="menuitem" onClick={() => { setMenu(null); void run({ action: "status", status: s as LeadStatus }); }}>{STAGE_LABEL[s]}</button>)}
+              </div>
+            )}
+          </span>
+          <button className="bulk-act" disabled={busy} onClick={() => run({ action: allStarred ? "unstar" : "star" })}><Icon name="star" size={14} />{allStarred ? "Unstar" : "Star"}</button>
+          <span className="bulk-menu">
+            <button className="bulk-act" disabled={busy} aria-expanded={menu === "tag"} aria-haspopup="dialog" onClick={() => setMenu(menu === "tag" ? null : "tag")}><Icon name="tag" size={14} />Add tag</button>
+            {menu === "tag" && (
+              <div className="popover" role="dialog" aria-label="Tag the selected leads">
+                <form onSubmit={(e) => { e.preventDefault(); if (cleanTag) { setMenu(null); void run({ action: "tag", tag: cleanTag }); } }}>
+                  <input value={tag} maxLength={40} placeholder="tag" aria-label="Tag" autoFocus onChange={(e) => setTag(e.target.value)} disabled={busy} />
+                  <button type="submit" className="btn sm primary" disabled={busy || !cleanTag} title={tag.trim() && !cleanTag ? "A tag is up to 32 letters, numbers, spaces, - or _" : undefined}>Add</button>
+                  <button type="button" className="btn sm" disabled={busy || !cleanTag} onClick={() => { if (cleanTag) { setMenu(null); void run({ action: "untag", tag: cleanTag }); } }}>Remove</button>
+                </form>
+              </div>
+            )}
+          </span>
+          <button className="bulk-act" disabled={busy} title={archivedView ? undefined : "Starred leads are left alone. Unstar them first to archive them."} onClick={() => run({ action: archivedView ? "restore" : "archive" })}><Icon name="copy" size={14} />{archivedView ? "Restore" : "Archive"}</button>
+          <button className="bulk-clear" disabled={busy} onClick={() => { onClear(); setErr(""); setMenu(null); }}>Clear selection</button>
         </div>
       )}
-      {err && <p className="error" role="alert">{err}</p>}
+      {err && <p className="bulk-note err" role="alert">{err}</p>}
       <div role="status">
         {note && (
-          <div className="notice bulk-note">
+          <div className="bulk-note">
             <span>{note.text}</span>
-            {note.token && <button onClick={undo} disabled={busy}>Undo</button>}
+            {note.token && <button className="btn sm" onClick={undo} disabled={busy}>Undo</button>}
           </div>
         )}
       </div>

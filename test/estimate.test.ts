@@ -2,7 +2,7 @@ import { env, SELF } from "cloudflare:test";
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
 import { saveSettings } from "../src/worker/db/settings";
 import { createSearch } from "../src/worker/db/searches";
-import { estimateSearchCost } from "../src/worker/cost";
+import { PRICES, estimateQuickSearchCost, estimateSearchCost } from "../src/worker/cost";
 
 let cookie = "";
 const api = (path: string, init: RequestInit = {}) =>
@@ -27,8 +27,14 @@ const start = () => api("/api/searches", { method: "POST", body: JSON.stringify(
 
 describe("GET /api/searches/estimate agrees with the POST guard", () => {
   it("nothing in flight: ok, inFlightUsd 0, existing keys unchanged, and POST succeeds", async () => {
-    expect(await estimate()).toEqual({ estUsd: EST, inFlightUsd: 0, ok: true, spent: 0, limit: EST * 1.5 });
+    expect(await estimate()).toEqual({ estUsd: EST, quickUsd: estimateQuickSearchCost(50), inFlightUsd: 0, ok: true, spent: 0, limit: EST * 1.5 });
     expect((await start()).status).toBe(201);
+  });
+
+  it("quickUsd is the listing pages only, so a quick scan is far cheaper than the full estimate", async () => {
+    const e = await estimate();
+    expect(e.quickUsd).toBeCloseTo(3 * PRICES.listingPerRequest);
+    expect(e.quickUsd).toBeLessThan(e.estUsd / 10);
   });
 
   it("a running search is reported and flips ok, exactly when POST would answer 402", async () => {

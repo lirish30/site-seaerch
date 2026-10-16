@@ -33,3 +33,14 @@ export const applyLeadFilters = (rows: LeadRow[], f: LeadFilters): LeadRow[] => 
 /** Everything the table filters on that the page can save and restore (sorting and paging are not part of a saved view). */
 export interface TableFilters { q: string; niche: string; f: LeadFilters; }
 export const defaultTableFilters: TableFilters = { q: "", niche: "", f: defaultFilters };
+
+/** A lead with a draft that hasn't been acted on yet: the "Drafts ready" view. */
+export const isDraftReady = (r: LeadRow) => r.hasDraft && (r.business.lead_status === "new" || r.business.lead_status === "reviewed");
+
+/** Everything the table filters on after the server's list: the quality filters, industry and the search box. */
+export function filterLeadRows(rows: LeadRow[], t: TableFilters): LeadRow[] {
+  const needle = t.q.trim().toLowerCase();
+  return applyLeadFilters(rows, t.f)
+    .filter((r) => !t.niche || r.niche === t.niche)
+    .filter((r) => !needle || `${r.business.name} ${r.business.website_url ?? ""} ${r.business.address ?? ""}`.toLowerCase().includes(needle));
+}

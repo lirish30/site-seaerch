@@ -27,7 +27,7 @@ export const googleRoutes = new Hono<{ Bindings: Env }>();
 
 googleRoutes.get("/status", async (c) => {
   const row = await getGoogleAuth(c.env.DB);
-  return c.json({ configured: !!oauthClient(c.env, new URL(c.req.url).origin), connected: !!row, email: row?.email ?? null });
+  return c.json({ configured: !!oauthClient(c.env, new URL(c.req.url).origin), connected: !!row, email: row?.email ?? null, ...(row ? { connected_at: row.connected_at } : {}) });
 });
 
 googleRoutes.get("/connect", async (c) => {
@@ -44,7 +44,7 @@ googleRoutes.get("/connect", async (c) => {
 googleRoutes.get("/callback", async (c) => {
   const origin = new URL(c.req.url).origin;
   const client = oauthClient(c.env, origin);
-  const back = (q: string) => c.redirect(`/settings?google=${q}`);
+  const back = (q: string) => c.redirect(`/settings/google?google=${q}`);
   const { code, state, error } = c.req.query();
   const nonce = getCookie(c, NONCE_COOKIE);
   deleteCookie(c, NONCE_COOKIE, { path: "/api/google" });

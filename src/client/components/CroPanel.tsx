@@ -2,13 +2,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError } from "../api";
 import { pollDelay } from "../poll";
 import {
-  EVIDENCE_FAMILY_LABEL, STEP_LABEL, neighborOf, rebuildNeedsPatch, splitRoadmap, stepIndex,
+  EVIDENCE_FAMILY_LABEL, STEP_LABEL, auditStamp, neighborOf, rebuildNeedsPatch, splitRoadmap, stepIndex,
   type AssumptionOverrides, type CroAudit, type CroHistoryRow, type CroItem, type CroResponse, type Horizon, type ScenarioInputs,
 } from "../cro";
-import CroItemCard, { type CroItemPatch } from "./CroItemCard";
+import CroItemCard, { type CroCardVariant, type CroItemPatch } from "./CroItemCard";
 import { CroScenario, CroSnapshot } from "./CroSnapshot";
+import Icon from "./Icon";
+import { Badge } from "./Score";
 
 const HORIZONS: readonly (readonly [Horizon, string])[] = [[30, "Also this month"], [60, "Days 31–60"], [90, "Days 61–90"]];
+const STATUS_TONE = { done: "positive", running: "info", failed: "critical" } as const;
 
 const messageOf = (e: unknown) =>
   e instanceof ApiError && e.status === 402 ? "That would go over your monthly spend limit (see Settings)." : (e as Error).message || "Something went wrong";
@@ -73,55 +76,57 @@ export default function CroPanel({ leadId, onError }: { leadId: string; onError:
     if (o?.isConnected) o.focus();
   };
 
-  if (!data) return <div className="card" role="status">Loading…</div>;
+  if (!data) return <div className="cro"><div className="section-card cro-card" role="status">Loading…</div></div>;
   const a = data.audit;
 
   const picker = (cur: CroAudit) => {
     const rows = history.some((h) => h.id === cur.id) ? history
       : [{ id: cur.id, status: cur.status, created_at: cur.created_at, completed_at: cur.completed_at, item_count: data.items.length }, ...history];
     return (
-      <label className="row small cro-pick">Audit
-        <select className="auto" value={cur.id} onChange={(e) => { setRebuildOwed(null); load(e.target.value).catch((x) => onError(messageOf(x))); }}>
-          {rows.map((h) => <option key={h.id} value={h.id}>{new Date(h.created_at).toLocaleString()} · {h.status}{h.status === "done" ? ` · ${h.item_count} items` : ""}</option>)}
+      <label className="cro-pick"><span className="sr-only">Audit</span>
+        <Icon name="clock" size={14} />
+        <select value={cur.id} onChange={(e) => { setRebuildOwed(null); load(e.target.value).catch((x) => onError(messageOf(x))); }}>
+          {rows.map((h) => <option key={h.id} value={h.id}>{auditStamp(h.created_at)} · {h.status === "done" ? `${h.item_count} items` : h.status}</option>)}
         </select>
+        <Icon name="chevron-down" size={13} />
       </label>
     );
   };
 
   if (!a) return (
-    <div className="card cro-empty">
+    <div className="cro"><div className="section-card cro-card cro-empty">
       <h3>CRO audit</h3>
       <p>A deeper scan of up to 7 key pages on desktop and phone. It works out how this business makes money, then builds a specific roadmap: what to fix this month, the next 90 days, what to measure, and what it could be worth.</p>
-      <p className="muted small">Takes about 2–4 minutes and roughly $0.15–0.40.</p>
-      <button className="primary" onClick={run} disabled={!!busy}>{busy ? "Starting…" : "Run CRO audit"}</button>
-    </div>
+      <p className="cro-hint">Takes about 2–4 minutes and roughly $0.15–0.40.</p>
+      <div className="cro-actions"><button className="btn primary" onClick={run} disabled={!!busy}>{busy ? "Starting…" : "Run CRO audit"}</button></div>
+    </div></div>
   );
 
   if (a.status === "running") {
     const cur = Math.min(Math.max(stepIndex(a.step), 0), STEP_LABEL.length - 1);
     return (
-      <div className="card">
+      <div className="cro"><div className="section-card cro-card">
         <h3>CRO audit running…</h3>
-        <p className="small" role="status" aria-live="polite">Step {cur + 1} of {STEP_LABEL.length}: {STEP_LABEL[cur][1]}</p>
+        <p role="status" aria-live="polite">Step {cur + 1} of {STEP_LABEL.length}: {STEP_LABEL[cur][1]}</p>
         <ol className="cro-steps">{STEP_LABEL.map(([s, label], i) => (
           <li key={s} className={i < cur ? "done" : i === cur ? "on" : ""} aria-current={i === cur ? "step" : undefined}>
             {label}{i < cur && <span className="sr-only"> (done)</span>}
           </li>))}</ol>
-        <p className="muted small">You can leave this page; it keeps going.</p>
-        {lagging && <p className="muted small" role="status">Having trouble checking progress. Trying again shortly.</p>}
-      </div>
+        <p className="cro-hint">You can leave this page; it keeps going.</p>
+        {lagging && <p className="cro-hint" role="status">Having trouble checking progress. Trying again shortly.</p>}
+      </div></div>
     );
   }
 
   if (a.status === "failed") return (
-    <div className="card">
-      <div className="cro-bar"><h3>CRO audit didn't finish</h3>{history.length > 1 && picker(a)}</div>
-      <p className="error">{a.error}</p>
-      <div className="row">
-        <button className="primary" onClick={() => act("retry", () => api.post(`/cro-audits/${a.id}/retry`), a.id)} disabled={!!busy}>{busy === "retry" ? "Retrying…" : "Retry from where it stopped"}</button>
-        <button onClick={run} disabled={!!busy}>{busy === "run" ? "Starting…" : "Start over"}</button>
+    <div className="cro"><div className="section-card cro-card">
+      <div className="cro-bar"><h3>CRO audit didn't finish</h3><span className="cro-grow" />{history.length > 1 && picker(a)}</div>
+      <p className="cro-note err">{a.error}</p>
+      <div className="cro-actions">
+        <button className="btn primary" onClick={() => act("retry", () => api.post(`/cro-audits/${a.id}/retry`), a.id)} disabled={!!busy}>{busy === "retry" ? "Retrying…" : "Retry from where it stopped"}</button>
+        <button className="btn" onClick={run} disabled={!!busy}>{busy === "run" ? "Starting…" : "Start over"}</button>
       </div>
-    </div>
+    </div></div>
   );
 
   const sorted = [...data.items].sort((x, y) => x.rank - y.rank);
@@ -142,8 +147,8 @@ export default function CroPanel({ leadId, onError }: { leadId: string; onError:
     try { if (await patch(item, { rank: theirs }) && !(await patch(other, { rank: mine }))) await load(a.id).catch(() => {}); }
     finally { setMoving(false); }
   };
-  const card = (it: CroItem, n: number | undefined, compact = false) => (
-    <CroItemCard key={it.id} audit={a} item={it} n={n} compact={compact} disabled={moving}
+  const card = (it: CroItem, n: number | undefined, variant: CroCardVariant = "month") => (
+    <CroItemCard key={it.id} audit={a} item={it} n={n} variant={variant} disabled={moving}
       canUp={!!neighborOf(split, it, -1)} canDown={!!neighborOf(split, it, 1)}
       onPatch={(p) => patch(it, p)} onMove={(d) => void move(it, d)} onEvidence={openEvidence} />
   );
@@ -157,19 +162,19 @@ export default function CroPanel({ leadId, onError }: { leadId: string; onError:
     <div className="cro">
       <div className="cro-bar">
         {picker(a)}
-        <span className="row">
-          <button className="link-btn" onClick={(e) => openEvidence("all", e.currentTarget)}>All evidence ({a.evidence.length})</button>
-          <button onClick={run} disabled={!!busy} title="Starts a fresh scan; roughly $0.15–0.40">{busy === "run" ? "Starting…" : "Run again"}</button>
-        </span>
+        <Badge tone={STATUS_TONE[a.status]} dot>{a.status[0].toUpperCase() + a.status.slice(1)}</Badge>
+        <span className="cro-grow" />
+        <button className="btn-plain" onClick={(e) => openEvidence("all", e.currentTarget)}><Icon name="list" size={16} />All evidence ({a.evidence.length})</button>
+        <button className="btn" onClick={run} disabled={!!busy} title="Starts a fresh scan; roughly $0.15–0.40"><Icon name="refresh" size={16} />{busy === "run" ? "Starting…" : "Run again"}</button>
       </div>
       {a.error && (
-        <div className="row">
-          <p className="error small">The last update didn't finish, so this is the previous version of the roadmap. {a.error}</p>
-          <button onClick={() => act("rebuild", () => api.post(`/cro-audits/${a.id}/rebuild`), a.id)} disabled={!!busy}>{busy === "rebuild" ? "Trying again…" : "Try again"}</button>
+        <div className="cro-note err">
+          <span>The last update didn't finish, so this is the previous version of the roadmap. {a.error}</span>
+          <button className="btn sm" onClick={() => act("rebuild", () => api.post(`/cro-audits/${a.id}/rebuild`), a.id)} disabled={!!busy}>{busy === "rebuild" ? "Trying again…" : "Try again"}</button>
         </div>
       )}
-      {a.warning && <p className="warn">⚠ {a.warning}</p>}
-      {a.partial && <p className="muted small">⚠ Some pages couldn't be loaded; the roadmap covers the rest.</p>}
+      {a.warning && <p className="cro-note warn">⚠ {a.warning}</p>}
+      {a.partial && <p className="cro-note">⚠ Some pages couldn't be loaded; the roadmap covers the rest.</p>}
 
       <CroSnapshot key={`${a.id}-${a.completed_at}`} audit={a} busy={busy === "rebuild"} rebuildOwed={rebuildOwed === a.id} onRebuild={(overrides: AssumptionOverrides) => act("rebuild", async () => {
         if (rebuildNeedsPatch(overrides)) await api.patch(`/cro-audits/${a.id}/assumptions`, { overrides });
@@ -178,41 +183,58 @@ export default function CroPanel({ leadId, onError }: { leadId: string; onError:
         setRebuildOwed(null);
       }, a.id)} />
 
-      {a.strengths.length > 0 && <section className="card"><h3>What already works</h3><ul>{a.strengths.map((s, i) => <li key={i}>{s}</li>)}</ul></section>}
+      {(a.strengths.length > 0 || a.positioning) && <div className="cro-pair">
+        {a.strengths.length > 0 && <section className="section-card cro-card" aria-label="What already works">
+          <h3>What already works</h3>
+          <ul className="cro-checks">{a.strengths.map((s, i) => <li key={i}><Icon name="check" size={14} />{s}</li>)}</ul>
+        </section>}
+        {a.positioning && <section className="section-card cro-card" aria-label="Positioning">
+          <h3>Positioning</h3>
+          <div className="cro-says"><span className="cro-lbl">The site says now</span><p>“{a.positioning.says_now}”</p></div>
+          <div className="cro-says should"><span className="cro-lbl">It should say</span><p>“{a.positioning.should_say}”</p></div>
+        </section>}
+      </div>}
 
-      <h3>Do this month</h3>
-      {split.month.length === 0 && <p className="muted small">Nothing is included for this month.</p>}
+      <div className="cro-head">
+        <h3>Do this month</h3>
+        <Badge>{split.month.length} of {split.month.length + split.hidden.length} included</Badge>
+        <span className="cro-grow" />
+        <span className="cro-hint">Included items go into the PDF and emails</span>
+      </div>
+      {split.month.length === 0 && <p className="cro-note">Nothing is included for this month.</p>}
       {split.month.map((it, i) => card(it, i + 1))}
 
-      {roadmap.some(([, , col]) => col.length > 0) && <section>
-        <h3>90-day roadmap</h3>
+      {roadmap.some(([, , col]) => col.length > 0) && <>
+        <div className="cro-head"><h3>90-day roadmap</h3></div>
         <div className="cro-cols">{roadmap.map(([h, label, col]) => (
-          <div key={h}><h4>{label}</h4>{col.map((it) => card(it, visible.indexOf(it) + 1, true))}</div>
+          <section key={h} className="cro-col" aria-label={label}>
+            <div className="cro-col-head"><h4>{label}</h4><span>{col.length}</span></div>
+            {col.map((it) => card(it, visible.indexOf(it) + 1, "compact"))}
+          </section>
         ))}</div>
-      </section>}
-
-      {split.hidden.length > 0 && <section>
-        <h3>Hidden from the deck and emails</h3>
-        {split.hidden.map((it) => card(it, undefined, true))}
-      </section>}
-
-      {a.positioning && <section className="card"><h3>Positioning</h3>
-        <p><span className="muted small">The site says now</span><br />“{a.positioning.says_now}”</p>
-        <p><span className="muted small">It should say</span><br /><strong>“{a.positioning.should_say}”</strong></p></section>}
-
-      {a.tracking_plan.length > 0 && <section className="card"><h3>What to measure</h3>
-        <table><tbody>{a.tracking_plan.map((t, i) => <tr key={i}><td><strong>{t.event}</strong></td><td>{t.why}</td></tr>)}</tbody></table></section>}
+      </>}
 
       <CroScenario key={`s-${a.id}-${a.completed_at}-${scenarioKey}`} audit={a} busy={busy === "scenario"}
         onSave={(s: ScenarioInputs) => act("scenario", () => api.patch(`/cro-audits/${a.id}/assumptions`, { scenario: s }), a.id)} />
 
+      {(a.tracking_plan.length > 0 || split.hidden.length > 0) && <div className="cro-pair">
+        {a.tracking_plan.length > 0 && <section className="section-card cro-card tight" aria-label="What to measure">
+          <h3>What to measure</h3>
+          <dl className="cro-measure">{a.tracking_plan.map((t, i) => <div key={i}><dt>{t.event}</dt><dd>{t.why}</dd></div>)}</dl>
+        </section>}
+        {split.hidden.length > 0 && <section className="section-card cro-card tight cro-hidden" aria-label="Hidden from the PDF and emails">
+          <h3><Icon name="eye" size={15} />Hidden from the PDF and emails</h3>
+          <div className="cro-hid-list">{split.hidden.map((it) => card(it, undefined, "hidden"))}</div>
+        </section>}
+      </div>}
+
       {evidence && (
-        <aside className="card cro-evidence" aria-label="Evidence" tabIndex={-1} ref={drawer}
+        <aside className="section-card cro-evidence" aria-label="Evidence" tabIndex={-1} ref={drawer}
           onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); closeEvidence(); } }}>
-          <div className="row between"><h3>Evidence</h3><button className="link-btn" onClick={closeEvidence}>Close</button></div>
-          {evidenceShown.length === 0 ? <p className="muted small">No evidence recorded.</p> : (
+          <div className="cro-card-head"><h3>Evidence</h3><span className="cro-grow" /><button className="btn sm" onClick={closeEvidence}>Close</button></div>
+          {evidenceShown.length === 0 ? <p className="cro-hint">No evidence recorded.</p> : (
             <ul>{evidenceShown.map((e) => (
-              <li key={e.id}><code>{e.id}</code> <span className="muted small">{e.pageKind} · {EVIDENCE_FAMILY_LABEL[e.family] ?? e.family}{e.device ? ` · ${e.device}` : ""}</span><br />{e.fact}</li>
+              <li key={e.id}><code>{e.id}</code> <span className="cro-hint">{e.pageKind} · {EVIDENCE_FAMILY_LABEL[e.family] ?? e.family}{e.device ? ` · ${e.device}` : ""}</span><br />{e.fact}</li>
             ))}</ul>
           )}
         </aside>

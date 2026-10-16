@@ -2,16 +2,22 @@ import { monthUsage } from "./db/usage";
 import { getSettings } from "./db/settings";
 import { BRIGHTDATA_PAGE_SIZE } from "./listings/brightdata";
 
-// Rough list prices; update when invoices disagree.
+// Rough list prices; update when invoices disagree. placesPerRequest is the Text Search Enterprise SKU (phone/website/rating)
+// beyond its free monthly allowance; listingPerRequest is the dearer of the two listing providers, used for spend-cap estimates.
 // browserPerRender: ~20s of Browser Rendering at $0.09/browser-hour. claudePerReview / claudePerDraft / croAudit were sized
 // for Sonnet 5.5 and Haiku 4.5; Haiku 5.5 ($0.10/$0.50 per MTok) now costs a fraction, so they are conservative spend-cap ceilings.
-export const PRICES = { brightdataPerRequest: 0.0015, pagespeedPerCall: 0, claudePerDraft: 0.01, browserPerRender: 0.0005, claudePerReview: 0.035, croAudit: 0.25 };
+export const PRICES = { brightdataPerRequest: 0.0015, placesPerRequest: 0.035, listingPerRequest: 0.035, pagespeedPerCall: 0, claudePerDraft: 0.01, browserPerRender: 0.0005, claudePerReview: 0.035, croAudit: 0.25 };
 
 export const PER_LEAD_COST = PRICES.browserPerRender + PRICES.claudePerReview + PRICES.claudePerDraft;
 
 export function estimateSearchCost(maxResults: number): number {
   const pages = Math.ceil(maxResults / BRIGHTDATA_PAGE_SIZE);
-  return pages * PRICES.brightdataPerRequest + maxResults * PER_LEAD_COST;
+  return pages * PRICES.listingPerRequest + maxResults * PER_LEAD_COST;
+}
+
+/** What a quick scan costs: the Maps listing pages only (crawl and score are free; render, review and draft wait for the full scan). */
+export function estimateQuickSearchCost(maxResults: number): number {
+  return Math.ceil(maxResults / BRIGHTDATA_PAGE_SIZE) * PRICES.listingPerRequest;
 }
 
 export async function checkSpend(db: D1Database, extraUsd: number) {

@@ -4,12 +4,16 @@ import type { Env } from "../env";
 import { getBusiness } from "../db/businesses";
 import { logActivity } from "../db/activity";
 import { buildToday, isTodayKind, snoozeDetail } from "../today";
+import { buildSummary } from "../todaySummary";
 
 const Snooze = z.object({ days: z.number({ error: "days must be a whole number from 1 to 30" }).int("days must be a whole number from 1 to 30").min(1, "days must be from 1 to 30").max(30, "days must be from 1 to 30") });
 
 export const todayRoutes = new Hono<{ Bindings: Env }>();
 
 todayRoutes.get("/", async (c) => c.json({ items: await buildToday(c.env.DB, new Date()) }));
+
+/** The Home KPI cards, pipeline counts and recent activity. */
+todayRoutes.get("/summary", async (c) => c.json(await buildSummary(c.env.DB, new Date())));
 
 /** The kind must be one of the Today kinds and the lead must exist, else 404. */
 async function target(c: { env: Env; req: { param: (k: string) => string } }) {

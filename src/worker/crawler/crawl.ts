@@ -21,7 +21,7 @@ const MAX_BROKEN_CHECKS = 15;
 // `x.redirect` defaults to "follow"; `x.anyBody` also reads non-HTML bodies (robots.txt); `x.maxBytes` stops reading
 // after that many bytes; `x.accept` overrides the Accept header (text/html by default).
 interface GetX { redirect?: RequestRedirect; anyBody?: boolean; maxBytes?: number; accept?: string }
-async function readText(res: Response, maxBytes?: number): Promise<string> {
+export async function readText(res: Response, maxBytes?: number): Promise<string> {
   if (!maxBytes || !res.body) return res.text();
   const reader = res.body.getReader(); const dec = new TextDecoder(); let out = "", n = 0;
   while (n < maxBytes) {

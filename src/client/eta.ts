@@ -10,6 +10,11 @@ const MEASURE_AFTER = 10; // leads processed before trusting measured pace
 
 export type Stage = "fetching" | "auditing" | "done" | "failed";
 
+/** True while the listing fetch is failing and being retried: the countdown means nothing then, so it is hidden. */
+export function isRetryingFetch(s: Search): boolean {
+  return searchStage(s) === "fetching" && s.fetch_attempts > 0;
+}
+
 export function searchStage(s: Search): Stage {
   if (s.status === "failed") return "failed";
   if (s.status === "running" && s.found_count === 0) return "fetching";
@@ -31,6 +36,7 @@ export function elapsedSeconds(createdAt: string, nowMs: number): number {
 export function estimateRemainingSeconds(s: Search, nowMs: number): number | null {
   const stage = searchStage(s);
   if (stage === "done" || stage === "failed") return null;
+  if (isRetryingFetch(s)) return null;
   const elapsed = elapsedSeconds(s.created_at, nowMs);
   if (stage === "fetching") {
     const fetchLeft = Math.max(15, FETCH_S - elapsed);

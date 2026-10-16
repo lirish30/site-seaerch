@@ -3,6 +3,12 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { createFitProfile, deleteFitProfile, listFitProfiles, updateFitProfile } from "../db/fit";
 import { getServiceByKey } from "../db/services";
+import { listAllBusinesses } from "../db/businesses";
+import { latestAuditsFor } from "../db/audits";
+import { scoreFit } from "../scoring/fit";
+
+/** A lead counts toward a profile when it fits that profile alone at least this well. */
+export const MATCH_AT = 80;
 
 const Platforms = z.array(z.enum(["wix", "squarespace", "godaddy", "wordpress", "weebly", "shopify", "webflow", "other"])).max(20);
 const Strs = z.array(z.string().trim().min(1).max(80)).max(50);
@@ -26,6 +32,15 @@ const UNKNOWN_SERVICE = { error: "service_key is not a service in the catalog" }
 export const fitRoutes = new Hono<{ Bindings: Env }>();
 
 fitRoutes.get("/", async (c) => c.json(await listFitProfiles(c.env.DB)));
+
+// How many leads fit each profile at MATCH_AT or better, judged against that profile alone (a profile with no criteria matches nothing).
+fitRoutes.get("/matches", async (c) => {
+  const [profiles, businesses] = await Promise.all([listFitProfiles(c.env.DB), listAllBusinesses(c.env.DB, {})]);
+  const audits = await latestAuditsFor(c.env.DB, businesses.map((b) => b.id));
+  const counts: Record<string, number> = {};
+  for (const p of profiles) counts[p.id] = businesses.filter((b) => (scoreFit(b, audits.get(b.id) ?? null, [{ ...p, active: true }]).fit ?? -1) >= MATCH_AT).length;
+  return c.json({ matchAt: MATCH_AT, counts });
+});
 
 fitRoutes.post("/", async (c) => {
   const parsed = NewProfile.safeParse(await c.req.json().catch(() => ({})));

@@ -1,30 +1,40 @@
+import { Link } from "react-router-dom";
 import type { BestOffer } from "../types";
-import EvidenceBadge from "./EvidenceBadge";
+import Icon from "./Icon";
+import { Severity } from "./Score";
 
-/** The one service this audit argues for first, and the findings that argue for it. */
-export default function BestOfferCard({ offer, auditCreatedAt }: { offer: BestOffer; auditCreatedAt: string }) {
-  const { service: s, because } = offer;
+/** The one service this audit argues for first, the findings that argue for it, and the button that starts the email. */
+export default function BestOfferCard({ offer, fallbackName, onWriteEmail, canWrite = true }: {
+  offer: BestOffer | null; fallbackName: string; onWriteEmail: () => void; canWrite?: boolean;
+}) {
+  const s = offer?.service;
+  const because = offer?.because ?? [];
   return (
-    <section className="best-offer" aria-label="Best first offer">
-      <p className="best-offer-kicker small">Best first offer</p>
-      <h3>{s.name}</h3>
-      {s.summary && <p>{s.summary}</p>}
-      {s.first_engagement && <p><strong>First engagement:</strong> {s.first_engagement}</p>}
-      {s.deliverables.length > 0 && <><h4>Deliverables</h4><ul>{s.deliverables.map((x) => <li key={x}>{x}</li>)}</ul></>}
-      {s.prerequisites.length > 0 && <><h4>Needs from the client</h4><ul>{s.prerequisites.map((x) => <li key={x}>{x}</li>)}</ul></>}
-      <h4>Why this one</h4>
-      {because.length > 0 ? (
-        <ul className="top-issues">
-          {because.map((f, i) => (
-            <li key={`${f.code}:${i}`} className={`finding sev-${f.severity}`}>
-              <div>
-                <p className="finding-evidence"><span className={`sev-dot sev-${f.severity}`} />{f.evidence}</p>
-                <EvidenceBadge finding={f} auditCreatedAt={auditCreatedAt} stale={!!f.stale} />
-              </div>
-            </li>
-          ))}
-        </ul>
-      ) : <p className="muted small">No single finding points here; this is the service the audit's overall pitch maps to.</p>}
+    <section className="section-card pitch" aria-label="Recommended pitch">
+      <div className="kick">
+        <Icon name="sparkles" size={16} />
+        <p className="kicker">Recommended pitch</p>
+        {because.length > 0 && <small>Picked from the weakest area</small>}
+      </div>
+      <h2>{s?.name ?? fallbackName}</h2>
+      {s?.summary && <p>{s.summary}</p>}
+      {(s?.first_engagement || (s?.prerequisites.length ?? 0) > 0) && (
+        <div className="pitch-boxes">
+          {s?.first_engagement && <div className="mini-box"><span className="lbl">First engagement</span><p>{s.first_engagement}</p></div>}
+          {s && s.prerequisites.length > 0 && <div className="mini-box"><span className="lbl">Needs from them</span><p>{s.prerequisites.join(", ")}</p></div>}
+        </div>
+      )}
+      {s && s.deliverables.length > 0 && <div className="mini-box"><span className="lbl">What you'd deliver</span><ul>{s.deliverables.map((x) => <li key={x}>{x}</li>)}</ul></div>}
+      <>
+        <p className="why-lbl">Why this pitch</p>
+        {because.length > 0
+          ? because.map((f, i) => <div key={`${f.code}:${i}`} className="why-row"><Severity severity={f.severity} /><span>{f.evidence}</span></div>)
+          : <p className="muted small">{offer ? "No single finding points here; this is the service the audit's overall pitch maps to." : "This is the offer the audit's overall pitch maps to."}</p>}
+      </>
+      <div className="pitch-actions">
+        <button className="btn primary" onClick={onWriteEmail} disabled={!canWrite} title={canWrite ? undefined : "Suppressed: drafting is turned off"}><Icon name="send" size={14} />Write email with this pitch</button>
+        <Link className="btn-plain" to="/settings">Other services</Link>
+      </div>
     </section>
   );
 }

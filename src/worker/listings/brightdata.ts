@@ -1,6 +1,6 @@
 import type { Listing } from "../types";
 import type { Fetcher } from "../crawler/crawl";
-import { RetryableError, type ListingQuery, type ListingSource } from "./source";
+import { RateLimitedError, RetryableError, REQUEST_TIMEOUT_MS, SEARCH_DEADLINE_MS, fetchWithTimeout, type ListingQuery, type ListingSource } from "./source";
 
 export const BRIGHTDATA_PAGE_SIZE = 20;
 const MAX_PAGES = 10;
@@ -50,29 +50,32 @@ function itemsOf(json: unknown): Record<string, unknown>[] {
 }
 
 export class BrightDataListingSource implements ListingSource {
-  constructor(private o: { apiKey: string; zone: string; fetch: Fetcher }) {}
+  constructor(private o: { apiKey: string; zone: string; fetch: Fetcher; requestTimeoutMs?: number; deadlineMs?: number }) {}
 
   async search(q: ListingQuery) {
     const seen = new Set<string>();
     const listings: Listing[] = [];
     let requests = 0;
     const term = encodeURIComponent(`${q.businessType} in ${q.location}`);
+    const timeoutMs = this.o.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
+    const startedAt = Date.now();
     for (let p = 0; p < MAX_PAGES && listings.length < q.maxResults; p++) {
+      // Out of time: keep the pages already fetched rather than risk the step timing out and discarding them.
+      if (p > 0 && Date.now() - startedAt >= (this.o.deadlineMs ?? SEARCH_DEADLINE_MS)) break;
       const url = `https://www.google.com/maps/search/${term}/?brd_json=1&gl=us&hl=en${p ? `&start=${p * BRIGHTDATA_PAGE_SIZE}` : ""}`;
-      const res = await this.o.fetch("https://api.brightdata.com/request", {
+      requests++;
+      const { res, body } = await fetchWithTimeout(this.o.fetch, "https://api.brightdata.com/request", {
         method: "POST",
         headers: { authorization: `Bearer ${this.o.apiKey}`, "content-type": "application/json" },
         body: JSON.stringify({ zone: this.o.zone, url, format: "raw" }),
-      });
-      requests++;
-      const body = await res.text();
+      }, timeoutMs, "Bright Data");
       // Bright Data reports an upstream (Google Maps) failure as HTTP 200 with an empty body and the real
       // status in x-brd-status-code, so res.ok alone is not enough.
       const status = Number(res.headers.get("x-brd-status-code")) || res.status;
       if (!res.ok || status >= 400) {
         const code = res.headers.get("x-brd-error-code");
         const msg = `Bright Data HTTP ${status}${code ? ` (${code})` : ""}: ${body.slice(0, 200) || res.headers.get("x-brd-error") || "no body"}`;
-        throw status === 429 || status >= 500 ? new RetryableError(msg) : new Error(msg);
+        throw status === 429 ? new RateLimitedError(msg) : status >= 500 ? new RetryableError(msg) : new Error(msg);
       }
       if (!body.trim()) throw new RetryableError("Bright Data returned an empty response");
       let json: unknown;
@@ -92,6 +95,6 @@ export class BrightDataListingSource implements ListingSource {
       }
       if (!added) break;
     }
-    return { listings, requests };
+    return { listings, requests, provider: "brightdata" as const };
   }
 }

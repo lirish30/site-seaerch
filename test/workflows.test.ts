@@ -26,18 +26,21 @@ describe("adaptStep retry config", () => {
     await adaptStep(step as any).do(name, async () => true);
     return cfg;
   };
-  it("fetch-listings retries more patiently than other steps (Bright Data 502s come in bursts)", async () => {
-    const listing = await configFor("fetch-listings");
+  it("fetch-listings backs off longer than other steps but gives up within minutes, not tens of minutes", async () => {
+    for (const name of ["fetch-listings", "fetch-listings-1", "fetch-listings-2"]) {
+      const listing = await configFor(name);
+      expect(listing.retries.limit).toBe(3);
+      expect(listing.retries.delay).toBe("20 seconds");
+      expect(listing.retries.backoff).toBe("exponential");
+      expect(listing.timeout).toBe("5 minutes");
+    }
     const other = await configFor("pagespeed");
-    expect(listing.retries.limit).toBe(5);
-    expect(listing.retries.delay).toBe("30 seconds");
-    expect(listing.retries.backoff).toBe("exponential");
     expect(other.retries.limit).toBe(3);
     expect(other.retries.delay).toBe("10 seconds");
   });
   it("gives the AI steps (business model, each page, the roadmap) a 10 minute timeout and leaves the rest at 5", async () => {
     for (const name of ["model", "page-0", "page-6", "synthesize"]) expect((await configFor(name)).timeout).toBe("10 minutes");
-    for (const name of ["capture-0", "evidence", "pagespeed", "review", "fetch-listings"]) expect((await configFor(name)).timeout).toBe("5 minutes");
+    for (const name of ["capture-0", "evidence", "pagespeed", "review"]) expect((await configFor(name)).timeout).toBe("5 minutes");
     expect((await configFor("synthesize")).retries.limit).toBe(3);
   });
 

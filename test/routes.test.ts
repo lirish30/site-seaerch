@@ -354,6 +354,6 @@ describe("routes", () => {
     expect((await api(`/api/leads/${b.id}/drive`, { method: "POST", body: "{}" })).status).toBe(400);
     const cb = await SELF.fetch("https://x/api/google/callback?code=c&state=bad", { redirect: "manual" });
     expect(cb.status).toBe(302);
-    expect(cb.headers.get("location")).toBe("/settings?google=failed");
+    expect(cb.headers.get("location")).toBe("/settings/google?google=failed");
   });
 });

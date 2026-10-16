@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { FitChip } from "../components/FitChip";
+import { LeadScore } from "../components/Score";
 import { FULL_SCAN_ADDS, fullScanErrorText, fullScanLabel, parseMinFit, promisingPath } from "../promising";
 import { OFFER_LABEL, type LeadRow } from "../types";
 
@@ -66,7 +67,7 @@ export default function Promising() {
       ) : (
         <div className="table-wrap"><table className="promising">
           <thead><tr><th>Business</th><th title="How well the business matches your best fit profile. — means no profile applies">Fit</th>
-            <th title="Opportunity: higher is a better lead">Opp.</th><th>Top issue</th><th></th></tr></thead>
+            <th title="Lead score: how strong a prospect is. Higher is better.">Lead score</th><th>Top issue</th><th></th></tr></thead>
           <tbody>
             {rows.map((r) => {
               const id = r.business.id, isBusy = busy.has(id), isStarted = started.has(id);
@@ -77,7 +78,7 @@ export default function Promising() {
                     <div className="sub" title={r.business.website_url ?? ""}>{host(r.business.website_url) || "no website"}</div>
                   </td>
                   <td><FitChip fit={r.fit} /></td>
-                  <td><span className={`opp ${r.score === null ? "" : r.score >= 60 ? "hot" : r.score >= 25 ? "warm" : "cool"}`}>{r.score ?? "…"}</span></td>
+                  <td><LeadScore score={r.score} /></td>
                   <td><span className="clamp2" title={r.topFinding ?? ""}>{r.topFinding ?? <span className="muted">—</span>}</span>
                     {r.offer && <span className="sub">{OFFER_LABEL[r.offer] ?? r.offer}</span>}</td>
                   <td>
