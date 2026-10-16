@@ -7,11 +7,14 @@ import { ev, model, rec } from "./fixtures/cro";
 
 const business = { id: "b1", name: "Ace Plumbing", category: "Plumber", address: "12 Main St, Boise, ID 83702", phone: null,
   website_url: "https://ace.com", rating: 4.6, review_count: 38 } as Business;
-const fixed = (input: unknown, costUsd = 0.01): CroCaller => async () => ({ input, costUsd, model: "claude-haiku-4-5" });
+const fixed = (input: unknown, costUsd = 0.01): CroCaller => async () => ({ input, costUsd, model: "claude-haiku-5-5" });
 
 describe("costOf", () => {
   it("prices input, output and cache tokens per model", () => {
-    expect(costOf("claude-haiku-4-5", { input_tokens: 1e6, output_tokens: 1e6 })).toBeCloseTo(6);
+    expect(costOf("claude-haiku-5-5", { input_tokens: 50_000, output_tokens: 1e6 })).toBeCloseTo(0.005 + 0.5);
+    // A prompt over 100K tokens (cached tokens count) moves to the long-prompt rate card.
+    expect(costOf("claude-haiku-5-5", { input_tokens: 100_001, output_tokens: 1e6 })).toBeCloseTo((100_001 * 0.5) / 1e6 + 2.5);
+    expect(costOf("claude-haiku-5-5", { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 200_000 })).toBeCloseTo(0.2 * 0.5 * 0.1);
     expect(costOf("claude-sonnet-5-5", { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 1e6, cache_creation_input_tokens: 1e6 })).toBeCloseTo(0.2 + 2.5);
   });
 });
@@ -19,7 +22,7 @@ describe("costOf", () => {
 describe("callStage", () => {
   it("retries once on output that fails the schema and sums the cost", async () => {
     let n = 0;
-    const call: CroCaller = async () => ({ input: ++n === 1 ? { bad: true } : model(), costUsd: 0.01, model: "claude-haiku-4-5" });
+    const call: CroCaller = async () => ({ input: ++n === 1 ? { bad: true } : model(), costUsd: 0.01, model: "claude-haiku-5-5" });
     const r = await callStage(call, {} as StageRequest, BusinessModelSchema);
     expect(n).toBe(2);
     expect(r.value!.model).toBe("lead_gen_phone");
@@ -119,21 +122,36 @@ describe("anthropicCroCaller", () => {
   };
   const req: StageRequest = { stage: "pages", system: "s", content: [{ type: "text", text: "t" }], tool: { name: "submit_page_review", input_schema: { type: "object" } } };
 
-  it("uses forced tool choice and no effort on Haiku", async () => {
-    const f = fakeClient();
-    const r = await anthropicCroCaller("k", { model: "claude-haiku-4-5", pages: "claude-haiku-4-5", synthesize: "claude-haiku-4-5" }, f.client)(req);
-    expect(f.calls[0].tool_choice).toEqual({ type: "tool", name: "submit_page_review" });
-    expect(f.calls[0].output_config).toBeUndefined();
-    expect(f.calls[0].system[0].cache_control).toEqual({ type: "ephemeral" });
-    expect(r).toMatchObject({ input: { ok: 1 }, model: "claude-haiku-4-5" });
-    expect(r!.costUsd).toBeCloseTo((1000 * 1 + 100 * 5) / 1e6);
-  });
+  const models = { model: "claude-haiku-5-5", pages: "claude-haiku-5-5", synthesize: "claude-haiku-5-5" } as const;
 
-  it("uses auto tool choice and medium effort on Sonnet", async () => {
+  it("lets Haiku think on the judgement stages: auto tool choice, per-stage effort, tool named in the prompt", async () => {
     const f = fakeClient();
-    await anthropicCroCaller("k", { model: "claude-haiku-4-5", pages: "claude-sonnet-5-5", synthesize: "claude-haiku-4-5" }, f.client)(req);
+    const r = await anthropicCroCaller("k", models, f.client)(req);
     expect(f.calls[0].tool_choice).toEqual({ type: "auto" });
     expect(f.calls[0].output_config).toEqual({ effort: "medium" });
+    expect(f.calls[0].system[0].text).toContain("submit_page_review");
+    expect(f.calls[0].system[0].cache_control).toEqual({ type: "ephemeral" });
+    expect(r).toMatchObject({ input: { ok: 1 }, model: "claude-haiku-5-5" });
+    expect(r!.costUsd).toBeCloseTo((1000 * 0.1 + 100 * 0.5) / 1e6);
+  });
+
+  it("runs the roadmap stage at high effort", async () => {
+    const f = fakeClient();
+    await anthropicCroCaller("k", models, f.client)({ ...req, stage: "synthesize" });
+    expect(f.calls[0].output_config).toEqual({ effort: "high" });
+  });
+
+  it("forces the tool only for the simple classify stage on Haiku", async () => {
+    const f = fakeClient();
+    await anthropicCroCaller("k", models, f.client)({ ...req, stage: "model" });
+    expect(f.calls[0].tool_choice).toEqual({ type: "tool", name: "submit_page_review" });
+    expect(f.calls[0].output_config).toEqual({ effort: "low" });
+  });
+
+  it("never forces the tool on Sonnet, which rejects it", async () => {
+    const f = fakeClient();
+    await anthropicCroCaller("k", { ...models, model: "claude-sonnet-5-5" }, f.client)({ ...req, stage: "model" });
+    expect(f.calls[0].tool_choice).toEqual({ type: "auto" });
   });
 
   it("throws on refusal", async () => {

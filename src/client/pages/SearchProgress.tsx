@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { elapsedSeconds, estimateRemainingSeconds, formatClock, formatEta, searchStage, type Stage } from "../eta";
+import { elapsedSeconds, estimateRemainingSeconds, formatClock, formatEta, isRetryingFetch, searchStage, type Stage } from "../eta";
 import type { Search } from "../types";
 
 const STEPS: { key: Exclude<Stage, "failed">; label: string }[] = [
@@ -9,7 +9,7 @@ const STEPS: { key: Exclude<Stage, "failed">; label: string }[] = [
 ];
 
 /** Ticks once a second while `active`, so elapsed time keeps moving between polls. */
-function useNow(active: boolean): number {
+export function useNow(active: boolean): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!active) return;
@@ -26,7 +26,9 @@ export default function SearchProgress({ search, compact = false }: { search: Se
   const now = useNow(running);
   const eta = estimateRemainingSeconds(search, now);
   const pct = search.found_count > 0 ? Math.min(100, Math.round((search.processed_count / search.found_count) * 100)) : 0;
-  const status = stage === "fetching" ? "Searching Google Maps for listings…"
+  const retrying = isRetryingFetch(search);
+  const status = retrying ? `Google Maps search failed ${search.fetch_attempts} ${search.fetch_attempts === 1 ? "time" : "times"} · retrying`
+    : stage === "fetching" ? "Searching Google Maps for listings…"
     : stage === "auditing" ? `${search.processed_count} of ${search.found_count} businesses audited`
     : stage === "done" ? (search.found_count === 0 ? "No businesses found" : `${search.found_count} businesses audited`)
     : "Search failed";
@@ -44,6 +46,7 @@ export default function SearchProgress({ search, compact = false }: { search: Se
           </span>
         )}
       </div>
+      {retrying && search.error && <p className="muted small progress-error">Last error: {search.error}. The listing provider sometimes rejects or throttles requests; it keeps retrying (waiting longer after a rate limit) and fails on its own if that runs out.</p>}
       <div className={`bar${stage === "fetching" ? " indeterminate" : ""}${running ? " live" : ""}${stage === "failed" ? " failed" : ""}`}
         role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={stage === "fetching" ? undefined : pct}>
         <span style={{ width: stage === "fetching" ? undefined : `${stage === "done" ? 100 : pct}%` }} />

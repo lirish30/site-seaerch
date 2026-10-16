@@ -21,11 +21,11 @@ describe("cro db", () => {
   it("accumulates cost and records the model per stage", async () => {
     const b = await seedBusiness();
     const a = await createCroAudit(env.DB, b.id);
-    await addCroCost(env.DB, a.id, 0.01, "model", "claude-haiku-4-5");
-    await addCroCost(env.DB, a.id, 0.02, "pages", "claude-haiku-4-5");
+    await addCroCost(env.DB, a.id, 0.01, "model", "claude-haiku-5-5");
+    await addCroCost(env.DB, a.id, 0.02, "pages", "claude-haiku-5-5");
     const r = (await getCroAudit(env.DB, a.id))!;
     expect(r.est_cost_usd).toBeCloseTo(0.03);
-    expect(r.models_used).toEqual({ model: "claude-haiku-4-5", pages: "claude-haiku-4-5" });
+    expect(r.models_used).toEqual({ model: "claude-haiku-5-5", pages: "claude-haiku-5-5" });
   });
 
   it("latest/list return newest first; latest can require done", async () => {

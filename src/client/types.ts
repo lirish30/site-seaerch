@@ -7,7 +7,9 @@ export interface Business { id: string; name: string; category: string | null; a
   starred_at: string | null; }
 /** 'quick' = crawled and scored only; 'full' = also screenshots, PageSpeed, AI review and a draft. */
 export type ScanStage = "quick" | "full";
-export interface LeadRow { business: Business; score: number | null; health: number | null; niche: string | null; topFinding: string | null; offer: string | null;
+export interface LeadRow { business: Business; score: number | null; health: number | null; niche: string | null; topFinding: string | null;
+  /** Severity and category of `topFinding` (the audit's first finding), null when there is no audit. */
+  topSeverity: Severity | null; topCategory: AuditCategory | "site" | null; hasDraft: boolean; offer: string | null;
   bestContact: string | null; hasEmail: boolean; partial: boolean; poc: { name: string; email: string | null } | null;
   platform: string | null; rating: number | null; reviewCount: number | null; fit: FitResult; scan_stage: ScanStage; }
 
@@ -42,7 +44,7 @@ export const NICHE_LABEL: Record<string, string> = {
   education: "Education", fitness_beauty: "Fitness & beauty", nonprofit_community: "Nonprofit & community", general: "Local business",
 };
 export interface Search { id: string; location: string; business_type: string; radius_km?: number; max_results: number; status: "running" | "done" | "failed";
-  error: string | null; found_count: number; processed_count: number; created_at: string; new_only: 0 | 1; quick_scan: 0 | 1; }
+  error: string | null; fetch_attempts: number; found_count: number; processed_count: number; created_at: string; new_only: 0 | 1; quick_scan: 0 | 1; }
 export const STATUSES: LeadStatus[] = ["new", "reviewed", "contacted", "replied", "won", "lost", "skip"];
 export interface Radar { id: string; location: string; business_type: string; radius_km?: number; max_results: number; interval_days: number;
   enabled: 0 | 1; next_run_at: string; last_run_at: string | null; last_search_id: string | null; last_error: string | null; created_at: string;
@@ -108,3 +110,7 @@ export interface JobPosting {
   role_kind: "web_dev" | "design" | "seo" | "cro" | "marketing" | null; posted_at: string | null; first_seen_at: string; last_seen_at: string; closed_at: string | null; baseline: boolean;
 }
 export type OpenRole = JobPosting & { business_name: string };
+
+/** GET /api/outreach: the leads in one outreach queue with each one's current draft, and the size of every queue. */
+export interface OutreachCounts { drafts: number; followups: number; contacted: number; replied: number; full_time: number; freelance: number }
+export type OutreachView = "drafts" | "followups" | "contacted" | "replied";

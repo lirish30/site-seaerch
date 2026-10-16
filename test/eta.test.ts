@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { elapsedSeconds, estimateRemainingSeconds, formatClock, formatEta, searchStage } from "../src/client/eta";
+import { elapsedSeconds, estimateRemainingSeconds, formatClock, formatEta, isRetryingFetch, searchStage } from "../src/client/eta";
 import type { Search } from "../src/client/types";
 
 const T0 = Date.parse("2026-10-03T12:00:00.000Z");
 const s = (o: Partial<Search>): Search => ({ id: "s", location: "L", business_type: "b", max_results: 50, status: "running",
-  error: null, found_count: 0, processed_count: 0, created_at: "2026-10-03T12:00:00.000Z", new_only: 0, quick_scan: 0, ...o });
+  error: null, fetch_attempts: 0, found_count: 0, processed_count: 0, created_at: "2026-10-03T12:00:00.000Z", new_only: 0, quick_scan: 0, ...o });
 
 describe("searchStage", () => {
   it("is fetching until listings are found, then auditing, then done", () => {
@@ -53,5 +53,16 @@ describe("formatting", () => {
     expect(formatEta(20)).toBe("under a minute");
     expect(formatEta(95)).toBe("about 2 min");
     expect(formatEta(600)).toBe("about 10 min");
+  });
+});
+
+describe("retrying the listing fetch", () => {
+  it("hides the countdown once a fetch attempt has failed, and only while still fetching", () => {
+    expect(estimateRemainingSeconds(s({}), T0 + 60_000)).not.toBeNull();
+    expect(isRetryingFetch(s({ fetch_attempts: 2 }))).toBe(true);
+    expect(estimateRemainingSeconds(s({ fetch_attempts: 2 }), T0 + 60_000)).toBeNull();
+    // listings found: it is auditing now, so the old retries no longer matter
+    expect(isRetryingFetch(s({ fetch_attempts: 2, found_count: 20 }))).toBe(false);
+    expect(estimateRemainingSeconds(s({ fetch_attempts: 2, found_count: 20 }), T0 + 60_000)).not.toBeNull();
   });
 });

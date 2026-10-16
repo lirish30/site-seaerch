@@ -60,7 +60,8 @@ export interface Listing {
 
 export interface Search {
   id: string; location: string; business_type: string; radius_km: number; max_results: number;
-  status: "running" | "done" | "failed"; error: string | null;
+  status: "running" | "done" | "failed"; error: string | null; // while running, error is the last listing-fetch failure being retried
+  fetch_attempts: number; // listing-fetch attempts that failed and were retried
   found_count: number; processed_count: number; created_at: string;
   new_only: 0 | 1; // Radar-started: only businesses never audited get the per-lead pipeline
   quick_scan: 0 | 1; // its leads run the quick stage (no render, PageSpeed, AI review or draft); Radar searches never set it
@@ -115,7 +116,7 @@ export interface Person {
   linkedin: string | null; source: "manual" | "site"; is_poc: boolean; created_at: string;
 }
 
-export type ActivityKind = "status" | "archived" | "restored" | "website" | "reaudit" | "score_flagged" | "export" | "draft" | "cro_audit" | "suppressed" | "import" | "bulk" | "today_done" | "snoozed" | "starred" | "unstarred" | "job_found";
+export type ActivityKind = "status" | "archived" | "restored" | "website" | "reaudit" | "score_flagged" | "export" | "draft" | "cro_audit" | "suppressed" | "import" | "bulk" | "today_done" | "snoozed" | "starred" | "unstarred" | "note" | "job_found";
 export interface Activity { id: string; business_id: string; kind: ActivityKind; detail: string | null; created_at: string; }
 
 export interface Audit {
@@ -179,6 +180,8 @@ export interface Settings {
   /** JSON of a Signature, or "" to use the plain-text `signature`. */
   signature_json: string;
   default_purpose: Purpose;
+  /** 1/0: new freelance / full-time drafts carry the mailing footer; Gmail drafts attach the audit PDF unless the request says otherwise. */
+  footer_freelance?: number; footer_full_time?: number; attach_audit_pdf?: number;
 }
 export type TonePreset = "friendly_local" | "consultative" | "direct" | "formal";
 export type EmailLength = "short" | "medium" | "long";

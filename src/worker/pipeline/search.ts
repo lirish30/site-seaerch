@@ -1,7 +1,7 @@
-import { isRetryable, type ListingSource } from "../listings/source";
+import { isRateLimited, isRetryable, type ListingSource } from "../listings/source";
 import type { StepLike } from "./lead";
 import type { Business, Listing, ScanStage } from "../types";
-import { getSearch, setFoundCount, setSearchStatus, setProcessedCount } from "../db/searches";
+import { getSearch, setFoundCount, setSearchStatus, setProcessedCount, recordFetchRetry, clearFetchRetryError } from "../db/searches";
 import { upsertBusiness } from "../db/businesses";
 import { isSuppressed } from "../db/suppression";
 import { latestDraft } from "../db/drafts";
@@ -11,6 +11,9 @@ import { PRICES } from "../cost";
 
 export const LEAD_BATCH_SIZE = 5;
 export const LEAD_BATCH_DELAY_MS = 20_000;
+// After a 429 the fetch step stops retrying (30s apart would just hit the same limit) and the workflow sleeps this long
+// before trying the whole fetch again: 1 then 3 minutes, then the search fails with the 429 message.
+export const RATE_LIMIT_WAITS_MS = [60_000, 180_000];
 
 export interface SearchDeps {
   db: D1Database; source: ListingSource; startLead: (p: { businessId: string; searchId: string; stage: ScanStage }) => Promise<void>;
@@ -36,26 +39,42 @@ export async function runSearch(deps: SearchDeps, step: StepLike, searchId: stri
   if (!search) throw new Error(`Search ${searchId} not found`);
 
   try {
-    const fetched = await step.do("fetch-listings", async () => {
+    const fetchListings = async () => {
       try {
         const r = await deps.source.search({
           location: search.location, businessType: search.business_type, radiusKm: search.radius_km, maxResults: search.max_results,
         });
-        return { ok: true as const, listings: r.listings, requests: r.requests };
+        await clearFetchRetryError(deps.db, searchId);
+        return { ok: true as const, rateLimited: false as const, listings: r.listings, requests: r.requests, provider: r.provider ?? ("brightdata" as const) };
       } catch (e) {
-        // Transient (429/5xx): rethrow so Workflows retries the step; once retries are exhausted the
+        const error = (e as Error).message;
+        // Rate limited (429): hand it back instead of throwing, so the workflow can wait minutes rather than seconds.
+        if (isRateLimited(e)) {
+          await recordFetchRetry(deps.db, searchId, error).catch(() => {});
+          return { ok: false as const, rateLimited: true as const, error, listings: [] as Listing[], requests: 0, provider: "brightdata" as const };
+        }
+        // Transient (5xx): rethrow so Workflows retries the step; once retries are exhausted the
         // outer catch marks the search failed. Permanent (4xx) errors fail the search right away.
-        if (isRetryable(e)) throw e;
-        return { ok: false as const, error: (e as Error).message, listings: [] as Listing[], requests: 0 };
+        if (isRetryable(e)) {
+          await recordFetchRetry(deps.db, searchId, error).catch(() => {}); // progress info only: never mask the real error
+          throw e;
+        }
+        return { ok: false as const, rateLimited: false as const, error, listings: [] as Listing[], requests: 0, provider: "brightdata" as const };
       }
-    });
+    };
+    // Each round is a fresh step name (a step's result is cached once it returns), with a long sleep between rounds.
+    let fetched = await step.do("fetch-listings", fetchListings);
+    for (let round = 0; fetched.rateLimited && round < RATE_LIMIT_WAITS_MS.length; round++) {
+      await step.sleep(`rate-limit-wait-${round + 1}`, RATE_LIMIT_WAITS_MS[round]);
+      fetched = await step.do(`fetch-listings-${round + 1}`, fetchListings);
+    }
     if (!fetched.ok) {
       await step.do("mark-failed", () => setSearchStatus(deps.db, searchId, "failed", fetched.error).then(() => true));
       return { businessIds: [] as string[] };
     }
 
     await step.do("record-usage", () =>
-      recordUsage(deps.db, "brightdata", fetched.requests, fetched.requests * PRICES.brightdataPerRequest).then(() => true));
+      recordUsage(deps.db, fetched.provider, fetched.requests, fetched.requests * (fetched.provider === "places" ? PRICES.placesPerRequest : PRICES.brightdataPerRequest)).then(() => true));
 
     const toProcess = await step.do("upsert", async () => {
       const ids = new Set<string>();

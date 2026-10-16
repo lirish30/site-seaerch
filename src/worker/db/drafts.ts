@@ -22,6 +22,25 @@ export async function latestDraft(db: D1Database, businessId: string): Promise<D
   return r ? fromRow(r) : null;
 }
 
+/** The current draft of every lead that has one (the newest group's first variant, same rule as `latestDraft`). */
+export async function latestDraftsByBusiness(db: D1Database): Promise<Map<string, Draft>> {
+  const { results } = await db.prepare(
+    `SELECT * FROM (SELECT d.*, ROW_NUMBER() OVER (PARTITION BY business_id ORDER BY created_at DESC, variant_index ASC) AS rn FROM drafts d) WHERE rn = 1`,
+  ).all<Row & { rn: number }>();
+  return new Map(results.map((r) => [r.business_id, fromRow(r)]));
+}
+
+/** Which of these leads have at least one draft (for the "Drafts ready" view). */
+export async function draftedIds(db: D1Database, ids: string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (let i = 0; i < ids.length; i += 80) { // stay under D1's bound-parameter limit
+    const chunk = ids.slice(i, i + 80);
+    const { results } = await db.prepare(`SELECT DISTINCT business_id FROM drafts WHERE business_id IN (${chunk.map(() => "?").join(",")})`).bind(...chunk).all<{ business_id: string }>();
+    for (const r of results) out.add(r.business_id);
+  }
+  return out;
+}
+
 export async function getDraft(db: D1Database, businessId: string, id: string): Promise<Draft | null> {
   const r = await db.prepare(`SELECT * FROM drafts WHERE id = ? AND business_id = ?`).bind(id, businessId).first<Row>();
   return r ? fromRow(r) : null;

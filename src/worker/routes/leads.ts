@@ -17,7 +17,7 @@ import { scoreFit } from "../scoring/fit";
 import { rankPromising } from "../scoring/promising";
 import { bestOffer } from "../services/best-offer";
 import { listContacts, contactsFor } from "../db/contacts";
-import { latestDraft, updateDraftBody, listDrafts, selectDraft, variantsOf } from "../db/drafts";
+import { draftedIds, latestDraft, updateDraftBody, listDrafts, selectDraft, variantsOf } from "../db/drafts";
 import { activeReportFor, createReport, otherActiveCount, revokeReports, type ReportRow } from "../db/reports";
 import { pickRecipient } from "../recipient";
 import { regenerateDraft, TWEAKS, type Tweak } from "../pipeline/lead";
@@ -37,13 +37,14 @@ const STATUSES = ["new", "reviewed", "contacted", "replied", "won", "lost", "ski
 
 export async function leadRows(db: D1Database, businesses: Business[]) {
   const ids = businesses.map((b) => b.id);
-  const [audits, contactMap, pocs, profiles] = await Promise.all([latestAuditsFor(db, ids), contactsFor(db, ids), pocsFor(db, ids), listFitProfiles(db, { activeOnly: true })]);
+  const [audits, contactMap, pocs, profiles, drafted] = await Promise.all([latestAuditsFor(db, ids), contactsFor(db, ids), pocsFor(db, ids), listFitProfiles(db, { activeOnly: true }), draftedIds(db, ids)]);
   return businesses.map((b) => {
     const audit = audits.get(b.id) ?? null;
     const best = pickRecipient(contactMap.get(b.id) ?? [], domainOf(b.website_url));
     return {
       business: b, score: audit?.score ?? null, health: audit?.health_score ?? null, niche: audit?.niche ?? null,
-      topFinding: audit?.findings[0]?.evidence ?? null,
+      topFinding: audit?.findings[0]?.evidence ?? null, topSeverity: audit?.findings[0]?.severity ?? null, topCategory: audit?.findings[0]?.category ?? null,
+      hasDraft: drafted.has(b.id),
       offer: audit?.offer ?? null, bestContact: best.contact?.value ?? null, hasEmail: !!best.emailContact || !!pocs.get(b.id)?.email,
       poc: pocs.get(b.id) ? { name: pocs.get(b.id)!.name, email: pocs.get(b.id)!.email } : null,
       partial: audit?.partial ?? false, platform: audit?.platform ?? null, rating: b.rating, reviewCount: b.review_count,
@@ -201,7 +202,8 @@ leadRoutes.post("/:id/gmail-draft", (c) => exportGuard(c, async () => {
   const id = c.req.param("id");
   const blocked = await suppressedResponse(c, id);
   if (blocked) return blocked;
-  const { attachReport } = await c.req.json<{ attachReport?: boolean }>().catch(() => ({ attachReport: false }));
+  const body = await c.req.json<{ attachReport?: boolean }>().catch(() => ({} as { attachReport?: boolean }));
+  const attachReport = body.attachReport ?? (await getSettings(c.env.DB)).attach_audit_pdf !== 0;
   const draft = await latestDraft(c.env.DB, id);
   if (!draft) return c.json({ error: "Write a draft first" }, 400);
   const { token } = await googleAccess(c.env, new URL(c.req.url).origin);
@@ -275,6 +277,18 @@ leadRoutes.post("/:id/archive", async (c) => {
   const b = await setArchived(c.env.DB, id, archived !== false);
   await logActivity(c.env.DB, id, b.archived_at ? "archived" : "restored");
   return c.json(b);
+});
+
+/** A note on the lead's timeline: what was said or what to do next. Shown in the Activity tab. */
+const NOTE_MAX = 2000;
+leadRoutes.post("/:id/notes", async (c) => {
+  const id = c.req.param("id");
+  if (!(await getBusiness(c.env.DB, id))) return c.json({ error: "not found" }, 404);
+  const body = await c.req.json<{ text?: unknown }>().catch(() => ({} as { text?: unknown }));
+  const text = typeof body.text === "string" ? body.text.trim() : "";
+  if (!text || text.length > NOTE_MAX) return c.json({ error: `A note is 1 to ${NOTE_MAX} characters.` }, 400);
+  await logActivity(c.env.DB, id, "note", text);
+  return c.json({ ok: true }, 201);
 });
 
 const SuppressLead = z.object({ reason: Reason, note: Note });

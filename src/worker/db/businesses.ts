@@ -53,10 +53,12 @@ export async function upsertBusiness(db: D1Database, l: Listing, searchId: strin
   const domain = rawDomain && !isSocialOnlyUrl(`https://${rawDomain}/`) ? rawDomain : null;
   let existing: Business | null = null;
   if (l.placeId) existing = one(await db.prepare(`SELECT * FROM businesses WHERE place_id = ?`).bind(l.placeId).first<BusinessRow>());
-  // Domain fallback only when one side lacks a place_id; two distinct place_ids are two businesses (e.g. chain branches).
+  // Domain fallback only when one side lacks a place_id, or the two ids come from different providers (Bright Data ids look like
+  // "0x...:0x...", Places ids like "ChIJ..."): those are the same business under two names. Two ids from the same provider are two
+  // businesses (e.g. chain branches).
   if (!existing && domain) {
     existing = one(l.placeId
-      ? await db.prepare(`SELECT * FROM businesses WHERE domain = ? AND place_id IS NULL`).bind(domain).first<BusinessRow>()
+      ? await db.prepare(`SELECT * FROM businesses WHERE domain = ? AND (place_id IS NULL OR (place_id LIKE '0x%') <> (? LIKE '0x%'))`).bind(domain, l.placeId).first<BusinessRow>()
       : await db.prepare(`SELECT * FROM businesses WHERE domain = ?`).bind(domain).first<BusinessRow>());
   }
 

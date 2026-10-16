@@ -7,7 +7,7 @@ import { saveSettings } from "../src/worker/db/settings";
 describe("cost", () => {
   it("estimates listing pages + per-lead render, review and draft", () => {
     expect(PER_LEAD_COST).toBeCloseTo(PRICES.browserPerRender + PRICES.claudePerReview + PRICES.claudePerDraft);
-    expect(estimateSearchCost(50)).toBeCloseTo(3 * PRICES.brightdataPerRequest + 50 * PER_LEAD_COST);
+    expect(estimateSearchCost(50)).toBeCloseTo(3 * PRICES.listingPerRequest + 50 * PER_LEAD_COST);
   });
 
   it("blocks when this month's spend + estimate exceeds limit", async () => {
