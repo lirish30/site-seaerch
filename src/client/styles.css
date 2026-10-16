@@ -199,7 +199,8 @@ code { font-size:12px; background:var(--bg-hover); padding:1px 4px; border-radiu
 .lead-actions select { width:auto; }
 
 /* Quick scan badge and Promising queue */
-table.promising td:last-child { min-width:190px; }
+table.promising col.c-fit { width:70px; } table.promising col.c-score { width:120px; } table.promising col.c-action { width:150px; }
+table.promising td { vertical-align:middle; } table.promising td:last-child { padding-right:14px; }
 
 /* Import leads */
 .import-form textarea { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:14px; }
