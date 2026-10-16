@@ -1,81 +1,52 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
-import { api, ApiError } from "../api";
-import type { TodayItem } from "../types";
-import { actionErrorText, actionPath, doneLabel, dueLabel, snoozeButtonLabel, snoozeLabel, SNOOZE_DAYS, TODAY_KIND_LABEL, withoutItem } from "../todayView";
+import { useEffect } from "react";
+import { Link, useLocation } from "react-router-dom";
+import Icon from "../components/Icon";
+import ActivityCard from "../components/home/ActivityCard";
+import KpiCards from "../components/home/KpiCards";
+import PipelineCard from "../components/home/PipelineCard";
+import SpendCard from "../components/home/SpendCard";
+import UpNext from "../components/home/UpNext";
+import { useHome } from "../components/home/useHome";
+import { dayLine, greeting } from "../todayHome";
 
+/** Home: the greeting, your key numbers, what to do next, the pipeline, this month's spend and the latest activity. */
 export default function Today() {
-  const [items, setItems] = useState<TodayItem[] | null>(null);
-  // The load error and the per-item action errors are separate, so reloading never wipes the message from a button the user pressed.
-  const [loadErr, setLoadErr] = useState("");
-  const [errs, setErrs] = useState<Readonly<Record<string, string>>>({});
-  const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
-  const [reloads, setReloads] = useState(0);
-  const alive = useRef(true);
-  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  const h = useHome();
+  const { hash, key } = useLocation();
+  const now = new Date();
 
+  // The sidebar's Pipeline and Activity links are hashes: scroll the panel to that card, or back to the top for Your day.
   useEffect(() => {
-    let cancelled = false;
-    setLoadErr("");
-    api.get<{ items: TodayItem[] }>("/today")
-      .then((r) => { if (!cancelled && alive.current) setItems(r.items); })
-      .catch((e) => { if (!cancelled && alive.current) setLoadErr(e instanceof ApiError ? e.message : "Couldn't load today's list."); });
-    return () => { cancelled = true; };
-  }, [reloads]);
-
-  const mark = (id: string, on: boolean) => { if (alive.current) setBusy((b) => { const n = new Set(b); on ? n.add(id) : n.delete(id); return n; }); };
-  const act = useCallback(async (item: TodayItem, action: "done" | "snooze", days?: number) => {
-    mark(item.id, true);
-    if (alive.current) setErrs((e) => { const { [item.id]: _drop, ...rest } = e; return rest; });
-    try {
-      await api.post(actionPath(item, action), action === "snooze" ? { days } : undefined);
-      if (alive.current) setItems((cur) => (cur ? withoutItem(cur, item.id) : cur));
-    } catch (x) {
-      if (alive.current) setErrs((e) => ({ ...e, [item.id]: actionErrorText(x, action) }));
-    }
-    mark(item.id, false);
-  }, []);
+    const smooth = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const el = hash ? document.getElementById(hash.slice(1)) : null;
+    if (el) el.scrollIntoView({ block: "start", behavior: smooth ? "smooth" : "auto" });
+    else document.querySelector(".panel")?.scrollTo({ top: 0, behavior: smooth ? "smooth" : "auto" });
+  }, [hash, key]);
 
   return (
-    <div>
-      <div className="row between page-head">
-        <h2>Today</h2>
-        <button onClick={() => setReloads((n) => n + 1)}>Refresh</button>
+    <div className="hm">
+      <header className="page-header">
+        <div>
+          <h1>{greeting(h.money.data?.name ?? "", now)}</h1>
+          <p>{dayLine(h.items.data ? h.items.data.length : null, now)}</p>
+        </div>
+        <div className="header-actions">
+          <button type="button" className={`btn${h.loading ? " hm-spin" : ""}`} onClick={h.reload} disabled={h.loading} aria-busy={h.loading}><Icon name="refresh" size={16} />Refresh</button>
+          <Link to="/" className="btn primary"><Icon name="plus" size={16} />New search</Link>
+        </div>
+      </header>
+      <div className="hm-top">
+        <KpiCards summary={h.summary} onRetry={h.reload} />
+        <div className="hm-cols">
+          <UpNext items={h.items} leads={h.leads} summary={h.summary} busy={h.busy} scans={h.scans} errs={h.errs}
+            onDone={(i) => void h.act(i, "done")} onSnooze={(i, d) => void h.act(i, "snooze", d)} onFullScan={(i) => void h.fullScan(i)} onRetry={h.reload} />
+          <div className="hm-side">
+            <PipelineCard summary={h.summary} onRetry={h.reload} />
+            <SpendCard money={h.money} onRetry={h.reload} />
+          </div>
+        </div>
       </div>
-      <p className="muted">
-        What needs you next: follow-ups that are due, drafts you haven't sent, deals that went quiet, and quick-scanned leads worth a full scan.
-        Done hides an item for a week; Snooze hides it for as long as you choose.
-      </p>
-      {loadErr && <p className="error" role="alert">{loadErr}</p>}
-      {!items ? (loadErr ? null : <p role="status">Loading…</p>) : items.length === 0 ? (
-        <div className="card"><p role="status">Nothing due</p></div>
-      ) : (
-        <ul className="today-list" aria-label="Today's items">
-          {items.map((it) => {
-            const isBusy = busy.has(it.id), due = dueLabel(it.due);
-            return (
-              <li key={it.id} className="card today-item">
-                <div className="today-main">
-                  <div className="row">
-                    <span className={`badge today-kind ${it.kind}`}>{TODAY_KIND_LABEL[it.kind]}</span>
-                    <Link to={`/leads/${it.businessId}`} title={it.businessName}><strong>{it.businessName}</strong></Link>
-                    {due && <span className="muted small">{due}</span>}
-                  </div>
-                  <p className="today-reason">{it.reason}</p>
-                  {errs[it.id] && <p className="error small" role="alert">{errs[it.id]}</p>}
-                </div>
-                <div className="today-actions row">
-                  <button className="primary" aria-label={doneLabel(it.businessName)} disabled={isBusy} onClick={() => act(it, "done")}>Done</button>
-                  <span className="muted small" aria-hidden="true">Snooze</span>
-                  {SNOOZE_DAYS.map((d) => (
-                    <button key={d} aria-label={snoozeLabel(it.businessName, d)} disabled={isBusy} onClick={() => act(it, "snooze", d)}>{snoozeButtonLabel(d)}</button>
-                  ))}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      <div className="hm-below"><ActivityCard summary={h.summary} onRetry={h.reload} /></div>
     </div>
   );
 }

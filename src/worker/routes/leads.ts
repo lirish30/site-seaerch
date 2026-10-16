@@ -202,7 +202,8 @@ leadRoutes.post("/:id/gmail-draft", (c) => exportGuard(c, async () => {
   const id = c.req.param("id");
   const blocked = await suppressedResponse(c, id);
   if (blocked) return blocked;
-  const { attachReport } = await c.req.json<{ attachReport?: boolean }>().catch(() => ({ attachReport: false }));
+  const body = await c.req.json<{ attachReport?: boolean }>().catch(() => ({} as { attachReport?: boolean }));
+  const attachReport = body.attachReport ?? (await getSettings(c.env.DB)).attach_audit_pdf !== 0;
   const draft = await latestDraft(c.env.DB, id);
   if (!draft) return c.json({ error: "Write a draft first" }, 400);
   const { token } = await googleAccess(c.env, new URL(c.req.url).origin);

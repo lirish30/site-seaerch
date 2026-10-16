@@ -8,6 +8,10 @@ import { isDraftReady } from "../leadFilters";
 import { TODAY_KIND_LABEL } from "../todayView";
 import type { LeadRow, OutreachCounts, SavedFilter, TodayItem } from "../types";
 import Icon, { LogoMark, type IconName } from "./Icon";
+import { SideGroup, SideItem } from "./sidebars/parts";
+import FindSidebar from "./sidebars/FindSidebar";
+import HomeSidebar from "./sidebars/HomeSidebar";
+import SettingsSidebar from "./sidebars/SettingsSidebar";
 
 /** Anything that changes a lead (a bulk edit, a star, a stage) fires this so the sidebar's counts refresh. */
 export const LEADS_CHANGED = "leads:changed";
@@ -24,29 +28,6 @@ const STAGES: { key: "new" | "reviewed" | "contacted" | "replied" | "won" | "los
   { key: "new", label: "New", icon: "inbox" }, { key: "reviewed", label: "Reviewed", icon: "eye" }, { key: "contacted", label: "Contacted", icon: "send" },
   { key: "replied", label: "Replied", icon: "mail" }, { key: "won", label: "Won", icon: "check" }, { key: "lost", label: "Lost", icon: "x" },
 ];
-
-function SideItem({ to, icon, label, count, active }: { to: string; icon: IconName; label: string; count?: number; active: boolean }) {
-  return (
-    <Link to={to} className={`side-item${active ? " active" : ""}`} aria-current={active ? "page" : undefined}>
-      <Icon name={icon} size={16} />
-      <span className="label">{label}</span>
-      {count !== undefined && <span className="count">{count}</span>}
-    </Link>
-  );
-}
-
-/** A collapsible group heading ("Stages", "Saved filters"); the collapsed state is remembered per browser. */
-function SideGroup({ id, title, children }: { id: string; title: string; children: ReactNode }) {
-  const key = `sidebar:${id}`;
-  const [open, setOpen] = useState(() => { try { return localStorage.getItem(key) !== "closed"; } catch { return true; } });
-  const toggle = () => setOpen((o) => { try { localStorage.setItem(key, o ? "closed" : "open"); } catch { /* storage unavailable */ } return !o; });
-  return (
-    <>
-      <button type="button" className="side-head" aria-expanded={open} onClick={toggle}>{title}<Icon name="chevron-down" size={14} /></button>
-      {open && children}
-    </>
-  );
-}
 
 /** Everything the Leads sidebar counts. Loaded when the sidebar appears and again whenever a lead changes. */
 function useSidebarData() {
@@ -129,17 +110,6 @@ function OutreachSidebar() {
   );
 }
 
-function FindSidebar() {
-  const { pathname } = useLocation();
-  return (
-    <>
-      <div className="side-title"><h2>Find</h2></div>
-      <SideItem to="/" icon="search" label="New search" active={pathname === "/"} />
-      <SideItem to="/radar" icon="radar" label="Radar" active={pathname === "/radar"} />
-    </>
-  );
-}
-
 /** Closes a popover on an outside click or Escape. */
 function usePopover() {
   const [open, setOpen] = useState(false);
@@ -206,6 +176,8 @@ function Account() {
   );
 }
 
+const SIDEBAR_LABEL = { leads: "Leads views", outreach: "Outreach", find: "Find", home: "Home", settings: "Settings" } as const;
+
 /** Icon rail, the section's sidebar (where it has one) and the floating white content panel. */
 export default function Shell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
@@ -227,7 +199,7 @@ export default function Shell({ children }: { children: ReactNode }) {
         </NavLink>
         <Account />
       </nav>
-      {sidebar && <aside className="sidebar" aria-label={sidebar === "leads" ? "Leads views" : sidebar === "outreach" ? "Outreach" : "Find"}>{sidebar === "leads" ? <LeadsSidebar /> : sidebar === "outreach" ? <OutreachSidebar /> : <FindSidebar />}</aside>}
+      {sidebar && <aside className="sidebar" aria-label={SIDEBAR_LABEL[sidebar]}>{sidebar === "leads" ? <LeadsSidebar /> : sidebar === "outreach" ? <OutreachSidebar /> : sidebar === "home" ? <HomeSidebar /> : sidebar === "settings" ? <SettingsSidebar /> : <FindSidebar />}</aside>}
       <main className={`panel${section === "outreach" ? " fixed" : ""}`}>{children}</main>
     </div>
   );

@@ -103,15 +103,16 @@ describe("small helpers", () => {
 describe("navigation mapping", () => {
   it("puts every existing route in a section", () => {
     const map: [string, string][] = [
-      ["/today", "home"], ["/leads", "leads"], ["/leads/abc", "leads"], ["/promising", "leads"], ["/import", "leads"],
-      ["/", "find"], ["/searches/s1", "find"], ["/radar", "find"], ["/settings", "settings"],
+      ["/today", "home"], ["/leads", "leads"], ["/leads/abc", "leads"], ["/promising", "leads"], ["/outreach", "outreach"],
+      ["/", "find"], ["/searches", "find"], ["/searches/s1", "find"], ["/radar", "find"], ["/import", "find"], ["/settings", "settings"], ["/settings/voice", "settings"],
     ];
     for (const [path, section] of map) expect(sectionOf(path), path).toBe(section);
   });
   it("gives a sidebar to list pages only", () => {
-    expect(["/leads", "/promising", "/import"].map(sidebarOf)).toEqual(["leads", "leads", "leads"]);
-    expect(["/", "/radar"].map(sidebarOf)).toEqual(["find", "find"]);
-    expect(["/today", "/leads/abc", "/settings", "/searches/s1"].map(sidebarOf)).toEqual([null, null, null, null]);
+    expect(["/leads", "/promising"].map(sidebarOf)).toEqual(["leads", "leads"]);
+    expect(["/", "/radar", "/import", "/searches", "/searches/s1"].map(sidebarOf)).toEqual(["find", "find", "find", "find", "find"]);
+    expect(["/today", "/outreach", "/settings", "/settings/voice"].map(sidebarOf)).toEqual(["home", "outreach", "settings", "settings"]);
+    expect(sidebarOf("/leads/abc")).toBeNull();
   });
   it("counts stages and starred from the rows", () => {
     const row = (lead_status: string, starred_at: string | null) => ({ business: { lead_status, starred_at } }) as unknown as LeadRow;

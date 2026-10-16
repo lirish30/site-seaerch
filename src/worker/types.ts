@@ -179,6 +179,8 @@ export interface Settings {
   /** JSON of a Signature, or "" to use the plain-text `signature`. */
   signature_json: string;
   default_purpose: Purpose;
+  /** 1/0: new freelance / full-time drafts carry the mailing footer; Gmail drafts attach the audit PDF unless the request says otherwise. */
+  footer_freelance?: number; footer_full_time?: number; attach_audit_pdf?: number;
 }
 export type TonePreset = "friendly_local" | "consultative" | "direct" | "formal";
 export type EmailLength = "short" | "medium" | "long";

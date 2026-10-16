@@ -488,9 +488,17 @@ a.chip-link:hover { background:var(--bg-hover); color:var(--text); } .chip-link 
   .sidebar { width:auto; flex-direction:row; align-items:center; overflow-x:auto; padding:0 0 8px; gap:4px; }
   .sidebar .side-title, .sidebar .side-head, .sidebar .side-spacer, .sidebar .side-gap { display:none; }
   .side-item { width:auto; flex:none; }
-  .panel { margin:0; overflow:visible; }
+  .panel { margin:0; overflow-x:auto; overflow-y:visible; min-width:0; }
+  .app { max-width:100vw; }
+  .side-group { flex-direction:row; align-items:center; gap:4px; }
   .page-header { padding:16px; flex-wrap:wrap; } .page-body { padding:16px; } .page-body.legacy { padding:16px; }
   .table-tools { flex-wrap:wrap; height:auto; } .search-box { width:100%; }
   .legend-row { flex-wrap:wrap; gap:10px 18px; } .legend-item.g1, .legend-item.g2, .legend-item.g3 { width:auto; }
   .o-list { border-right:0; } .o-items { max-height:60vh; }
 }
+
+/* Sidebar extras: running searches and grouped settings links */
+.side-group { display:flex; flex-direction:column; gap:2px; }
+.side-run { display:flex; flex-direction:column; gap:2px; padding:8px 10px; text-decoration:none; color:var(--text); border-radius:8px; } .side-run:hover { background:var(--bg-hover); }
+.side-run b { font:500 13px/19px var(--font); } .side-run small { font:500 12px/16px var(--font); color:var(--text-3); }
+.run-bar { display:block; height:4px; margin-top:6px; border-radius:2px; background:var(--bg-hover); overflow:hidden; } .run-bar i { display:block; height:100%; background:var(--signal); border-radius:2px; }

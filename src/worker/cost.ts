@@ -14,6 +14,11 @@ export function estimateSearchCost(maxResults: number): number {
   return pages * PRICES.brightdataPerRequest + maxResults * PER_LEAD_COST;
 }
 
+/** What a quick scan costs: the Maps listing pages only (crawl and score are free; render, review and draft wait for the full scan). */
+export function estimateQuickSearchCost(maxResults: number): number {
+  return Math.ceil(maxResults / BRIGHTDATA_PAGE_SIZE) * PRICES.brightdataPerRequest;
+}
+
 export async function checkSpend(db: D1Database, extraUsd: number) {
   const month = new Date().toISOString().slice(0, 7);
   const spent = (await monthUsage(db, month)).reduce((s, r) => s + r.est_cost_usd, 0);

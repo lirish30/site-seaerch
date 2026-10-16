@@ -150,7 +150,7 @@ describe("report management API", () => {
 });
 
 describe("public report endpoint", () => {
-  const KEYS = ["auditedAt", "businessName", "counts", "expiresAt", "findings", "partial", "sender"];
+  const KEYS = ["auditedAt", "businessName", "counts", "expiresAt", "findings", "partial", "sender", "website"];
 
   it("returns exactly the documented key set, ordered high -> low, with no internal data", async () => {
     const { b, a } = await seedLead("Ace Plumbing");
@@ -164,7 +164,7 @@ describe("public report endpoint", () => {
     expect(Object.keys(body.sender).sort()).toEqual(["businessName", "email", "logoUrl", "name"]);
     for (const f of body.findings) expect(Object.keys(f).sort()).toEqual(["evidence", "severity"]);
     expect(body).toMatchObject({
-      businessName: "Ace Plumbing", auditedAt: a.created_at, partial: false, expiresAt: j.expiresAt, counts: { high: 2, medium: 1, low: 2 },
+      businessName: "Ace Plumbing", website: "secret-site.example", auditedAt: a.created_at, partial: false, expiresAt: j.expiresAt, counts: { high: 2, medium: 1, low: 2 },
       sender: { name: "Logan Irish", businessName: "Irish Web", email: "logan@irish.example", logoUrl: "https://irish.example/logo.png" },
     });
     expect(body.findings).toEqual([
@@ -178,6 +178,15 @@ describe("public report endpoint", () => {
     // the owner-only mail note is stored on the audit and must stay out of the public report
     expect((await latestAudit(env.DB, b.id))!.mail_warning).toContain("SECRET-MAIL-WARNING");
     expect(text).not.toMatch(/mail_warning|mail records|bounce/i);
+  });
+
+  it("shows the audited site's bare domain, and an empty string when the lead has no usable site", async () => {
+    const { b } = await seedLead();
+    await env.DB.prepare(`UPDATE businesses SET website_url = ?, domain = NULL WHERE id = ?`).bind("https://www.Acme-Plumbing.example/about?x=1", b.id).run();
+    const j = await (await api(`/api/leads/${b.id}/report`, { method: "POST" })).json<any>();
+    expect((await (await pub(j.token)).json<any>()).website).toBe("acme-plumbing.example");
+    await env.DB.prepare(`UPDATE businesses SET website_url = ?, domain = NULL WHERE id = ?`).bind("https://facebook.com/acme", b.id).run();
+    expect((await (await pub(j.token)).json<any>()).website).toBe("");
   });
 
   it("audits stored before audit v2 (high / medium / low findings) still show with their severity", async () => {

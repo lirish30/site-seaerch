@@ -108,6 +108,8 @@ export default function LeadDetail() {
   const [editingUrl, setEditingUrl] = useState<string | null>(null);
   const [starBusy, setStarBusy] = useState(false);
   const [attachPdf, setAttachPdf] = useState(true);
+  // The default comes from Settings → Google; the menu checkbox overrides it for this lead.
+  useEffect(() => { api.get<{ settings: Record<string, string | number> }>("/settings").then((r) => setAttachPdf(Number(r.settings.attach_audit_pdf ?? 1) !== 0)).catch(() => {}); }, []);
   const [exportLink, setExportLink] = useState<{ label: string; url: string }[]>([]);
   const [report, setReport] = useState<ShareReport | null>(null); const [otherActive, setOtherActive] = useState(0); const [shareMsg, setShareMsg] = useState("");
   const [profiles, setProfiles] = useState<FitProfile[]>([]);
