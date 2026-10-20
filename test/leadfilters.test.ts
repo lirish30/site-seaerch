@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { applyLeadFilters, defaultFilters, NOT_CRAWLED, platformOptions, starredFirst, type LeadFilters } from "../src/client/leadFilters";
+import { activeExtraFilters, applyLeadFilters, defaultFilters, NOT_CRAWLED, platformOptions, starredFirst, type LeadFilters } from "../src/client/leadFilters";
 import type { FitResult, LeadRow } from "../src/client/types";
 
 let n = 0;
 const NO_FIT: FitResult = { fit: null, profile: null, matched: [], missing: [] };
-const row = (o: Partial<Omit<LeadRow, "business">> & { status?: string; starred?: boolean } = {}): LeadRow => {
-  const { status, starred, ...rest } = o;
+const row = (o: Partial<Omit<LeadRow, "business">> & { status?: string; starred?: boolean; biz?: Partial<LeadRow["business"]> } = {}): LeadRow => {
+  const { status, starred, biz, ...rest } = o;
   const flat = { rating: 4, reviewCount: 10, ...rest }; // business row mirrors the flat fields, as leadRows builds them
   return { business: { id: `b${n++}`, name: "N", category: null, address: null, phone: null, website_url: null, maps_url: null,
     lead_status: (status ?? "new") as any, notes: null, contacted_at: null, last_error: null, rating: flat.rating, review_count: flat.reviewCount,
-    archived_at: null, follow_up_at: null, deal_value: null, created_at: "2026-10-03T00:00:00.000Z", scan_stage: "full", tags: [], starred_at: starred ? "2026-10-01T00:00:00.000Z" : null },
+    archived_at: null, follow_up_at: null, deal_value: null, created_at: "2026-10-03T00:00:00.000Z", scan_stage: "full", tags: [], starred_at: starred ? "2026-10-01T00:00:00.000Z" : null, ...biz },
   score: 50, health: null, niche: null, poc: null, topFinding: null, topSeverity: null, topCategory: null, hasDraft: false, offer: "care_plan", bestContact: null, hasEmail: false, partial: false, platform: "wix", fit: NO_FIT, scan_stage: "full", ...flat };
 };
 const f = (o: Partial<LeadFilters> = {}): LeadFilters => ({ ...defaultFilters, ...o });
@@ -114,5 +114,59 @@ describe("starredFirst", () => {
     const copy = [...rows];
     expect(starredFirst(rows)).toEqual(copy);
     expect(rows).toEqual(copy);
+  });
+});
+
+describe("lead-finding filters", () => {
+  const now = new Date("2026-10-20T12:00:00");
+  const run = (rows: LeadRow[], o: Partial<LeadFilters>) => applyLeadFilters(rows, f(o), now);
+
+  it("website: has / no website, blank counts as none", () => {
+    const [a, b, c] = [row({ biz: { website_url: "https://a.com" } }), row({ biz: { website_url: null } }), row({ biz: { website_url: "  " } })];
+    expect(run([a, b, c], { website: "yes" })).toEqual([a]);
+    expect(run([a, b, c], { website: "no" })).toEqual([b, c]);
+    expect(run([a, b, c], { website: "any" })).toHaveLength(3);
+  });
+  it("phone and named contact", () => {
+    const [a, b, c] = [row({ biz: { phone: "555" }, poc: { name: "Sam", email: null } }), row({ biz: { phone: "" } }), row({ biz: { phone: null }, poc: { name: "Al", email: "a@x.com" } })];
+    expect(run([a, b, c], { hasPhone: true })).toEqual([a]);
+    expect(run([a, b, c], { hasContact: true })).toEqual([a, c]);
+  });
+  it("outreach: never contacted, follow-up due, no reply in 7+ days", () => {
+    const never = row(), due = row({ biz: { follow_up_at: "2026-10-19", contacted_at: "2026-10-10T00:00:00Z", lead_status: "contacted" } });
+    const today = row({ biz: { follow_up_at: "2026-10-20", contacted_at: "2026-10-19T00:00:00Z", lead_status: "contacted" } });
+    const later = row({ biz: { follow_up_at: "2026-10-25", contacted_at: "2026-10-19T00:00:00Z", lead_status: "contacted" } });
+    const replied = row({ biz: { contacted_at: "2026-10-01T00:00:00Z", lead_status: "replied" } });
+    expect(run([never, due, today, later, replied], { outreach: "never" })).toEqual([never]);
+    expect(run([never, due, today, later, replied], { outreach: "followup" })).toEqual([due, today]);
+    expect(run([never, due, today, later, replied], { outreach: "stale" })).toEqual([due]);
+  });
+  it("max site health excludes unmeasured sites; top issue and critical-only", () => {
+    const [a, b, c] = [row({ health: 30, topCategory: "speed", topSeverity: "critical" }), row({ health: 80, topCategory: "mobile", topSeverity: "nice" }), row({ health: null })];
+    expect(run([a, b, c], { maxHealth: 40 })).toEqual([a]);
+    expect(run([a, b, c], { maxHealth: 0 })).toEqual([]);
+    expect(run([a, b, c], { category: "mobile" })).toEqual([b]);
+    expect(run([a, b, c], { criticalOnly: true })).toEqual([a]);
+  });
+  it("min fit excludes a missing fit", () => {
+    const fit = (n: number | null): FitResult => ({ fit: n, profile: null, matched: [], missing: [] });
+    const [a, b, c] = [row({ fit: fit(80) }), row({ fit: fit(40) }), row({ fit: fit(null) })];
+    expect(run([a, b, c], { minFit: 50 })).toEqual([a]);
+    expect(run([a, b, c], { minFit: 0 })).toEqual([a, b]);
+  });
+  it("added within N days and scan depth", () => {
+    const [a, b] = [row({ biz: { created_at: "2026-10-18T00:00:00.000Z" } }), row({ biz: { created_at: "2026-09-01T00:00:00.000Z" }, scan_stage: "quick" })];
+    expect(run([a, b], { addedDays: 7 })).toEqual([a]);
+    expect(run([a, b], { addedDays: 60 })).toEqual([a, b]);
+    expect(run([a, b], { scan: "quick" })).toEqual([b]);
+  });
+  it("starred leads skip the health and fit limits but not the look-for filters", () => {
+    const s = row({ starred: true, health: 90, fit: { fit: 10, profile: null, matched: [], missing: [] }, biz: { website_url: "https://a.com" } });
+    expect(run([s], { maxHealth: 40, minFit: 50 })).toEqual([s]);
+    expect(run([s], { website: "no" })).toEqual([]);
+  });
+  it("counts the active extra filters", () => {
+    expect(activeExtraFilters(defaultFilters)).toBe(0);
+    expect(activeExtraFilters(f({ emailOnly: true, hasPhone: true, outreach: "never", maxHealth: 50, addedDays: 7 }))).toBe(5);
   });
 });

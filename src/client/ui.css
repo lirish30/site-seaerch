@@ -152,6 +152,7 @@ label.check { display:flex; gap:8px; align-items:center; font-weight:500; font-s
 .legend-info { color:var(--text-2); flex:none; }
 .legend-item { display:flex; align-items:center; gap:8px; font-size:12px; line-height:16px; font-weight:500; color:var(--text-2); flex:none; }
 .legend-item .txt { display:flex; flex-direction:column; } .legend-item .txt b { color:var(--text); font-weight:500; }
+.more-filters label.check select { width:auto; padding:4px 8px; font-size:13px; }
 .legend-item .pills { display:inline-flex; gap:4px; }
 .legend-item.g1 { width:489px; } .legend-item.g2 { width:300px; } .legend-item.g3 { width:178px; }
 .legend-item .fit-sample { font:500 13px/18px var(--font-mono); color:var(--text); }
