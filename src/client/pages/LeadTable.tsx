@@ -11,7 +11,7 @@ import { Badge, LeadScore, Severity, SiteHealth } from "../components/Score";
 import { compareFit } from "../fitView";
 import { followUpTone, STAGE_LABEL, STAGE_TONE } from "../leadView";
 import { CATEGORY_LABEL, NICHE_LABEL, OFFER_LABEL, type LeadRow } from "../types";
-import { defaultTableFilters, filterLeadRows, isStarred, type LeadFilters, NOT_CRAWLED, OFFERS, platformOptions, starredFirst, type TableFilters } from "../leadFilters";
+import { activeExtraFilters, CATEGORY_OPTIONS, defaultTableFilters, filterLeadRows, isStarred, type LeadFilters, NOT_CRAWLED, OFFERS, platformOptions, STALE_DAYS, starredFirst, type TableFilters } from "../leadFilters";
 import { allSelected, pruneSelection, toggleId, togglePage } from "../bulkView";
 
 type Key = "name" | "health" | "score" | "fit" | "status" | "follow";
@@ -104,7 +104,8 @@ export default function LeadTable({ rows, filters, onFiltersChange, bulk, onTagC
     }
   };
   const selectedRows = rows.filter((r) => selected.has(r.business.id));
-  const filterCount = (f.offer !== "any" ? 1 : 0) + (f.platform !== "any" ? 1 : 0) + (niche ? 1 : 0);
+  const extraCount = activeExtraFilters(f);
+  const filterCount = (f.offer !== "any" ? 1 : 0) + (f.platform !== "any" ? 1 : 0) + (f.website !== "any" ? 1 : 0) + (niche ? 1 : 0) + extraCount;
 
   return (
     <>
@@ -124,7 +125,11 @@ export default function LeadTable({ rows, filters, onFiltersChange, bulk, onTagC
           <select value={f.platform} onChange={(e) => set({ platform: e.target.value })} aria-label="Platform">
             <option value="any">Any</option>{platforms.map((p) => <option key={p} value={p}>{PLATFORM_LABEL[p] ?? p}</option>)}<option value={NOT_CRAWLED}>Not crawled</option>
           </select><Icon name="chevron-down" size={14} /></label>
-        <button className="ghost" aria-expanded={more} aria-controls="more-filters" onClick={() => setMore((m) => !m)}><Icon name="plus" size={14} />More filters</button>
+        <label className={`filter${f.website !== "any" ? " on" : ""}`}><span>Website</span>
+          <select value={f.website} onChange={(e) => set({ website: e.target.value as LeadFilters["website"] })} aria-label="Website">
+            <option value="any">Any</option><option value="yes">Has website</option><option value="no">No website</option>
+          </select><Icon name="chevron-down" size={14} /></label>
+        <button className="ghost" aria-expanded={more} aria-controls="more-filters" onClick={() => setMore((m) => !m)}><Icon name="plus" size={14} />More filters{extraCount ? ` (${extraCount})` : ""}</button>
         <span className="grow" />
         <label className="switch"><input type="checkbox" role="switch" checked={f.hideSkipped} onChange={(e) => set({ hideSkipped: e.target.checked })} /><i aria-hidden="true" /><span>Hide skipped</span></label>
       </div>
@@ -134,6 +139,28 @@ export default function LeadTable({ rows, filters, onFiltersChange, bulk, onTagC
           <label className="check">Min lead score <input type="number" min={0} max={100} className="num" value={f.minScore} onChange={(e) => set({ minScore: Number(e.target.value) })} /></label>
           <label className="check">Min reviews <input type="number" min={0} className="num" value={f.minReviews ?? ""} onChange={(e) => set({ minReviews: num(e.target.value) })} /></label>
           <label className="check">Max rating <input type="number" min={0} max={5} step={0.1} className="num" value={f.maxRating ?? ""} onChange={(e) => set({ maxRating: num(e.target.value) })} /></label>
+          <label className="check"><input className="cb" type="checkbox" checked={f.hasPhone} onChange={(e) => set({ hasPhone: e.target.checked })} /> Has phone</label>
+          <label className="check"><input className="cb" type="checkbox" checked={f.hasContact} onChange={(e) => set({ hasContact: e.target.checked })} /> Has named contact</label>
+          <label className="check">Outreach
+            <select value={f.outreach} onChange={(e) => set({ outreach: e.target.value as LeadFilters["outreach"] })} aria-label="Outreach">
+              <option value="any">Any</option><option value="never">Never contacted</option><option value="followup">Follow-up due</option>
+              <option value="stale">{`No reply in ${STALE_DAYS}+ days`}</option>
+            </select></label>
+          <label className="check">Max site health <input type="number" min={0} max={100} className="num" value={f.maxHealth ?? ""} onChange={(e) => set({ maxHealth: num(e.target.value) })} /></label>
+          <label className="check">Top issue
+            <select value={f.category} onChange={(e) => set({ category: e.target.value as LeadFilters["category"] })} aria-label="Top issue">
+              <option value="any">Any</option>{CATEGORY_OPTIONS.map((c) => <option key={c} value={c}>{CATEGORY_LABEL[c]}</option>)}
+            </select></label>
+          <label className="check"><input className="cb" type="checkbox" checked={f.criticalOnly} onChange={(e) => set({ criticalOnly: e.target.checked })} /> Critical issue only</label>
+          <label className="check">Min fit <input type="number" min={0} max={100} className="num" value={f.minFit ?? ""} onChange={(e) => set({ minFit: num(e.target.value) })} /></label>
+          <label className="check">Added
+            <select value={f.addedDays ?? ""} onChange={(e) => set({ addedDays: num(e.target.value) })} aria-label="Added">
+              <option value="">Any time</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option>
+            </select></label>
+          <label className="check">Scan
+            <select value={f.scan} onChange={(e) => set({ scan: e.target.value as LeadFilters["scan"] })} aria-label="Scan depth">
+              <option value="any">Any</option><option value="quick">Quick only</option><option value="full">Full only</option>
+            </select></label>
           {moreFilters}
         </div>
       )}
