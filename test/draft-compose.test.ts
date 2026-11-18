@@ -2,6 +2,7 @@ import { env, SELF } from "cloudflare:test";
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { regenerateDraft, type LeadDeps } from "../src/worker/pipeline/lead";
 import { latestDraft, listDrafts, selectDraft, variantsOf } from "../src/worker/db/drafts";
+import { saveSettings } from "../src/worker/db/settings";
 import { createWorkSample } from "../src/worker/db/workSamples";
 import { seedBusiness, seedLeadAudit } from "./fixtures/cro";
 
@@ -76,6 +77,100 @@ describe("tweaking the current draft", () => {
     await expect(regenerateDraft(leadDeps(() => three()), b.id, { tweak: "warmer" })).rejects.toThrow(/Write a draft first/);
   });
 
+});
+
+describe("picking a variant", () => {
+  it("makes it the current draft while the group keeps its order", async () => {
+    const b = await lead();
+    const first = await regenerateDraft(leadDeps(() => three()), b.id);
+    const group = await variantsOf(env.DB, first);
+    const picked = await selectDraft(env.DB, b.id, group[2].id, new Date(Date.now() + 5000));
+    expect(picked!.id).toBe(group[2].id);
+    expect((await latestDraft(env.DB, b.id))!.id).toBe(group[2].id);
+    expect((await variantsOf(env.DB, picked!)).map((v) => v.id)).toEqual(group.map((v) => v.id));
+  });
+
+  it("will not select a draft that belongs to another lead", async () => {
+    const mine = await lead();
+    const other = await lead();
+    const d = await regenerateDraft(leadDeps(() => three()), other.id);
+    expect(await selectDraft(env.DB, mine.id, d.id)).toBeNull();
+  });
+});
+
+describe("draft routes", () => {
+  it("lead detail returns the variants, select switches the current one, patch toggles the footer", async () => {
+    const b = await lead();
+    const first = await regenerateDraft(leadDeps(() => three()), b.id);
+    const group = await variantsOf(env.DB, first);
+
+    const detail = await (await api(`/api/leads/${b.id}`)).json<any>();
+    expect(detail.draft.id).toBe(first.id);
+    expect(detail.variants.map((v: any) => v.id)).toEqual(group.map((v) => v.id));
+
+    const sel = await send(`/api/leads/${b.id}/draft/select`, "POST", { draftId: group[1].id });
+    expect(sel.status).toBe(200);
+    expect((await sel.json<any>()).id).toBe(group[1].id);
+    expect((await (await api(`/api/leads/${b.id}`)).json<any>()).draft.id).toBe(group[1].id);
+    expect((await send(`/api/leads/${b.id}/draft/select`, "POST", { draftId: "nope" })).status).toBe(404);
+    expect((await send(`/api/leads/${b.id}/draft/select`, "POST", {})).status).toBe(400);
+
+    expect((await send(`/api/leads/${b.id}/draft`, "PATCH", { subject: "Edited", body: "Edited body", include_footer: true })).status).toBe(200);
+    const after = (await latestDraft(env.DB, b.id))!;
+    expect([after.subject, after.body, after.include_footer, after.edited]).toEqual(["Edited", "Edited body", true, true]);
+    // Omitting the flag leaves the choice alone.
+    await send(`/api/leads/${b.id}/draft`, "PATCH", { subject: "Edited 2", body: "Edited body 2" });
+    expect((await latestDraft(env.DB, b.id))!.include_footer).toBe(true);
+  });
+
+  it("previews the composed email without saving anything", async () => {
+    await saveSettings(env.DB, { signature: "Logan\nIrish Web", physical_address: "1 Main St", opt_out_line: "Reply stop." });
+    const b = await lead();
+    await regenerateDraft(leadDeps(() => three()), b.id);
+    const before = (await latestDraft(env.DB, b.id))!;
+    const r = await send(`/api/leads/${b.id}/draft/preview`, "POST", { subject: "Hi", body: "Hello there", include_footer: true });
+    const e = await r.json<any>();
+    expect(e.text).toBe("Hello there\n\nLogan\nIrish Web\n\n1 Main St\nReply stop.");
+    expect(e.html).toContain("Hello there");
+    expect((await (await send(`/api/leads/${b.id}/draft/preview`, "POST", { subject: "Hi", body: "Hello there", include_footer: false })).json<any>()).text).toBe("Hello there\n\nLogan\nIrish Web");
+    expect((await send(`/api/leads/${b.id}/draft/preview`, "POST", { subject: "", body: "x" })).status).toBe(400);
+    expect((await latestDraft(env.DB, b.id))!.body).toBe(before.body);
+  });
+
+  it("rejects an unknown purpose or tweak on regenerate", async () => {
+    const b = await lead();
+    expect((await send(`/api/leads/${b.id}/regenerate`, "POST", { purpose: "spam" })).status).toBe(400);
+    expect((await send(`/api/leads/${b.id}/regenerate`, "POST", { tweak: "louder" })).status).toBe(400);
+  });
+});
+
+describe("work sample routes", () => {
+  it("creates, lists, updates and deletes samples", async () => {
+    const created = await send("/api/work-samples", "POST", { title: "  Acme redesign ", url: "https://logan.dev/acme", result_line: "+40% leads", tags: "dental" });
+    expect(created.status).toBe(201);
+    const s = await created.json<any>();
+    expect(s).toMatchObject({ title: "Acme redesign", url: "https://logan.dev/acme", result_line: "+40% leads", tags: "dental" });
+    expect((await (await api("/api/work-samples")).json<any[]>()).some((x) => x.id === s.id)).toBe(true);
+    const up = await send(`/api/work-samples/${s.id}`, "PUT", { result_line: "+55% leads" });
+    expect((await up.json<any>()).result_line).toBe("+55% leads");
+    expect((await api(`/api/work-samples/${s.id}`, { method: "DELETE" })).status).toBe(200);
+    expect((await api(`/api/work-samples/${s.id}`, { method: "DELETE" })).status).toBe(404);
+    expect((await send(`/api/work-samples/${s.id}`, "PUT", { title: "x" })).status).toBe(404);
+  });
+
+  it("only accepts https links and a title", async () => {
+    for (const bad of [{ title: "x", url: "http://logan.dev" }, { title: "x", url: "javascript:alert(1)" }, { title: "", url: "https://logan.dev" }, { title: "x", url: "logan.dev" }]) {
+      expect((await send("/api/work-samples", "POST", bad)).status, JSON.stringify(bad)).toBe(400);
+    }
+  });
+
+  it("keeps at most 20 samples", async () => {
+    const have = (await (await api("/api/work-samples")).json<any[]>()).length;
+    for (let i = have; i < 20; i++) expect((await send("/api/work-samples", "POST", { title: `S${i}`, url: `https://logan.dev/${i}` })).status).toBe(201);
+    const over = await send("/api/work-samples", "POST", { title: "one too many", url: "https://logan.dev/over" });
+    expect(over.status).toBe(400);
+    expect((await over.json<any>()).error).toMatch(/20/);
+  });
 });
 
 describe("profile and signature settings", () => {
