@@ -10,8 +10,8 @@ import type { ScanStage } from "./types";
 import { BrightDataListingSource } from "./listings/brightdata";
 import { GooglePlacesListingSource } from "./listings/places";
 import { FallbackListingSource } from "./listings/fallback";
-import { runCroWithErrorHandling, type CroDeps, type CroParams } from "./cro/pipeline";
-import { CroFatalError, anthropicCroCaller } from "./cro/ai";
+import { runCroWithErrorHandling, startCroStages, type CroDeps, type CroParams } from "./cro/pipeline";
+import { CroFatalError } from "./cro/ai";
 import { puppeteerCroBrowser } from "./cro/capture";
 
 const RETRY = { retries: { limit: 3, delay: "10 seconds" as const, backoff: "exponential" as const }, timeout: "5 minutes" as const };
@@ -97,8 +97,9 @@ export class SearchWorkflow extends WorkflowEntrypoint<Env, SearchParams> {
 }
 
 export function croDepsFromEnv(env: Env): CroDeps {
-  return { db: env.DB, raw: env.RAW, browser: env.BROWSER ? puppeteerCroBrowser(env.BROWSER) : undefined,
-    ai: anthropicCroCaller(env.ANTHROPIC_API_KEY), now: () => new Date() };
+  // No AI caller: the Claude stages are queued for Claude Code to work (startCroStages), and the workflow ends after capture and evidence.
+  return { db: env.DB, raw: env.RAW, browser: env.BROWSER ? puppeteerCroBrowser(env.BROWSER) : undefined, now: () => new Date(),
+    start: (auditId, from) => startCroStages(env, auditId, from) };
 }
 
 export class CroAuditWorkflow extends WorkflowEntrypoint<Env, CroParams> {

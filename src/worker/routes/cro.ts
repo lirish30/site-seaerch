@@ -8,7 +8,9 @@ import { checkSpend, PRICES } from "../cost";
 import { CRO_LIMITS } from "../cro/config";
 import { logActivity } from "../db/activity";
 import { createCroAudit, failCroAudit, getCroAudit, latestCroAudit, listCroAudits, listCroItems, runningCroAudit, updateCroAudit, updateCroItem, type CroItemPatch } from "../db/cro";
-import { shotKey, textKey } from "../cro/pipeline";
+import { shotKey, textKey } from "../cro/keys";
+import { CRO_TARGET } from "../queue/cro";
+import { cancelTasksFor } from "../queue/db";
 import { scenarioFor } from "../cro/scenario";
 import { BIZ_MODEL_KEYS, type BusinessModel, type CroAudit, type CroFrom, type CroStep } from "../cro/types";
 
@@ -144,12 +146,15 @@ croRoutes.post("/cro-audits/:id/rebuild", async (c) => {
   if (!a) return c.json({ error: "not found" }, 404);
   const inFlight = await busy(c, a);
   if (inFlight) return inFlight;
-  if (!a.business_model || !a.pages.some((p) => p.ok)) return c.json({ error: "Nothing to rebuild yet; run the audit first" }, 409);
+  // Page reviews are written for a specific business model, so a changed model re-runs them. An audit still waiting on Claude restarts the stage it is in.
+  const waitingOn: CroFrom = a.status === "waiting" && (a.step === "model" || a.step === "pages") ? a.step : "synthesize";
+  const from: CroFrom = waitingOn === "synthesize" && effectiveModel(a) !== a.reviewed_as ? "pages" : waitingOn;
+  if ((!a.business_model && from !== "model") || !a.pages.some((p) => p.ok)) return c.json({ error: "Nothing to rebuild yet; run the audit first" }, 409);
   const spend = await checkSpend(c.env.DB, 0); // rebuilding reuses the captured pages, so only Claude work (free) remains
   if (!spend.ok) return c.json({ error: "spend limit", ...spend }, 402);
-  // Page reviews are written for a specific business model, so a changed model re-runs them.
-  const from: CroFrom = effectiveModel(a) !== a.reviewed_as ? "pages" : "synthesize";
   if (!(await claim(c.env.DB, a.id, from))) return c.json({ error: "This audit is still running" }, 409);
+  // Whatever Claude was still asked about belongs to the run being replaced; a result that arrives for it later is discarded.
+  await cancelTasksFor(c.env.DB, CRO_TARGET, a.id);
   const failed = await launch(c, a.id, from);
   return failed ?? c.json({ ok: true, from }, 202);
 });
@@ -179,6 +184,7 @@ croRoutes.post("/cro-audits/:id/retry", async (c) => {
   const spend = await checkSpend(c.env.DB, from === "capture" ? CAPTURE_USD : 0);
   if (!spend.ok) return c.json({ error: "spend limit", ...spend }, 402);
   if (!(await claim(c.env.DB, a.id, from))) return c.json({ error: "This audit is still running" }, 409);
+  await cancelTasksFor(c.env.DB, CRO_TARGET, a.id);
   const failed = await launch(c, a.id, from);
   return failed ?? c.json({ ok: true, from }, 202);
 });

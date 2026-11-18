@@ -116,6 +116,14 @@ describe("CRO routes", () => {
     expect(r.audit).toMatchObject({ id: a.id, status: "failed" });
   });
 
+  it("never fails an audit that is waiting for Claude as a dead run, however long it waits", async () => {
+    const b = await seedBusiness();
+    const a = await createCroAudit(env.DB, b.id);
+    await env.DB.prepare(`UPDATE cro_audits SET status = 'waiting', step = 'pages', started_at = '2020-01-01T00:00:00.000Z' WHERE id = ?`).bind(a.id).run();
+    const r = await (await api(`/api/leads/${b.id}/cro-audit`)).json<any>();
+    expect(r.audit).toMatchObject({ id: a.id, status: "waiting", step: "pages", pending_pages: [], error: null });
+  });
+
   it("edits an item and validates the body", async () => {
     const { a } = await doneAudit();
     const [item] = await listCroItems(env.DB, a.id);
