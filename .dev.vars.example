@@ -7,3 +7,8 @@ ANTHROPIC_API_KEY=
 # Optional: Gmail drafts + Drive export (see README "Google")
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
+# Agency OS MCP bearer token (required for /mcp). generate with: openssl rand -hex 32
+MCP_TOKEN=
+# Optional passkey settings. Default = the request host. For local dev set e.g. localhost / http://localhost:5173
+# WEBAUTHN_RP_ID=
+# WEBAUTHN_ORIGIN=

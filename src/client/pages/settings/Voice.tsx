@@ -21,7 +21,7 @@ export default function Voice() {
           ))}
         </div>
       </Card>
-      <Card title="Length" sub="Job emails run about 50 words longer.">
+      <Card title="Length" sub="How long drafts run.">
         <Segmented large label="Length" value={length} onChange={(l) => set("email_length", l)} options={LENGTHS.map((l) => ({ value: l.value, label: l.label, hint: l.words }))} />
       </Card>
       <Card title="What you ask them to do" sub="The single next step at the end of each email.">

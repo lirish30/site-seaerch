@@ -2,8 +2,8 @@ import { env, SELF } from "cloudflare:test";
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { regenerateDraft, type LeadDeps } from "../src/worker/pipeline/lead";
 import { latestDraft, listDrafts, selectDraft, variantsOf } from "../src/worker/db/drafts";
-import { createWorkSample } from "../src/worker/db/workSamples";
 import { saveSettings } from "../src/worker/db/settings";
+import { createWorkSample } from "../src/worker/db/workSamples";
 import { seedBusiness, seedLeadAudit } from "./fixtures/cro";
 
 let cookie = "";
@@ -33,53 +33,33 @@ async function lead() {
 }
 
 describe("writing a draft for a purpose", () => {
-  it("full-time: stores every variant in one group, first one current, footer off", async () => {
+  it("freelance: stores every variant in one group, first one current, footer on", async () => {
     const b = await lead();
-    await saveSettings(env.DB, { default_purpose: "full_time" });
     const d = await regenerateDraft(leadDeps(() => three()), b.id);
-    expect([d.purpose, d.include_footer, d.angle, d.subject, d.variant_index]).toEqual(["full_time", false, "Angle 1", "Subject 1", 0]);
+    expect([d.purpose, d.include_footer, d.angle, d.subject, d.variant_index]).toEqual(["freelance", true, "Angle 1", "Subject 1", 0]);
     const current = (await latestDraft(env.DB, b.id))!;
     expect(current.id).toBe(d.id);
     const group = await variantsOf(env.DB, current);
     expect(group.map((v) => [v.variant_index, v.angle, v.purpose, v.include_footer])).toEqual([
-      [0, "Angle 1", "full_time", false], [1, "Angle 2", "full_time", false], [2, "Angle 3", "full_time", false]]);
+      [0, "Angle 1", "freelance", true], [1, "Angle 2", "freelance", true], [2, "Angle 3", "freelance", true]]);
     expect(new Set(group.map((v) => v.variant_group)).size).toBe(1);
     expect(new Set(group.map((v) => v.created_at)).size).toBe(1);
   });
 
-  it("freelance: footer on, and the full-time work samples stay out of the prompt", async () => {
+  it("keeps work samples out of the prompt", async () => {
     const b = await lead();
     await createWorkSample(env.DB, { title: "Secret Sample", url: "https://logan.dev/secret", result_line: "", tags: "" });
     const seen: { system: string; user: string }[] = [];
-    const d = await regenerateDraft(leadDeps(() => three(), seen), b.id, { purpose: "freelance" });
-    expect([d.purpose, d.include_footer]).toEqual(["freelance", true]);
+    await regenerateDraft(leadDeps(() => three(), seen), b.id);
     expect(seen[0].system).toContain("mini proposal");
     expect(seen[0].user).not.toContain("Secret Sample");
-  });
-
-  it("uses the account's default purpose when none is given", async () => {
-    const b = await lead();
-    await saveSettings(env.DB, { default_purpose: "freelance" });
-    expect((await regenerateDraft(leadDeps(() => three()), b.id)).purpose).toBe("freelance");
-    await saveSettings(env.DB, { default_purpose: "full_time" });
-    expect((await regenerateDraft(leadDeps(() => three()), b.id)).purpose).toBe("full_time");
-  });
-
-  it("full-time cites only the work samples that fit, and a pick overrides the match", async () => {
-    const b = await lead();
-    await createWorkSample(env.DB, { title: "Alpha Build", url: "https://logan.dev/alpha", result_line: "Did a thing", tags: "zzzz" });
-    const z = await createWorkSample(env.DB, { title: "Zeta Build", url: "https://logan.dev/zeta", result_line: "", tags: "yyyy" });
-    const seen: { system: string; user: string }[] = [];
-    await regenerateDraft(leadDeps(() => three(), seen), b.id, { purpose: "full_time", sampleIds: [z.id] });
-    expect(seen[0].user).toContain("https://logan.dev/zeta");
-    expect(seen[0].user).not.toContain("https://logan.dev/alpha");
   });
 });
 
 describe("tweaking the current draft", () => {
-  it("rewrites it with one instruction, keeps purpose and footer choice, and writes one new draft", async () => {
+  it("rewrites it with one instruction, keeps the footer choice, and writes one new draft", async () => {
     const b = await lead();
-    await regenerateDraft(leadDeps(() => three()), b.id, { purpose: "full_time" });
+    await regenerateDraft(leadDeps(() => three()), b.id);
     const before = (await listDrafts(env.DB, b.id)).length;
     const seen: { system: string; user: string }[] = [];
     const d = await regenerateDraft(leadDeps(() => ({ variants: [{ angle: "Shorter", subject: "Tight", body: "Short body" }], to_contact_id: null, recipient_reason: "r" }), seen), b.id, { tweak: "shorter" });
@@ -87,7 +67,7 @@ describe("tweaking the current draft", () => {
     expect(seen[0].user).toContain("Subject: Subject 1");
     expect(seen[0].user).toContain("cut it by about a third");
     expect(seen[0].system).toMatch(/exactly 1 variant/);
-    expect([d.purpose, d.include_footer, d.subject]).toEqual(["full_time", false, "Tight"]);
+    expect([d.purpose, d.include_footer, d.subject]).toEqual(["freelance", true, "Tight"]);
     expect((await listDrafts(env.DB, b.id)).length).toBe(before + 1);
     expect((await latestDraft(env.DB, b.id))!.id).toBe(d.id);
   });
@@ -97,17 +77,6 @@ describe("tweaking the current draft", () => {
     await expect(regenerateDraft(leadDeps(() => three()), b.id, { tweak: "warmer" })).rejects.toThrow(/Write a draft first/);
   });
 
-  it("swap_samples sets aside the samples the current draft already links", async () => {
-    const b = await lead();
-    await createWorkSample(env.DB, { title: "First Work", url: "https://logan.dev/first", result_line: "", tags: "" });
-    await createWorkSample(env.DB, { title: "Second Work", url: "https://logan.dev/second", result_line: "", tags: "" });
-    await regenerateDraft(leadDeps(() => ({ variants: [{ angle: "a", subject: "s", body: "See https://logan.dev/first for more" }], to_contact_id: null, recipient_reason: "r" })), b.id, { purpose: "full_time" });
-    const seen: { system: string; user: string }[] = [];
-    await regenerateDraft(leadDeps(() => ({ variants: [{ angle: "a", subject: "s", body: "b" }], to_contact_id: null, recipient_reason: "r" }), seen), b.id, { tweak: "swap_samples" });
-    const listed = seen[0].user.split("Work samples you may cite (only these):")[1].split("Contacts:")[0];
-    expect(listed).not.toContain("https://logan.dev/first");
-    expect(listed).toContain("https://logan.dev/second");
-  });
 });
 
 describe("picking a variant", () => {
@@ -208,14 +177,12 @@ describe("profile and signature settings", () => {
   const put = (body: unknown) => send("/api/settings", "PUT", body);
 
   it("saves the profile fields", async () => {
-    const r = await put({ role_title: "Front-end developer", bio: "I build things.", availability: "January", goal_line: "A full-time role", resume_url: "https://logan.dev/resume.pdf", default_purpose: "freelance" });
+    const r = await put({ role_title: "Front-end developer", bio: "I build things.", availability: "January", goal_line: "Agency projects", resume_url: "https://logan.dev/resume.pdf" });
     expect(r.status).toBe(200);
-    expect(await r.json()).toMatchObject({ role_title: "Front-end developer", resume_url: "https://logan.dev/resume.pdf", default_purpose: "freelance" });
-    await put({ default_purpose: "full_time" });
+    expect(await r.json()).toMatchObject({ role_title: "Front-end developer", resume_url: "https://logan.dev/resume.pdf" });
   });
 
-  it("rejects a bad purpose or resume link", async () => {
-    expect((await put({ default_purpose: "spam" })).status).toBe(400);
+  it("rejects a bad resume link", async () => {
     expect((await put({ resume_url: "javascript:alert(1)" })).status).toBe(400);
     expect((await put({ resume_url: "" })).status).toBe(200);
   });

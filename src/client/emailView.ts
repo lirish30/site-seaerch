@@ -1,19 +1,9 @@
-export type Purpose = "full_time" | "freelance";
-export const PURPOSE_LABEL: Record<Purpose, string> = { full_time: "Full-time role", freelance: "Freelance work" };
-export const PURPOSE_HINT: Record<Purpose, string> = {
-  full_time: "A personal note that makes the case for hiring you. No job needs to be open.",
-  freelance: "A proposal-style pitch for a project, built from the audit findings.",
-};
+export type Purpose = "freelance";
+export const PURPOSE_LABEL: Record<Purpose, string> = { freelance: "Freelance work" };
 
 export interface Draft {
   id: string; business_id: string; subject: string; body: string; recipient_reason: string; edited: boolean; created_at: string;
-  steering_note: string | null; purpose: Purpose; angle: string; include_footer: boolean; variant_group: string | null; variant_index: number; posting_id: string | null;
-}
-
-/** GET /api/leads/:id/draft-role. `cited` is the role the current draft names (`warning` set when that is no longer true); `next` is what a new draft would cite. */
-export interface DraftRole {
-  cited: { id: string; title: string | null; url: string | null; state: "open" | "unseen" | "closed"; warning: string | null } | null;
-  next: { id: string; title: string; url: string; role_kind: string } | null;
+  steering_note: string | null; purpose: Purpose; angle: string; include_footer: boolean; variant_group: string | null; variant_index: number;
 }
 
 export interface WorkSample { id: string; title: string; url: string; result_line: string; tags: string }
@@ -50,22 +40,6 @@ export const isBlankSignature = (s: SignatureData) =>
 /** What gets saved: "" for an empty signature (so the plain-text one is used), else the JSON. */
 export const writeSignature = (s: SignatureData) => (isBlankSignature(s) ? "" : JSON.stringify(s));
 
-export interface ProfileFields { role_title?: unknown; bio?: unknown; goal_line?: unknown }
-
-/** What is still missing for a full-time email to have something real to say about the sender. */
-export function profileGaps(purpose: Purpose, p: ProfileFields, sampleCount: number): string[] {
-  if (purpose !== "full_time") return [];
-  const gaps: string[] = [];
-  if (!text(p.role_title).trim()) gaps.push("your role");
-  if (!text(p.bio).trim()) gaps.push("a short bio");
-  if (!text(p.goal_line).trim()) gaps.push("what you're looking for");
-  if (sampleCount === 0) gaps.push("at least one work sample");
-  return gaps;
-}
-
-export const gapsMessage = (gaps: string[]) =>
-  gaps.length ? `Add ${gaps.length === 1 ? gaps[0] : `${gaps.slice(0, -1).join(", ")} and ${gaps.at(-1)}`} in Settings so the email can talk about real work.` : "";
-
 export const wordCount = (s: string) => s.trim().split(/\s+/).filter(Boolean).length;
 
 export const snippet = (s: string, max = 120) => {
@@ -75,14 +49,8 @@ export const snippet = (s: string, max = 120) => {
 
 export const variantTitle = (v: { angle: string }, i: number) => v.angle.trim() || `Option ${i + 1}`;
 
-/** Quick rewrites keep the draft's purpose, so a toggle that disagrees with the draft needs fresh options instead. */
-export const purposeSwitchNotice = (draftPurpose: Purpose, chosen: Purpose): string | null =>
-  draftPurpose === chosen ? null
-    : `This email was written for ${PURPOSE_LABEL[draftPurpose].toLowerCase()}. Quick rewrites keep that. Write new options to switch it to ${PURPOSE_LABEL[chosen].toLowerCase()}.`;
-
-export const TWEAK_BUTTONS: { key: "shorter" | "warmer" | "more_direct" | "swap_samples"; label: string; fullTimeOnly?: boolean }[] = [
+export const TWEAK_BUTTONS: { key: "shorter" | "warmer" | "more_direct"; label: string }[] = [
   { key: "shorter", label: "Shorter" }, { key: "warmer", label: "Warmer" }, { key: "more_direct", label: "More direct" },
-  { key: "swap_samples", label: "Different work sample", fullTimeOnly: true },
 ];
 
 export const mailtoHref = (to: string, subject: string, text: string) =>

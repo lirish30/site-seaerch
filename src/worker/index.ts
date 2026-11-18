@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Env } from "./env";
 import { requireAuth } from "./auth";
 import { authRoutes } from "./routes/auth";
+import { passkeyRoutes } from "./routes/passkeys";
 import { searchRoutes } from "./routes/searches";
 import { leadRoutes } from "./routes/leads";
 import { settingsRoutes } from "./routes/settings";
@@ -16,15 +17,21 @@ import { importRoutes } from "./routes/import";
 import { todayRoutes } from "./routes/today";
 import { outreachRoutes } from "./routes/outreach";
 import { workSampleRoutes } from "./routes/workSamples";
-import { jobRoutes } from "./routes/jobs";
+import { spendRoutes } from "./routes/spend";
+import { approvalRoutes } from "./routes/approvals";
+import { agentActionRoutes } from "./routes/agentActions";
+import "./approvals/leadNote";
+import { mcpRoute } from "./mcp/route";
 import { runDueRadars } from "./radar-run";
 import { searchWorkflowStarter } from "./search-start";
-import { jobDeps, runJobWatch } from "./jobs/run";
 
 const app = new Hono<{ Bindings: Env }>();
+// Outside /api/*, so the cookie middleware does not apply: /mcp does its own bearer-token check.
+app.all("/mcp", mcpRoute);
 app.use("/api/*", requireAuth);
 app.get("/api/health", (c) => c.json({ ok: true }));
 app.route("/api", authRoutes);
+app.route("/api/passkey", passkeyRoutes);
 app.route("/api/searches", searchRoutes);
 app.route("/api/leads", leadRoutes);
 app.route("/api/settings", settingsRoutes);
@@ -38,21 +45,16 @@ app.route("/api/import", importRoutes);
 app.route("/api/today", todayRoutes);
 app.route("/api/outreach", outreachRoutes);
 app.route("/api/work-samples", workSampleRoutes);
-app.route("/api/jobs", jobRoutes);
+app.route("/api/spend", spendRoutes);
+app.route("/api/approvals", approvalRoutes);
+app.route("/api/agent-actions", agentActionRoutes);
 // Mounted last at /api: /api/leads/:id/cro-audit(s), /api/cro-items/:id, /api/cro-audits/:id/... (all behind requireAuth).
 app.route("/api", croRoutes);
 
-// Radars keep their daily cron; the job watcher runs every six hours on its own.
-export const JOB_WATCH_CRON = "37 */6 * * *";
-
 export default {
   fetch: app.fetch,
-  // Cron Trigger: unattended work, so a crash here must be logged, never thrown into a retry loop.
-  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
-    if (controller.cron === JOB_WATCH_CRON) {
-      ctx.waitUntil(jobDeps(env).then(runJobWatch).then((s) => console.log("job watch", JSON.stringify(s)), (e) => console.error("job watch failed", e)));
-      return;
-    }
+  // Cron Trigger: unattended spend, so a crash here must be logged, never thrown into a retry loop.
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(
       runDueRadars({
         db: env.DB, now: () => new Date(), startWorkflow: searchWorkflowStarter(env),

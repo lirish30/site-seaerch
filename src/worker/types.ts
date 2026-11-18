@@ -116,7 +116,7 @@ export interface Person {
   linkedin: string | null; source: "manual" | "site"; is_poc: boolean; created_at: string;
 }
 
-export type ActivityKind = "status" | "archived" | "restored" | "website" | "reaudit" | "score_flagged" | "export" | "draft" | "cro_audit" | "suppressed" | "import" | "bulk" | "today_done" | "snoozed" | "starred" | "unstarred" | "note" | "job_found";
+export type ActivityKind = "status" | "archived" | "restored" | "website" | "reaudit" | "score_flagged" | "export" | "draft" | "cro_audit" | "suppressed" | "import" | "bulk" | "today_done" | "snoozed" | "starred" | "unstarred" | "note";
 export interface Activity { id: string; business_id: string; kind: ActivityKind; detail: string | null; created_at: string; }
 
 export interface Audit {
@@ -144,8 +144,8 @@ export interface ContactInput {
 }
 export interface Contact extends ContactInput { id: string; business_id: string; }
 
-export type Purpose = "full_time" | "freelance";
-export const PURPOSES: readonly Purpose[] = ["full_time", "freelance"];
+export type Purpose = "freelance";
+export const PURPOSES: readonly Purpose[] = ["freelance"];
 
 export interface Draft {
   id: string; business_id: string; audit_id: string | null; to_contact_id: string | null;
@@ -153,11 +153,9 @@ export interface Draft {
   steering_note: string | null; edited: boolean; created_at: string;
   purpose: Purpose; angle: string; include_footer: boolean;
   variant_group: string | null; variant_index: number;
-  /** The job posting the text was written to cite ("I saw you're hiring for X"), or null when it claims none. */
-  posting_id: string | null;
 }
-export type DraftInsert = Omit<Draft, "id" | "created_at" | "edited" | "purpose" | "angle" | "include_footer" | "variant_group" | "variant_index" | "posting_id">
-  & Partial<Pick<Draft, "purpose" | "angle" | "include_footer" | "variant_group" | "variant_index" | "posting_id">> & { created_at?: string };
+export type DraftInsert = Omit<Draft, "id" | "created_at" | "edited" | "purpose" | "angle" | "include_footer" | "variant_group" | "variant_index">
+  & Partial<Pick<Draft, "purpose" | "angle" | "include_footer" | "variant_group" | "variant_index">> & { created_at?: string };
 
 export interface WorkSample { id: string; title: string; url: string; result_line: string; tags: string; created_at: string }
 
@@ -181,11 +179,8 @@ export interface Settings {
   role_title: string; bio: string; availability: string; resume_url: string; goal_line: string;
   /** JSON of a Signature, or "" to use the plain-text `signature`. */
   signature_json: string;
-  default_purpose: Purpose;
-  /** 1/0: new freelance / full-time drafts carry the mailing footer; Gmail drafts attach the audit PDF unless the request says otherwise. */
-  footer_freelance?: number; footer_full_time?: number; attach_audit_pdf?: number;
-  /** Role kinds best first, comma separated (see parseKindOrder): which open role a draft and Today name when a lead has several. */
-  role_kind_order: string;
+  /** 1/0: new drafts carry the mailing footer; Gmail drafts attach the audit PDF unless the request says otherwise. */
+  footer_freelance?: number; attach_audit_pdf?: number;
 }
 export type TonePreset = "friendly_local" | "consultative" | "direct" | "formal";
 export type EmailLength = "short" | "medium" | "long";
@@ -195,19 +190,3 @@ export const SUPPRESSION_REASONS = ["client", "opt_out", "competitor", "active_d
 export type SuppressionReason = (typeof SUPPRESSION_REASONS)[number];
 export type SuppressionKind = "domain" | "place_id";
 export interface Suppression { id: string; kind: SuppressionKind; value: string; reason: SuppressionReason; note: string | null; created_at: string; }
-export type Ats = "greenhouse" | "lever" | "ashby";
-export const ROLE_KINDS = ["web_dev", "design", "seo", "cro", "marketing"] as const;
-export type RoleKind = (typeof ROLE_KINDS)[number];
-export type CareerStatus = "active" | "none" | "error";
-export interface CareerSource {
-  business_id: string; status: CareerStatus; ats: Ats | null; token: string | null; careers_url: string | null;
-  checked_at: string | null; last_ok_at: string | null; next_check_at: string; empty_streak: number; last_error: string | null; created_at: string;
-}
-export interface JobPosting {
-  id: string; business_id: string; external_id: string; title: string; url: string; location: string | null; department: string | null;
-  role_kind: RoleKind | null; posted_at: string | null; first_seen_at: string; last_seen_at: string; closed_at: string | null;
-  /** Found on the first look at the board: its age is unknown unless the board gave a posted date. */
-  baseline: boolean;
-}
-/** One role as a job board reports it, before it is stored. */
-export interface RawPosting { externalId: string; title: string; url: string; location: string | null; department: string | null; postedAt: string | null }

@@ -4,7 +4,7 @@ import SettingsPage, { Callout } from "../../components/SettingsPage";
 import WorkSamplesEditor, { MAX_SAMPLES, SamplesLimitNote, useWorkSamples } from "../../components/WorkSamplesEditor";
 import { samplesNeeded, samplesNudge } from "../../settingsPagesView";
 
-/** Settings > Outreach > Work samples: the projects full-time emails may link to. Changes save as you make them. */
+/** Settings > Outreach > Work samples: the projects agency emails may link to. Changes save as you make them. */
 export default function WorkSamples() {
   const state = useWorkSamples();
   const [adding, setAdding] = useState(false);
@@ -12,7 +12,7 @@ export default function WorkSamples() {
   const full = (samples?.length ?? 0) >= MAX_SAMPLES;
   const needed = samples && samples.length ? samplesNeeded(samples) : 0;
   return (
-    <SettingsPage title="Work samples" sub="Full-time emails link only to these. Add a result so drafts can mention it." width={900}
+    <SettingsPage title="Work samples" sub="Agency emails can link to these. Add a result so drafts can mention it." width={900}
       badge={samples ? <span className="badge2"><i className="dot" />{samples.length} of {MAX_SAMPLES}</span> : undefined}
       action={<button type="button" className="btn primary" disabled={!samples || full} title={full ? `You can keep up to ${MAX_SAMPLES} samples` : undefined} onClick={() => setAdding(true)}><Icon name="plus" size={16} />Add sample</button>}>
       {state.error && <Callout tone="critical" icon="alert">{state.error}</Callout>}

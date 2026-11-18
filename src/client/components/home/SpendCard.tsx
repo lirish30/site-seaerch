@@ -1,11 +1,13 @@
 import { Link } from "react-router-dom";
 import Icon from "../Icon";
 import { limitLabel, moneyCents, spendView } from "../../todayHome";
-import type { Money, Part } from "./useHome";
+import { spendLine } from "../../approvalsView";
+import type { Money, Part, Spend } from "./useHome";
 
 /** This month's paid usage against the monthly limit from Settings. */
-export default function SpendCard({ money, onRetry }: { money: Part<Money>; onRetry: () => void }) {
-  const m = money.data, v = m ? spendView(m.usage, m.limit) : null;
+export default function SpendCard({ money, spend, onRetry }: { money: Part<Money>; spend: Part<Spend>; onRetry: () => void }) {
+  const m = money.data, sp = spend.data, v = m && sp ? spendView(m.usage, m.limit, sp.fixedUsd) : null;
+  const fixed = sp ? sp.fixedCosts.filter((f) => f.active) : [];
   return (
     <section className="hm-card" id="spend" aria-labelledby="hm-spend-h">
       <header className="hm-card-head">
@@ -20,12 +22,19 @@ export default function SpendCard({ money, onRetry }: { money: Part<Money>; onRe
           <p className="hm-spend-total">
             {v ? <><span>{moneyCents(v.total)}</span><small> of {limitLabel(m!.limit)}</small></> : <i className="hm-skel" style={{ width: 96, height: 24 }} />}
           </p>
+          {sp && <p className={`hm-spend-level ${sp.level}`} role={sp.level === "ok" ? undefined : "status"}>{spendLine(sp)}</p>}
+          {!sp && spend.error && <p className="hm-err" role="alert">{spend.error}</p>}
           <div className={`hm-meter${v?.over ? " over" : ""}`} role="progressbar" aria-label="Spend against the monthly limit" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(v?.pct ?? 0)}><i style={{ width: `${v?.pct ?? 0}%` }} /></div>
           <ul className="hm-spend-rows">
             {(v?.rows ?? [{ label: "Google Maps listings", usd: null }, { label: "AI reviews & drafts", usd: null }, { label: "Browser checks", usd: null }]).map((r) => (
               <li key={r.label}><span>{r.label}</span><b>{r.usd === null ? "–" : moneyCents(r.usd)}</b></li>
             ))}
           </ul>
+          {fixed.length > 0 && (
+            <ul className="hm-spend-rows hm-spend-fixed" aria-label="Fixed monthly costs">
+              {fixed.map((f) => <li key={f.id}><span>{f.name}</span><b>{moneyCents(f.monthly_usd)}</b></li>)}
+            </ul>
+          )}
         </div>
       )}
     </section>

@@ -42,16 +42,16 @@ describe("usage history", () => {
 });
 
 describe("mailing footer and Gmail defaults", () => {
-  afterEach(async () => { await saveSettings(env.DB, { footer_freelance: 1, footer_full_time: 0, attach_audit_pdf: 1, default_purpose: "full_time" }); });
+  afterEach(async () => { await saveSettings(env.DB, { footer_freelance: 1, attach_audit_pdf: 1 }); });
   const put = (body: unknown) => api("/api/settings", { method: "PUT", body: JSON.stringify(body) });
 
-  it("defaults to what drafts already did: footer on for freelance, off for full-time, PDF attached", async () => {
+  it("defaults to what drafts already did: footer on, PDF attached", async () => {
     const s = (await (await api("/api/settings")).json<any>()).settings;
-    expect([s.footer_freelance, s.footer_full_time, s.attach_audit_pdf]).toEqual([1, 0, 1]);
+    expect([s.footer_freelance, s.attach_audit_pdf]).toEqual([1, 1]);
   });
-  it("saves the three switches and rejects anything but 0 or 1", async () => {
-    const r = await put({ footer_full_time: 1, attach_audit_pdf: 0 });
-    expect(await r.json()).toMatchObject({ footer_full_time: 1, attach_audit_pdf: 0, footer_freelance: 1 });
+  it("saves the two switches and rejects anything but 0 or 1", async () => {
+    const r = await put({ attach_audit_pdf: 0 });
+    expect(await r.json()).toMatchObject({ attach_audit_pdf: 0, footer_freelance: 1 });
     expect((await put({ footer_freelance: 2 })).status).toBe(400);
     expect((await put({ footer_freelance: "yes" })).status).toBe(400);
   });
@@ -60,12 +60,10 @@ describe("mailing footer and Gmail defaults", () => {
     claude: async () => ({ variants: [{ angle: "A", subject: "S", body: "B" }], to_contact_id: null, recipient_reason: "r" }) }) as unknown as LeadDeps;
   it("new drafts take their footer default from the settings", async () => {
     const b = await seedBusiness(); await seedLeadAudit(b.id);
-    await saveSettings(env.DB, { footer_full_time: 1, footer_freelance: 0 });
-    expect((await regenerateDraft(deps(), b.id, { purpose: "full_time" })).include_footer).toBe(true);
-    expect((await regenerateDraft(deps(), b.id, { purpose: "freelance" })).include_footer).toBe(false);
-    await saveSettings(env.DB, { footer_full_time: 0, footer_freelance: 1 });
-    expect((await regenerateDraft(deps(), b.id, { purpose: "full_time" })).include_footer).toBe(false);
-    expect((await regenerateDraft(deps(), b.id, { purpose: "freelance" })).include_footer).toBe(true);
+    await saveSettings(env.DB, { footer_freelance: 0 });
+    expect((await regenerateDraft(deps(), b.id)).include_footer).toBe(false);
+    await saveSettings(env.DB, { footer_freelance: 1 });
+    expect((await regenerateDraft(deps(), b.id)).include_footer).toBe(true);
   });
 });
 

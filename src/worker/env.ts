@@ -9,6 +9,8 @@ export interface Env {
   LOGIN_LIMITER?: RateLimit;
   APP_PASSWORD: string;
   SESSION_SECRET: string;
+  /** Bearer token for the /mcp endpoint (Worker secret). */
+  MCP_TOKEN: string;
   BRIGHTDATA_API_KEY: string;
   BRIGHTDATA_SERP_ZONE: string;
   /** Optional: Google Places API (New) key. When set, listings come from Places first and Bright Data is the fallback. */
@@ -18,4 +20,7 @@ export interface Env {
   /** Optional: Google OAuth client for Gmail drafts and Drive export. */
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
+  /** Optional passkey overrides. When unset, the request URL's hostname is the RP ID and its origin the expected origin. */
+  WEBAUTHN_RP_ID?: string;
+  WEBAUTHN_ORIGIN?: string;
 }

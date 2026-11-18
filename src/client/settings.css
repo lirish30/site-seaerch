@@ -1,5 +1,5 @@
 /* Settings: the shared frame (st-*: header, breadcrumb, cards, fields, callouts, save bar) and the pages built on it.
-   Page rules are prefixed per page: sh- home, sp- profile, sj- job search, sg- signature, vo- voice, sw- work samples. Measured from the Figma file at 1x. */
+   Page rules are prefixed per page: sh- home, sp- profile, sg- signature, vo- voice, sw- work samples. Measured from the Figma file at 1x. */
 .settings-page { min-height:100%; display:flex; flex-direction:column; }
 
 /* Header: breadcrumb, title (+ badge), subtitle, optional action on the right */
@@ -101,9 +101,6 @@
 .sp-tile { width:60px; height:60px; flex:none; align-self:flex-end; margin-bottom:0; display:grid; place-items:center; border-radius:12px; background:var(--bg-muted); border:1px solid var(--border); color:var(--text-3); overflow:hidden; }
 .sp-tile img { width:32px; height:32px; object-fit:contain; border-radius:6px; display:block; }
 
-/* ---------- Job search (sj-) ---------- */
-.st-field textarea.sj-bio { min-height:88px; }
-
 /* ---------- Email signature (sg-) ---------- */
 .sg-layout { display:grid; grid-template-columns:minmax(0,560px) minmax(280px,420px); gap:24px; align-items:start; }
 .sg-form { display:flex; flex-direction:column; gap:18px; min-width:0; }
@@ -188,3 +185,9 @@ button.sw-result.missing { padding:0; border:0; background:none; text-align:left
 .side-find:focus-visible { outline:0; border-color:var(--border-focus); box-shadow:0 0 0 1px var(--border-focus); }
 .side-none { margin:8px 10px; font:400 13px/19px var(--font); color:var(--text-3); }
 @media (max-width: 900px) { .sidebar .side-find, .sidebar .side-none { display:none; } }
+
+/* Security: the passkey list */
+.st-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; }
+.st-list-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 0; border-top:1px solid var(--border); font:500 13px/19px var(--font); color:var(--text); }
+.st-list-row:first-child { border-top:0; padding-top:0; }
+.st-list-row span { color:var(--text-3); }

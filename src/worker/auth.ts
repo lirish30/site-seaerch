@@ -1,5 +1,6 @@
 import type { MiddlewareHandler } from "hono";
-import { getCookie } from "hono/cookie";
+import type { Context } from "hono";
+import { getCookie, setCookie } from "hono/cookie";
 import type { Env } from "./env";
 
 const enc = new TextEncoder();
@@ -28,7 +29,24 @@ export async function passwordMatches(given: string, actual: string) {
   return a === b;
 }
 
-const PUBLIC = new Set(["/api/health", "/api/login", "/api/google/callback"]);
+const THIRTY_DAYS = 30 * 24 * 3600;
+
+/** Sign a 30-day session and set the cookie. The one place the session cookie is issued (password and passkey login). */
+export async function startSession(c: Context<{ Bindings: Env }>) {
+  const token = await signSession(c.env.SESSION_SECRET, Date.now() + THIRTY_DAYS * 1000);
+  setCookie(c, "session", token, { httpOnly: true, secure: true, sameSite: "Strict", path: "/", maxAge: THIRTY_DAYS });
+}
+
+/** Throttle brute force per client IP. The binding is optional so local/test runs without it still work. True when over the limit. */
+export async function loginThrottled(c: Context<{ Bindings: Env }>) {
+  const limiter = c.env.LOGIN_LIMITER;
+  if (!limiter) return false;
+  const { success } = await limiter.limit({ key: c.req.header("cf-connecting-ip") ?? "unknown" });
+  return !success;
+}
+
+// Only the login entry points are public: everything else under /api/passkey needs a session.
+const PUBLIC = new Set(["/api/health", "/api/login", "/api/google/callback", "/api/passkey/login/options", "/api/passkey/login/verify"]);
 
 // The only unauthenticated data route: a single non-empty token segment under this prefix, nothing else.
 const PUBLIC_REPORT_PREFIX = "/api/public/report/";

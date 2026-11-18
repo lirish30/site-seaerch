@@ -1,5 +1,6 @@
 import type { Radar, Search } from "./types";
 import { addDays, claimRadar, listDueRadars, recordRadarBlocked, recordRadarStarted } from "./db/radar";
+import { allowOptionalJob } from "./spend";
 import { failureMessage, startSearchRun, type StartFailure, type StartResult } from "./search-start";
 
 // Bounds an unattended burst: one cron tick starts at most this many searches; the rest wait for the next tick.
@@ -41,7 +42,11 @@ export async function runRadar(deps: RadarDeps, radar: Radar, opts: { manual?: b
   return { status: "blocked", failure: r };
 }
 
-export async function runDueRadars(deps: RadarDeps, opts: { maxPerRun?: number } = {}) {
+export async function runDueRadars(deps: RadarDeps, opts: { maxPerRun?: number } = {}): Promise<{ started: number; skipped: number | "spend_cap"; failed: number }> {
+  if (!(await allowOptionalJob(deps.db, deps.now()))) {
+    console.log("radar run paused: monthly spend cap reached");
+    return { started: 0, skipped: "spend_cap" as const, failed: 0 };
+  }
   const summary = { started: 0, skipped: 0, failed: 0 };
   const due = await listDueRadars(deps.db, deps.now().toISOString(), opts.maxPerRun ?? DEFAULT_MAX_PER_RUN);
   for (const radar of due) {

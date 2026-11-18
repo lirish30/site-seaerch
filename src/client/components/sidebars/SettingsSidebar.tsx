@@ -8,13 +8,14 @@ import { SideItem, SideLabel, SideTitle } from "./parts";
 export interface SettingsPageDef { slug: string; label: string; icon: IconName; group: "You" | "Outreach" | "Lead scoring" | "Account" }
 /** Every settings page, in sidebar order. `slug` is the path under /settings. */
 export const SETTINGS_PAGES: SettingsPageDef[] = [
-  { slug: "profile", label: "Profile", icon: "user", group: "You" }, { slug: "job-search", label: "Job search", icon: "briefcase", group: "You" },
+  { slug: "profile", label: "Profile", icon: "user", group: "You" },
   { slug: "signature", label: "Email signature", icon: "pen", group: "You" },
   { slug: "voice", label: "Email voice", icon: "mail", group: "Outreach" }, { slug: "work-samples", label: "Work samples", icon: "image", group: "Outreach" },
   { slug: "services", label: "Services you sell", icon: "list", group: "Outreach" },
   { slug: "fit-profiles", label: "Fit profiles", icon: "target", group: "Lead scoring" }, { slug: "suppressions", label: "Suppressions", icon: "ban", group: "Lead scoring" },
   { slug: "scores", label: "How scores work", icon: "zap", group: "Lead scoring" },
   { slug: "google", label: "Google", icon: "link", group: "Account" }, { slug: "usage", label: "Usage & limits", icon: "card", group: "Account" },
+  { slug: "security", label: "Security", icon: "key", group: "Account" },
   { slug: "footer", label: "Mailing footer", icon: "shield", group: "Account" },
 ];
 const GROUPS = ["You", "Outreach", "Lead scoring", "Account"] as const;

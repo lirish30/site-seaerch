@@ -26,17 +26,17 @@ export function queuesOf(b: Pick<Business, "lead_status" | "follow_up_at">, draf
 
 /**
  * Everything the Outreach page needs in one request: the lead rows for the chosen queue (with each lead's current draft), and the
- * count of every queue so the sidebar can show them. `purpose` narrows the "drafts" queue to full-time or freelance emails.
+ * count of every queue so the sidebar can show them. `purpose` narrows the "drafts" queue (only "freelance" exists now).
  */
 outreachRoutes.get("/", async (c) => {
   const q = c.req.query("view");
   const view: View = (VIEWS as readonly string[]).includes(q ?? "") ? (q as View) : "drafts";
   const purpose = c.req.query("purpose");
-  if (purpose !== undefined && purpose !== "full_time" && purpose !== "freelance") return c.json({ error: "bad purpose" }, 400);
+  if (purpose !== undefined && purpose !== "freelance") return c.json({ error: "bad purpose" }, 400);
   const [all, drafts] = await Promise.all([listAllBusinesses(c.env.DB, {}), latestDraftsByBusiness(c.env.DB)]);
   const hidden = await suppressedLeadIds(c.env.DB, all);
   const today = new Date().toISOString().slice(0, 10);
-  const counts = { drafts: 0, followups: 0, contacted: 0, replied: 0, full_time: 0, freelance: 0 };
+  const counts = { drafts: 0, followups: 0, contacted: 0, replied: 0, freelance: 0 };
   const picked: Business[] = [];
   for (const b of all) {
     if (hidden.has(b.id)) continue;

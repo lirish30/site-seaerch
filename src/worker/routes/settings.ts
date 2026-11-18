@@ -3,8 +3,6 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { getSettings, saveSettings } from "../db/settings";
 import { monthlySpend, monthUsage } from "../db/usage";
-import { ROLE_KINDS } from "../types";
-import { parseKindOrder } from "../jobs/select";
 import { parseSignature, renderSignatureHtml, renderSignatureText, safeImageUrl, safeUrl } from "../email/signature";
 
 // The logo is embedded in a public page, so only a plain https URL (or none) is accepted.
@@ -35,10 +33,7 @@ const S = z.object({
   logo_url: logoUrl,
   role_title: z.string().max(200), bio: z.string().max(2000), availability: z.string().max(300),
   resume_url: optionalUrl, goal_line: z.string().max(500), signature_json: signatureJson,
-  default_purpose: z.enum(["full_time", "freelance"]),
-  footer_freelance: z.number().int().min(0).max(1), footer_full_time: z.number().int().min(0).max(1), attach_audit_pdf: z.number().int().min(0).max(1),
-  // Stored whole (every kind, best first) so what the owner sees is what ranks.
-  role_kind_order: z.string().max(100).refine((v) => v.split(",").every((k) => (ROLE_KINDS as readonly string[]).includes(k.trim()))).transform((v) => parseKindOrder(v).join(",")),
+  footer_freelance: z.number().int().min(0).max(1), attach_audit_pdf: z.number().int().min(0).max(1),
 }).partial();
 
 export const settingsRoutes = new Hono<{ Bindings: Env }>();

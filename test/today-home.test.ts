@@ -85,6 +85,16 @@ describe("Home numbers", () => {
     expect(spendView([{ service: "claude", units: 1, est_cost_usd: 200 }], 150)).toMatchObject({ pct: 100, over: true });
     expect(spendView([], 0)).toMatchObject({ total: 0, pct: 0, over: false });
   });
+  it("counts active fixed costs in the headline, the meter and the over state, like enforcement", () => {
+    const usage = [{ service: "claude", units: 1, est_cost_usd: 0.5 }];
+    const v = spendView(usage, 150, 7);
+    expect(v.total).toBeCloseTo(7.5, 5);
+    expect(v.pct).toBeCloseTo(5, 5);
+    expect(v.over).toBe(false);
+    expect(spendView([{ service: "claude", units: 1, est_cost_usd: 100 }], 150, 50)).toMatchObject({ total: 150, pct: 100, over: true });
+    expect(spendView([], 150, 200)).toMatchObject({ total: 200, pct: 100, over: true });
+    expect(spendView(usage, 150).total).toBe(0.5);
+  });
 });
 
 describe("Home sidebar", () => {

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../env";
-import type { Business, Draft, LeadStatus } from "../types";
+import type { Business, LeadStatus } from "../types";
 import { getBusiness, listAllBusinesses, listQuickStageBusinesses, updateLead, domainOf, setArchived, deleteBusiness, applyBulk, undoBulk, normalizeTag, setStarred } from "../db/businesses";
 import { createFilter, deleteFilter, FilterLimit, FilterNameTaken, listFilters } from "../db/filters";
 import { listPeople, createPerson, updatePerson, deletePerson, pocsFor } from "../db/people";
@@ -17,12 +17,10 @@ import { scoreFit } from "../scoring/fit";
 import { rankPromising } from "../scoring/promising";
 import { bestOffer } from "../services/best-offer";
 import { listContacts, contactsFor } from "../db/contacts";
-import { bestOpenPosting, citedRole } from "../db/jobs";
-import { parseKindOrder } from "../jobs/select";
-import { clearDraftPosting, draftedIds, latestDraft, updateDraftBody, listDrafts, selectDraft, variantsOf } from "../db/drafts";
+import { draftedIds, latestDraft, updateDraftBody, listDrafts, selectDraft, variantsOf } from "../db/drafts";
 import { activeReportFor, createReport, otherActiveCount, revokeReports, type ReportRow } from "../db/reports";
 import { pickRecipient } from "../recipient";
-import { mentions, regenerateDraft, TWEAKS, type Tweak } from "../pipeline/lead";
+import { regenerateDraft, TWEAKS, type Tweak } from "../pipeline/lead";
 import { depsFromEnv } from "../workflows";
 import { checkSpend, PER_LEAD_COST } from "../cost";
 import { getSettings } from "../db/settings";
@@ -192,15 +190,6 @@ leadRoutes.get("/:id/report.pdf", async (c) => {
 });
 
 // Exports to the connected Google account. Gmail gets a draft only; nothing is ever sent.
-/**
- * A draft that says "I saw you're hiring for X" must not leave the app after X closed (or stopped showing on the board).
- * The owner can still override with `allowStaleRole`, since they may have edited around it; the app never sends mail either way.
- */
-async function staleRoleResponse(c: any, draft: Draft, allow: boolean | undefined): Promise<Response | null> {
-  const role = allow ? null : await citedRole(c.env.DB, draft, Date.now());
-  return role?.warning ? c.json({ error: role.warning, code: "stale_role", role }, 409) : null;
-}
-
 async function exportGuard(c: any, fn: () => Promise<Response>) {
   try { return await fn(); }
   catch (e) {
@@ -213,13 +202,10 @@ leadRoutes.post("/:id/gmail-draft", (c) => exportGuard(c, async () => {
   const id = c.req.param("id");
   const blocked = await suppressedResponse(c, id);
   if (blocked) return blocked;
-  const body = await c.req.json<{ attachReport?: boolean; allowStaleRole?: boolean }>().catch(() => ({} as { attachReport?: boolean; allowStaleRole?: boolean }));
-  const allowStaleRole = body.allowStaleRole;
+  const body = await c.req.json<{ attachReport?: boolean }>().catch(() => ({} as { attachReport?: boolean }));
   const attachReport = body.attachReport ?? (await getSettings(c.env.DB)).attach_audit_pdf !== 0;
   const draft = await latestDraft(c.env.DB, id);
   if (!draft) return c.json({ error: "Write a draft first" }, 400);
-  const stale = await staleRoleResponse(c, draft, allowStaleRole);
-  if (stale) return stale;
   const { token } = await googleAccess(c.env, new URL(c.req.url).origin);
   const contacts = await listContacts(c.env.DB, id);
   const poc = await pocFor(c.env.DB, id);
@@ -242,10 +228,6 @@ leadRoutes.post("/:id/drive", (c) => exportGuard(c, async () => {
   if (blocked) return blocked;
   const r = await reportFor(c.env, id);
   if (!r) return c.json({ error: "No audit yet" }, 404);
-  // The Doc embeds the current draft, so it is held to the same rule as the Gmail draft.
-  const latest = await latestDraft(c.env.DB, id);
-  const stale = latest && await staleRoleResponse(c, latest, (await c.req.json<{ allowStaleRole?: boolean }>().catch(() => ({ allowStaleRole: false }))).allowStaleRole);
-  if (stale) return stale;
   const { token, row } = await googleAccess(c.env, new URL(c.req.url).origin);
   const folder = await ensureFolder(fetch, token, row.folder_id, "Site Search reports");
   if (folder !== row.folder_id) await setGoogleFolder(c.env.DB, folder);
@@ -364,22 +346,7 @@ leadRoutes.patch("/:id/draft", async (c) => {
   const d = await latestDraft(c.env.DB, c.req.param("id"));
   if (!d) return c.json({ error: "no draft" }, 404);
   await updateDraftBody(c.env.DB, d.id, p.data);
-  // Deleting the "hiring for X" sentence ends the claim, so the staleness warning goes with it.
-  const cited = await citedRole(c.env.DB, d, Date.now());
-  if (cited?.title && !mentions(p.data, cited.title)) await clearDraftPosting(c.env.DB, d.id);
   return c.json({ ok: true });
-});
-
-// Which role the current draft cites (and whether that is still true), and which one a new draft would cite. The composer shows both.
-leadRoutes.get("/:id/draft-role", async (c) => {
-  const id = c.req.param("id");
-  const d = await latestDraft(c.env.DB, id);
-  const now = new Date();
-  const [cited, next] = await Promise.all([
-    d ? citedRole(c.env.DB, d, now.getTime()) : null,
-    bestOpenPosting(c.env.DB, id, now.toISOString(), parseKindOrder((await getSettings(c.env.DB)).role_kind_order)),
-  ]);
-  return c.json({ cited, next: next && { id: next.id, title: next.title, url: next.url, role_kind: next.role_kind } });
 });
 
 // The email exactly as it would be saved to Gmail: body, signature, optional footer. Stateless, so the editor can preview unsaved edits.
@@ -404,10 +371,8 @@ const Regenerate = z.object({
   focus: z.array(z.number().int().min(0).max(200)).max(10).optional(),
   croFocus: z.array(z.string().min(1).max(64)).max(10).optional(),
   tone: z.enum(["friendly_local", "consultative", "direct", "formal"]).nullable().optional(),
-  purpose: z.enum(["full_time", "freelance"]).optional(),
+  purpose: z.literal("freelance").optional(),
   tweak: z.enum(Object.keys(TWEAKS) as [Tweak, ...Tweak[]]).optional(),
-  sampleIds: z.array(z.string().min(1).max(64)).max(5).optional(),
-  usePosting: z.boolean().optional(),
 });
 leadRoutes.post("/:id/regenerate", async (c) => {
   const blocked = await suppressedResponse(c, c.req.param("id"));
@@ -418,8 +383,7 @@ leadRoutes.post("/:id/regenerate", async (c) => {
   try {
     const d = await regenerateDraft(depsFromEnv(c.env), id, {
       steeringNote: p.data.steeringNote?.trim() || null, focus: p.data.focus, croFocus: p.data.croFocus, tone: p.data.tone,
-      purpose: p.data.purpose, tweak: p.data.tweak, sampleIds: p.data.sampleIds,
-      usePosting: p.data.usePosting,
+      purpose: p.data.purpose, tweak: p.data.tweak,
     });
     const picked = (p.data.focus?.length ?? 0) + (p.data.croFocus?.length ?? 0);
     await logActivity(c.env.DB, id, "draft", p.data.tweak ? `Rewrote the draft (${p.data.tweak.replace("_", " ")})`

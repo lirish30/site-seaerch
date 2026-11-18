@@ -15,6 +15,7 @@ beforeAll(async () => {
   cookie = r.headers.get("set-cookie")!.split(";")[0];
 });
 beforeEach(async () => {
+  await env.DB.prepare(`UPDATE fixed_costs SET active = 0`).run(); // these tests budget metered usage only
   await env.DB.batch([env.DB.prepare(`DELETE FROM searches`), env.DB.prepare(`DELETE FROM usage`)]);
   await saveSettings(env.DB, { physical_address: "1 Main St", opt_out_line: "Reply no.", monthly_spend_limit_usd: EST * 1.5 });
   orig = env.SEARCH_WORKFLOW.create;

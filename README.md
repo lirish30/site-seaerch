@@ -15,7 +15,7 @@ Personal tool: find local businesses, audit their websites, draft outreach email
    - `APP_PASSWORD` is the only thing guarding the app: use a long random value, at least 20 characters (e.g. `openssl rand -base64 24`). `SESSION_SECRET` should be similarly long and random.
    - Login attempts are throttled by the `LOGIN_LIMITER` Workers Rate Limiting binding in `wrangler.jsonc` (10 attempts per minute per client IP; over the limit `/api/login` returns 429). Its `namespace_id` (`1001`) just needs to be unique among rate limiters on your account.
 3. `npm run deploy` (only after step 1 has succeeded; the cron trigger in `wrangler.jsonc` is registered by this deploy)
-4. Sign in and fill in Settings: your profile and job-search details (role, short bio, what you're looking for, resume link), a few work samples, and your email signature (the builder takes a graphic and links). Paste tone notes from `scripts/tone-notes.txt`. The mailing address and opt-out line are optional: they only go on an email when you turn the footer on for it (off by default for full-time emails, on for freelance).
+4. Sign in and fill in Settings: your profile, a few work samples, and your email signature (the builder takes a graphic and links). Paste tone notes from `scripts/tone-notes.txt`. The mailing address and opt-out line are optional: they only go on an email when you turn the footer on for it (on by default).
 5. The Bright Data test fixture (`test/fixtures/brightdata-maps.json`) is a trimmed live capture from 2026-10-03. If Bright Data changes its response shape and results come back empty or misread, re-capture it and update `mapBrightDataItem`.
 
 Optional voice check before relying on drafts: `ANTHROPIC_API_KEY=... TONE="$(cat scripts/tone-notes.txt)" npm run prompt-check` for full-time emails, and again with `PURPOSE=freelance` (writes `scripts/out/prompt-check-<purpose>.md`). It checks length, that no footer or signature is in the body, and that a full-time email links only to your work samples.
@@ -71,6 +71,11 @@ Radar re-runs saved searches on a schedule. Tick "Repeat this search (Radar)" on
 - A blocked radar retries the next day and shows the reason.
 - Radar sends no email or push notification. New leads show as a count on the Radar page.
 - Test the cron locally: `npx wrangler dev -c wrangler.jsonc --local --test-scheduled`, then `curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=17+13+*+*+*"`. Keep `-c wrangler.jsonc`: a stale `.wrangler/deploy/config.json` can otherwise redirect to an old build.
+
+## Agency OS setup
+- Generate the MCP bearer token: `openssl rand -hex 32`. Put it in `.dev.vars` as `MCP_TOKEN=` for local runs, and for production run `npx wrangler secret put MCP_TOKEN`.
+- Add the MCP server to Claude Code: `claude mcp add --transport http agency-os <url>/mcp --header "Authorization: Bearer <token>"`. `/mcp` is POST only; wrong tokens are rate limited per IP.
+- Passkeys are bound to the domain (`WEBAUTHN_RP_ID` / `WEBAUTHN_ORIGIN`, default the request host). After a domain change, re-register your passkeys.
 
 ## Known limitations
 - The PageSpeed test fixture is hand-written, not a live capture. Capture one real PageSpeed response, then verify the Lighthouse audit ids in `src/worker/scoring/labels.ts` and the `viewport` / `font-size` / `tap-targets` audits used for mobile-friendliness (a missing audit counts as passing).

@@ -6,7 +6,7 @@ import SettingsPage from "../../components/SettingsPage";
 import type { WorkSample } from "../../emailView";
 import type { SettingsDoc, UsageRow } from "../../settingsData";
 import {
-  hasBuiltSignature, jobMissing, profileMissing, samplesNeeded, setupItems, setupSentence, suppressionWord, voiceSummary,
+  hasBuiltSignature, profileMissing, samplesNeeded, setupItems, setupSentence, suppressionWord, voiceSummary,
 } from "../../settingsPagesView";
 import type { FitProfile, Service, Suppression } from "../../types";
 
@@ -15,6 +15,8 @@ interface Google { configured: boolean; connected: boolean; email: string | null
 interface Data {
   doc: SettingsDoc | null | false; usage: UsageRow[]; samples: WorkSample[] | null | false; services: Service[] | null | false;
   fits: FitProfile[] | null | false; supps: Suppression[] | null | false; google: Google | null | false;
+  /** GET /api/spend: usage plus active fixed costs against the cap, the same total the cap enforces. */
+  spend: { spentUsd: number; limitUsd: number } | null | false;
 }
 type Tone = "positive" | "warning" | "";
 interface Chip { tone: Tone; text: string }
@@ -27,11 +29,9 @@ const limitText = (n: number) => (Number.isInteger(n) ? `$${n}` : dollars(n));
 function chips(d: Data): Record<string, Chip | null> {
   const wait = (v: unknown, make: () => Chip): Chip | null => (v === null ? null : v === false ? { tone: "", text: "Couldn't load" } : make());
   const doc = d.doc || {};
-  const missingJob = jobMissing(doc);
   const missingProfile = profileMissing(doc);
   return {
     profile: wait(d.doc, () => (missingProfile.length ? { tone: "warning", text: `Add ${missingProfile[0]}` } : { tone: "positive", text: "Complete" })),
-    "job-search": wait(d.doc, () => (!String(doc.resume_url ?? "").trim() ? { tone: "warning", text: "Resume link missing" } : missingJob.length ? { tone: "warning", text: `Add ${missingJob[0]}` } : { tone: "positive", text: "Complete" })),
     signature: wait(d.doc, () => (hasBuiltSignature(doc) ? { tone: "positive", text: "Complete" } : String(doc.signature ?? "").trim() ? { tone: "", text: "Plain text only" } : { tone: "warning", text: "Not set up" })),
     voice: wait(d.doc, () => ({ tone: "", text: voiceSummary(String(doc.tone_preset), String(doc.email_length)) })),
     "work-samples": wait(d.samples, () => {
@@ -48,11 +48,12 @@ function chips(d: Data): Record<string, Chip | null> {
     }),
     suppressions: wait(d.supps, () => ({ tone: "", text: (d.supps as Suppression[]).length ? suppressionWord(d.supps as Suppression[]) : "Nothing suppressed" })),
     scores: { tone: "", text: "Guide" },
+    security: { tone: "", text: "Passkeys" },
     google: wait(d.google, () => {
       const g = d.google as Google;
       return !g.configured ? { tone: "", text: "Not set up" } : g.connected ? { tone: "positive", text: `Connected · ${g.email ?? "your account"}` } : { tone: "warning", text: "Not connected" };
     }),
-    usage: wait(d.doc, () => ({ tone: "", text: `${dollars(d.usage.reduce((t, u) => t + u.est_cost_usd, 0))} of ${limitText(Number(doc.monthly_spend_limit_usd) || 0)}` })),
+    usage: wait(d.spend, () => ({ tone: "", text: `${dollars((d.spend as { spentUsd: number }).spentUsd)} of ${limitText((d.spend as { limitUsd: number }).limitUsd)}` })),
     footer: wait(d.doc, () => (String(doc.physical_address ?? "").trim() ? { tone: "", text: "On for freelance only" } : { tone: "warning", text: "Add a mailing address" })),
   };
 }
@@ -61,12 +62,11 @@ interface CardDef { slug: string; title: string; icon: IconName; text: string }
 const SECTIONS: { name: string; tint: "signal" | "info" | "positive" | "plain"; cards: CardDef[] }[] = [
   { name: "You", tint: "signal", cards: [
     { slug: "profile", title: "Profile", icon: "user", text: "Your name, business, contact email and logo. Shown on shared reports." },
-    { slug: "job-search", title: "Job search", icon: "briefcase", text: "Role, short bio, what you’re looking for and your resume link." },
     { slug: "signature", title: "Email signature", icon: "pen", text: "Name, title, links and a graphic, added to every draft." },
   ] },
   { name: "Outreach", tint: "info", cards: [
     { slug: "voice", title: "Email voice", icon: "mail", text: "Tone, length, what you ask for, and phrases you use or avoid." },
-    { slug: "work-samples", title: "Work samples", icon: "image", text: "Projects your full-time emails can point to." },
+    { slug: "work-samples", title: "Work samples", icon: "image", text: "Your best projects. Agency emails can link to what is listed here." },
     { slug: "services", title: "Services you sell", icon: "list", text: "The catalog behind “Recommended pitch”." },
   ] },
   { name: "Lead scoring", tint: "positive", cards: [
@@ -77,13 +77,14 @@ const SECTIONS: { name: string; tint: "signal" | "info" | "positive" | "plain"; 
   { name: "Account", tint: "plain", cards: [
     { slug: "google", title: "Google", icon: "link", text: "Gmail drafts and Drive. Nothing is ever sent." },
     { slug: "usage", title: "Usage & limits", icon: "card", text: "Monthly spend limit and what each service cost." },
+    { slug: "security", title: "Security", icon: "key", text: "Sign in with Touch ID. Your password stays as a fallback." },
     { slug: "footer", title: "Mailing footer", icon: "shield", text: "Mailing address and opt-out line for freelance emails." },
   ] },
 ];
 
 /** Settings: the overview. A card per page with its real status, and a banner for what is still missing. */
 export default function SettingsHome() {
-  const [d, setD] = useState<Data>({ doc: null, usage: [], samples: null, services: null, fits: null, supps: null, google: null });
+  const [d, setD] = useState<Data>({ doc: null, usage: [], samples: null, services: null, fits: null, supps: null, google: null, spend: null });
   useEffect(() => {
     let live = true;
     const part = <T,>(p: Promise<T>, apply: (v: T | false) => void) => p.then((v) => live && apply(v)).catch(() => live && apply(false));
@@ -92,6 +93,7 @@ export default function SettingsHome() {
     void part(api.get<Service[]>("/services"), (v) => setD((o) => ({ ...o, services: v })));
     void part(api.get<FitProfile[]>("/fit-profiles"), (v) => setD((o) => ({ ...o, fits: v })));
     void part(api.get<Suppression[]>("/suppressions"), (v) => setD((o) => ({ ...o, supps: v })));
+    void part(api.get<{ spentUsd: number; limitUsd: number }>("/spend"), (v) => setD((o) => ({ ...o, spend: v })));
     void part(api.get<Google>("/google/status"), (v) => setD((o) => ({ ...o, google: v })));
     return () => { live = false; };
   }, []);

@@ -10,10 +10,11 @@ export default defineConfig(async () => {
         miniflare: {
           bindings: {
             TEST_MIGRATIONS: migrations,
-            APP_PASSWORD: "test-pass",
+            APP_PASSWORD: "test-pass", MCP_TOKEN: "test-mcp-token",
             SESSION_SECRET: "test-secret-test-secret-test-secret",
             BRIGHTDATA_API_KEY: "x", BRIGHTDATA_SERP_ZONE: "x",
             PAGESPEED_API_KEY: "x", ANTHROPIC_API_KEY: "x",
+            WEBAUTHN_RP_ID: "x", WEBAUTHN_ORIGIN: "https://x",
           },
         },
       }),

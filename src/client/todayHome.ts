@@ -74,14 +74,14 @@ const SPEND_ROWS: { label: string; services: string[] }[] = [
   { label: "AI reviews & drafts", services: ["claude", "claude_cro"] },
   { label: "Browser checks", services: ["browser", "pagespeed"] },
 ];
-/** This month's spend: the total, how much of the limit it is (0-100), and the three lines under it. */
-export function spendView(usage: readonly UsageRow[], limit: number) {
+/** This month's spend: the total (usage plus active fixed costs, the same sum the cap enforces), how much of the limit it is (0-100), and the three usage lines under it. */
+export function spendView(usage: readonly UsageRow[], limit: number, fixedUsd = 0) {
   const cost = (services: string[]) => usage.filter((u) => services.includes(u.service)).reduce((n, u) => n + (u.est_cost_usd || 0), 0);
   const known = SPEND_ROWS.flatMap((r) => r.services);
   // Anything not named above (a future service) still counts toward the total, so it is added to the last line rather than lost.
   const rows = SPEND_ROWS.map((r) => ({ label: r.label, usd: cost(r.services) }));
   rows[rows.length - 1].usd += usage.filter((u) => !known.includes(u.service)).reduce((n, u) => n + (u.est_cost_usd || 0), 0);
-  const total = rows.reduce((n, r) => n + r.usd, 0);
+  const total = rows.reduce((n, r) => n + r.usd, 0) + fixedUsd;
   const pct = limit > 0 ? Math.min(100, (100 * total) / limit) : total > 0 ? 100 : 0;
   return { rows, total, pct, over: total >= limit && total > 0 };
 }

@@ -26,7 +26,6 @@ const paragraphs = (body: string) => body.split(/\n{2,}/).filter((p) => p.trim()
 export default function Outreach() {
   const [sp] = useSearchParams();
   const view = (["drafts", "followups", "contacted", "replied"].includes(sp.get("view") ?? "") ? sp.get("view") : "drafts") as OutreachView;
-  const purpose = sp.get("purpose");
   const [items, setItems] = useState<Item[] | null>(null);
   const [counts, setCounts] = useState<OutreachCounts | null>(null);
   const [err, setErr] = useState("");
@@ -40,12 +39,12 @@ export default function Outreach() {
   useEffect(() => {
     let cancelled = false;
     setErr("");
-    api.get<{ counts: OutreachCounts; items: Item[] }>(`/outreach?view=${view}${purpose ? `&purpose=${purpose}` : ""}`)
+    api.get<{ counts: OutreachCounts; items: Item[] }>(`/outreach?view=${view}`)
       .then((r) => { if (!cancelled) { setItems(r.items); setCounts(r.counts); } })
       .catch((e) => { if (!cancelled) setErr(e instanceof ApiError ? e.message : "Couldn't load your drafts."); });
     return () => { cancelled = true; };
-  }, [view, purpose, reloads]);
-  useEffect(() => { setPicked(null); setSkipped(new Set()); setNote(""); }, [view, purpose]);
+  }, [view, reloads]);
+  useEffect(() => { setPicked(null); setSkipped(new Set()); setNote(""); }, [view]);
 
   const sorted = useMemo(() => {
     const list = [...(items ?? [])].filter((i) => !skipped.has(i.row.business.id));
@@ -81,7 +80,7 @@ export default function Outreach() {
     <div className="outreach">
       <section className="o-list" aria-label={TITLE[view]}>
         <header className="o-list-head">
-          <h1>{purpose ? PURPOSE_LABEL[purpose as "full_time" | "freelance"] ?? TITLE[view] : TITLE[view]}</h1>
+          <h1>{TITLE[view]}</h1>
           <label className="sort"><select value={sort} onChange={(e) => setSort(e.target.value as Sort)} aria-label="Sort drafts">{SORTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select><Icon name="chevron-down" size={12} /></label>
         </header>
         <div className="o-items">
@@ -94,7 +93,7 @@ export default function Outreach() {
                 <span className="o-top"><b>{b.name}</b>{a && <time className={a.days >= 6 ? "late" : undefined} dateTime={it.draft?.created_at}>{a.label}</time>}</span>
                 <span className="o-sub">{it.draft?.subject ?? (it.row.topFinding ?? "No draft yet")}</span>
                 <span className="o-snip">{it.draft ? snippet(it.draft.body.replace(/^\s*(hi|hello|hey|dear)\b[^\n]{0,40},?\s*\n+/i, ""), 70) : "Follow-up due. Open the lead to write an email."}</span>
-                <span className="o-tags"><LeadScore score={it.row.score} />{it.draft && <Badge tone="outline">{it.draft.purpose === "full_time" ? "Full-time" : "Freelance"}</Badge>}</span>
+                <span className="o-tags"><LeadScore score={it.row.score} />{it.draft && <Badge tone="outline">{PURPOSE_LABEL[it.draft.purpose]}</Badge>}</span>
               </button>
             );
           })}
