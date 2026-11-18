@@ -19,6 +19,7 @@ const CONFIG = {
 
 let sent: { mb: Mailbox; password: string; msg: OutboundMessage }[] = [];
 let smtpError: Error | null = null;
+let probeCalls = 0, imapCalls = 0;
 const dohReply = (spf: boolean) => (url: string) => {
   const type = new URL(url).searchParams.get("type");
   const Answer = type === "TXT" && spf ? [{ type: 16, data: '"v=spf1 include:mail.test ~all"' }] : [];
@@ -26,12 +27,13 @@ const dohReply = (spf: boolean) => (url: string) => {
 };
 
 beforeEach(async () => {
-  sent = []; smtpError = null;
+  sent = []; smtpError = null; probeCalls = 0; imapCalls = 0;
   await env.DB.prepare(`UPDATE mailboxes SET enabled = 0, smtp_host = '', smtp_port = 465, imap_host = '', imap_port = 993, username = '',
     from_email = '', from_name = '', warmup_started_at = NULL, imap_uid_validity = NULL, imap_last_uid = NULL, last_sync_at = NULL, last_sync_error = NULL`).run();
   setMailDeps({
     smtp: async (mb, password, msg) => { if (smtpError) throw smtpError; sent.push({ mb, password, msg }); },
-    imap: async () => ({ uidValidity: 1, uidNext: 1, messages: [] }),
+    imap: async () => { imapCalls++; return { uidValidity: 1, uidNext: 1, messages: [] }; },
+    imapProbe: async () => { probeCalls++; return { uidValidity: 1 }; },
     fetch: dohReply(true),
     now: () => new Date("2026-11-20T10:00:00Z"),
   });
@@ -98,11 +100,13 @@ describe("mailboxes", () => {
     expect(j.smtp.error).toContain("535 auth failed");
     expect(j.imap.ok).toBe(true);
     expect(j.spf).toBe(true);
+    expect(probeCalls).toBe(1);
+    expect(imapCalls).toBe(0); // a connection test never downloads a message
   });
 
   it("test reports imap failure and a missing SPF record", async () => {
     await call("PUT", "/api/mailboxes/outreach", CONFIG);
-    setMailDeps({ smtp: async () => {}, imap: async () => { throw new Error("LOGIN failed"); }, fetch: dohReply(false) });
+    setMailDeps({ smtp: async () => {}, imapProbe: async () => { throw new Error("LOGIN failed"); }, fetch: dohReply(false) });
     const j = await (await call("POST", "/api/mailboxes/outreach/test")).json<{ smtp: { ok: boolean }; imap: { ok: boolean; error?: string }; spf: boolean | null }>();
     expect(j.smtp.ok).toBe(true);
     expect(j.imap).toEqual({ ok: false, error: "LOGIN failed" });

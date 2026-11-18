@@ -35,3 +35,6 @@ export type SmtpSend = (mb: Mailbox, password: string, msg: OutboundMessage) => 
 export type ImapFetch = (
   mb: Mailbox, password: string, sinceUid: number | null,
 ) => Promise<{ uidValidity: number; uidNext: number; messages: { uid: number; raw: Uint8Array }[] }>;
+
+/** Logs in and selects INBOX, fetching no messages. Used by the connection test. */
+export type ImapProbe = (mb: Mailbox, password: string) => Promise<{ uidValidity: number }>;

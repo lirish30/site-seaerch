@@ -18,14 +18,12 @@ const PutMailbox = z.object({
   username: Text.optional(), from_email: z.email().max(254).optional(), from_name: Text.optional(),
 }).strict();
 
-// Highest possible UID: the connection test only wants login and the mailbox's UIDVALIDITY, not any messages.
-const NO_MESSAGES_UID = 2_147_483_647;
-
 const view = (env: Env, mb: Mailbox) => ({ ...mb, passwordSet: mailboxPassword(env, mb.key) !== null });
 const message = (e: unknown, secret: string) => {
   const text = e instanceof Error ? e.message : String(e);
   return secret ? text.split(secret).join("***") : text;
 };
+const domainOf = (email: string) => email.slice(email.lastIndexOf("@") + 1);
 const configured = (mb: Mailbox) => !!(mb.smtp_host && mb.username && mb.from_email.includes("@"));
 
 export const mailboxRoutes = new Hono<{ Bindings: Env }>();
@@ -50,15 +48,14 @@ mailboxRoutes.put("/:key", async (c) => {
 });
 
 /** A short message to the mailbox's own address; never to anyone else. */
-async function sendToSelf(env: Env, mb: Mailbox, password: string, subject: string): Promise<void> {
-  const domain = mb.from_email.slice(mb.from_email.lastIndexOf("@") + 1);
+async function sendToSelf(mb: Mailbox, password: string, subject: string): Promise<void> {
   await getMailDeps().smtp(mb, password, {
     from: { email: mb.from_email, name: mb.from_name },
     to: mb.from_email,
     subject,
     text: "This is a test message from your Siteline mailbox settings. Nothing else was sent.",
     html: "<p>This is a test message from your Siteline mailbox settings. Nothing else was sent.</p>",
-    messageId: `<${crypto.randomUUID()}@${domain}>`,
+    messageId: `<${crypto.randomUUID()}@${domainOf(mb.from_email)}>`,
   });
 }
 
@@ -72,11 +69,11 @@ mailboxRoutes.post("/:key/test", async (c) => {
   }
   const deps = getMailDeps();
   const [smtp, imap, mail] = await Promise.all([
-    sendToSelf(c.env, mb, password, "Siteline SMTP connection test")
+    sendToSelf(mb, password, "Siteline SMTP connection test")
       .then(() => ({ ok: true as const }), (e) => ({ ok: false as const, error: message(e, password) })),
-    deps.imap(mb, password, NO_MESSAGES_UID)
+    deps.imapProbe(mb, password)
       .then(() => ({ ok: true as const }), (e) => ({ ok: false as const, error: message(e, password) })),
-    lookupMailDns(mb.from_email.slice(mb.from_email.lastIndexOf("@") + 1), deps.fetch),
+    lookupMailDns(domainOf(mb.from_email), deps.fetch),
   ]);
   return c.json({ smtp, imap, spf: mail.hasSpf });
 });
@@ -88,7 +85,7 @@ mailboxRoutes.post("/:key/test-send", async (c) => {
   if (!password) return c.json({ error: "password secret is not set" }, 400);
   if (!configured(mb)) return c.json({ error: "mailbox is not configured" }, 400);
   try {
-    await sendToSelf(c.env, mb, password, "Siteline test message");
+    await sendToSelf(mb, password, "Siteline test message");
     return c.json({ ok: true });
   } catch (e) {
     return c.json({ ok: false, error: message(e, password) }, 502);
