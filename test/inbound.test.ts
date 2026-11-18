@@ -66,6 +66,17 @@ describe("classifyInbound", () => {
     expect(await kindOf(withBody("Don't email me again!"))).toBe("stop");
   });
 
+  it("a List-Unsubscribe click (subject stop, empty body) is a stop; any other empty-body subject is a reply", async () => {
+    const subj = (subject: string, body = "") => `From: Pat <pat@example.test>\r\nTo: outreach@hellositeline.test\r\nSubject: ${subject}\r\nMessage-ID: <m2@example.test>\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n${body}\r\n`;
+    expect(await kindOf(subj("stop"))).toBe("stop");
+    expect(await kindOf(subj("Re: Stop"))).toBe("stop");
+    expect(await kindOf(subj("Fwd: Re: unsubscribe"))).toBe("stop");
+    expect(await kindOf(subj("Re: Quick video about X"))).toBe("reply");
+    expect(await kindOf(subj("Can you stop by"))).toBe("reply");
+    expect(await kindOf(subj("stop", "Sounds good, call me Tuesday."))).toBe("reply"); // a written body decides, not the subject
+    expect(await kindOf(subj("Re: hello", "unsubscribe"))).toBe("stop");
+  });
+
   it('"Can you stop by tomorrow?" is a reply', async () => {
     expect(await kindOf(withBody("Can you stop by tomorrow?"))).toBe("reply");
   });

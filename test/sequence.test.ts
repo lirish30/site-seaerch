@@ -293,6 +293,23 @@ describe("after send and the due-step scan", () => {
     expect((await scanDueSteps(env, t)).calls).toBe(0); // not due again
   });
 
+  it("one scan handles at most 40 enrollments, oldest due first, and the next scan takes the rest", async () => {
+    const ids: string[] = [];
+    for (let i = 0; i < 45; i++) {
+      const lead = await seedLead(`Bulk ${i}`, { website: `https://bulk${i}.test`, email: `owner${i}@bulk${i}.test` });
+      // enrollment 0 has been due the longest
+      ids.push(await seedEnrollment({ business_id: lead.id, to_email: `owner${i}@bulk${i}.test`, next_due_at: new Date(NOW.getTime() - (60 - i) * 60_000).toISOString() }));
+    }
+    expect(await scanDueSteps(env, NOW)).toEqual({ approvalsCreated: 40, calls: 0, skipped: 0 });
+    const open = new Set((await approvalRows()).map((a) => a.record_id));
+    expect(open.size).toBe(40);
+    expect(ids.slice(0, 40).every((id) => open.has(id))).toBe(true);
+    expect(ids.slice(40).some((id) => open.has(id))).toBe(false);
+    expect(await scanDueSteps(env, NOW)).toEqual({ approvalsCreated: 5, calls: 0, skipped: 0 });
+    expect(new Set((await approvalRows()).map((a) => a.record_id)).size).toBe(45);
+    expect(await scanDueSteps(env, NOW)).toEqual({ approvalsCreated: 0, calls: 0, skipped: 0 });
+  });
+
   it("unfilled merge field skips the step and records last_error", async () => {
     await saveStep(env.DB, campaignId, { idx: 1, kind: "email", offset_days: 5, offset_kind: "business", subject: "Re: {Business}", variants: ["Hi {Name}, see {link} about {nope}."] });
     const id = await seedEnrollment();
@@ -307,7 +324,7 @@ describe("after send and the due-step scan", () => {
     const saved = e.OUTREACH_LINK_BASE;
     const id = await seedEnrollment();
     try {
-      for (const bad of [undefined, "", "go.example.test/not a url", "https://acme-demo.someone.workers.dev"]) {
+      for (const bad of [undefined, "", "go.example.test/not a url", "http://go.example.test", "https://acme-demo.someone.workers.dev"]) {
         e.OUTREACH_LINK_BASE = bad;
         expect(await scanDueSteps(env, NOW)).toEqual({ approvalsCreated: 0, calls: 0, skipped: 1 });
         expect((await enrollment(id)).last_error).toContain("OUTREACH_LINK_BASE is not set");
@@ -638,7 +655,7 @@ describe("problemOne", () => {
   });
 
   it("keeps an acronym as written", () => {
-    expect(problemOne([f({ evidence: "SEO basics missing. Titles are blank." })])).toBe("SEO basics missing");
+    expect(problemOne([f({ evidence: "SEO title tags. Titles are blank." })])).toBe("SEO title tags");
   });
 
   it("falls back to 'website' for no finding, a verb, a colon or a long sentence", () => {
@@ -678,9 +695,9 @@ describe("problem_one wording", () => {
   });
 
   it("keeps the casing of a proper noun or acronym, lower-cases an ordinary title", () => {
-    expect(problemOne([ai("WordPress theme looks dated. Old.")])).toBe("WordPress theme looks dated");
-    expect(problemOne([ai("Google Business Profile is incomplete. Missing hours.")])).toBe("Google Business Profile is incomplete");
-    expect(problemOne([ai("Facebook page not linked. Nothing.")])).toBe("Facebook page not linked");
+    expect(problemOne([ai("WordPress theme outdated. Old.")])).toBe("WordPress theme outdated");
+    expect(problemOne([ai("Google Business Profile gaps. Missing hours.")])).toBe("Google Business Profile gaps");
+    expect(problemOne([ai("Facebook page link. Nothing.")])).toBe("Facebook page link");
     expect(problemOne([ai("Weak call to action. Nothing to click.")])).toBe("weak call to action");
   });
 
@@ -691,6 +708,17 @@ describe("problem_one wording", () => {
     }
     expect(problemOne([ai("Cluttered homepage layout. Too much.")])).toBe("cluttered homepage layout");
     expect(problemOne([ai("Hours & directions buried. Hard to find.")])).toBe("hours & directions buried");
+  });
+
+  it("a sentence-like title (a verb anywhere, or more than four words) falls back to 'website'", () => {
+    expect(problemOne([ai("Homepage lacks a clear call to action. Nothing to click.")])).toBe("website");
+    expect(problemOne([ai("Missing click-to-call button. Hard to call.")])).toBe("website");
+    expect(problemOne([ai("Google Business Profile is incomplete. Missing hours.")])).toBe("website");
+    expect(problemOne([ai("WordPress theme looks dated. Old.")])).toBe("website");
+    expect(problemOne([ai("Facebook page not linked. Nothing.")])).toBe("website");
+    expect(problemOne([ai("SEO basics missing. Titles are blank.")])).toBe("website");
+    expect(problemOne([ai("Slow cluttered homepage layout today. Too much.")])).toBe("website"); // five words
+    expect(problemOne([ai("Weak call to action. Nothing to click.")])).toBe("weak call to action"); // four words, no verb
   });
 });
 

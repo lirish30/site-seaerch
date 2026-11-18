@@ -31,13 +31,18 @@ export function warmupLine(mb: { warmup_started_at: string | null }, now: Date):
   return `Warm-up complete. Up to ${dailyLimitFor(mb, now)} a day`;
 }
 
-/** When the reply check last ran: the failure, never, or how many whole minutes ago. */
+/** The sync's own non-failure notes, which it stores in `last_sync_error` (see syncMailbox): a UID-validity reset and an oversized-mail warning. */
+const isSyncNote = (text: string) => text.startsWith("mailbox UID validity changed") || text.startsWith("skipped ");
+
+/** When the reply check last ran: the failure, never, or how many whole minutes ago (with the sync's note, if it left one). */
 export function syncLine(mb: { last_sync_at: string | null; last_sync_error: string | null }, now: Date): string {
-  if (mb.last_sync_error) return `Last check failed: ${mb.last_sync_error}`;
+  const err = mb.last_sync_error;
+  if (err && !isSyncNote(err)) return `Last check failed: ${err}`;
   const at = mb.last_sync_at ? Date.parse(mb.last_sync_at) : NaN;
-  if (Number.isNaN(at)) return "Not checked yet";
+  if (Number.isNaN(at)) return err ? `Not checked yet. Note: ${err}` : "Not checked yet";
   const min = Math.floor((now.getTime() - at) / 60_000);
-  return min < 1 ? "Checked just now" : `Checked ${min} min ago`;
+  const checked = min < 1 ? "Checked just now" : `Checked ${min} min ago`;
+  return err ? `${checked}. Note: ${err}` : checked;
 }
 
 export const mailboxTitle = (key: MailboxKey) => (key === "outreach" ? "Outreach mailbox" : "Main mailbox");

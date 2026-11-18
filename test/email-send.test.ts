@@ -174,6 +174,69 @@ describe("email.send", () => {
     expect(smtpCalls).toHaveLength(6);
   });
 
+  describe("an answer to a message the lead sent is not cold mail", () => {
+    const INBOUND = "<their-reply-1@lead.test>";
+    const inbound = async (over: { business?: string; counterpart?: string; messageId?: string } = {}) => {
+      await env.DB.prepare(`INSERT INTO messages (id, direction, mailbox_key, business_id, message_id, counterpart, subject, text, status, kind, created_at)
+        VALUES (?, 'in', 'outreach', ?, ?, ?, 'Re: hello', 'Yes please', 'received', 'reply', ?)`)
+        .bind(crypto.randomUUID(), over.business ?? businessId, over.messageId ?? INBOUND, over.counterpart ?? "dana@acme.test", NOW.toISOString()).run();
+    };
+
+    it("sends during warm-up day 5", async () => {
+      await saveMailbox(env.DB, "outreach", { warmup_started_at: daysAgo(4) });
+      await inbound();
+      expect(await approve(env, (await mk({ inReplyTo: INBOUND })).id)).toEqual({ ok: true });
+      expect(smtpCalls).toHaveLength(1);
+      expect(smtpCalls[0].inReplyTo).toBe(INBOUND);
+      expect(smtpCalls[0].text).toContain(ADDRESS); // the footer is still there
+    });
+
+    it("sends after the daily cap is reached, and matches the recipient case-insensitively and the id with or without brackets", async () => {
+      for (let i = 0; i < 5; i++) expect(await approve(env, (await mk()).id)).toEqual({ ok: true });
+      expect(await approve(env, (await mk()).id)).toMatchObject({ ok: false, error: "daily limit reached (5)" });
+      await inbound({ messageId: "their-reply-1@lead.test", counterpart: "Dana@Acme.test" });
+      expect(await approve(env, (await mk({ inReplyTo: INBOUND })).id)).toEqual({ ok: true });
+      expect(smtpCalls).toHaveLength(6);
+    });
+
+    it("a made-up inReplyTo is refused by the warm-up lock and by the daily cap", async () => {
+      await saveMailbox(env.DB, "outreach", { warmup_started_at: daysAgo(4) });
+      await inbound();
+      const r = await approve(env, (await mk({ inReplyTo: "<made-up@x.test>" })).id);
+      expect(r).toMatchObject({ ok: false, status: 502 });
+      expect((r as { error: string }).error).toContain("warm-up");
+      expect(smtpCalls).toHaveLength(0);
+      await saveMailbox(env.DB, "outreach", { warmup_started_at: daysAgo(40) });
+      for (let i = 0; i < 5; i++) expect(await approve(env, (await mk()).id)).toEqual({ ok: true });
+      expect(await approve(env, (await mk({ inReplyTo: "<made-up@x.test>" })).id)).toMatchObject({ ok: false, error: "daily limit reached (5)" });
+    });
+
+    it("an inbound message of another business, another recipient or an outbound row does not count", async () => {
+      await saveMailbox(env.DB, "outreach", { warmup_started_at: daysAgo(4) });
+      const other = await upsertBusiness(env.DB, { placeId: crypto.randomUUID(), name: "Other Plumbing", category: null, address: null, phone: null, websiteUrl: null, mapsUrl: null, rating: null, reviewCount: null },
+        (await createSearch(env.DB, { location: "Boise", businessType: "plumber", radiusKm: 10, maxResults: 5 })).id);
+      await inbound({ business: other.id });
+      const a = await approve(env, (await mk({ inReplyTo: INBOUND })).id);
+      expect(a).toMatchObject({ ok: false });
+      expect((a as { error: string }).error).toContain("warm-up");
+      await env.DB.prepare(`DELETE FROM messages`).run();
+      await inbound({ counterpart: "someone-else@acme.test" });
+      expect(await approve(env, (await mk({ inReplyTo: INBOUND })).id)).toMatchObject({ ok: false });
+      await env.DB.prepare(`DELETE FROM messages`).run();
+      await env.DB.prepare(`INSERT INTO messages (id, direction, mailbox_key, business_id, message_id, counterpart, subject, text, status, created_at)
+        VALUES (?, 'out', 'outreach', ?, ?, 'dana@acme.test', 's', 't', 'sent', ?)`).bind(crypto.randomUUID(), businessId, INBOUND, NOW.toISOString()).run();
+      expect(await approve(env, (await mk({ inReplyTo: INBOUND })).id)).toMatchObject({ ok: false });
+      expect(smtpCalls).toHaveLength(0);
+    });
+
+    it("the other checks still apply: a listed recipient is refused", async () => {
+      await saveMailbox(env.DB, "outreach", { warmup_started_at: daysAgo(4) });
+      await inbound();
+      await saveSettings(env.DB, { physical_address: "" });
+      expect(await approve(env, (await mk({ inReplyTo: INBOUND })).id)).toMatchObject({ ok: false, error: "add your mailing address in Settings before sending cold email" });
+    });
+  });
+
   it("the main mailbox is not warm-up limited", async () => {
     const a = await mk({ mailbox: "main" });
     expect(await approve(env, a.id)).toEqual({ ok: true });
@@ -255,6 +318,18 @@ describe("email.send", () => {
     } finally { e.OUTREACH_LINK_BASE = saved; }
   });
 
+  it("an http OUTREACH_LINK_BASE is treated as misconfigured and blocks cold sends", async () => {
+    const e = env as { OUTREACH_LINK_BASE?: string };
+    const saved = e.OUTREACH_LINK_BASE;
+    e.OUTREACH_LINK_BASE = "http://go.hellositeline.test";
+    try {
+      const r = await approve(env, (await mk({ body: "Plain note with no links." })).id);
+      expect(r).toMatchObject({ ok: false, status: 502 });
+      expect((r as { error: string }).error).toContain("OUTREACH_LINK_BASE (http://go.hellositeline.test) is not a valid URL");
+      expect(smtpCalls).toHaveLength(0);
+    } finally { e.OUTREACH_LINK_BASE = saved; }
+  });
+
   it("a public page link must be on the outreach host", async () => {
     const good = await mk({ body: "Take a look: https://go.hellositeline.test/r/abc." });
     expect(await approve(env, good.id)).toEqual({ ok: true });
@@ -327,9 +402,10 @@ describe("email.send", () => {
     expect(a.kind).toBe("email.send");
     expect(a.record_type).toBe("lead");
     expect(a.record_id).toBe(businessId);
-    expect(a.preview.startsWith("To: dana@acme.test\nSubject: Quick note about your site\n\nHi Dana")).toBe(true);
+    expect(a.preview.startsWith("From: outreach mailbox (no address set yet)\nTo: dana@acme.test\nSubject: Quick note about your site\n\nHi Dana")).toBe(true);
+    expect(buildEmailSendApproval({ ...payload(), title: "t", drafted_by: "logan" }, (await env.DB.prepare(`SELECT * FROM settings WHERE id = 1`).first())! as never, "hello@go.example.test").preview.startsWith("From: hello@go.example.test\nTo: dana@acme.test\n")).toBe(true);
     expect(a.preview).toContain(ADDRESS);
-    expect(a.preview.length).toBeLessThanOrEqual("To: dana@acme.test\nSubject: Quick note about your site\n\n".length + 400);
+    expect(a.preview.length).toBeLessThanOrEqual("From: outreach mailbox (no address set yet)\nTo: dana@acme.test\nSubject: Quick note about your site\n\n".length + 400);
     expect(a.payload).toMatchObject({ mailbox: "outreach", to: "dana@acme.test", body: payload().body });
     const e = await mk({ enrollmentId: "enr1", stepIndex: 2 });
     expect(e.record_type).toBe("enrollment");

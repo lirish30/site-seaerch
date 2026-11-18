@@ -3,7 +3,7 @@ import type { Finding } from "../types";
 import type { MailboxKey } from "../mail/types";
 import { getMailDeps } from "../mail/deps";
 import { checkConflict } from "../conflict";
-import { buildEmailSendApproval } from "../approvals/emailSend";
+import { buildEmailSendApproval, mailboxFromEmail } from "../approvals/emailSend";
 import { createApproval, createApprovalUnlessOpen } from "../db/approvals";
 import { getBusiness, businessDomain, updateLead } from "../db/businesses";
 import { getCampaign, listSteps, type SequenceStep } from "../db/campaigns";
@@ -61,7 +61,7 @@ export async function startSequence(env: Env, o: { businessId: string; campaignI
     spec = buildEmailSendApproval({
       mailbox, businessId: o.businessId, to, subject: draft.subject, body: draft.body, includeFooter: draft.include_footer,
       enrollmentId, stepIndex: 0, title: `Email 1 to ${business.name}`, drafted_by: "logan",
-    }, await getSettings(db));
+    }, await getSettings(db), await mailboxFromEmail(db, mailbox));
   } catch (e) {
     return { ok: false, error: `the draft cannot be sent: ${oneLine(e)}`, status: 422 };
   }
@@ -112,6 +112,13 @@ export const RULE_PHRASES: Readonly<Record<string, string>> = RULE_PHRASE;
 
 // An AI title that opens with one of these is a verb or a negation, and does not read after "the".
 const NOT_A_NOUN_PHRASE = /^(no|not|add|use|make|fix|improve|update|create|replace|remove|show|include|consider|ensure|they|there|it|its|the|a|an|is|are|was|has|have|does|do|lacks?|needs?|should|can|cannot|your|you|we)\b/i;
+// A usable title is a short noun phrase: at most this many words, and none of them verb-like. "Homepage lacks a clear call to action" would read
+// "If the homepage lacks a clear call to action ever becomes a priority", so a title with a verb or a negation anywhere in it is refused.
+const MAX_TITLE_WORDS = 4;
+const VERB_LIKE = new Set([
+  "lacks", "lack", "missing", "misses", "has", "have", "is", "are", "was", "were", "does", "doesn't", "don't", "not", "no", "fails", "fail", "needs", "need",
+  "uses", "loads", "takes", "shows", "show", "looks", "look", "makes", "causes", "hurts", "buries", "hides", "requires", "contains", "includes",
+]);
 // Only plain words ever reach the outbound email: letters, spaces and ' & / -, 3 to 60 characters. Anything else (digits, a colon, a URL or
 // domain, an @, markup, other punctuation) is refused rather than escaped.
 const SAFE_PHRASE = /^[A-Za-z][A-Za-z '&/-]{2,59}$/;
@@ -124,6 +131,8 @@ function aiTitle(f: Finding): string | null {
   const cut = text.indexOf(". ");
   const title = (cut === -1 ? text.replace(/\.$/, "") : text.slice(0, cut)).trim();
   if (!SAFE_PHRASE.test(title) || NOT_A_NOUN_PHRASE.test(title)) return null;
+  const words = title.split(/[\s/&-]+/).filter(Boolean);
+  if (title.split(/\s+/).filter((w) => /[A-Za-z]/.test(w)).length > MAX_TITLE_WORDS || words.some((w) => VERB_LIKE.has(w.toLowerCase()))) return null;
   const first = title.split(/[ /&-]/)[0];
   const keepCase = /[A-Z]/.test(first.slice(1)) || BRANDS.has(first.toLowerCase());
   return keepCase ? title : title.charAt(0).toLowerCase() + title.slice(1);
@@ -132,7 +141,7 @@ function aiTitle(f: Finding): string | null {
 /**
  * `{problem_one}` for Email 3: a noun phrase that reads after "the", taken from the audit's single top finding (highest severity,
  * then most points, then first listed). A rule finding is named by its code; an AI finding by its title. When that cannot reasonably
- * follow "the" (a verb or negation, a colon, a long sentence) or there is no finding, it is `PROBLEM_ONE_FALLBACK`, so Email 3 never throws.
+ * follow "the" (a verb or negation anywhere in it, a colon, more than four words) or there is no finding, it is `PROBLEM_ONE_FALLBACK`, so Email 3 never throws.
  */
 export function problemOne(findings: Finding[]): string {
   const top = [...findings].sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] || b.points - a.points)[0];
@@ -155,7 +164,7 @@ function linkBase(env: Env): string {
   if (!raw) throw new StepSkip("OUTREACH_LINK_BASE is not set");
   let u: URL;
   try { u = new URL(raw); } catch { throw new StepSkip("OUTREACH_LINK_BASE is not set to a valid URL"); }
-  if (u.protocol !== "https:" && u.protocol !== "http:") throw new StepSkip("OUTREACH_LINK_BASE is not set to a valid URL");
+  if (u.protocol !== "https:") throw new StepSkip("OUTREACH_LINK_BASE is not set to a valid URL");
   if (/(^|\.)workers\.dev$/i.test(u.hostname)) throw new StepSkip("OUTREACH_LINK_BASE is not set to a cold-link host (workers.dev is never used)");
   return raw.replace(/\/+$/, "");
 }
@@ -171,7 +180,8 @@ const setError = (db: D1Database, id: string, msg: string | null) => db.prepare(
 /** Pending, or approved for this very step and mid-send: the enrollment already has an approval in flight. */
 const IN_FLIGHT = `(a.status = 'pending' OR (a.status = 'approved' AND json_extract(a.payload, '$.stepIndex') = e.next_step_index))`;
 const REJECTED_STEP = (step: string) => `EXISTS (SELECT 1 FROM approvals a WHERE a.record_type = 'enrollment' AND a.record_id = e.id AND a.status = 'rejected' AND json_extract(a.payload, '$.stepIndex') = ${step})`;
-const MAX_PER_SCAN = 200;
+/** Enrollments handled per scan: about 18 D1 queries each must stay inside one invocation's query budget. The scan is daily and oldest-due first, so leftovers go out on the next run. */
+const MAX_PER_SCAN = 40;
 
 /**
  * The daily pass over live sequences. First it ends any sequence whose Email 1 approval was rejected. Then, for every active enrollment
@@ -281,6 +291,6 @@ async function buildStepApproval(env: Env, e: Enrollment, step: SequenceStep, st
   const spec = buildEmailSendApproval({
     mailbox: e.mailbox_key, businessId: e.business_id, to: e.to_email, subject, body, includeFooter: true, enrollmentId: e.id, stepIndex: step.idx,
     ...(inReplyTo ? { inReplyTo } : {}), title: step.kind === "checkin" ? `Check-in to ${business.name}` : `Email ${emailNumber(steps, step.idx)} to ${business.name}`, drafted_by: "job",
-  }, await getSettings(db));
+  }, await getSettings(db), await mailboxFromEmail(db, e.mailbox_key));
   return spec;
 }

@@ -6,7 +6,7 @@ import { activityStmt } from "./activity";
 export function domainOf(url: string | null): string | null {
   if (!url) return null;
   try {
-    const u = new URL(url.startsWith("http") ? url : `https://${url}`);
+    const u = new URL(/^https?:\/\//i.test(url) ? url : `https://${url}`);
     return u.hostname.toLowerCase().replace(/^www\./, "");
   } catch {
     return null;

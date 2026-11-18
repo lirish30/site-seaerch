@@ -49,18 +49,20 @@ const URL_RE = /https?:\/\/[^\s<>"']+/gi;
 const TRAILING = /[.,;:!?)\]]+$/;
 /** A URL's host, lower-cased and without a trailing dot (`sitelineweb.com.` is the same host as `sitelineweb.com`). Null when it does not parse. */
 const hostOf = (url: string): string | null => { try { return new URL(url).hostname.toLowerCase().replace(/\.+$/, ""); } catch { return null; } };
+/** The host of the cold-link base, or null when it does not parse or is not `https:` (a cold link is never plain http). */
+const linkBaseHost = (base: string): string | null => { try { return new URL(base).protocol === "https:" ? hostOf(base) : null; } catch { return null; } };
 
 /**
  * Why this message may not be sent because of the links in it, or null when it is clean.
  * Every mailbox: no workers.dev. Outreach only: no link to the main brand domain, and no public-page link on a host other than
- * the one in OUTREACH_LINK_BASE (checked only when it is set; a set but invalid value blocks cold sends). Third-party hosts (a signature website, a logo CDN) pass.
+ * the one in OUTREACH_LINK_BASE (checked only when it is set; a set but invalid or non-https value blocks cold sends). Third-party hosts (a signature website, a logo CDN) pass.
  */
 export function linkProblem(c: Pick<ComposedEmail, "text" | "html">, mailbox: MailboxKey, linkBase: string | undefined): string | null {
   const all = `${c.text}\n${c.html}`;
   if (/workers\.dev/i.test(all)) return "message mentions workers.dev; links must use your own domain";
   if (mailbox !== "outreach") return null;
-  const baseHost = linkBase?.trim() ? hostOf(linkBase.trim()) : null;
-  // A configured but unparseable base must not silently switch the public-page rule off.
+  const baseHost = linkBase?.trim() ? linkBaseHost(linkBase.trim()) : null;
+  // A configured but unparseable (or non-https) base must not silently switch the public-page rule off.
   if (linkBase?.trim() && !baseHost) return `OUTREACH_LINK_BASE (${linkBase.trim()}) is not a valid URL, so cold email is blocked until it is fixed (expected something like https://go.example.com)`;
   for (const url of new Set([...all.matchAll(URL_RE)].map((m) => m[0].replace(TRAILING, "")))) {
     let u: URL;
@@ -74,6 +76,20 @@ export function linkProblem(c: Pick<ComposedEmail, "text" | "html">, mailbox: Ma
     }
   }
   return null;
+}
+
+/**
+ * True when this send is an answer to something the lead actually wrote to us: `inReplyTo` is the Message-ID of an INBOUND message stored for the
+ * SAME business, and the recipient is that message's sender. Such a send is not cold mail, so the warm-up lock and the daily cap do not apply.
+ * A caller-supplied `inReplyTo` alone never qualifies.
+ */
+async function isReplyToInbound(db: D1Database, p: SendInput): Promise<boolean> {
+  const id = p.inReplyTo?.trim().replace(/^<|>$/g, "");
+  if (!p.businessId || !id) return false;
+  const row = await db.prepare(
+    `SELECT 1 AS x FROM messages WHERE direction = 'in' AND business_id = ? AND message_id IN (?, ?) AND LOWER(TRIM(counterpart)) = ? LIMIT 1`,
+  ).bind(p.businessId, id, `<${id}>`, p.to.trim().toLowerCase()).first();
+  return row !== null;
 }
 
 /** Check 5: warm-up and the rolling daily cap. Cold sends only. */
@@ -107,7 +123,7 @@ export function setAfterSendForTests(fn: ((env: Env, p: SendInput) => Promise<vo
 
 /**
  * The one path every outgoing message takes. Real sends (`skipLimits` false) run checks 3 to 6 in order: cold-mail footer, link guard,
- * warm-up and daily cap, then the once-only send. `skipLimits` is for test messages to the mailbox's own address.
+ * warm-up and daily cap (not for an answer to a message the lead sent us, see `isReplyToInbound`), then the once-only send. `skipLimits` is for test messages to the mailbox's own address.
  *
  * Once-only: the `messages` row (status 'sending', UNIQUE on approval_id) is written BEFORE SMTP is called. If a row already
  * exists: 'sent' is a no-op, 'failed' is retried, and 'sending' is refused because the earlier attempt may have reached the server
@@ -141,7 +157,7 @@ export async function sendEmail(env: Env, p: SendInput, opts: { approvalId: stri
   if (real) {
     const problem = linkProblem(composed, p.mailbox, env.OUTREACH_LINK_BASE);
     if (problem) throw new Error(problem);
-    if (p.mailbox === "outreach") await assertWithinLimit(db, mb, now);
+    if (p.mailbox === "outreach" && !(await isReplyToInbound(db, p))) await assertWithinLimit(db, mb, now);
   }
 
   const fresh = `<${crypto.randomUUID()}@${domainOf(mb.from_email)}>`;

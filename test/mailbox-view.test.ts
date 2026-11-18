@@ -46,6 +46,17 @@ describe("syncLine", () => {
     expect(syncLine({ last_sync_at: "2026-11-18T11:59:00.000Z", last_sync_error: "login failed" }, now)).toBe("Last check failed: login failed");
     expect(syncLine({ last_sync_at: null, last_sync_error: "no route" }, now)).toBe("Last check failed: no route");
   });
+  it("shows the sync's own notes as a note on a successful check, not as a failure", () => {
+    expect(syncLine({ last_sync_at: "2026-11-18T11:57:00.000Z", last_sync_error: "mailbox UID validity changed; baseline reset" }, now))
+      .toBe("Checked 3 min ago. Note: mailbox UID validity changed; baseline reset");
+    expect(syncLine({ last_sync_at: "2026-11-18T11:59:30.000Z", last_sync_error: "skipped 2 oversized message(s): uids 4, 9" }, now))
+      .toBe("Checked just now. Note: skipped 2 oversized message(s): uids 4, 9");
+    expect(syncLine({ last_sync_at: "2026-11-18T11:57:00.000Z", last_sync_error: "skipped 1 oversized message(s): uids 4; gave up on uid 7 after 5 attempts: boom" }, now))
+      .toBe("Checked 3 min ago. Note: skipped 1 oversized message(s): uids 4; gave up on uid 7 after 5 attempts: boom");
+    // anything else, including a message that only mentions these words, is still a failure
+    expect(syncLine({ last_sync_at: "2026-11-18T11:57:00.000Z", last_sync_error: "failed on uid 3: skipped" }, now)).toBe("Last check failed: failed on uid 3: skipped");
+    expect(syncLine({ last_sync_at: "2026-11-18T11:57:00.000Z", last_sync_error: "gave up on uid 7 after 5 attempts: boom" }, now)).toBe("Last check failed: gave up on uid 7 after 5 attempts: boom");
+  });
   it("says it has never been checked", () => {
     expect(syncLine({ last_sync_at: null, last_sync_error: null }, now)).toBe("Not checked yet");
   });

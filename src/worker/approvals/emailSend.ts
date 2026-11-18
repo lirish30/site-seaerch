@@ -3,6 +3,8 @@ import { registerHandler } from "./registry";
 import type { Drafter } from "../db/approvals";
 import type { Settings } from "../types";
 import { composeOutbound, sendEmail } from "../mail/send";
+import { getMailbox } from "../db/mailboxes";
+import type { MailboxKey } from "../mail/types";
 
 const OneLine = (max: number) => z.string().trim().min(1).max(max).regex(/^[^\r\n]*$/, "must be one line");
 
@@ -22,15 +24,23 @@ export type EmailSendPayload = z.infer<typeof EmailSendSchema>;
 
 const PREVIEW_CHARS = 400;
 
-/** The `createApproval` arguments for one email, with a preview that shows the recipient, subject and the start of the composed text. */
-export function buildEmailSendApproval(p: EmailSendPayload & { title: string; drafted_by: Drafter }, settings: Settings) {
+/** The address a mailbox sends from, for the preview's From line; undefined when the mailbox row is missing or has no address yet. */
+export async function mailboxFromEmail(db: D1Database, key: MailboxKey): Promise<string | undefined> {
+  try { return (await getMailbox(db, key)).from_email.trim() || undefined; } catch { return undefined; }
+}
+
+/**
+ * The `createApproval` arguments for one email, with a preview that shows the sender, recipient, subject and the start of the composed text.
+ * `fromEmail` is the mailbox's address (see `mailboxFromEmail`); without it the From line names the mailbox.
+ */
+export function buildEmailSendApproval(p: EmailSendPayload & { title: string; drafted_by: Drafter }, settings: Settings, fromEmail?: string) {
   const { title, drafted_by, ...rest } = p;
   const payload = EmailSendSchema.parse(rest);
   const composed = composeOutbound(settings, payload);
   return {
     kind: "email.send" as const,
     title,
-    preview: `To: ${payload.to}\nSubject: ${payload.subject}\n\n${composed.text.slice(0, PREVIEW_CHARS)}`,
+    preview: `From: ${fromEmail ?? `${payload.mailbox} mailbox (no address set yet)`}\nTo: ${payload.to}\nSubject: ${payload.subject}\n\n${composed.text.slice(0, PREVIEW_CHARS)}`,
     payload,
     record_type: payload.enrollmentId ? "enrollment" : "lead",
     record_id: payload.enrollmentId ?? payload.businessId,

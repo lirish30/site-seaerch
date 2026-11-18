@@ -30,6 +30,12 @@ export function normalizeHost(raw: string | null | undefined): string | null {
 /** True when `host` is `listed` or a subdomain of it (`mail.acme.com` of `acme.com`, never `notacme.com`). */
 export const hostWithin = (host: string, listed: string): boolean => host === listed || host.endsWith(`.${listed}`);
 
+/** Free-mail providers: a domain entry would block every person on them. A single address is an Email entry instead. */
+const FREE_MAIL_DOMAINS = new Set([
+  "gmail.com", "googlemail.com", "yahoo.com", "ymail.com", "outlook.com", "hotmail.com", "live.com", "msn.com", "aol.com", "icloud.com", "me.com",
+  "proton.me", "protonmail.com", "comcast.net", "att.net", "verizon.net", "sbcglobal.net",
+]);
+
 /** Normalizes a value for its kind. Throws `InvalidDoNotContact` for anything unusable. */
 export function normalizeDoNotContactValue(kind: DoNotContactKind, raw: string): string {
   if (kind === "email") {
@@ -40,6 +46,7 @@ export function normalizeDoNotContactValue(kind: DoNotContactKind, raw: string):
   if (kind === "domain") {
     const d = normalizeHost(raw);
     if (!d) throw new InvalidDoNotContact("enter a domain such as company.com");
+    if (FREE_MAIL_DOMAINS.has(d)) throw new InvalidDoNotContact("use an Email entry for a single address instead of blocking a whole free-mail provider");
     return d;
   }
   const n = normalizeName(raw);

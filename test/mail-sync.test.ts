@@ -359,6 +359,110 @@ describe("syncMailbox: hostile and odd mail", () => {
   });
 });
 
+describe("syncMailbox: forged and misdirected mail", () => {
+  const dsn = (inReplyTo: string, recipient: string) =>
+    bounceEml.replace("Auto-Submitted: auto-replied\n", `Auto-Submitted: auto-replied\nIn-Reply-To: ${inReplyTo}\n`).replace("Final-Recipient: rfc822; owner@oldplumber.example", `Final-Recipient: rfc822; ${recipient}`);
+
+  it("a forged DSN naming a stranger's address bounces the lead but lists the address we wrote to", async () => {
+    const lead = await seedLead("Old Plumber", { to: "owner@oldplumber.example", outbound: OUT.reply });
+    await baseline();
+    deliver(dsn(OUT.reply, "ceo@bigcompany.example"));
+    expect(await syncMailbox(env, "outreach")).toMatchObject({ bounced: 1 });
+    expect((await enrollment(lead.enrollmentId)).status).toBe("bounced");
+    expect((await listDoNotContact(env.DB)).map((d) => d.value)).toEqual(["owner@oldplumber.example"]);
+  });
+
+  it("a DSN naming another address we wrote to for the lead lists that address", async () => {
+    const lead = await seedLead("Old Plumber", { to: "owner@oldplumber.example", outbound: OUT.reply });
+    await env.DB.prepare(`INSERT INTO messages (id, direction, mailbox_key, business_id, enrollment_id, step_index, message_id, counterpart, subject, text, status, created_at, sent_at)
+      VALUES (?, 'out', 'outreach', ?, NULL, NULL, '<one-off@hellositeline.test>', 'Office@OldPlumber.example', 'Hi', 'Hi', 'sent', ?, ?)`)
+      .bind(crypto.randomUUID(), lead.businessId, NOW.toISOString(), NOW.toISOString()).run();
+    await baseline();
+    deliver(dsn(OUT.reply, "office@oldplumber.example"));
+    await syncMailbox(env, "outreach");
+    expect((await listDoNotContact(env.DB)).map((d) => d.value)).toEqual(["office@oldplumber.example"]);
+  });
+
+  it("a stop from a forwarding address lists the lead's own address, not the sender", async () => {
+    const lead = await seedLead("Lakeview Vet", { to: "dana@lakeviewvet.example", outbound: OUT.stop });
+    await baseline();
+    deliver(eml({ from: "assistant@forwarder.example", inReplyTo: OUT.stop, subject: "Re: hello", body: "Stop" }));
+    expect(await syncMailbox(env, "outreach")).toMatchObject({ stopped: 1 });
+    expect(await enrollment(lead.enrollmentId)).toMatchObject({ status: "stopped", stopped_reason: "opt_out" });
+    expect((await listDoNotContact(env.DB)).map((d) => d.value)).toEqual(["dana@lakeviewvet.example"]);
+  });
+
+  it("a stop from an address we wrote to for the lead lists that address", async () => {
+    const lead = await seedLead("Lakeview Vet", { to: "dana@lakeviewvet.example", outbound: OUT.stop });
+    await env.DB.prepare(`INSERT INTO messages (id, direction, mailbox_key, business_id, enrollment_id, step_index, message_id, counterpart, subject, text, status, created_at, sent_at)
+      VALUES (?, 'out', 'outreach', ?, NULL, NULL, '<one-off2@hellositeline.test>', 'front@lakeviewvet.example', 'Hi', 'Hi', 'sent', ?, ?)`)
+      .bind(crypto.randomUUID(), lead.businessId, NOW.toISOString(), NOW.toISOString()).run();
+    await baseline();
+    deliver(eml({ from: "Front@LakeviewVet.example", inReplyTo: OUT.stop, body: "Unsubscribe" }));
+    await syncMailbox(env, "outreach");
+    expect((await listDoNotContact(env.DB)).map((d) => d.value)).toEqual(["front@lakeviewvet.example"]);
+  });
+
+  it("a 5000-character In-Reply-To is ignored, the message falls back to the sender and is still processed", async () => {
+    const lead = await seedLead("Bright Smiles", { to: "pat@brightsmiles.example", outbound: OUT.reply });
+    await baseline();
+    deliver(`From: pat@brightsmiles.example\r\nSubject: Re: hello\r\nMessage-ID: <long@x.test>\r\nIn-Reply-To: <${"a".repeat(5000)}@x.test>\r\nReferences: <${"b".repeat(4000)}@x.test> <${"c".repeat(1000)}@x.test>\r\n\r\nSounds good.\r\n`);
+    const r = await syncMailbox(env, "outreach");
+    expect(r.error).toBeUndefined();
+    expect(r).toMatchObject({ matched: 1, replies: 1 });
+    expect((await inbound())[0].business_id).toBe(lead.businessId);
+  });
+});
+
+describe("syncMailbox: the main mailbox and clients", () => {
+  const syncMain = async () => { await syncMailbox(env, "main"); box.calls = []; };
+
+  it("main mail from an old lead's address that answers nothing of ours is ignored and not stored", async () => {
+    const lead = await seedLead("Old Co", { to: "pat@brightsmiles.example", outbound: OUT.reply, status: "completed", nextDueAt: null });
+    await syncMain();
+    deliver(eml({ from: "pat@brightsmiles.example", body: "No thanks." }));
+    expect(await syncMailbox(env, "main")).toMatchObject({ fetched: 1, matched: 0, replies: 0, stopped: 0 });
+    expect(await inbound()).toHaveLength(0);
+    expect(await listDoNotContact(env.DB)).toHaveLength(0);
+    expect((await getBusiness(env.DB, lead.businessId))!.lead_status).toBe("contacted");
+  });
+
+  it("main mail that answers one of our messages (In-Reply-To) is processed", async () => {
+    const lead = await seedLead("Bright Smiles", { to: "pat@brightsmiles.example", outbound: OUT.reply });
+    await syncMain();
+    deliver(eml({ from: "someone-else@brightsmiles.example", inReplyTo: OUT.reply, body: "Tuesday works." }));
+    expect(await syncMailbox(env, "main")).toMatchObject({ matched: 1, replies: 1 });
+    expect((await inbound())[0]).toMatchObject({ mailbox_key: "main", business_id: lead.businessId, kind: "reply" });
+    expect(await enrollment(lead.enrollmentId)).toMatchObject({ status: "replied" });
+  });
+
+  it("a client's 'no thanks' by address is not stored and suppresses nothing", async () => {
+    const lead = await seedLead("Client Co", { to: "pat@client.example", outbound: OUT.reply, status: "completed", nextDueAt: null });
+    await env.DB.prepare(`UPDATE businesses SET lead_status = 'won' WHERE id = ?`).bind(lead.businessId).run();
+    await baseline();
+    deliver(eml({ from: "pat@client.example", body: "No thanks." }));
+    expect(await syncMailbox(env, "outreach")).toMatchObject({ fetched: 1, matched: 0, stopped: 0 });
+    expect(await inbound()).toHaveLength(0);
+    expect(await listDoNotContact(env.DB)).toHaveLength(0);
+    expect(await listSuppressions(env.DB)).toHaveLength(0);
+  });
+
+  it("a client's 'no thanks' that answers our message is stored but changes nothing", async () => {
+    const lead = await seedLead("Client Co", { to: "pat@client.example", outbound: OUT.stop });
+    await env.DB.prepare(`UPDATE businesses SET lead_status = 'won' WHERE id = ?`).bind(lead.businessId).run();
+    await baseline();
+    deliver(eml({ from: "pat@client.example", inReplyTo: OUT.stop, body: "No thanks." }));
+    const r = await syncMailbox(env, "outreach");
+    expect(r).toMatchObject({ matched: 1, stopped: 0, replies: 0 });
+    expect((await inbound())[0]).toMatchObject({ business_id: lead.businessId, processed_at: NOW.toISOString() });
+    expect((await getBusiness(env.DB, lead.businessId))!.lead_status).toBe("won");
+    expect(await enrollment(lead.enrollmentId)).toMatchObject({ status: "active" });
+    expect(await listDoNotContact(env.DB)).toHaveLength(0);
+    expect(await listSuppressions(env.DB)).toHaveLength(0);
+    expect(await env.DB.prepare(`SELECT COUNT(*) AS n FROM claude_tasks WHERE payload LIKE ?`).bind(`%${lead.businessId}%`).first<{ n: number }>()).toEqual({ n: 0 });
+  });
+});
+
 describe("syncMailbox: idempotence and recovery", () => {
   it("the same uid is not processed twice", async () => {
     const lead = await seedLead("Bright Smiles", { to: "pat@brightsmiles.example", outbound: OUT.reply });

@@ -87,5 +87,7 @@ export function classifyInbound(m: InboundMessage): InboundKind {
   }
   if (m.autoSubmitted || AUTO_SUBJECT.test(m.subject)) return "auto_reply";
   const first = stripQuoted(m.text).split("\n").map((l) => l.trim()).find((l) => l !== "") ?? "";
-  return STOP.test(first) ? "stop" : "reply";
+  // A mail client's List-Unsubscribe (mailto:...?subject=stop) sends the word as the subject with an empty body.
+  const subject = first === "" ? m.subject.replace(/^(\s*(re|fwd?)\s*:)+/i, "").trim() : "";
+  return STOP.test(first || subject) ? "stop" : "reply";
 }

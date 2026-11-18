@@ -4,7 +4,7 @@ import { addDoNotContact, listDoNotContact, removeDoNotContact } from "../src/wo
 import { checkConflict } from "../src/worker/conflict";
 import { suppressLead } from "../src/worker/db/suppression";
 import { createSearch } from "../src/worker/db/searches";
-import { upsertBusiness } from "../src/worker/db/businesses";
+import { domainOf, upsertBusiness } from "../src/worker/db/businesses";
 import { setMailDeps } from "../src/worker/mail/deps";
 import type { OutboundMessage } from "../src/worker/mail/types";
 import { createApproval } from "../src/worker/db/approvals";
@@ -162,6 +162,38 @@ describe("email.send gate", () => {
     expect(await approve(env, a.id)).toEqual({ ok: true });
     expect(calls).toBe(2);
     expect(smtpCalls).toHaveLength(1);
+  });
+});
+
+describe("hosts that start with http", () => {
+  it("httpbin.org can be listed as a do-not-contact domain, and an address at http.acme.com is blocked by acme.com", async () => {
+    const d = await addDoNotContact(env.DB, { kind: "domain", value: "httpbin.org", reason: "other" });
+    expect(d.value).toBe("httpbin.org");
+    expect(await checkConflict(env.DB, { email: "x@httpbin.org" })).toMatchObject({ blocked: true, source: "do_not_contact" });
+    await addDoNotContact(env.DB, { kind: "domain", value: "acme.com", reason: "client" });
+    expect(await checkConflict(env.DB, { email: "x@http.acme.com" })).toMatchObject({ blocked: true, source: "do_not_contact" });
+    const id = await lead("Httpd Shop", "http.acme.com");
+    expect(await checkConflict(env.DB, { email: "shop@gmail.test", businessId: id })).toMatchObject({ blocked: true });
+    expect(domainOf("https://httpbin.org/x")).toBe("httpbin.org");
+    expect(domainOf("HTTP://Www.Acme.com")).toBe("acme.com");
+  });
+});
+
+describe("free-mail domains", () => {
+  it("cannot be listed as a domain, with a message that points to an Email entry", async () => {
+    for (const host of ["gmail.com", "GMAIL.com", "https://www.yahoo.com/", "googlemail.com", "ymail.com", "outlook.com", "hotmail.com", "live.com", "msn.com", "aol.com", "icloud.com", "me.com", "proton.me", "protonmail.com", "comcast.net", "att.net", "verizon.net", "sbcglobal.net"]) {
+      await expect(addDoNotContact(env.DB, { kind: "domain", value: host, reason: "other" })).rejects.toThrow("use an Email entry for a single address instead of blocking a whole free-mail provider");
+    }
+    expect(await listDoNotContact(env.DB)).toHaveLength(0);
+  });
+
+  it("the route answers 400, and email and name entries are unaffected", async () => {
+    const r = await api("POST", "/api/do-not-contact", { kind: "domain", value: "gmail.com", reason: "other" });
+    expect(r.status).toBe(400);
+    expect((await r.json<{ error: string }>()).error).toContain("Email entry");
+    expect((await api("POST", "/api/do-not-contact", { kind: "email", value: "someone@gmail.com", reason: "opt_out" })).status).toBe(201);
+    expect((await api("POST", "/api/do-not-contact", { kind: "name", value: "Gmail Repair", reason: "other" })).status).toBe(201);
+    expect((await api("POST", "/api/do-not-contact", { kind: "domain", value: "gmail.company.test", reason: "other" })).status).toBe(201);
   });
 });
 

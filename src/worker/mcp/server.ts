@@ -3,6 +3,8 @@ import { z } from "zod";
 import type { Env } from "../env";
 import "../approvals/leadNote"; // registers the built-in kinds for this entry path too
 import "../approvals/emailSend";
+import { buildEmailSendApproval, mailboxFromEmail, type EmailSendPayload } from "../approvals/emailSend";
+import { getSettings } from "../db/settings";
 import { createApproval, listApprovals, UnknownKindError } from "../db/approvals";
 import { getHandler, registeredKinds } from "../approvals/registry";
 import { checkConflict } from "../conflict";
@@ -74,28 +76,48 @@ export function buildMcpServer(env: Env): McpServer {
     return text(rows);
   });
 
+  /**
+   * `email.send` is built ENTIRELY here, from the validated payload: the caller's preview, record fields and any enrollment link are ignored, because
+   * Claude reads scraped lead facts and inbound mail and could be steered. The Home card shows only the preview, so it must be ours, not the caller's.
+   * The caller may not name a sequence step (it could advance someone else's sequence on send) or the `main` mailbox (it has no warm-up or cap).
+   */
+  const proposeEmailSend = async (a: { title: string; payload: unknown }) => {
+    let p: EmailSendPayload;
+    try { p = getHandler("email.send")!.parse(a.payload) as EmailSendPayload; }
+    catch (e) {
+      await log("propose_approval", "rejected an invalid email.send payload");
+      return fail(`invalid email.send payload: ${e instanceof Error ? e.message.replace(/\s+/g, " ").slice(0, 400) : "does not match the schema"}`);
+    }
+    if (p.enrollmentId !== undefined || p.stepIndex !== undefined) {
+      await log("propose_approval", "refused email.send naming a sequence step", { type: "business", id: p.businessId });
+      return fail("email.send proposals cannot name an enrollment or a step (enrollmentId, stepIndex); sequence steps are proposed by the app itself. Remove them.");
+    }
+    if (p.mailbox !== "outreach") {
+      await log("propose_approval", `refused email.send from the ${p.mailbox} mailbox`, { type: "business", id: p.businessId });
+      return fail('email.send proposals must use mailbox "outreach"');
+    }
+    // The gate runs when the approval is made, not only when it is approved: a listed recipient, a suppressed lead or a client never gets a card.
+    const c = await checkConflict(db, { email: p.to, businessId: p.businessId });
+    if (c.blocked) {
+      await log("propose_approval", `refused email.send to ${p.to.slice(0, 100)}: ${c.reason}`.slice(0, 300), { type: "business", id: p.businessId });
+      return fail(`blocked: ${c.reason} (${c.source})`);
+    }
+    const title = a.title.replace(/\s+/g, " ").trim().slice(0, 120).trim() || `Email to ${p.to}`;
+    const spec = buildEmailSendApproval({ ...p, title, drafted_by: "mcp" }, await getSettings(db), await mailboxFromEmail(db, p.mailbox));
+    const created = await createApproval(db, spec);
+    await log("propose_approval", `proposed email.send: ${title}`, { type: "business", id: p.businessId });
+    return text(created);
+  };
+
   server.registerTool("propose_approval", {
-    description: `Propose an action for Logan to approve. Nothing runs until he approves it in the app. Registered kinds: ${registeredKinds().join(", ")}.`,
+    description: `Propose an action for Logan to approve. Nothing runs until he approves it in the app. Registered kinds: ${registeredKinds().join(", ")}. For email.send the app builds the preview and record link itself from the payload (outreach mailbox only, no enrollmentId/stepIndex); your preview, record_type and record_id are ignored.`,
     inputSchema: {
       kind: z.string().min(1).max(100), title: z.string().min(1).max(200), preview: z.string().max(5000), payload: z.unknown(),
       record_type: z.string().max(50).optional(), record_id: z.string().max(100).optional(),
     },
   }, async (a) => {
     try {
-      if (a.kind === "email.send") {
-        // The gate runs when the approval is made, not only when it is approved: a listed recipient, a suppressed lead or a client never gets a card.
-        let p: { to: string; businessId: string };
-        try { p = getHandler("email.send")!.parse(a.payload); }
-        catch (e) {
-          await log("propose_approval", "rejected an invalid email.send payload");
-          return fail(`invalid email.send payload: ${e instanceof Error ? e.message.replace(/\s+/g, " ").slice(0, 400) : "does not match the schema"}`);
-        }
-        const c = await checkConflict(db, { email: p.to, businessId: p.businessId });
-        if (c.blocked) {
-          await log("propose_approval", `refused email.send to ${p.to.slice(0, 100)}: ${c.reason}`.slice(0, 300), { type: "business", id: p.businessId });
-          return fail(`blocked: ${c.reason} (${c.source})`);
-        }
-      }
+      if (a.kind === "email.send") return await proposeEmailSend(a);
       const created = await createApproval(db, { ...a, drafted_by: "mcp" });
       await log("propose_approval", `proposed ${a.kind}: ${a.title}`, a.record_type && a.record_id ? { type: a.record_type, id: a.record_id } : undefined);
       return text(created);

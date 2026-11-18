@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { getMailDeps } from "../mail/deps";
 import { checkConflict } from "../conflict";
-import { buildEmailSendApproval } from "../approvals/emailSend";
+import { buildEmailSendApproval, mailboxFromEmail } from "../approvals/emailSend";
 import { createApprovalForTask } from "../db/approvals";
 import { logAgentAction } from "../db/agentActions";
 import { logActivity } from "../db/activity";
@@ -210,7 +210,7 @@ async function applyEffects(env: Env, t: Target, r: ReplyResult, taskId: string)
         spec = buildEmailSendApproval({
           mailbox: "outreach", businessId, to: sender, subject: r.draft.subject, body: r.draft.body, includeFooter: true,
           ...(inReplyTo ? { inReplyTo } : {}), title: `Reply to ${clip(t.business.name, 100)}`, drafted_by: "mcp",
-        }, await getSettings(db));
+        }, await getSettings(db), await mailboxFromEmail(db, "outreach"));
       } catch (e) {
         return { ok: false, error: `the draft cannot be sent: ${oneLine(e)}` };
       }

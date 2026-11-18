@@ -130,12 +130,54 @@ describe("mcp", () => {
       expect(await countFor(b.id)).toBe(0);
     });
 
-    it("still creates a pending approval for a clear recipient", async () => {
+    it("still creates a pending approval for a clear recipient, with a server-built preview", async () => {
       const b = await lead("Clear Plumbing", "https://clear-plumbing.test");
       const j = await propose(b.id, "owner@clear-plumbing.test");
       expect(j.result.isError).toBeFalsy();
       const a = JSON.parse(j.result.content[0].text);
-      expect(a).toMatchObject({ kind: "email.send", status: "pending", drafted_by: "mcp" });
+      expect(a).toMatchObject({ kind: "email.send", status: "pending", drafted_by: "mcp", record_type: "lead", record_id: b.id });
+      expect(a.preview).not.toBe("p");
+      expect(a.preview).toMatch(/^From: outreach mailbox.*\nTo: owner@clear-plumbing\.test\nSubject: Hello\n\nHi there/);
+    });
+
+    it("ignores the caller's preview, record_type and record_id, and keeps the real recipient in the preview", async () => {
+      const b = await lead("Misleading Plumbing", "https://misleading-plumbing.test");
+      const other = await lead("Other Plumbing", "https://other-plumbing.test");
+      const j = await call("propose_approval", {
+        kind: "email.send", title: "Reply to Acme\nwith a second line  and spaces ".padEnd(190, "x"), preview: "Reply to Acme", record_type: "enrollment", record_id: other.id,
+        payload: { mailbox: "outreach", businessId: b.id, to: "owner@misleading-plumbing.test", subject: "Real subject", body: "Real body text", includeFooter: true },
+      });
+      expect(j.result.isError).toBeFalsy();
+      const a = JSON.parse(j.result.content[0].text);
+      expect(a.preview).not.toContain("Reply to Acme");
+      expect(a.preview).toContain("To: owner@misleading-plumbing.test");
+      expect(a.preview).toContain("Subject: Real subject");
+      expect(a.preview).toContain("Real body text");
+      expect(a.title).not.toMatch(/[\r\n]/);
+      expect(a.title.length).toBeLessThanOrEqual(120);
+      const row = await env.DB.prepare(`SELECT record_type, record_id, preview FROM approvals WHERE id = ?`).bind(a.id).first<{ record_type: string; record_id: string; preview: string }>();
+      expect(row).toMatchObject({ record_type: "lead", record_id: b.id });
+      expect(row!.preview).toBe(a.preview);
+    });
+
+    it("refuses a payload that names an enrollment or a step, and creates nothing", async () => {
+      const b = await lead("Steered Plumbing", "https://steered-plumbing.test");
+      const e1 = await propose(b.id, "owner@steered-plumbing.test", { enrollmentId: "some-enrollment", stepIndex: 1 });
+      expect(e1.result.isError).toBe(true);
+      expect(e1.result.content[0].text).toContain("enrollmentId");
+      const e2 = await propose(b.id, "owner@steered-plumbing.test", { stepIndex: 0 });
+      expect(e2.result.isError).toBe(true);
+      const e3 = await propose(b.id, "owner@steered-plumbing.test", { enrollmentId: "x" });
+      expect(e3.result.isError).toBe(true);
+      expect(await countFor(b.id)).toBe(0);
+    });
+
+    it("refuses the main mailbox", async () => {
+      const b = await lead("Main Plumbing", "https://main-plumbing.test");
+      const j = await propose(b.id, "owner@main-plumbing.test", { mailbox: "main" });
+      expect(j.result.isError).toBe(true);
+      expect(j.result.content[0].text).toContain("outreach");
+      expect(await countFor(b.id)).toBe(0);
     });
   });
 
