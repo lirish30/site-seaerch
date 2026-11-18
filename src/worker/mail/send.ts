@@ -8,6 +8,7 @@ import { getBusiness, updateLead } from "../db/businesses";
 import { logActivity } from "../db/activity";
 import { getByApproval, insertOutbound, markFailed, markSent, reclaimFailed } from "../db/messages";
 import { getMailDeps } from "./deps";
+import { errorText } from "./redact";
 import { dailyLimit, sentInLast24h, warmupUnlockDate } from "./limits";
 import type { Mailbox, MailboxKey } from "./types";
 
@@ -35,21 +36,37 @@ export function composeOutbound(s: Settings, p: Pick<SendInput, "mailbox" | "sub
   return composeEmail(s, { subject: p.subject, body: p.body, include_footer: include });
 }
 
+/** The main brand domain. Cold email never links it (or any subdomain, such as clients.): cold links use OUTREACH_LINK_BASE. */
+export const BRAND_HOST = "sitelineweb.com";
+/** Path prefixes of the app's public pages (report and proposal pages). On cold email they must be served from the outreach host. */
+export const PUBLIC_PAGE_PREFIXES = ["/r/", "/p/"];
+
 const URL_RE = /https?:\/\/[^\s<>"']+/gi;
 const TRAILING = /[.,;:!?)\]]+$/;
+const hostOf = (url: string): string | null => { try { return new URL(url).hostname.toLowerCase(); } catch { return null; } };
 
-/** Why this message may not be sent because of the links in it, or null when it is clean. */
+/**
+ * Why this message may not be sent because of the links in it, or null when it is clean.
+ * Every mailbox: no workers.dev. Outreach only: no link to the main brand domain, and no public-page link on a host other than
+ * the one in OUTREACH_LINK_BASE (checked only when it is set). Third-party hosts (a signature website, a logo CDN) pass.
+ */
 export function linkProblem(c: Pick<ComposedEmail, "text" | "html">, mailbox: MailboxKey, linkBase: string | undefined): string | null {
   const all = `${c.text}\n${c.html}`;
   if (/workers\.dev/i.test(all)) return "message mentions workers.dev; links must use your own domain";
   if (mailbox !== "outreach") return null;
-  const urls = [...all.matchAll(URL_RE)].map((m) => m[0].replace(TRAILING, ""));
-  if (!urls.length) return null;
-  const base = (linkBase ?? "").trim().replace(/\/+$/, "").toLowerCase();
-  if (!base) return "OUTREACH_LINK_BASE is not set, so cold email cannot contain links";
-  const inside = (u: string) => { const l = u.toLowerCase(); return l === base || (l.startsWith(base) && "/?#".includes(l[base.length])); };
-  const bad = urls.find((u) => !inside(u));
-  return bad ? `link outside OUTREACH_LINK_BASE (${linkBase}): ${bad}` : null;
+  const baseHost = linkBase?.trim() ? hostOf(linkBase.trim()) : null;
+  for (const url of new Set([...all.matchAll(URL_RE)].map((m) => m[0].replace(TRAILING, "")))) {
+    let u: URL;
+    try { u = new URL(url); } catch { continue; }
+    const host = u.hostname.toLowerCase();
+    if (host === BRAND_HOST || host.endsWith(`.${BRAND_HOST}`)) {
+      return `link ${url} is on the main brand domain (${BRAND_HOST}); cold email must link the outreach domain${baseHost ? ` (${linkBase})` : ""}`;
+    }
+    if (baseHost && host !== baseHost && PUBLIC_PAGE_PREFIXES.some((p) => u.pathname.startsWith(p))) {
+      return `link ${url} is a public page on ${host}; cold email must link the outreach domain, so change it to ${linkBase!.trim().replace(/\/+$/, "")}${u.pathname}`;
+    }
+  }
+  return null;
 }
 
 /** Check 5: warm-up and the rolling daily cap. Cold sends only. */
@@ -63,10 +80,16 @@ async function assertWithinLimit(db: D1Database, mb: Mailbox, now: Date): Promis
 }
 
 /**
- * Extension point for Task 7 (sequences): runs once after a message is recorded as sent, to advance the enrollment.
- * A no-op until then.
+ * Extension point for Task 7 (sequences): advances the enrollment once a message is recorded as sent. A no-op until then.
+ * MUST be idempotent: it runs again on every retry of an approval whose row is already `sent` (after a failure here the
+ * approval returns to pending, and the retry skips the send and only repeats this).
  */
-export async function afterSend(_env: Env, _p: SendInput): Promise<void> {}
+let afterSendImpl: (env: Env, p: SendInput) => Promise<void> = async () => {};
+export const afterSend = (env: Env, p: SendInput): Promise<void> => afterSendImpl(env, p);
+/** Tests only: replace the hook; null restores the no-op. */
+export function setAfterSendForTests(fn: ((env: Env, p: SendInput) => Promise<void>) | null): void {
+  afterSendImpl = fn ?? (async () => {});
+}
 
 /**
  * The one path every outgoing message takes. Real sends (`skipLimits` false) run checks 3 to 6 in order: cold-mail footer, link guard,
@@ -78,6 +101,13 @@ export async function afterSend(_env: Env, _p: SendInput): Promise<void> {}
  */
 export async function sendEmail(env: Env, p: SendInput, opts: { approvalId: string | null; skipLimits?: boolean }): Promise<void> {
   const db = env.DB, deps = getMailDeps(), now = deps.now(), real = !opts.skipLimits;
+  if (real && !opts.approvalId) throw new Error("sendEmail: a real send needs an approvalId (programmer error)");
+  if (opts.approvalId) {
+    // Already sent: skip every check (a retry must not fail on a cap, a setting or a signature that changed since) and only
+    // repeat the idempotent after-send step, which an earlier attempt may not have completed.
+    const done = await getByApproval(db, opts.approvalId);
+    if (done?.status === "sent") return afterSend(env, p);
+  }
   const { mb, password } = await loadSendable(env, p.mailbox, real);
   const settings = await getSettings(db);
 
@@ -101,7 +131,7 @@ export async function sendEmail(env: Env, p: SendInput, opts: { approvalId: stri
   if (!(await insertOutbound(db, rowId, row))) {
     const existing = opts.approvalId ? await getByApproval(db, opts.approvalId) : null;
     if (!existing) throw new Error("could not record the message; nothing was sent");
-    if (existing.status === "sent") return;
+    if (existing.status === "sent") return afterSend(env, p); // sent by a concurrent attempt since the lookup above
     const retry = existing.status === "failed" && (await reclaimFailed(db, existing.id, { to: p.to, subject: composed.subject, text: composed.text }));
     if (!retry) throw new Error("an earlier send for this approval is unresolved and may already have been sent; check the mailbox's Sent folder before retrying");
     rowId = existing.id;
@@ -115,12 +145,12 @@ export async function sendEmail(env: Env, p: SendInput, opts: { approvalId: stri
     });
   } catch (e) {
     await markFailed(db, rowId).catch(() => { /* the row stays 'sending', which refuses a resend: the safe side */ });
-    throw e;
+    throw new Error(errorText(e, password)); // the text ends up in approvals.error: never let the secret reach D1
   }
   try {
     await markSent(db, rowId, now.toISOString());
   } catch (e) {
-    throw new Error(`the message was sent but could not be recorded, so it may already have been sent: ${e instanceof Error ? e.message : String(e)}`);
+    throw new Error(`the message was sent but could not be recorded, so it may already have been sent: ${errorText(e, password)}`);
   }
 
   if (p.businessId && (p.stepIndex === undefined || p.stepIndex === 0)) {

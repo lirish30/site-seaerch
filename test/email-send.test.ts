@@ -11,6 +11,7 @@ import { saveSettings } from "../src/worker/db/settings";
 import { createSearch } from "../src/worker/db/searches";
 import { getBusiness, upsertBusiness } from "../src/worker/db/businesses";
 import { listActivity } from "../src/worker/db/activity";
+import { setAfterSendForTests } from "../src/worker/mail/send";
 
 const NOW = new Date("2026-11-20T10:00:00Z");
 const daysAgo = (n: number) => new Date(NOW.getTime() - n * 86_400_000).toISOString();
@@ -45,7 +46,7 @@ beforeEach(async () => {
   const s = await createSearch(env.DB, { location: "Boise", businessType: "plumber", radiusKm: 10, maxResults: 5 });
   businessId = (await upsertBusiness(env.DB, { placeId: crypto.randomUUID(), name: "Acme Plumbing", category: null, address: null, phone: null, websiteUrl: null, mapsUrl: null, rating: null, reviewCount: null }, s.id)).id;
 });
-afterEach(() => setMailDeps(null));
+afterEach(() => { setMailDeps(null); setAfterSendForTests(null); });
 
 const payload = (over: Partial<EmailSendPayload> = {}): EmailSendPayload => ({
   mailbox: "outreach", businessId, to: "dana@acme.test", subject: "Quick note about your site",
@@ -131,18 +132,21 @@ describe("email.send", () => {
     expect(at(400)).toBe(20);
   });
 
-  it("sentInLast24h counts only sent business messages in the window", async () => {
-    const ins = (id: string, o: { business?: string | null; status?: string; sent?: string; direction?: string; mailbox?: string }) =>
+  it("sentInLast24h counts sent and in-flight business messages in the window", async () => {
+    const ins = (id: string, o: { business?: string | null; status?: string; sent?: string | null; created?: string; direction?: string; mailbox?: string }) =>
       env.DB.prepare(`INSERT INTO messages (id, direction, mailbox_key, business_id, counterpart, status, created_at, sent_at) VALUES (?,?,?,?,?,?,?,?)`)
-        .bind(id, o.direction ?? "out", o.mailbox ?? "outreach", o.business === undefined ? businessId : o.business, "x@y.test", o.status ?? "sent", NOW.toISOString(), o.sent ?? NOW.toISOString()).run();
+        .bind(id, o.direction ?? "out", o.mailbox ?? "outreach", o.business === undefined ? businessId : o.business, "x@y.test", o.status ?? "sent",
+          o.created ?? NOW.toISOString(), o.sent === undefined ? NOW.toISOString() : o.sent).run();
     await ins("a", {});
     await ins("b", { sent: daysAgo(0.9) });
+    await ins("inflight", { status: "sending", sent: null });
     await ins("old", { sent: daysAgo(1.1) });
+    await ins("old-inflight", { status: "sending", sent: null, created: daysAgo(1.1) });
     await ins("test", { business: null });
-    await ins("failed", { status: "failed" });
+    await ins("failed", { status: "failed", sent: null });
     await ins("inbound", { direction: "in", status: "received" });
     await ins("main", { mailbox: "main" });
-    expect(await sentInLast24h(env.DB, "outreach", NOW)).toBe(2);
+    expect(await sentInLast24h(env.DB, "outreach", NOW)).toBe(3);
   });
 
   it("warm-up blocks outreach before day 30", async () => {
@@ -212,17 +216,55 @@ describe("email.send", () => {
     expect(smtpCalls).toHaveLength(0);
   });
 
-  it("link outside OUTREACH_LINK_BASE blocks send", async () => {
-    const bad = await mk({ body: "Take a look: https://example.com/audit/acme" });
+  it("a body link to the main brand domain blocks cold send", async () => {
+    for (const url of ["https://sitelineweb.com/x", "https://clients.sitelineweb.com/report/abc", "http://WWW.SitelineWeb.com/"]) {
+      const r = await approve(env, (await mk({ body: `Take a look: ${url}` })).id);
+      expect(r).toMatchObject({ ok: false, status: 502 });
+      expect((r as { error: string }).error).toContain(url);
+      expect((r as { error: string }).error).toContain("main brand domain");
+      expect((r as { error: string }).error).toContain("outreach domain");
+    }
+    expect(smtpCalls).toHaveLength(0);
+    // the main mailbox is not a cold mailbox: it may link the brand domain
+    expect(await approve(env, (await mk({ mailbox: "main", body: "See https://sitelineweb.com/x" })).id)).toEqual({ ok: true });
+  });
+
+  it("a public page link must be on the outreach host", async () => {
+    const good = await mk({ body: "Take a look: https://go.hellositeline.test/r/abc." });
+    expect(await approve(env, good.id)).toEqual({ ok: true });
+    const bad = await mk({ body: "Take a look: https://other.example/r/abc" });
     const r = await approve(env, bad.id);
     expect(r).toMatchObject({ ok: false, status: 502 });
-    expect((r as { error: string }).error).toContain("OUTREACH_LINK_BASE");
-    const lookalike = await mk({ body: "Take a look: https://go.hellositeline.test.evil.example/x" });
-    expect(await approve(env, lookalike.id)).toMatchObject({ ok: false });
-    expect(smtpCalls).toHaveLength(0);
-    const good = await mk({ body: "Take a look: https://go.hellositeline.test/audit/acme." });
-    expect(await approve(env, good.id)).toEqual({ ok: true });
+    expect((r as { error: string }).error).toContain("https://other.example/r/abc");
+    expect((r as { error: string }).error).toContain("https://go.hellositeline.test/r/abc");
+    const proposal = await approve(env, (await mk({ body: "Here: https://other.example/p/xyz" })).id);
+    expect(proposal).toMatchObject({ ok: false });
     expect(smtpCalls).toHaveLength(1);
+    // other paths on third-party hosts are fine
+    expect(await approve(env, (await mk({ body: "My work: https://other.example/portfolio" })).id)).toEqual({ ok: true });
+  });
+
+  it("a signature with a personal website and a CDN logo still sends", async () => {
+    await saveSettings(env.DB, { signature_json: JSON.stringify({
+      name: "Logan Irish", website: "https://loganirish.com", links: [{ label: "Work", url: "https://loganirish.com/work" }],
+      image_url: "https://cdn.example.net/logo.png", image_link: "https://loganirish.com",
+    }) });
+    expect(await approve(env, (await mk()).id)).toEqual({ ok: true });
+    expect(smtpCalls[0].html).toContain("cdn.example.net/logo.png");
+    expect(smtpCalls[0].text).toContain("loganirish.com");
+  });
+
+  it("with OUTREACH_LINK_BASE unset only workers.dev and the brand domain are blocked", async () => {
+    const e = env as { OUTREACH_LINK_BASE?: string };
+    const saved = e.OUTREACH_LINK_BASE;
+    e.OUTREACH_LINK_BASE = undefined;
+    try {
+      expect(await approve(env, (await mk({ body: "See https://loganirish.com/work" })).id)).toEqual({ ok: true });
+      expect(await approve(env, (await mk({ body: "See https://other.example/r/abc" })).id)).toEqual({ ok: true });
+      expect(await approve(env, (await mk({ body: "See https://sitelineweb.com/x" })).id)).toMatchObject({ ok: false });
+      expect(await approve(env, (await mk({ body: "See https://a.someone.workers.dev/x" })).id)).toMatchObject({ ok: false });
+    } finally { e.OUTREACH_LINK_BASE = saved; }
+    expect(smtpCalls).toHaveLength(2);
   });
 
   it("outreach send always carries address and opt-out", async () => {
@@ -292,6 +334,41 @@ describe("email.send", () => {
     const a = await mk();
     expect(await approve(env, a.id, { ...payload(), to: "not-an-email" })).toMatchObject({ ok: false, status: 422 });
     expect(await approve(env, a.id, { ...payload(), subject: "Hi\r\nBcc: x@y.test" })).toMatchObject({ ok: false, status: 422 });
+    expect(smtpCalls).toHaveLength(0);
+  });
+
+  it("the smtp error stored on the approval never contains the password", async () => {
+    const pw = env.MAILBOX_OUTREACH_PASSWORD!;
+    const a = await mk();
+    smtpFailures = [new Error(`535 auth failed for ${pw} (${encodeURIComponent(pw)}) ${btoa(`\0hello@outreach.test\0${pw}`)}`)];
+    const r = await approve(env, a.id);
+    expect(r).toMatchObject({ ok: false, status: 502 });
+    const stored = (await approval(a.id))!.error!;
+    expect(stored).toContain("535 auth failed");
+    expect(stored).not.toContain(pw);
+    expect((r as { error: string }).error).not.toContain(pw);
+    expect(JSON.stringify(await messages())).not.toContain(pw);
+  });
+
+  it("a retry of a sent message repeats afterSend instead of the checks and the send", async () => {
+    for (let i = 0; i < 4; i++) expect(await approve(env, (await mk()).id)).toEqual({ ok: true });
+    const fifth = await mk();
+    let calls = 0;
+    setAfterSendForTests(async () => { if (++calls === 1) throw new Error("advance failed"); });
+    expect(await approve(env, fifth.id)).toMatchObject({ ok: false, status: 502, error: "advance failed" });
+    expect(await approval(fifth.id)).toMatchObject({ status: "pending", error: "advance failed" });
+    expect(smtpCalls).toHaveLength(5);
+    // now at the cap and with the mailing address gone: the retry must still succeed without sending
+    await saveSettings(env.DB, { physical_address: "" });
+    expect(await approve(env, fifth.id)).toEqual({ ok: true });
+    expect(calls).toBe(2);
+    expect(smtpCalls).toHaveLength(5);
+    expect(await messages()).toHaveLength(5);
+  });
+
+  it("a real send without an approval id is refused", async () => {
+    const { sendEmail } = await import("../src/worker/mail/send");
+    await expect(sendEmail(env, payload(), { approvalId: null })).rejects.toThrow("approvalId");
     expect(smtpCalls).toHaveLength(0);
   });
 });

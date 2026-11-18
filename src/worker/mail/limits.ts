@@ -25,10 +25,14 @@ export function warmupUnlockDate(mb: Pick<Mailbox, "warmup_started_at">): string
   return Number.isNaN(start) ? null : new Date(start + WARMUP_DAYS * DAY_MS).toISOString().slice(0, 10);
 }
 
-/** Prospect messages sent in the 24h ending at `now`. Test messages have no business, so they never count. */
+/**
+ * Prospect messages sent, or being sent, in the 24h ending at `now`. Counting 'sending' rows keeps concurrent approves from
+ * overshooting the cap. Test messages have no business, so they never count.
+ */
 export async function sentInLast24h(db: D1Database, key: MailboxKey, now: Date): Promise<number> {
   const row = await db.prepare(`SELECT COUNT(*) AS n FROM messages
-    WHERE mailbox_key = ? AND direction = 'out' AND status = 'sent' AND business_id IS NOT NULL AND sent_at > ? AND sent_at <= ?`)
+    WHERE mailbox_key = ? AND direction = 'out' AND status IN ('sent','sending') AND business_id IS NOT NULL
+      AND COALESCE(sent_at, created_at) > ? AND COALESCE(sent_at, created_at) <= ?`)
     .bind(key, new Date(now.getTime() - DAY_MS).toISOString(), now.toISOString()).first<{ n: number }>();
   return row?.n ?? 0;
 }

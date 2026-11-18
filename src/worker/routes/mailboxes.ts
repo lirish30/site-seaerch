@@ -5,6 +5,7 @@ import { MAILBOX_KEYS, getMailbox, mailboxPassword, saveMailbox, startWarmup } f
 import { lookupMailDns } from "../dns";
 import { getMailDeps } from "../mail/deps";
 import { sendEmail } from "../mail/send";
+import { errorText } from "../mail/redact";
 import type { Mailbox, MailboxKey } from "../mail/types";
 
 const Port = z.number().int().min(1).max(65535);
@@ -20,10 +21,6 @@ const PutMailbox = z.object({
 }).strict();
 
 const view = (env: Env, mb: Mailbox) => ({ ...mb, passwordSet: mailboxPassword(env, mb.key) !== null });
-const message = (e: unknown, secret: string) => {
-  const text = e instanceof Error ? e.message : String(e);
-  return secret ? text.split(secret).join("***") : text;
-};
 const domainOf = (email: string) => email.slice(email.lastIndexOf("@") + 1);
 const configured = (mb: Mailbox) => !!(mb.smtp_host && mb.username && mb.from_email.includes("@"));
 
@@ -65,9 +62,9 @@ mailboxRoutes.post("/:key/test", async (c) => {
   const deps = getMailDeps();
   const [smtp, imap, mail] = await Promise.all([
     sendToSelf(c.env, mb, "Siteline SMTP connection test")
-      .then(() => ({ ok: true as const }), (e) => ({ ok: false as const, error: message(e, password) })),
+      .then(() => ({ ok: true as const }), (e) => ({ ok: false as const, error: errorText(e, password) })),
     deps.imapProbe(mb, password)
-      .then(() => ({ ok: true as const }), (e) => ({ ok: false as const, error: message(e, password) })),
+      .then(() => ({ ok: true as const }), (e) => ({ ok: false as const, error: errorText(e, password) })),
     lookupMailDns(domainOf(mb.from_email), deps.fetch),
   ]);
   return c.json({ smtp, imap, spf: mail.hasSpf });
@@ -83,7 +80,7 @@ mailboxRoutes.post("/:key/test-send", async (c) => {
     await sendToSelf(c.env, mb, "Siteline test message");
     return c.json({ ok: true });
   } catch (e) {
-    return c.json({ ok: false, error: message(e, password) }, 502);
+    return c.json({ ok: false, error: errorText(e, password) }, 502);
   }
 });
 
