@@ -1,4 +1,4 @@
-export class ApiError extends Error { constructor(public status: number, message: string, public fields: string[] = [], public code = "") { super(message); } }
+export class ApiError extends Error { constructor(public status: number, message: string, public fields: string[] = [], public code = "", public body: unknown = undefined) { super(message); } }
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`/api${path}`, {
@@ -8,11 +8,21 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
   });
   if (res.status === 401 && !path.startsWith("/login")) { location.href = "/login"; throw new ApiError(401, "unauthorized"); }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(res.status, (data as any).error ?? `HTTP ${res.status}`, (data as any).fields ?? [], (data as any).code ?? "");
+  if (!res.ok) throw new ApiError(res.status, (data as any).error ?? `HTTP ${res.status}`, (data as any).fields ?? [], (data as any).code ?? "", data);
+  return data as T;
+}
+
+/** Sends a file as it is (a recording), not as JSON. */
+async function putRaw<T>(path: string, body: Blob, headers: Record<string, string>): Promise<T> {
+  const res = await fetch(`/api${path}`, { method: "PUT", credentials: "same-origin", headers, body });
+  if (res.status === 401) { location.href = "/login"; throw new ApiError(401, "unauthorized"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new ApiError(res.status, (data as any).error ?? `HTTP ${res.status}`);
   return data as T;
 }
 
 export const api = {
+  putRaw,
   get: <T,>(p: string) => req<T>("GET", p),
   post: <T,>(p: string, b?: unknown) => req<T>("POST", p, b ?? {}),
   patch: <T,>(p: string, b: unknown) => req<T>("PATCH", p, b),

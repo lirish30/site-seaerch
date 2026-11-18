@@ -50,8 +50,7 @@ export async function savePlan(db: D1Database, id: string, plan: VideoPlan): Pro
 export type VideoPatch = Partial<Pick<VideoAudit, "steering_note" | "video_key" | "gif_key" | "poster_key" | "duration_ms" | "publish_approval_id" | "error">>;
 const PATCH_COLUMNS = ["steering_note", "video_key", "gif_key", "poster_key", "duration_ms", "publish_approval_id", "error"] as const;
 
-/** Moves a video to a status and updates only the columns the patch names (null clears one). Entering `published` stamps published_at. */
-export async function setVideoStatus(db: D1Database, id: string, status: VideoStatus, patch: VideoPatch = {}): Promise<VideoAudit | null> {
+function statusUpdate(status: VideoStatus, patch: VideoPatch): { sets: string[]; binds: unknown[] } {
   const now = new Date().toISOString();
   const sets = ["status = ?", "updated_at = ?"];
   const binds: unknown[] = [status, now];
@@ -59,8 +58,25 @@ export async function setVideoStatus(db: D1Database, id: string, status: VideoSt
     if (patch[c] !== undefined) { sets.push(`${c} = ?`); binds.push(patch[c]); }
   }
   if (status === "published") { sets.push("published_at = ?"); binds.push(now); }
+  return { sets, binds };
+}
+
+/** Moves a video to a status and updates only the columns the patch names (null clears one). Entering `published` stamps published_at. */
+export async function setVideoStatus(db: D1Database, id: string, status: VideoStatus, patch: VideoPatch = {}): Promise<VideoAudit | null> {
+  const { sets, binds } = statusUpdate(status, patch);
   await db.prepare(`UPDATE video_audits SET ${sets.join(", ")} WHERE id = ?`).bind(...binds, id).run();
   return getVideoAudit(db, id);
+}
+
+/**
+ * The same move, but only when the video is in one of the `from` statuses right now, decided in the one statement so that two callers cannot both win.
+ * Returns whether this call moved it.
+ */
+export async function moveVideoStatus(db: D1Database, id: string, from: readonly VideoStatus[], to: VideoStatus, patch: VideoPatch = {}): Promise<boolean> {
+  const { sets, binds } = statusUpdate(to, patch);
+  const marks = from.map(() => "?").join(",");
+  const r = await db.prepare(`UPDATE video_audits SET ${sets.join(", ")} WHERE id = ? AND status IN (${marks})`).bind(...binds, id, ...from).run();
+  return r.meta.changes > 0;
 }
 
 /** The audit's published video, if it has one. */

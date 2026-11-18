@@ -101,8 +101,8 @@ export function planDurationMs(segments: Pick<Segment, "text">[]): number {
   return segments.reduce((sum, s) => sum + estimateDurationMs(s.text), 0) + GAP_MS * (segments.length - 1);
 }
 
-/** Problems a person can read and act on; an empty list means the plan is fine. */
-export function checkPlanAgainst(plan: Pick<VideoPlan, "shots" | "segments">, findingCodes: string[]): string[] {
+/** Problems with what the plan points at: a line over a screenshot or about a finding that is not there. Fine to save with; not fine to approve. */
+export function checkPlanRefs(plan: Pick<VideoPlan, "shots" | "segments">, findingCodes: string[]): string[] {
   const problems: string[] = [];
   const shotIds = new Set(plan.shots.map((s) => s.id));
   const codes = new Set(findingCodes);
@@ -110,6 +110,12 @@ export function checkPlanAgainst(plan: Pick<VideoPlan, "shots" | "segments">, fi
     if (!shotIds.has(s.shotId)) problems.push(`Line ${i + 1} uses a screenshot (${s.shotId}) that is not in this video.`);
     if (s.findingCode !== undefined && !codes.has(s.findingCode)) problems.push(`Line ${i + 1} points at a finding (${s.findingCode}) this audit does not have.`);
   });
+  return problems;
+}
+
+/** Problems a person can read and act on; an empty list means the plan is fine. */
+export function checkPlanAgainst(plan: Pick<VideoPlan, "shots" | "segments">, findingCodes: string[]): string[] {
+  const problems = checkPlanRefs(plan, findingCodes);
   const ms = planDurationMs(plan.segments);
   if (ms < SCRIPT_MS.min || ms > SCRIPT_MS.max) {
     problems.push(`The script runs about ${Math.round(ms / 1000)} seconds; it should be ${SCRIPT_MS.min / 1000} to ${SCRIPT_MS.max / 1000} seconds.`);
@@ -129,3 +135,18 @@ export function hashText(text: string): string {
 
 /** A line needs (new) audio when it has none or its text changed since the audio was made. */
 export const lineStale = (seg: Segment): boolean => !seg.audio || seg.audio.textHash !== hashText(seg.text);
+
+/**
+ * Everything standing between a plan and its approval, in words the editor can show: lines with no words, callouts with no text (a draft is
+ * allowed while editing), lines that must be recorded and have no current recording, then what `checkPlanAgainst` finds. Empty means go.
+ */
+export function approvalBlockers(plan: VideoPlan, findingCodes: string[]): string[] {
+  const blockers: string[] = [];
+  plan.segments.forEach((s, i) => {
+    const n = i + 1;
+    if (wordCount(s.text) === 0) blockers.push(`Line ${n} has no words.`);
+    if (s.markups.some((m) => m.type === "callout" && m.text.trim() === "")) blockers.push(`Line ${n} has a callout with no text. Type its words or delete it.`);
+    if (plan.narration === "recorded" && (lineStale(s) || s.audio?.source !== "recorded")) blockers.push(`Line ${n} needs a recording.`);
+  });
+  return [...blockers, ...checkPlanAgainst(plan, findingCodes)];
+}

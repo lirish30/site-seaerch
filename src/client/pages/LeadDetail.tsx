@@ -19,6 +19,7 @@ import { REASONS, reasonLabel, suppressedMessage } from "../suppressionView";
 import { isSpendLimit, SPEND_LIMIT_REACHED } from "../spend";
 import EmailComposer, { type ComposerHandle } from "../components/EmailComposer";
 import SequencePanel from "../components/SequencePanel";
+import VideoPanel from "../components/video/VideoPanel";
 import InlineError from "../components/InlineError";
 import type { Draft } from "../emailView";
 import type { CroResponse } from "../cro";
@@ -434,6 +435,10 @@ export default function LeadDetail() {
               startDisabled={!d.draft || !!d.draftPlaceholder || !!d.suppressed} startWhy={d.suppressed ? "Suppressed: outreach is turned off" : "Write a draft first"}
               beforeStart={async () => (await composer.current?.save()) ?? true} />
           </PropSection>
+
+          {a && <PropSection icon="image" title="Video audit">
+            <VideoPanel leadId={b.id} canStart={b.scan_stage === "full" && a.site_status === "ok"} whyNot={b.scan_stage !== "full" ? "Run a full audit on this lead first." : "The site didn't load on the last audit, so there is nothing to record."} />
+          </PropSection>}
 
           {a && <PropSection icon="send" title="Share & export">
             <div className="btn-row nowrap">
