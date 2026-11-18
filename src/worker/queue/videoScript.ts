@@ -70,7 +70,7 @@ export function buildScriptInstructions(s: Settings, steeringNote: string | null
     "- Every coordinate is a fraction from 0 to 1 of that screenshot's width and height, measured from its top left.",
     `- markups mark what the line is about: circle (x, y centre, r radius), arrow (from, to), blur (x, y, w, h: use it to hide a phone number, email address or other private detail), callout (x, y and a short text of at most ${MAX_CALLOUT_CHARS} characters on one line). At most ${MAX_MARKUPS} per line; give each problem line one or two.`,
     "- focus is optional: the region (x, y, w, h) to zoom into while the line plays.",
-    '- id is a short unique name for each line, such as "s1", "s2".',
+    '- id is a short unique name for each line: only letters, digits, "_" and "-", at most 40 characters, such as "s1", "s2".',
   ].filter((l, i, all) => l !== "" || all[i - 1] !== "").join("\n");
 }
 

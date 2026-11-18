@@ -3,7 +3,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
 import { buildBundle } from "../src/worker/queue/bundle";
 import { completeTask, expireOldTasks, finishClaudeTask, getTask } from "../src/worker/queue/db";
 import { getTaskKind } from "../src/worker/queue/registry";
-import { VIDEO_SCRIPT_KIND, VIDEO_SCRIPT_FAILED, defaultNarration, requestVideoScript } from "../src/worker/queue/videoScript";
+import { VIDEO_SCRIPT_KIND, VIDEO_SCRIPT_FAILED, buildScriptInstructions, defaultNarration, requestVideoScript } from "../src/worker/queue/videoScript";
 import { insertAudit } from "../src/worker/db/audits";
 import { createVideoAudit, getVideoAudit, savePlan, setVideoStatus } from "../src/worker/db/videoAudits";
 import { saveSettings, getSettings } from "../src/worker/db/settings";
@@ -230,6 +230,13 @@ describe("video.script build", () => {
     const { v, taskId } = await scripting();
     await setVideoStatus(env.DB, v.id, "review");
     expect(await buildBundle(env, await claimById(taskId))).toEqual({ stale: "the video is no longer waiting for a script" });
+  });
+});
+
+describe("script instructions", () => {
+  it("state the segment id format", async () => {
+    const text = buildScriptInstructions(await getSettings(env.DB), null);
+    expect(text).toContain('only letters, digits, "_" and "-", at most 40 characters');
   });
 });
 

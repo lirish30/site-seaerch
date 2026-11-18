@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  addMarkup, approveBlockers, canCancel, lineVoice, mergeSaved, moveMarkup, moveArrowEnd, removeMarkup, replaceMarkup, resizeMarkup, scriptSummary, setSegmentShot, setSegmentText,
+  addMarkup, approveBlockers, canCancel, editorMode, isWatching, lineVoice, mergeSaved, moveMarkup, moveArrowEnd, removeMarkup, replaceMarkup, resizeMarkup, scriptSummary, setSegmentShot, setSegmentText,
   shotLabel, videoStateLine,
 } from "../src/client/videoView";
 import { MAX_MARKUPS, hashText, type Markup, type Segment, type VideoPlan } from "../src/worker/video/plan";
@@ -224,5 +224,23 @@ describe("small helpers", () => {
     expect(merged.segments[0].text).toBe("typed after the save began for this line");
     expect(merged.segments[1].audio).toEqual(saved.segments[1].audio);
     expect(merged.segments[2].audio).toBeUndefined();
+  });
+});
+
+describe("editorMode", () => {
+  const withLines = { segments: [{}] };
+  it("shows only the state while there is no plan or no lines yet, whatever the status", () => {
+    for (const status of ["capturing", "scripting", "failed", "cancelled", "review"]) {
+      expect(editorMode(status, null), status).toBe("state");
+      expect(editorMode(status, { segments: [] }), status).toBe("state");
+    }
+  });
+  it("edits only in review, and shows the plan read-only otherwise", () => {
+    expect(editorMode("review", withLines)).toBe("edit");
+    for (const status of ["scripting", "producing", "rendered", "published", "failed", "cancelled"]) expect(editorMode(status, withLines), status).toBe("readonly");
+  });
+  it("keeps polling while the video moves on its own, and stops on failure", () => {
+    for (const s of ["capturing", "scripting", "producing"]) expect(isWatching(s), s).toBe(true);
+    for (const s of ["review", "rendered", "published", "failed", "cancelled"]) expect(isWatching(s), s).toBe(false);
   });
 });

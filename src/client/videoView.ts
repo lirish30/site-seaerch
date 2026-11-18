@@ -106,6 +106,15 @@ export function videoStateLine(v: VideoState): string {
   }
 }
 
+/** How the editor page shows a video: "edit" (review with a script), "readonly" (a script, but not editable now), or "state" (nothing to edit yet or any more: just where the video stands). */
+export function editorMode(status: string, plan: { segments: unknown[] } | null): "edit" | "readonly" | "state" {
+  if (!plan || plan.segments.length === 0) return "state";
+  return status === "review" ? "edit" : "readonly";
+}
+
+/** Statuses the page keeps asking the server about: the video changes without the user doing anything. */
+export const isWatching = (status: string): boolean => status === "capturing" || status === "scripting" || status === "producing";
+
 /** Statuses a video can be cancelled from: anything still open. */
 export const canCancel = (status: string): boolean => !["published", "cancelled", "failed"].includes(status);
 /** A video that has not been published, failed or been cancelled holds its audit's one slot; the lead page then opens it instead of starting another. */

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { DraftPlanSchema, MarkupSchema, SCRIPT_MS, checkPlanAgainst, estimateDurationMs, hashText, lineStale, planDurationMs,
+import { DraftPlanSchema, SegmentSchema, MarkupSchema, SCRIPT_MS, checkPlanAgainst, estimateDurationMs, hashText, lineStale, planDurationMs,
   type Segment, type Shot } from "../src/worker/video/plan";
 
 const words = (n: number, w = "word") => Array.from({ length: n }, () => w).join(" ");
@@ -131,5 +131,24 @@ describe("lineStale", () => {
     expect(hashText("abc")).toMatch(/^[0-9a-f]{8}$/);
     expect(hashText("abc")).toBe(hashText("abc"));
     expect(hashText("abc")).not.toBe(hashText("abd"));
+  });
+});
+
+describe("segment ids", () => {
+  const withId = (id: string) => SegmentSchema.safeParse(seg(id, "hook")).success;
+  it("a segment id with a slash is rejected", () => {
+    expect(withId("a/b")).toBe(false);
+    expect(withId("../x")).toBe(false);
+    expect(withId("a b")).toBe(false);
+  });
+  it("a 41-character segment id is rejected", () => {
+    expect(withId("a".repeat(41))).toBe(false);
+    expect(withId("a".repeat(40))).toBe(true);
+  });
+  it("plain ids pass, and the draft schema applies the same rule", () => {
+    for (const id of ["s1", "line_2", "hook-A"]) expect(withId(id), id).toBe(true);
+    const d = draft();
+    d.segments[0].id = "bad/id";
+    expect(DraftPlanSchema.safeParse(d).success).toBe(false);
   });
 });

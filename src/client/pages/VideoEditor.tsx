@@ -3,15 +3,13 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { pollDelay } from "../poll";
 import type { Segment, VideoPlan } from "../../worker/video/plan";
-import { approveBlockers, canCancel, mergeSaved, replaceSegment, scriptSummary, videoStateLine, type VideoResponse } from "../videoView";
+import { approveBlockers, canCancel, editorMode, isWatching, mergeSaved, replaceSegment, scriptSummary, videoStateLine, type VideoResponse } from "../videoView";
 import Icon from "../components/Icon";
 import { Badge } from "../components/Score";
 import ShotCanvas from "../components/video/ShotCanvas";
 import SegmentList from "../components/video/SegmentList";
 
 type Save = "idle" | "saving" | "saved" | "failed";
-/** Statuses where the page keeps asking the server what happened. */
-const WATCHING = new Set(["capturing", "scripting", "producing"]);
 
 /**
  * A lead's video before it is made: the script on the left (words, screenshot and voice for each line), the screenshot with its markups on the right.
@@ -58,13 +56,14 @@ export default function VideoEditor() {
   // While the video is being made or waiting on Claude the status can change under us; a failed poll backs off.
   const status = data?.video.status;
   useEffect(() => {
-    if (!status || !WATCHING.has(status)) return;
+    if (!status || !isWatching(status)) return;
     const t = setTimeout(() => load(true).then(() => { failures.current = 0; }).catch(() => { failures.current++; }).finally(() => setTick((n) => n + 1)), pollDelay(failures.current));
     return () => clearTimeout(t);
   }, [status, tick, load]);
 
   const videoId = data?.video.id;
-  const editable = status === "review";
+  const mode = data ? editorMode(data.video.status, plan) : "state";
+  const editable = mode === "edit";
 
   /** Saves the plan as it is now. Saves run one after another so a slow one never lands after a newer one. */
   const commit = useCallback((): Promise<void> => {
@@ -137,9 +136,9 @@ export default function VideoEditor() {
       <div className="page-body"><div className="card"><p>This lead has no video yet. Start one from the Video audit panel on the lead.</p></div></div>
     </>
   );
-  if (!data || !plan) return <div className="page-body">{error ? <p className="error" role="alert">{error}</p> : <p>Loading…</p>}</div>;
+  if (!data) return <div className="page-body">{error ? <p className="error" role="alert">{error}</p> : <p>Loading…</p>}</div>;
 
-  const waitingForNewScript = data.video.status === "scripting" && plan.segments.length > 0;
+  const waitingForNewScript = data.video.status === "scripting" && mode !== "state";
   const shown = blockers ?? live;
   return (
     <>
@@ -150,7 +149,7 @@ export default function VideoEditor() {
           {stateLine && <p className="vd-state" role="status">{stateLine}</p>}
         </div>
         <div className="vd-header-actions">
-          {summary && <span className={`vd-summary${summary.inWindow ? "" : " off"}`} title="The video should run 80 to 130 seconds">{summary.words} words · about {summary.seconds} seconds{summary.inWindow ? "" : " (outside 80 to 130)"}</span>}
+          {mode !== "state" && summary && <span className={`vd-summary${summary.inWindow ? "" : " off"}`} title="The video should run 80 to 130 seconds">{summary.words} words · about {summary.seconds} seconds{summary.inWindow ? "" : " (outside 80 to 130)"}</span>}
           <span className="vd-save" aria-live="polite">{save === "saving" ? "Saving…" : save === "saved" ? "Saved" : save === "failed" ? "Not saved" : ""}</span>
           {canCancel(data.video.status) && <button type="button" className="btn" onClick={cancel} disabled={!!busy}>Cancel video</button>}
           {editable && <button type="button" className="btn primary" onClick={() => void approve()} disabled={!!busy || shown.length > 0 || save === "saving"} aria-describedby="vd-blockers">{busy === "approve" ? "Approving…" : "Approve and make the video"}</button>}
@@ -165,10 +164,9 @@ export default function VideoEditor() {
             <button type="button" className="btn sm" onClick={() => void writeMyself()} disabled={!!busy}>Write it myself</button>
           </div>
         )}
-        {data.video.status === "scripting" && !waitingForNewScript && <div className="card"><p>{stateLine}</p></div>}
-        {data.video.status === "capturing" && <div className="card"><p>{stateLine}</p></div>}
+        {mode === "state" && !stateLine && <div className="card"><p>There is no script to edit yet.</p></div>}
 
-        {plan.segments.length > 0 && (
+        {mode !== "state" && plan && (
           <div className="vd-split">
             <section className="vd-left" aria-label="Script">
               {editable && (

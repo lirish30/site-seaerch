@@ -40,8 +40,11 @@ export const AudioSchema = z.object({
 });
 export type SegmentAudio = z.infer<typeof AudioSchema>;
 
+/** A line's id ends up in storage keys and URLs, so it is short and plain: letters, digits, underscore, hyphen. */
+export const SEGMENT_ID = /^[A-Za-z0-9_-]{1,40}$/;
+
 export const SegmentSchema = z.object({
-  id: z.string().min(1),
+  id: z.string().regex(SEGMENT_ID, "a line id is 1 to 40 letters, digits, _ or -"),
   role: z.enum(ROLES),
   findingCode: z.string().min(1).optional(),
   text: z.string(),
