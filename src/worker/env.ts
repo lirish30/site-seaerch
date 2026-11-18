@@ -9,6 +9,8 @@ export interface Env {
   LOGIN_LIMITER?: RateLimit;
   APP_PASSWORD: string;
   SESSION_SECRET: string;
+  /** Bearer token for the /mcp endpoint (Worker secret). */
+  MCP_TOKEN: string;
   BRIGHTDATA_API_KEY: string;
   BRIGHTDATA_SERP_ZONE: string;
   /** Optional: Google Places API (New) key. When set, listings come from Places first and Bright Data is the fallback. */

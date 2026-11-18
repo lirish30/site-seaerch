@@ -21,10 +21,13 @@ import { spendRoutes } from "./routes/spend";
 import { approvalRoutes } from "./routes/approvals";
 import { agentActionRoutes } from "./routes/agentActions";
 import "./approvals/leadNote";
+import { mcpRoute } from "./mcp/route";
 import { runDueRadars } from "./radar-run";
 import { searchWorkflowStarter } from "./search-start";
 
 const app = new Hono<{ Bindings: Env }>();
+// Outside /api/*, so the cookie middleware does not apply: /mcp does its own bearer-token check.
+app.all("/mcp", mcpRoute);
 app.use("/api/*", requireAuth);
 app.get("/api/health", (c) => c.json({ ok: true }));
 app.route("/api", authRoutes);
