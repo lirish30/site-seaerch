@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import Icon from "../components/Icon";
+import ApprovalsCard from "../components/home/ApprovalsCard";
 import ActivityCard from "../components/home/ActivityCard";
 import KpiCards from "../components/home/KpiCards";
 import PipelineCard from "../components/home/PipelineCard";
@@ -38,11 +39,15 @@ export default function Today() {
       <div className="hm-top">
         <KpiCards summary={h.summary} onRetry={h.reload} />
         <div className="hm-cols">
+          <div className="hm-lead">
+          <ApprovalsCard approvals={h.approvals} errs={h.approvalErrs} busy={h.busy} onApprove={(a, p) => void h.approveOne(a, p)}
+            onReject={(a, n) => void h.rejectOne(a, n)} onApproveAll={(g) => void h.approveAll(g)} onRetry={h.reload} />
           <UpNext items={h.items} leads={h.leads} summary={h.summary} busy={h.busy} scans={h.scans} errs={h.errs}
             onDone={(i) => void h.act(i, "done")} onSnooze={(i, d) => void h.act(i, "snooze", d)} onFullScan={(i) => void h.fullScan(i)} onRetry={h.reload} />
+          </div>
           <div className="hm-side">
             <PipelineCard summary={h.summary} onRetry={h.reload} />
-            <SpendCard money={h.money} onRetry={h.reload} />
+            <SpendCard money={h.money} spend={h.spend} onRetry={h.reload} />
           </div>
         </div>
       </div>

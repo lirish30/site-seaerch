@@ -126,3 +126,20 @@
 }
 @media (max-width: 640px) { .hm .page-header > div:first-child { flex-basis:100%; } .hm-side { grid-template-columns:minmax(0,1fr); } .hm-kpi-num { font-size:30px; line-height:38px; } }
 @media (max-width: 460px) { .hm-kpis { grid-template-columns:minmax(0,1fr); } }
+
+/* Approval inbox and spend level */
+.hm-lead { display:flex; flex-direction:column; gap:16px; min-width:0; }
+.hm-appr-group + .hm-appr-group { border-top:1px solid var(--border); }
+.hm-appr-ghead { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:12px 18px 0; }
+.hm-appr-ghead h3 { font:600 13px/19px var(--font); color:var(--text-2); } .hm-appr-ghead h3 span { font-weight:500; color:var(--text-3); }
+.hm-appr-list { list-style:none; margin:0; padding:0; }
+.hm-appr-row { align-items:flex-start; } .hm-appr-row:last-child { border-bottom:0; }
+.hm-appr-meta { margin-top:3px !important; font:400 12px/16px var(--font); color:var(--text-3); }
+.hm-appr-form { display:flex; flex-direction:column; gap:6px; margin-top:10px; }
+.hm-appr-form label { font:500 12px/16px var(--font); color:var(--text-2); }
+.hm-appr-form textarea, .hm-appr-form input { width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:var(--bg-surface); color:var(--text); font:400 13px/19px var(--font-mono, var(--font)); }
+.hm-appr-form textarea:focus-visible, .hm-appr-form input:focus-visible { outline:2px solid var(--border-focus); outline-offset:1px; }
+.hm-appr-formacts { display:flex; gap:8px; }
+.hm-spend-level { font:400 13px/19px var(--font); color:var(--text-2); }
+.hm-spend-level.warn { color:var(--warning); } .hm-spend-level.capped { color:var(--critical); }
+.hm-spend-fixed { padding-top:10px; border-top:1px solid var(--border); }
