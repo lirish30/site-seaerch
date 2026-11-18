@@ -9,7 +9,7 @@ import { CRO_LIMITS } from "../cro/config";
 import { logActivity } from "../db/activity";
 import { createCroAudit, failCroAudit, getCroAudit, latestCroAudit, listCroAudits, listCroItems, runningCroAudit, updateCroAudit, updateCroItem, type CroItemPatch } from "../db/cro";
 import { shotKey, textKey } from "../cro/keys";
-import { CRO_TARGET } from "../queue/cro";
+import { CRO_TARGET, healCroHandover } from "../queue/cro";
 import { cancelTasksFor } from "../queue/db";
 import { scenarioFor } from "../cro/scenario";
 import { BIZ_MODEL_KEYS, type BusinessModel, type CroAudit, type CroFrom, type CroStep } from "../cro/types";
@@ -80,6 +80,8 @@ croRoutes.get("/leads/:id/cro-audit", async (c) => {
   await runningCroAudit(c.env.DB, id, new Date()); // fails a dead run so the UI stops polling it
   const a = which ? await getCroAudit(c.env.DB, which) : await latestCroAudit(c.env.DB, id);
   if (!a || a.business_id !== id) return c.json({ audit: null, items: [] });
+  // The panel polls this while the audit waits: an audit whose roadmap never got queued (the hand-over failed) is put right here.
+  if (a.status === "waiting" && a.step === "synthesize") await healCroHandover(c.env, a.id);
   return c.json({ audit: a, items: await listCroItems(c.env.DB, a.id) });
 });
 

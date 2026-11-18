@@ -1,5 +1,5 @@
 import type { Env } from "../env";
-import { CRO_SYNTH_KIND, CRO_TARGET } from "../queue/cro";
+import { CRO_SYNTH_KIND, CRO_TARGET } from "../queue/croKinds";
 import { enqueueTask } from "../queue/db";
 
 /** Whether the audit has a roadmap task a worker could pick up (any try). */

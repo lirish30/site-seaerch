@@ -1,13 +1,14 @@
 import { env, SELF } from "cloudflare:test";
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { runCroAudit, type CroDeps } from "../src/worker/cro/pipeline";
+import { healCroHandovers } from "../src/worker/queue/cro";
 import { COULDNT_FINISH_MODEL, COULDNT_FINISH_ROADMAP, CRO_MODEL_KIND, CRO_PAGE_KIND, CRO_SYNTH_KIND, NOT_PICKED_UP, startCroStages } from "../src/worker/queue/cro";
 import "../src/worker/queue/leadDraft";
 import "../src/worker/queue/siteReview";
 import "../src/worker/queue/replyClassify";
 import * as synthesis from "../src/worker/cro/synthesis";
 import { buildBundle } from "../src/worker/queue/bundle";
-import { MAX_ATTEMPTS, claimNextTask, completeTask, expireOldTasks, getTask } from "../src/worker/queue/db";
+import { MAX_ATTEMPTS, claimNextTask, completeTask, expireOldTasks, getTask, markTaskStale } from "../src/worker/queue/db";
 import { getTaskKind, registeredTaskKinds } from "../src/worker/queue/registry";
 import { createCroAudit, getCroAudit, listCroItems, replaceCroItems, settlePage, updateCroAudit } from "../src/worker/db/cro";
 import { defaultScenario } from "../src/worker/cro/scenario";
@@ -800,6 +801,65 @@ describe("the hand-over to the roadmap", () => {
     expect(await synthTasks(id)).toHaveLength(1);
     await giveUp(last.id).catch(() => {}); // a late failure of the same page changes nothing
     expect(await synthTasks(id)).toHaveLength(1);
+  });
+
+  /** Two pages; the first is reviewed. Returns the last one, still to be completed. */
+  async function lastPageOpen() {
+    const { id } = await audited({ contact: "https://ace.com/contact" });
+    await modelDone(id);
+    const e = await evidenceId(id);
+    await complete((await pageTask(id, 0)).id, review([issue(e)]));
+    return { id, e, last: await pageTask(id, 1) };
+  }
+
+  it("heals when the last page's task is reclaimed after its lease and found stale: the roadmap gets queued while briefing it", async () => {
+    const { id, e, last } = await lastPageOpen();
+    startSynthesis.mockRejectedValueOnce(new Error("D1 hiccup"));
+    await claimById(last.id);
+    await expect(completeTask(env, last.id, review([issue(e)]))).rejects.toThrow("D1 hiccup");
+    expect(await audit(id)).toMatchObject({ status: "waiting", step: "synthesize", pending_pages: [] });
+    expect(await synthTasks(id)).toHaveLength(0);
+    // The worker never retried; 31 minutes on, next_claude_task hands the task out again, briefs it (stale) and closes it, as mcp/server.ts does.
+    const again = await claimNextTask(env, new Date(Date.now() + 31 * 60_000));
+    expect(again!.id).toBe(last.id);
+    const bundle = await buildBundle(env, again!);
+    expect("stale" in bundle && bundle.stale).toMatch(/moved on to synthesize/);
+    await markTaskStale(env.DB, again!.id, "stale");
+    expect(await synthTasks(id)).toHaveLength(1);
+    expect(synthPayload((await synthTasks(id))[0])).toEqual({ auditId: id, attempt: 1 });
+    // A second briefing of anything for this audit does not queue another.
+    await expect(buildBundle(env, (await getTask(env.DB, last.id))!)).resolves.toBeDefined();
+    expect(await synthTasks(id)).toHaveLength(1);
+  });
+
+  it("does not queue a roadmap for a stale task of a superseded run", async () => {
+    const { id, last } = await lastPageOpen();
+    await claimById(last.id);
+    await startCroStages(env, id, "synthesize"); // a rebuild: its own fresh roadmap task
+    await env.DB.prepare(`UPDATE claude_tasks SET status = 'claimed', dedupe_key = NULL WHERE id = ?`).bind(last.id).run();
+    await env.DB.prepare(`UPDATE claude_tasks SET status = 'stale' WHERE kind = ? AND target_id = ?`).bind(CRO_SYNTH_KIND, id).run(); // no roadmap open any more
+    const bundle = await buildBundle(env, (await getTask(env.DB, last.id))!);
+    expect("stale" in bundle).toBe(true);
+    expect(await synthTasks(id)).toHaveLength(1); // only the rebuild's own (now closed) one: the old run's task did not queue another
+  });
+
+  it("heals later when the hook that should have retried the hand-over failed too: the status read and the sweep both queue the roadmap", async () => {
+    const { id, last } = await lastPageOpen();
+    startSynthesis.mockRejectedValueOnce(new Error("D1 is down")); // the hook's one hand-over fails; the queue swallows that
+    await giveUp(last.id, { keepKey: true });
+    expect((await getTask(env.DB, last.id))!.status).toBe("failed");
+    expect(await audit(id)).toMatchObject({ status: "waiting", step: "synthesize", pending_pages: [], partial: true });
+    expect(await synthTasks(id)).toHaveLength(0); // the task is terminal and its hook is spent
+    // The panel polls the audit: reading it puts the hand-over right.
+    const r = await api(`/api/leads/${(await audit(id)).business_id}/cro-audit`);
+    expect(r.status).toBe(200);
+    expect(await synthTasks(id)).toHaveLength(1);
+    // The sweep (for the daily run) finds nothing more to do for it, and heals an audit in the same state again.
+    await env.DB.prepare(`UPDATE cro_audits SET status = 'failed' WHERE id != ?`).bind(id).run(); // audits other tests left waiting
+    expect(await healCroHandovers(env)).toBe(0);
+    await env.DB.prepare(`UPDATE claude_tasks SET status = 'stale' WHERE kind = ? AND target_id = ?`).bind(CRO_SYNTH_KIND, id).run();
+    expect(await healCroHandovers(env)).toBe(1);
+    expect((await synthTasks(id)).map((t) => t.status)).toEqual(["stale", "pending"]);
   });
 
   it("a roadmap rebuild queues exactly one task", async () => {

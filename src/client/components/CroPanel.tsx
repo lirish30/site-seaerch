@@ -97,7 +97,7 @@ export default function CroPanel({ leadId, onError }: { leadId: string; onError:
     <div className="cro"><div className="section-card cro-card cro-empty">
       <h3>CRO audit</h3>
       <p>A deeper scan of up to 7 key pages on desktop and phone. It works out how this business makes money, then builds a specific roadmap: what to fix this month, the next 90 days, what to measure, and what it could be worth.</p>
-      <p className="cro-hint">Takes about 2–4 minutes and roughly $0.15–0.40.</p>
+      <p className="cro-hint">Pages are captured now; Claude writes the review in your next queue session. No extra cost.</p>
       <div className="cro-actions"><button className="btn primary" onClick={run} disabled={!!busy}>{busy ? "Starting…" : "Run CRO audit"}</button></div>
     </div></div>
   );
@@ -167,7 +167,7 @@ export default function CroPanel({ leadId, onError }: { leadId: string; onError:
         <Badge tone={STATUS_TONE[a.status]} dot>{a.status[0].toUpperCase() + a.status.slice(1)}</Badge>
         <span className="cro-grow" />
         <button className="btn-plain" onClick={(e) => openEvidence("all", e.currentTarget)}><Icon name="list" size={16} />All evidence ({a.evidence.length})</button>
-        <button className="btn" onClick={run} disabled={!!busy} title="Starts a fresh scan; roughly $0.15–0.40"><Icon name="refresh" size={16} />{busy === "run" ? "Starting…" : "Run again"}</button>
+        <button className="btn" onClick={run} disabled={!!busy} title="Starts a fresh scan"><Icon name="refresh" size={16} />{busy === "run" ? "Starting…" : "Run again"}</button>
       </div>
       {a.error && (
         <div className="cro-note err">

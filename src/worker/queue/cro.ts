@@ -13,13 +13,10 @@ import type { Business } from "../types";
 import type { BusinessModel, CroAudit, CroStep, Device, Evidence } from "../cro/types";
 import { cancelTasksFor, enqueueTask, type ClaudeTask } from "./db";
 import { registerTaskKind, type TaskKindDef } from "./registry";
+import { CRO_MODEL_KIND, CRO_PAGE_KIND, CRO_SYNTH_KIND, CRO_TARGET } from "./croKinds";
 
-/** The task kinds this file handles: Claude works out how the business makes money, reviews each captured page of its site, then writes the roadmap. */
-export const CRO_MODEL_KIND = "cro.model";
-export const CRO_PAGE_KIND = "cro.page";
-export const CRO_SYNTH_KIND = "cro.synthesize";
-/** What the CRO tasks are about, so `cancelTasksFor(db, CRO_TARGET, auditId)` closes the open ones of one audit. */
-export const CRO_TARGET = "cro_audit";
+// The task kinds this file handles: Claude works out how the business makes money, reviews each captured page of its site, then writes the roadmap.
+export { CRO_MODEL_KIND, CRO_PAGE_KIND, CRO_SYNTH_KIND, CRO_TARGET };
 export const NOT_PICKED_UP = "Claude didn't pick this up in time. Rebuild to try again.";
 export const COULDNT_FINISH_MODEL = "Claude couldn't finish reading this business. Rebuild to try again.";
 export const COULDNT_FINISH_ROADMAP = "Claude couldn't finish writing the roadmap. Rebuild to try again.";
@@ -169,6 +166,32 @@ async function skipPage(env: Env, auditId: string, pageIndex: number, task?: Cla
   await finishPages(env, a.id, settled === null);
 }
 
+/**
+ * Re-runs the hand-over to the roadmap for an audit that is waiting at the roadmap step of the current run (`task` is the stale task asking, if any: one
+ * from a superseded run changes nothing). The hand-over is idempotent (`startSynthesis` does nothing while a roadmap task is open), so this is safe to call
+ * from anywhere, any number of times. Best effort: it never throws, so a caller (a briefing that is about to be closed, a status read) is never broken by it.
+ *
+ * It exists because the hand-over can stop after the step moved on (the queue write failed) and the page task that would have retried it then ends
+ * without running a hook (a reclaimed task found stale is closed silently), or its hook failed too. Nothing else would ever queue the roadmap.
+ */
+export async function healCroHandover(env: Env, auditId: string, task?: ClaudeTask): Promise<void> {
+  try {
+    const a = await getCroAudit(env.DB, auditId);
+    if (!a || a.status !== "waiting" || a.step !== "synthesize" || !current(a, task)) return;
+    await finishPages(env, a.id, true);
+  } catch (e) { console.warn("healing the CRO hand-over failed for", auditId, e); }
+}
+
+/** Heals every audit waiting at the roadmap step with no roadmap task open (see `healCroHandover`). For a periodic sweep. Returns how many audits it looked at. */
+export async function healCroHandovers(env: Env): Promise<number> {
+  const rows = (await env.DB.prepare(
+    `SELECT id FROM cro_audits WHERE status = 'waiting' AND step = 'synthesize' AND NOT EXISTS (
+       SELECT 1 FROM claude_tasks WHERE kind = ? AND target_type = ? AND target_id = cro_audits.id AND status IN ('pending','claimed')) LIMIT 100`,
+  ).bind(CRO_SYNTH_KIND, CRO_TARGET).all<{ id: string }>()).results;
+  for (const r of rows) await healCroHandover(env, r.id);
+  return rows.length;
+}
+
 const croModel: TaskKindDef<CroModelPayload, z.infer<typeof BusinessModelResult>> = {
   kind: CRO_MODEL_KIND,
   label: "Work out how a business makes money",
@@ -221,7 +244,8 @@ const croPage: TaskKindDef<CroPagePayload, z.infer<typeof PageReviewResult>> = {
   /** The page's screenshots, the business, the model card (derived from the site) and the ledger are untrusted; so are the reasons an earlier try was thrown away. */
   async build(env, p, task) {
     const t = await loadTarget(env, p.auditId, task, ["pages"]);
-    if ("stale" in t) return t;
+    // The audit already moved on to the roadmap: this page was settled, and the task being closed as stale is the last chance to see that the roadmap got queued.
+    if ("stale" in t) { await healCroHandover(env, p.auditId, task); return t; }
     const { audit, business } = t;
     if (!audit.pending_pages.includes(p.pageIndex)) return { stale: "this page was already reviewed or skipped" };
     const page = audit.pages.find((x) => x.index === p.pageIndex && x.ok);
@@ -246,7 +270,7 @@ const croPage: TaskKindDef<CroPagePayload, z.infer<typeof PageReviewResult>> = {
 
     if (!audit.pending_pages.includes(p.pageIndex)) {
       // Already settled: this completion ran before (it crashed after saving) or the page was given up on since.
-      if (!reviewed(audit)) return { stale: "this page was skipped meanwhile" };
+      if (!reviewed(audit)) { await healCroHandover(env, audit.id, task); return { stale: "this page was skipped meanwhile" }; }
       await finishPages(env, audit.id, true);
       return log("reviewed");
     }

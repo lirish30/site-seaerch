@@ -70,9 +70,7 @@ export const SynthesisSchema = SynthesisResult.transform((v) => ({
   recommendations: v.recommendations.map((r) => ({ ...r, evidence_ids: r.evidence_ids ?? [], catalog_id: r.catalog_id ?? null, we_can_do_it: r.we_can_do_it ?? "" })),
 }));
 
-// ---- system prompts (stable, marked for caching) ----
-// Caching only engages when the cached prefix reaches the model's minimum (Haiku 5.5's minimum is not measured here). We do not measure or
-// guarantee that today; cache_control stays in place so it applies whenever the prefix is long enough.
+// ---- system prompts (fixed text the app wrote; everything copied from a site goes in the untrusted parts, never here) ----
 const KNOWLEDGE = `CONVERSION PRINCIPLES (apply them as concrete checks; never name the frameworks to the business owner):
 - Value proposition (LIFT): within 5 seconds can a visitor tell what this business does, for whom, where, and why them over others?
 - Relevance: does the page match what someone searching for this service in this town expects to see?
