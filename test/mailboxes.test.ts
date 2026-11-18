@@ -28,6 +28,7 @@ const dohReply = (spf: boolean) => (url: string) => {
 
 beforeEach(async () => {
   sent = []; smtpError = null; probeCalls = 0; imapCalls = 0;
+  await env.DB.prepare(`DELETE FROM messages`).run();
   await env.DB.prepare(`UPDATE mailboxes SET enabled = 0, smtp_host = '', smtp_port = 465, imap_host = '', imap_port = 993, username = '',
     from_email = '', from_name = '', warmup_started_at = NULL, imap_uid_validity = NULL, imap_last_uid = NULL, last_sync_at = NULL, last_sync_error = NULL`).run();
   setMailDeps({
@@ -84,6 +85,9 @@ describe("mailboxes", () => {
     expect(sent[0].msg.from).toEqual({ email: "hello@outreach.test", name: "Logan at Siteline" });
     expect(sent[0].msg.to).toBe("hello@outreach.test");
     expect(sent[0].msg.messageId).toMatch(/^<[^@>]+@outreach\.test>$/);
+    expect(sent[0].msg.text).toContain("This is a test message from your Siteline mailbox settings");
+    const row = await env.DB.prepare(`SELECT business_id, status, message_id FROM messages`).first<{ business_id: string | null; status: string; message_id: string }>();
+    expect(row).toEqual({ business_id: null, status: "sent", message_id: sent[0].msg.messageId });
   });
 
   it("test-send on an unconfigured mailbox is a 400 and sends nothing", async () => {

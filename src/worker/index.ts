@@ -22,6 +22,7 @@ import { approvalRoutes } from "./routes/approvals";
 import { agentActionRoutes } from "./routes/agentActions";
 import { mailboxRoutes } from "./routes/mailboxes";
 import "./approvals/leadNote";
+import "./approvals/emailSend";
 import { mcpRoute } from "./mcp/route";
 import { runDueRadars } from "./radar-run";
 import { searchWorkflowStarter } from "./search-start";

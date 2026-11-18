@@ -4,6 +4,7 @@ import type { Env } from "../env";
 import { MAILBOX_KEYS, getMailbox, mailboxPassword, saveMailbox, startWarmup } from "../db/mailboxes";
 import { lookupMailDns } from "../dns";
 import { getMailDeps } from "../mail/deps";
+import { sendEmail } from "../mail/send";
 import type { Mailbox, MailboxKey } from "../mail/types";
 
 const Port = z.number().int().min(1).max(65535);
@@ -47,17 +48,11 @@ mailboxRoutes.put("/:key", async (c) => {
   return c.json(view(c.env, saved));
 });
 
-/** A short message to the mailbox's own address; never to anyone else. */
-async function sendToSelf(mb: Mailbox, password: string, subject: string): Promise<void> {
-  await getMailDeps().smtp(mb, password, {
-    from: { email: mb.from_email, name: mb.from_name },
-    to: mb.from_email,
-    subject,
-    text: "This is a test message from your Siteline mailbox settings. Nothing else was sent.",
-    html: "<p>This is a test message from your Siteline mailbox settings. Nothing else was sent.</p>",
-    messageId: `<${crypto.randomUUID()}@${domainOf(mb.from_email)}>`,
-  });
-}
+/** A short message to the mailbox's own address; never to anyone else. Logged without a lead and exempt from warm-up and the daily cap. */
+const sendToSelf = (env: Env, mb: Mailbox, subject: string) => sendEmail(env, {
+  mailbox: mb.key, to: mb.from_email, subject, includeFooter: false,
+  body: "This is a test message from your Siteline mailbox settings. Nothing else was sent.",
+}, { approvalId: null, skipLimits: true });
 
 mailboxRoutes.post("/:key/test", async (c) => {
   const key = c.req.param("key") as MailboxKey;
@@ -69,7 +64,7 @@ mailboxRoutes.post("/:key/test", async (c) => {
   }
   const deps = getMailDeps();
   const [smtp, imap, mail] = await Promise.all([
-    sendToSelf(mb, password, "Siteline SMTP connection test")
+    sendToSelf(c.env, mb, "Siteline SMTP connection test")
       .then(() => ({ ok: true as const }), (e) => ({ ok: false as const, error: message(e, password) })),
     deps.imapProbe(mb, password)
       .then(() => ({ ok: true as const }), (e) => ({ ok: false as const, error: message(e, password) })),
@@ -85,7 +80,7 @@ mailboxRoutes.post("/:key/test-send", async (c) => {
   if (!password) return c.json({ error: "password secret is not set" }, 400);
   if (!configured(mb)) return c.json({ error: "mailbox is not configured" }, 400);
   try {
-    await sendToSelf(mb, password, "Siteline test message");
+    await sendToSelf(c.env, mb, "Siteline test message");
     return c.json({ ok: true });
   } catch (e) {
     return c.json({ ok: false, error: message(e, password) }, 502);
