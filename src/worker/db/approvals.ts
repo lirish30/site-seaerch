@@ -54,6 +54,23 @@ export async function createApprovalUnlessOpen(db: D1Database, a: {
   return (res.meta.changes ?? 0) > 0 ? toApproval(row) : null;
 }
 
+/**
+ * Creates the approval a Claude task produces, at most ONE per task, in ONE statement: it is keyed to the task (`record_type 'claude_task'`,
+ * `record_id` the task id), and an approval already there in ANY status (pending, or already approved or rejected) means nothing is created.
+ * So a retry (a crash between this and finishing the task, a client resending after a timeout) and two completions at once all end with one
+ * approval. Null when the task already has one. The record fields in `a` are replaced by the task's.
+ */
+export async function createApprovalForTask(db: D1Database, taskId: string, a: {
+  kind: string; title: string; preview: string; payload: unknown; drafted_by: Drafter;
+}): Promise<Approval | null> {
+  if (!getHandler(a.kind)) throw new UnknownKindError(a.kind);
+  const row = newRow({ ...a, record_type: "claude_task", record_id: taskId });
+  const res = await db.prepare(`INSERT INTO approvals (id, kind, title, preview, payload, record_type, record_id, drafted_by, status, created_at)
+    SELECT ?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM approvals WHERE record_type = 'claude_task' AND record_id = ?)`)
+    .bind(row.id, row.kind, row.title, row.preview, row.payload, row.record_type, row.record_id, row.drafted_by, row.status, row.created_at, taskId).run();
+  return (res.meta.changes ?? 0) > 0 ? toApproval(row) : null;
+}
+
 export async function listApprovals(db: D1Database, o: { status?: ApprovalStatus; limit?: number }): Promise<Approval[]> {
   const rows = (await db.prepare(`SELECT * FROM approvals WHERE status = ? ORDER BY created_at DESC, id DESC LIMIT ?`)
     .bind(o.status ?? "pending", o.limit ?? 100).all<Row>()).results;
