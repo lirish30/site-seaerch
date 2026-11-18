@@ -7,6 +7,8 @@ export interface MessageRow {
   enrollment_id: string | null; step_index: number | null; approval_id: string | null;
   message_id: string | null; in_reply_to: string | null; counterpart: string; subject: string; text: string;
   status: MessageStatus; kind: string | null; imap_uid: number | null; created_at: string; sent_at: string | null;
+  /** Inbound only: set once the effects of the message (stop, bounce, activity) were applied. */
+  processed_at: string | null;
 }
 
 export interface OutboundRow {

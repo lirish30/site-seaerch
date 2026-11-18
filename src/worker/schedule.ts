@@ -8,11 +8,14 @@ import { syncAllMailboxes } from "./mail/sync";
 export const DAILY_CRON = "17 13 * * *";
 export const MAIL_SYNC_CRON = "*/15 * * * *";
 
-/** One part of a cron run, logged and contained: its failure is never allowed to stop another part or fail the cron. */
-async function part(name: string, run: () => Promise<unknown>): Promise<void> {
+/**
+ * One part of a cron run, logged and contained: its failure is never allowed to stop another part or fail the cron. A `quiet` part that
+ * returns nothing logs nothing (the mail sync runs every 15 minutes and logs its own news).
+ */
+async function part(name: string, run: () => Promise<unknown>, quiet = false): Promise<void> {
   try {
     const r = await run();
-    console.log(name, r === undefined ? "done" : JSON.stringify(r));
+    if (!(quiet && r === undefined)) console.log(name, r === undefined ? "done" : JSON.stringify(r));
   } catch (e) {
     console.error(`${name} failed`, e);
   }
@@ -24,7 +27,7 @@ async function part(name: string, run: () => Promise<unknown>): Promise<void> {
  */
 export async function runScheduled(env: Env, cron: string, now: Date): Promise<void> {
   if (cron === MAIL_SYNC_CRON) {
-    await part("mail sync", () => syncAllMailboxes(env));
+    await part("mail sync", () => syncAllMailboxes(env), true);
     return;
   }
   await part("radar run", () => runDueRadars({ db: env.DB, now: () => now, startWorkflow: searchWorkflowStarter(env) }));

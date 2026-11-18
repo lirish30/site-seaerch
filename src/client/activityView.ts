@@ -12,7 +12,7 @@ export const ACTIVITY_FILTERS: { key: ActivityFilter; label: string }[] = [
 export function filterOf(kind: string): Exclude<ActivityFilter, "all"> {
   if (kind === "note") return "notes";
   if (kind === "status") return "stage";
-  if (kind === "draft" || kind === "export") return "emails";
+  if (kind === "draft" || kind === "export" || kind === "email_sent" || kind === "email_reply" || kind === "email_bounce") return "emails";
   if (kind === "reaudit" || kind === "score_flagged" || kind === "cro_audit") return "audits";
   return "other";
 }
@@ -48,6 +48,9 @@ export function describeActivity(a: Pick<Activity, "kind" | "detail">): Activity
     case "import": return { icon: "upload", tone: "neutral", title: d?.startsWith("Also") ? "Also imported" : "Imported", detail: d, bubble: false };
     case "bulk": return { icon: "list", tone: "neutral", title: "Bulk change", detail: d, bubble: false };
     case "today_done": return { icon: "check", tone: "positive", title: "Marked done in Home", detail: null, bubble: false };
+    case "email_sent": return { icon: "send", tone: "info", title: "Email sent", detail: d, bubble: false };
+    case "email_reply": return { icon: "mail", tone: "positive", title: "Reply received", detail: d, bubble: false };
+    case "email_bounce": return { icon: "alert", tone: "critical", title: "Email bounced", detail: d, bubble: false };
     case "snoozed": return { icon: "clock", tone: "neutral", title: "Snoozed", detail: d, bubble: false };
     default: return { icon: "info", tone: "neutral", title: upperFirst(a.kind.replace(/_/g, " ")), detail: d, bubble: false };
   }

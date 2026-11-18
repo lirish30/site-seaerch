@@ -5,6 +5,7 @@ import { MAILBOX_KEYS, getMailbox, mailboxPassword, saveMailbox, startWarmup } f
 import { lookupMailDns } from "../dns";
 import { getMailDeps } from "../mail/deps";
 import { sendEmail } from "../mail/send";
+import { syncMailbox } from "../mail/sync";
 import { errorText } from "../mail/redact";
 import type { Mailbox, MailboxKey } from "../mail/types";
 
@@ -88,4 +89,14 @@ mailboxRoutes.post("/:key/start-warmup", async (c) => {
   const key = c.req.param("key") as MailboxKey;
   if (!(await startWarmup(c.env.DB, key, getMailDeps().now().toISOString()))) return c.json({ error: "warmup already started" }, 409);
   return c.json(view(c.env, await getMailbox(c.env.DB, key)));
+});
+
+/** Pulls this mailbox's new mail now (the cron does it every 15 minutes). The summary of what was found; 400 when the mailbox cannot be synced at all. */
+mailboxRoutes.post("/:key/sync", async (c) => {
+  const key = c.req.param("key") as MailboxKey;
+  try {
+    return c.json(await syncMailbox(c.env, key));
+  } catch (e) {
+    return c.json({ error: errorText(e, mailboxPassword(c.env, key)) }, 400);
+  }
 });

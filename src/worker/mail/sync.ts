@@ -1,4 +1,203 @@
 import type { Env } from "../env";
+import { MAILBOX_KEYS, getMailbox, mailboxPassword, saveMailbox } from "../db/mailboxes";
+import { activityStmt } from "../db/activity";
+import { getEnrollment } from "../db/enrollments";
+import { stopOutreach } from "../sequence/stop";
+import { getMailDeps } from "./deps";
+import { classifyInbound, parseInbound, type InboundMessage } from "./inbound";
+import { errorText } from "./redact";
+import type { Mailbox, MailboxKey } from "./types";
 
-/** Pulls new mail for every enabled mailbox and acts on replies, bounces and stops. Filled in by the sync task; until then the 15-minute cron does nothing. */
-export async function syncAllMailboxes(_env: Env): Promise<void> {}
+export interface SyncSummary {
+  fetched: number; matched: number; replies: number; stopped: number; bounced: number;
+  /** Set only when the run failed (the redacted IMAP or storage error). Nothing was advanced past the failure. */
+  error?: string;
+}
+
+/** Fetch windows per run: a backlog drains faster than one window per 15 minutes without one run holding the Worker for long. */
+const MAX_WINDOWS = 4;
+const AUTO_REPLY_DELAY_MS = 7 * 86_400_000;
+/** References lists grow with the thread (and can be hostile); the newest entries are the ones that name our message. */
+const MAX_REFERENCES = 10;
+
+const EMAIL = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
+/** An address fit for the do-not-contact list, or undefined. A mail system's odd Final-Recipient must never make the stop throw (it would block the mailbox on that message). */
+const usable = (a: string | null | undefined): string | undefined => {
+  const t = a?.trim().replace(/^<|>$/g, "").toLowerCase();
+  return t && EMAIL.test(t) ? t : undefined;
+};
+
+const clip = (s: string, n = 160) => (s.length > n ? `${s.slice(0, n)}...` : s);
+
+interface Match { businessId: string; enrollmentId: string | null }
+
+/**
+ * The lead an inbound message belongs to. First by the Message-ID it answers (In-Reply-To / References against our outbound rows),
+ * then by address: the DSN's failed recipient for a bounce (its sender is the mail system), otherwise the sender, against the address any
+ * enrollment, in any state, wrote to (newest first). Null means the message is not about any lead of ours.
+ */
+async function matchLead(db: D1Database, m: InboundMessage): Promise<Match | null> {
+  const ids = new Set<string>();
+  for (const raw of [m.inReplyTo ?? "", ...m.references.slice(-MAX_REFERENCES)]) {
+    const bare = raw.trim().replace(/^<|>$/g, "");
+    if (bare) { ids.add(bare); ids.add(`<${bare}>`); }
+  }
+  if (ids.size) {
+    const list = [...ids];
+    const row = await db.prepare(
+      `SELECT business_id, enrollment_id FROM messages WHERE direction = 'out' AND business_id IS NOT NULL AND message_id IN (${list.map(() => "?").join(",")}) ORDER BY created_at DESC, id LIMIT 1`,
+    ).bind(...list).first<{ business_id: string; enrollment_id: string | null }>();
+    if (row) return { businessId: row.business_id, enrollmentId: row.enrollment_id };
+  }
+  const address = (m.dsn ? m.dsn.recipient : m.from)?.trim().toLowerCase();
+  if (!address) return null;
+  const e = await db.prepare(`SELECT id, business_id FROM enrollments WHERE LOWER(to_email) = ? ORDER BY started_at DESC, id LIMIT 1`)
+    .bind(address).first<{ id: string; business_id: string }>();
+  return e ? { businessId: e.business_id, enrollmentId: e.id } : null;
+}
+
+interface StoredRow { id: string; business_id: string | null; enrollment_id: string | null; processed_at: string | null }
+const findStored = (db: D1Database, key: MailboxKey, uid: number) =>
+  db.prepare(`SELECT id, business_id, enrollment_id, processed_at FROM messages WHERE mailbox_key = ? AND imap_uid = ?`).bind(key, uid).first<StoredRow>();
+
+/**
+ * Stores one message (when it matches a lead) and applies what it means. The row goes in first with `processed_at` NULL; the effects follow,
+ * and the stamp is written in the same batch as the activity row, so a crash anywhere in between is finished by the next run (the stored row
+ * is found by its UID) and nothing is logged or moved twice. The stop itself is idempotent.
+ */
+async function processMessage(env: Env, key: MailboxKey, m: { uid: number; raw: Uint8Array }, now: string, tally: SyncSummary): Promise<void> {
+  const db = env.DB;
+  let row = await findStored(db, key, m.uid);
+  if (row?.processed_at) return;
+
+  const parsed = await parseInbound(m.raw);
+  const kind = classifyInbound(parsed);
+  const match: Match | null = row?.business_id ? { businessId: row.business_id, enrollmentId: row.enrollment_id } : await matchLead(db, parsed);
+  if (!match) return; // not about any lead: ignored, and not stored
+
+  if (!row) {
+    await db.prepare(`INSERT INTO messages (id, direction, mailbox_key, business_id, enrollment_id, message_id, in_reply_to, counterpart, subject, text, status, kind, imap_uid, created_at)
+      VALUES (?, 'in', ?, ?, ?, ?, ?, ?, ?, ?, 'received', ?, ?, ?) ON CONFLICT (mailbox_key, imap_uid) WHERE imap_uid IS NOT NULL DO NOTHING`)
+      .bind(crypto.randomUUID(), key, match.businessId, match.enrollmentId, parsed.messageId, parsed.inReplyTo, parsed.from, parsed.subject, parsed.text, kind, m.uid, now).run();
+    row = await findStored(db, key, m.uid);
+    if (!row) throw new Error(`could not store message ${m.uid}`);
+    if (row.processed_at) return; // another run finished it between our two reads
+  }
+  tally.matched++;
+
+  const businessId = match.businessId;
+  const stamp = db.prepare(`UPDATE messages SET processed_at = ? WHERE id = ?`).bind(now, row.id);
+  const subject = clip(parsed.subject);
+  const sender = clip(parsed.from || "unknown sender", 100);
+  switch (kind) {
+    case "reply":
+      await stopOutreach(db, { businessId, reason: "replied" });
+      await db.batch([activityStmt(db, businessId, "email_reply", `Reply from ${sender}: ${subject}`), stamp]);
+      tally.replies++;
+      return;
+    case "stop":
+      await stopOutreach(db, { businessId, reason: "opt_out", ...(usable(parsed.from) ? { email: usable(parsed.from) } : {}) });
+      await db.batch([activityStmt(db, businessId, "email_reply", `${sender} asked to stop: ${subject}`), stamp]);
+      tally.stopped++;
+      return;
+    case "bounce_hard": {
+      const enrollment = match.enrollmentId ? await getEnrollment(db, match.enrollmentId) : null;
+      const address = usable(parsed.dsn?.recipient) ?? usable(enrollment?.to_email);
+      await stopOutreach(db, { businessId, reason: "bounced", ...(address ? { email: address } : {}) });
+      await db.batch([activityStmt(db, businessId, "email_bounce", `Bounced${address ? `: ${clip(address, 100)}` : ""} (${parsed.dsn?.status ?? "failed"})`), stamp]);
+      tally.bounced++;
+      return;
+    }
+    case "bounce_soft":
+      await db.batch([activityStmt(db, businessId, "email_bounce", `Temporary delivery problem (${parsed.dsn?.status ?? "4.x.x"}); nothing changed`), stamp]);
+      return;
+    case "auto_reply": {
+      const enrollment = match.enrollmentId ? await getEnrollment(db, match.enrollmentId) : null;
+      const delay = enrollment?.status === "active" && enrollment.next_due_at;
+      const pushed = delay ? new Date(Date.parse(enrollment.next_due_at!) + AUTO_REPLY_DELAY_MS).toISOString() : null;
+      await db.batch([
+        ...(pushed ? [db.prepare(`UPDATE enrollments SET next_due_at = ? WHERE id = ? AND status = 'active' AND next_due_at IS NOT NULL`).bind(pushed, enrollment!.id)] : []),
+        activityStmt(db, businessId, "note", `Automatic reply from ${sender}${pushed ? "; the next step is delayed 7 days" : ""}`),
+        stamp,
+      ]);
+      return;
+    }
+  }
+}
+
+/**
+ * Pulls new mail for one mailbox and acts on it. Throws only when the mailbox cannot be synced at all (no password secret, not configured).
+ * Anything that goes wrong while syncing (IMAP, storage) is written to `last_sync_error` and returned as `error`: the cursor stays where it was,
+ * so the next run retries the same window.
+ */
+export async function syncMailbox(env: Env, key: MailboxKey): Promise<SyncSummary> {
+  const db = env.DB;
+  const mb: Mailbox = await getMailbox(db, key);
+  const password = mailboxPassword(env, key);
+  if (!password) throw new Error("password secret is not set");
+  if (!mb.imap_host || !mb.username) throw new Error("mailbox is not configured");
+
+  const deps = getMailDeps();
+  const now = deps.now().toISOString();
+  const tally: SyncSummary = { fetched: 0, matched: 0, replies: 0, stopped: 0, bounced: 0 };
+  const notes: string[] = [];
+  try {
+    // First run: remember where the mailbox ends now. Old mail is history, never imported.
+    if (mb.imap_last_uid === null) {
+      const r = await deps.imap(mb, password, null);
+      await saveMailbox(db, key, { imap_last_uid: r.uidNext - 1, imap_uid_validity: r.uidValidity, last_sync_at: now, last_sync_error: null });
+      return tally;
+    }
+    let cursor = mb.imap_last_uid;
+    let validity = mb.imap_uid_validity;
+    for (let window = 0; window < MAX_WINDOWS; window++) {
+      const r = await deps.imap(mb, password, cursor);
+      if (validity !== null && r.uidValidity !== validity) {
+        // The UIDs we hold mean nothing any more: start over from the end of the mailbox, importing nothing.
+        await saveMailbox(db, key, { imap_last_uid: r.uidNext - 1, imap_uid_validity: r.uidValidity, last_sync_at: now, last_sync_error: "mailbox UID validity changed; baseline reset" });
+        return tally;
+      }
+      tally.fetched += r.messages.length;
+      for (const m of [...r.messages].sort((a, b) => a.uid - b.uid)) await processMessage(env, key, m, now, tally);
+      if (r.skipped.length) notes.push(`skipped ${r.skipped.length} oversized message(s): uids ${r.skipped.map((s) => s.uid).join(", ")}`);
+      // Only after the whole window was applied: the highest UID examined, so an oversized mail never blocks the ones behind it.
+      const next = Math.max(cursor, r.highestUid);
+      await saveMailbox(db, key, { imap_last_uid: next, imap_uid_validity: r.uidValidity });
+      const progressed = next > cursor;
+      cursor = next; validity = r.uidValidity;
+      if (!progressed || cursor >= r.uidNext - 1) break;
+    }
+    await saveMailbox(db, key, { last_sync_at: now, last_sync_error: notes.length ? notes.join("; ") : null });
+    return tally;
+  } catch (e) {
+    const error = errorText(e, password);
+    await saveMailbox(db, key, { last_sync_error: error }).catch(() => { /* the error is still returned and logged by the caller */ });
+    return { ...tally, error };
+  }
+}
+
+/**
+ * The 15-minute cron: syncs every enabled mailbox that has its password secret. Never throws, and one mailbox failing does not stop the
+ * other. It logs only when there was mail or an error, so an idle mailbox leaves no noise in the logs.
+ */
+export async function syncAllMailboxes(env: Env): Promise<void> {
+  for (const key of MAILBOX_KEYS) {
+    try {
+      const mb = await getMailbox(env.DB, key);
+      const password = mailboxPassword(env, key);
+      if (!mb.enabled || !password) continue;
+      let result: SyncSummary;
+      try {
+        result = await syncMailbox(env, key);
+      } catch (e) {
+        const error = errorText(e, password);
+        await saveMailbox(env.DB, key, { last_sync_error: error });
+        result = { fetched: 0, matched: 0, replies: 0, stopped: 0, bounced: 0, error };
+      }
+      if (result.error) console.error(`mail sync ${key} failed: ${result.error}`);
+      else if (result.fetched > 0) console.log(`mail sync ${key}`, JSON.stringify(result));
+    } catch (e) {
+      console.error(`mail sync ${key} failed`, e);
+    }
+  }
+}
