@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { DraftPlanSchema, SCRIPT_MS, checkPlanAgainst, estimateDurationMs, hashText, lineStale, planDurationMs,
+import { DraftPlanSchema, MarkupSchema, SCRIPT_MS, checkPlanAgainst, estimateDurationMs, hashText, lineStale, planDurationMs,
   type Segment, type Shot } from "../src/worker/video/plan";
 
 const words = (n: number, w = "word") => Array.from({ length: n }, () => w).join(" ");
@@ -72,6 +72,14 @@ describe("DraftPlanSchema", () => {
     expect(DraftPlanSchema.safeParse(c).success).toBe(false);
     c.segments[1].markups = [{ type: "callout", x: 0.1, y: 0.1, text: "two\nlines" }];
     expect(DraftPlanSchema.safeParse(c).success).toBe(false);
+  });
+});
+
+describe("MarkupSchema", () => {
+  it("an empty callout text is a valid draft state", () => {
+    expect(MarkupSchema.safeParse({ type: "callout", x: 0.1, y: 0.1, text: "" }).success).toBe(true);
+    expect(MarkupSchema.safeParse({ type: "callout", x: 0.1, y: 0.1, text: "x".repeat(61) }).success).toBe(false);
+    expect(MarkupSchema.safeParse({ type: "callout", x: 0.1, y: 0.1, text: "two\nlines" }).success).toBe(false);
   });
 });
 

@@ -25,7 +25,7 @@ export const MarkupSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("circle"), x: frac, y: frac, r: frac }),
   z.object({ type: z.literal("arrow"), from: point, to: point }),
   z.object({ type: z.literal("blur"), x: frac, y: frac, w: frac, h: frac }),
-  z.object({ type: z.literal("callout"), x: frac, y: frac, text: z.string().min(1).max(MAX_CALLOUT_CHARS).regex(/^[^\r\n]*$/, "one line") }),
+  z.object({ type: z.literal("callout"), x: frac, y: frac, text: z.string().max(MAX_CALLOUT_CHARS).regex(/^[^\r\n]*$/, "one line") }),
 ]);
 export type Markup = z.infer<typeof MarkupSchema>;
 
