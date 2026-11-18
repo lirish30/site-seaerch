@@ -99,6 +99,20 @@ describe("POST /api/leads/:id/sequence/start", () => {
     expect(await env.DB.prepare(`SELECT 1 AS x FROM approvals`).first()).toBeNull();
   });
 
+  it("start on an archived campaign is 409, an unknown campaign stays 404, and an unknown lead on a live campaign stays 404", async () => {
+    await env.DB.prepare(`UPDATE campaigns SET status = 'archived' WHERE id = ?`).bind(campaignId).run();
+    const r = await post(`/api/leads/${businessId}/sequence/start`, { campaignId });
+    expect(r.status).toBe(409);
+    expect(await r.json()).toEqual({ error: "campaign is archived" });
+    expect(await env.DB.prepare(`SELECT 1 AS x FROM enrollments`).first()).toBeNull();
+    expect(await env.DB.prepare(`SELECT 1 AS x FROM approvals`).first()).toBeNull();
+    expect((await post(`/api/leads/${businessId}/sequence/start`, { campaignId: "nope" })).status).toBe(404);
+    await env.DB.prepare(`UPDATE campaigns SET status = 'active' WHERE id = ?`).bind(campaignId).run();
+    const nolead = await post(`/api/leads/nope/sequence/start`, { campaignId });
+    expect(nolead.status).toBe(404);
+    expect(await nolead.json()).toEqual({ error: "lead not found" });
+  });
+
   it("start twice is 409, a lead with no draft is 400, and a bad body is 400 with fields", async () => {
     expect((await post(`/api/leads/${businessId}/sequence/start`, { campaignId })).status).toBe(201);
     const again = await post(`/api/leads/${businessId}/sequence/start`, { campaignId });
@@ -166,6 +180,42 @@ describe("GET /api/leads/:id/sequence", () => {
     const stopped = await getSeq();
     expect(stopped.enrollment.status).toBe("stopped");
     expect(stopped.steps.map((s: any) => s.state)).toEqual(["skipped", "skipped", "skipped", "skipped"]);
+  });
+
+  // An enrollment row and the sent messages for the given steps, for states the real flow would take days to reach.
+  async function seedRun(o: { status: string; next: number; due: string | null; lastSent: number | null; sentSteps: number[] }) {
+    const id = crypto.randomUUID();
+    await env.DB.prepare(`INSERT INTO enrollments (id, business_id, campaign_id, mailbox_key, to_email, status, next_step_index, next_due_at, started_at, last_sent_at, last_sent_step)
+      VALUES (?,?,?, 'outreach', 'dana@acme.test', ?,?,?,?,?,?)`).bind(id, businessId, campaignId, o.status, o.next, o.due, NOW.toISOString(), o.lastSent === null ? null : NOW.toISOString(), o.lastSent).run();
+    await env.DB.batch(o.sentSteps.map((i) => env.DB.prepare(
+      `INSERT INTO messages (id, direction, mailbox_key, business_id, enrollment_id, step_index, counterpart, subject, text, status, created_at, sent_at)
+       VALUES (?, 'out', 'outreach', ?, ?, ?, 'dana@acme.test', 's', 't', 'sent', ?, ?)`).bind(`sm${i}`, businessId, id, i, NOW.toISOString(), NOW.toISOString())));
+    return id;
+  }
+
+  it("shows a call the sequence has moved past as sent with no date, and only the next step can be due", async () => {
+    await seedRun({ status: "active", next: 3, due: new Date(NOW.getTime() - 3600_000).toISOString(), lastSent: 1, sentSteps: [0, 1] });
+    const seq = await getSeq();
+    expect(seq.steps.map((s: any) => [s.step.idx, s.state])).toEqual([[0, "sent"], [1, "sent"], [2, "sent"], [3, "due"]]);
+    expect(seq.steps[2].at).toBeNull();
+    // Later steps stay upcoming however late the next one is: only the step being waited on is ever "due".
+    await env.DB.prepare(`UPDATE enrollments SET next_step_index = 1, next_due_at = ? WHERE business_id = ?`).bind(new Date(NOW.getTime() - 3600_000).toISOString(), businessId).run();
+    await env.DB.prepare(`DELETE FROM messages WHERE step_index = 1`).run();
+    expect((await getSeq()).steps.map((s: any) => s.state)).toEqual(["sent", "due", "upcoming", "upcoming"]);
+  });
+
+  it("shows a completed enrollment with every step sent", async () => {
+    await seedRun({ status: "completed", next: 4, due: null, lastSent: 3, sentSteps: [0, 1, 3] });
+    const seq = await getSeq();
+    expect(seq.enrollment.status).toBe("completed");
+    expect(seq.steps.map((s: any) => s.state)).toEqual(["sent", "sent", "sent", "sent"]);
+  });
+
+  it("shows a replied enrollment with the remaining steps skipped", async () => {
+    await seedRun({ status: "replied", next: 1, due: null, lastSent: 0, sentSteps: [0] });
+    const seq = await getSeq();
+    expect(seq.enrollment.status).toBe("replied");
+    expect(seq.steps.map((s: any) => s.state)).toEqual(["sent", "skipped", "skipped", "skipped"]);
   });
 
   it("lists the lead's messages newest first, cuts long text and leaves out secrets and transport ids", async () => {

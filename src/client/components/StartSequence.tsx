@@ -6,6 +6,11 @@ import type { Campaign } from "../types";
 import Icon from "./Icon";
 import InlineError from "./InlineError";
 
+/** What follows a start: Email 1 is on Home waiting for the owner. Nothing has been sent. */
+export function WaitingNotice() {
+  return <span className="seq-start done" role="status"><Icon name="check" size={14} />Waiting for your OK on Home<Link className="link-btn" to="/today">Open Home</Link></span>;
+}
+
 interface Props {
   leadId: string;
   /** Turns the button off (a suppressed lead, no draft). `why` is its tooltip. */
@@ -44,9 +49,7 @@ export default function StartSequence({ leadId, disabled, why, beforeStart, onSt
     finally { setBusy(false); }
   }
 
-  if (stage === "done") {
-    return <span className="seq-start done" role="status"><Icon name="check" size={14} />Waiting for your OK on Home<Link className="link-btn" to="/today">Open Home</Link></span>;
-  }
+  if (stage === "done") return <WaitingNotice />;
   if (stage === "idle") {
     return (
       <span className="seq-start">

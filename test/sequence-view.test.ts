@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { messageLabel, pickableCampaigns, stepStateLabel, stepStatusText, stepTitle, type StepView } from "../src/client/sequenceView";
+import { messageLabel, pickableCampaigns, showStartedNotice, stepStateLabel, stepStatusText, stepTitle, type StepView } from "../src/client/sequenceView";
 
 const NOW = new Date("2026-11-18T10:00:00.000Z");
 
@@ -23,8 +23,9 @@ describe("stepStateLabel", () => {
   it("labels a skipped step", () => {
     expect(stepStateLabel("skipped", null, NOW)).toBe("Skipped");
   });
-  it("turns an upcoming step whose day has already come into Due now", () => {
-    expect(stepStateLabel("upcoming", "2026-11-18T09:59:59.000Z", NOW)).toBe("Due now");
+  it("never says Due now for an upcoming step, even when its estimated day has passed", () => {
+    expect(stepStateLabel("upcoming", "2026-11-18T09:59:59.000Z", NOW)).toBe("Due Nov 18");
+    expect(stepStateLabel("upcoming", "2026-11-01T09:59:59.000Z", NOW)).toBe("Due Nov 1");
     expect(stepStateLabel("upcoming", "2026-11-18T10:00:01.000Z", NOW)).toBe("Due Nov 18");
   });
 });
@@ -49,6 +50,13 @@ describe("step titles and words", () => {
     expect(messageLabel({ direction: "out", status: "sent" })).toBe("Sent");
     expect(messageLabel({ direction: "out", status: "failed" })).toBe("Failed");
     expect(messageLabel({ direction: "out", status: "sending" })).toBe("Sending");
+  });
+  it("keeps the start confirmation up only while Email 1 is waiting for the owner", () => {
+    expect(showStartedNotice(true, [view(0, "email", "pending"), view(1, "email", "upcoming")])).toBe(true);
+    expect(showStartedNotice(true, [view(0, "email", "sent", "2026-11-18T09:00:00.000Z"), view(1, "email", "upcoming")])).toBe(false);
+    expect(showStartedNotice(true, [view(0, "email", "skipped")])).toBe(false);
+    expect(showStartedNotice(false, [view(0, "email", "pending")])).toBe(false);
+    expect(showStartedNotice(true, [])).toBe(false);
   });
   it("offers every campaign but the archived ones", () => {
     expect(pickableCampaigns([{ id: "a", status: "testing" }, { id: "b", status: "archived" }, { id: "c", status: "active" }]).map((c) => c.id)).toEqual(["a", "c"]);

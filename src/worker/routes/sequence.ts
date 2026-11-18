@@ -74,10 +74,13 @@ sequenceRoutes.post("/:id/sequence/start", async (c) => {
   const parsed = StartBody.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json(invalid(parsed.error), 400);
   const businessId = c.req.param("id");
-  const r = await startSequence(c.env, { businessId, campaignId: parsed.data.campaignId });
-  if (!r.ok) return c.json({ error: r.error }, r.status);
+  // Order of refusals: bad body 400, unknown campaign 404, archived campaign 409, then the engine's own (unknown lead 404, ...).
   const campaign = await getCampaign(c.env.DB, parsed.data.campaignId);
-  await logActivity(c.env.DB, businessId, "note", `Sequence started: ${campaign?.name ?? "campaign"}; Email 1 is waiting for your OK`);
+  if (!campaign) return c.json({ error: "campaign not found" }, 404);
+  if (campaign.status === "archived") return c.json({ error: "campaign is archived" }, 409);
+  const r = await startSequence(c.env, { businessId, campaignId: campaign.id });
+  if (!r.ok) return c.json({ error: r.error }, r.status);
+  await logActivity(c.env.DB, businessId, "note", `Sequence started: ${campaign.name}; Email 1 is waiting for your OK`);
   return c.json({ enrollmentId: r.enrollmentId, approvalId: r.approvalId }, 201);
 });
 

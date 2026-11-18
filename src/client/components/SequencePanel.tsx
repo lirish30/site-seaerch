@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api";
-import { ENROLLMENT_LABEL, ENROLLMENT_TONE, isLiveStatus, messageLabel, stepStatusText, stepTitle, type SequenceData } from "../sequenceView";
+import { ENROLLMENT_LABEL, ENROLLMENT_TONE, isLiveStatus, messageLabel, showStartedNotice, stepStatusText, stepTitle, type SequenceData } from "../sequenceView";
 import { sinceLabel } from "../settingsView";
 import Icon from "./Icon";
 import InlineError from "./InlineError";
 import { Badge } from "./Score";
-import StartSequence from "./StartSequence";
+import StartSequence, { WaitingNotice } from "./StartSequence";
 
 interface Props {
   leadId: string; leadName: string;
@@ -25,6 +25,8 @@ interface Props {
 export default function SequencePanel({ leadId, leadName, startDisabled, startWhy, beforeStart, refreshKey = 0, onChanged }: Props) {
   const [data, setData] = useState<SequenceData | null>(null);
   const [error, setError] = useState(""); const [stopping, setStopping] = useState(false);
+  // Set when a sequence is started here; the confirmation stays while Email 1 is waiting for the owner, and a stop clears it.
+  const [justStarted, setJustStarted] = useState(false);
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
@@ -39,11 +41,11 @@ export default function SequencePanel({ leadId, leadName, startDisabled, startWh
   async function stop() {
     if (!window.confirm(`Stop the sequence for ${leadName}? Any email waiting for your OK is rejected and nothing more is proposed. You can start it again later.`)) return;
     setStopping(true); setError("");
-    try { await api.post(`/leads/${leadId}/sequence/stop`); await load(); onChanged?.(); }
+    try { await api.post(`/leads/${leadId}/sequence/stop`); setJustStarted(false); await load(); onChanged?.(); }
     catch (e) { setError(e instanceof ApiError ? e.message : (e as Error).message || "Couldn't stop the sequence."); }
     finally { if (alive.current) setStopping(false); }
   }
-  async function started() { await load(); onChanged?.(); }
+  async function started() { setJustStarted(true); await load(); onChanged?.(); }
 
   if (!data) return error ? <InlineError message={error} /> : <p className="muted small">Loading…</p>;
   const e = data.enrollment, live = !!e && isLiveStatus(e.status), now = new Date();
@@ -65,6 +67,7 @@ export default function SequencePanel({ leadId, leadName, startDisabled, startWh
               </li>
             ))}
           </ol>
+          {live && showStartedNotice(justStarted, data.steps) && <WaitingNotice />}
           {live && <button type="button" className="btn danger sm seq-stop" onClick={() => void stop()} disabled={stopping}><Icon name="ban" size={14} />{stopping ? "Stopping…" : "Stop sequence"}</button>}
         </>
       ) : <p className="muted small">Not in a sequence.</p>}

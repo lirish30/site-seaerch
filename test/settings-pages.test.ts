@@ -41,7 +41,7 @@ describe("usage history", () => {
   });
 });
 
-describe("mailing footer and Gmail defaults", () => {
+describe("mailing footer and email defaults", () => {
   afterEach(async () => { await saveSettings(env.DB, { footer_freelance: 1, attach_audit_pdf: 1 }); });
   const put = (body: unknown) => api("/api/settings", { method: "PUT", body: JSON.stringify(body) });
 

@@ -8,10 +8,10 @@ export interface StepView { step: SequenceStep; state: StepState; at: string | n
 const monthDay = (iso: string): string => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 
 /**
- * One step's state as a short phrase. An upcoming step whose day has already come reads "Due now", since the daily scan will propose
- * it next. A missing or unreadable date leaves the day off rather than showing "Invalid Date".
+ * One step's state as a short phrase. "Due now" is only ever the `due` state (the server decides it); an upcoming step always reads
+ * "Due <day>" from its (estimated) date. A missing or unreadable date leaves the day off rather than showing "Invalid Date".
  */
-export function stepStateLabel(state: StepState, at: string | null, now: Date): string {
+export function stepStateLabel(state: StepState, at: string | null, _now: Date): string {
   const t = at ? Date.parse(at) : NaN;
   switch (state) {
     case "sent": return Number.isNaN(t) ? "Sent" : `Sent ${monthDay(at!)}`;
@@ -19,7 +19,7 @@ export function stepStateLabel(state: StepState, at: string | null, now: Date): 
     case "due": return "Due now";
     case "upcoming":
       if (Number.isNaN(t)) return "Upcoming";
-      return t <= now.getTime() ? "Due now" : `Due ${monthDay(at!)}`;
+      return `Due ${monthDay(at!)}`;
     case "skipped": return "Skipped";
   }
 }
@@ -68,3 +68,7 @@ export function messageLabel(m: Pick<SequenceMessage, "direction" | "status">): 
 
 /** The campaigns the picker offers: archived ones are left out, the rest keep the server's order. */
 export const pickableCampaigns = <T extends { status: string }>(list: T[]): T[] => list.filter((c) => c.status !== "archived");
+
+/** "Waiting for your OK on Home" stays up after a start for as long as Email 1 is still waiting for the owner. */
+export const showStartedNotice = (justStarted: boolean, steps: StepView[]): boolean =>
+  justStarted && steps.some((v) => v.step.idx === 0 && v.state === "pending");

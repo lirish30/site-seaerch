@@ -26,10 +26,11 @@ export async function verifyState(secret: string, state: string, cookieNonce: st
   return diff === 0;
 }
 
+// No `include_granted_scopes`: with it Google would fold scopes granted in an earlier consent (the old Gmail one) into a reconnect.
 export function authUrl(c: OAuthClient, state: string): string {
   const q = new URLSearchParams({
     client_id: c.clientId, redirect_uri: c.redirectUri, response_type: "code", scope: SCOPES.join(" "),
-    access_type: "offline", prompt: "consent", include_granted_scopes: "true", state,
+    access_type: "offline", prompt: "consent", state,
   });
   return `${AUTH_URL}?${q}`;
 }

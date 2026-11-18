@@ -324,7 +324,7 @@ leadRoutes.patch("/:id/draft", async (c) => {
   return c.json({ ok: true });
 });
 
-// The email exactly as it would be saved to Gmail: body, signature, optional footer. Stateless, so the editor can preview unsaved edits.
+// The email exactly as it will be sent: body, signature, optional footer. Stateless, so the editor can preview unsaved edits.
 leadRoutes.post("/:id/draft/preview", async (c) => {
   const p = PatchDraft.safeParse(await c.req.json().catch(() => ({})));
   if (!p.success) return c.json({ error: "invalid" }, 400);
