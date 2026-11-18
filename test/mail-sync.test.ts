@@ -75,6 +75,7 @@ const eml = (o: { from: string; inReplyTo?: string; subject?: string; body: stri
 
 let campaignId = "";
 let smtpCalls = 0;
+let warnings: string[] = [];
 let searchId = "";
 
 /** A lead with a sequence and the outbound email it was sent (Message-ID `outbound`), the way the send path leaves them. */
@@ -100,7 +101,8 @@ const mailbox = () => getMailbox(env.DB, "outreach");
 
 beforeEach(async () => {
   box.uidValidity = 7; box.window = 25; box.mails = []; box.uidNext = 1; box.calls = []; box.fail = null; box.oversized = new Set();
-  smtpCalls = 0;
+  smtpCalls = 0; warnings = [];
+  vi.spyOn(console, "warn").mockImplementation((...a) => { warnings.push(a.map(String).join(" ")); });
   setMailDeps({ imap: fakeImap, smtp: async () => { smtpCalls++; }, now: () => NOW });
   await env.DB.batch(["enrollments", "approvals", "messages", "campaigns", "do_not_contact", "suppressions", "activity", "businesses"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
   await saveMailbox(env.DB, "outreach", { ...CONFIG, imap_uid_validity: null, imap_last_uid: null, last_sync_at: null, last_sync_error: null, warmup_started_at: new Date(NOW.getTime() - 40 * DAY).toISOString() });
@@ -132,10 +134,30 @@ describe("syncMailbox: baseline", () => {
     expect(r).toEqual({ fetched: 0, matched: 0, replies: 0, stopped: 0, bounced: 0 });
     expect(await mailbox()).toMatchObject({ imap_last_uid: 19, imap_uid_validity: 8, last_sync_error: "mailbox UID validity changed; baseline reset" });
     expect(await inbound()).toHaveLength(0);
+    expect(warnings).toEqual(["mail sync outreach: mailbox UID validity changed; baseline reset"]);
     // the next run is an ordinary one from the new baseline
     box.uidNext = 21; box.mails.push({ uid: 20, raw: replyEml });
     expect((await syncMailbox(env, "outreach")).replies).toBe(1);
     expect((await mailbox()).last_sync_error).toBeNull();
+  });
+});
+
+describe("syncMailbox: UID validity and stored UIDs", () => {
+  it("a new-epoch mail that reuses a UID of an old processed row is still applied", async () => {
+    const lead = await seedLead("Bright Smiles", { to: "pat@brightsmiles.example", outbound: OUT.reply });
+    // an old-epoch message with UID 20 was stored and processed long ago
+    await env.DB.prepare(`INSERT INTO messages (id, direction, mailbox_key, business_id, enrollment_id, counterpart, subject, text, status, kind, imap_uid, created_at, processed_at)
+      VALUES ('old', 'in', 'outreach', ?, ?, 'pat@brightsmiles.example', 'old', 'old', 'received', 'auto_reply', 20, ?, ?)`)
+      .bind(lead.businessId, lead.enrollmentId, new Date(NOW.getTime() - 9 * DAY).toISOString(), new Date(NOW.getTime() - 9 * DAY).toISOString()).run();
+    await saveMailbox(env.DB, "outreach", { imap_last_uid: 30, imap_uid_validity: 7 });
+    box.uidValidity = 8; box.uidNext = 20; // the new epoch is numbered below the old UIDs
+    await syncMailbox(env, "outreach");
+    expect((await mailbox()).imap_last_uid).toBe(19);
+    box.uidNext = 21; box.mails.push({ uid: 20, raw: replyEml }); // the reply gets UID 20 again
+    expect(await syncMailbox(env, "outreach")).toMatchObject({ fetched: 1, matched: 1, replies: 1 });
+    expect(await enrollment(lead.enrollmentId)).toMatchObject({ status: "replied" });
+    const rows = (await env.DB.prepare(`SELECT id, imap_uid, kind FROM messages WHERE direction = 'in' ORDER BY created_at`).all<Record<string, any>>()).results;
+    expect(rows).toEqual([{ id: "old", imap_uid: null, kind: "auto_reply" }, expect.objectContaining({ imap_uid: 20, kind: "reply" })]);
   });
 });
 
@@ -430,6 +452,119 @@ describe("syncMailbox: windows and oversized mail", () => {
     expect((await mailbox())).toMatchObject({ imap_last_uid: uids[1], last_sync_at: NOW.toISOString() });
     expect((await mailbox()).last_sync_error).toBe(`skipped 1 oversized message(s): uids ${uids[0]}`);
     expect((await enrollment(lead.enrollmentId)).status).toBe("replied");
+    expect(warnings).toEqual([`mail sync outreach: skipped 1 oversized message(s): uids ${uids[0]}`]);
+  });
+});
+
+describe("syncMailbox: a message that cannot be applied", () => {
+  const POISON = `CREATE TRIGGER poison BEFORE INSERT ON messages WHEN NEW.subject LIKE '%POISON%' BEGIN SELECT RAISE(ABORT, 'poisoned'); END`;
+  const fromLead = (from: string, subject: string) => eml({ from, subject, body: "hello there" });
+  afterEach(async () => { await env.DB.prepare(`DROP TRIGGER IF EXISTS poison`).run(); });
+
+  async function threeInAWindow() {
+    const a = await seedLead("Bright Smiles", { to: "pat@brightsmiles.example", outbound: OUT.reply });
+    const b = await seedLead("Poison Co", { to: "poison@poison.example", outbound: null });
+    const c = await seedLead("Lakeview Vet", { to: "dana@lakeviewvet.example", outbound: OUT.stop });
+    await baseline();
+    deliver(replyEml, fromLead("poison@poison.example", "POISON"), stopEml);
+    await env.DB.prepare(POISON).run();
+    return { a, b, c };
+  }
+
+  it("a poison message in the middle of a window does not stop the later messages, and the cursor holds", async () => {
+    const { a, b, c } = await threeInAWindow();
+    const r = await syncMailbox(env, "outreach");
+    expect(r).toMatchObject({ fetched: 3, replies: 1, stopped: 1 });
+    expect(r.error).toMatch(/^failed on uid 2: .*poisoned/);
+    expect((await enrollment(a.enrollmentId)).status).toBe("replied");
+    expect((await enrollment(c.enrollmentId)).status).toBe("stopped"); // the stop behind the bad message was applied
+    expect((await enrollment(b.enrollmentId)).status).toBe("active");
+    expect(await mailbox()).toMatchObject({ imap_last_uid: 0, imap_fail_count: 1, imap_fail_cursor: 0 });
+    expect((await mailbox()).last_sync_error).toBe(r.error);
+    // the next run re-reads the window; the two applied messages are skipped, not applied again
+    const again = await syncMailbox(env, "outreach");
+    expect(again).toMatchObject({ fetched: 3, replies: 0, stopped: 0 });
+    expect(await mailbox()).toMatchObject({ imap_last_uid: 0, imap_fail_count: 2 });
+    expect((await listActivity(env.DB, a.businessId)).filter((x) => x.kind === "email_reply")).toHaveLength(1);
+  });
+
+  it("after 5 failing runs the cursor moves past the window and the give-up is recorded", async () => {
+    const { b } = await threeInAWindow();
+    for (let i = 1; i <= 4; i++) {
+      expect((await syncMailbox(env, "outreach")).error).toBeDefined();
+      expect(await mailbox()).toMatchObject({ imap_last_uid: 0, imap_fail_count: i });
+    }
+    const fifth = await syncMailbox(env, "outreach");
+    expect(fifth.error).toMatch(/^gave up on uid 2 after 5 attempts: .*poisoned/);
+    expect(await mailbox()).toMatchObject({ imap_last_uid: 3, imap_fail_count: 0, imap_fail_cursor: null, last_sync_at: NOW.toISOString() });
+    expect((await mailbox()).last_sync_error).toBe(fifth.error);
+    expect(warnings.some((w) => w.includes("gave up on uid 2"))).toBe(true);
+    expect((await enrollment(b.enrollmentId)).status).toBe("active"); // that one message was dropped, nothing else
+    // and the mailbox is flowing again
+    deliver(eml({ from: "nobody@x.example", body: "hi" }));
+    expect((await syncMailbox(env, "outreach")).error).toBeUndefined();
+    expect((await mailbox()).imap_last_uid).toBe(4);
+  });
+
+  it("the failure counter resets after a clean window", async () => {
+    await threeInAWindow();
+    await syncMailbox(env, "outreach"); await syncMailbox(env, "outreach");
+    expect((await mailbox()).imap_fail_count).toBe(2);
+    await env.DB.prepare(`DROP TRIGGER poison`).run();
+    const ok = await syncMailbox(env, "outreach");
+    expect(ok.error).toBeUndefined();
+    expect(await mailbox()).toMatchObject({ imap_last_uid: 3, imap_fail_count: 0, imap_fail_cursor: null, last_sync_error: null });
+    // a later failure starts counting from one again
+    deliver(fromLead("poison@poison.example", "POISON again"));
+    await env.DB.prepare(POISON).run();
+    await syncMailbox(env, "outreach");
+    expect(await mailbox()).toMatchObject({ imap_last_uid: 3, imap_fail_count: 1, imap_fail_cursor: 3 });
+  });
+
+  it("a different failing window starts the count over", async () => {
+    await threeInAWindow();
+    await syncMailbox(env, "outreach");
+    await saveMailbox(env.DB, "outreach", { imap_last_uid: 1 }); // the cursor is somewhere else now
+    await syncMailbox(env, "outreach");
+    expect(await mailbox()).toMatchObject({ imap_fail_count: 1, imap_fail_cursor: 1 });
+  });
+
+  it("a 2 MB Subject is stored clamped and its effect applies", async () => {
+    const lead = await seedLead("Bright Smiles", { to: "pat@brightsmiles.example", outbound: OUT.reply });
+    await baseline();
+    deliver(eml({ from: "pat@brightsmiles.example", inReplyTo: OUT.reply, subject: "S".repeat(2_000_000), body: "Yes please." }));
+    const r = await syncMailbox(env, "outreach");
+    expect(r).toMatchObject({ matched: 1, replies: 1 });
+    expect(r.error).toBeUndefined();
+    expect((await enrollment(lead.enrollmentId)).status).toBe("replied");
+    const row = (await inbound())[0];
+    expect(row.subject).toHaveLength(998);
+    expect((await listActivity(env.DB, lead.businessId)).find((x) => x.kind === "email_reply")!.detail!.length).toBeLessThan(400);
+  });
+
+  it("an oversized Message-ID, In-Reply-To and sender are clamped too", async () => {
+    await seedLead("Bright Smiles", { to: "pat@brightsmiles.example", outbound: OUT.reply });
+    await baseline();
+    deliver(
+      `From: pat@brightsmiles.example\r\nSubject: Re\r\nMessage-ID: <${"m".repeat(5000)}@x.test>\r\nIn-Reply-To: ${OUT.reply}\r\nReferences: ${OUT.reply} <${"r".repeat(5000)}@x.test>\r\n\r\nok\r\n`,
+    );
+    expect((await syncMailbox(env, "outreach")).replies).toBe(1);
+    const row = (await inbound())[0];
+    expect(row.message_id.length).toBeLessThanOrEqual(998);
+    expect(row.in_reply_to.length).toBeLessThanOrEqual(998);
+    expect(row.counterpart.length).toBeLessThanOrEqual(320);
+  });
+
+  it("a stop with no usable address still stops, and the unusable stored address is not listed", async () => {
+    const lead = await seedLead("Lakeview Vet", { to: "not-an-email", outbound: OUT.stop });
+    await baseline();
+    deliver(`Subject: Re: hello\r\nMessage-ID: <nofrom@x.test>\r\nIn-Reply-To: ${OUT.stop}\r\n\r\nStop\r\n`);
+    const r = await syncMailbox(env, "outreach");
+    expect(r).toMatchObject({ stopped: 1 });
+    expect(r.error).toBeUndefined();
+    expect(await enrollment(lead.enrollmentId)).toMatchObject({ status: "stopped", stopped_reason: "opt_out" });
+    expect(await listDoNotContact(env.DB)).toHaveLength(0);
+    expect((await inbound())[0].processed_at).toBe(NOW.toISOString());
   });
 });
 

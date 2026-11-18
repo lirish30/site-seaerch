@@ -16,7 +16,12 @@ export interface SyncSummary {
 
 /** Fetch windows per run: a backlog drains faster than one window per 15 minutes without one run holding the Worker for long. */
 const MAX_WINDOWS = 4;
-const AUTO_REPLY_DELAY_MS = 7 * 86_400_000;
+/** Consecutive failing runs on one cursor before the sync gives up on the window's bad message and moves on. */
+const MAX_ATTEMPTS = 5;
+// Stored fields are clamped: a sender controls them, and D1 rows are limited to 2 MB.
+const SUBJECT_MAX = 998;
+const ADDRESS_MAX = 320;
+const ID_MAX = 998;
 /** References lists grow with the thread (and can be hostile); the newest entries are the ones that name our message. */
 const MAX_REFERENCES = 10;
 
@@ -24,7 +29,7 @@ const EMAIL = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
 /** An address fit for the do-not-contact list, or undefined. A mail system's odd Final-Recipient must never make the stop throw (it would block the mailbox on that message). */
 const usable = (a: string | null | undefined): string | undefined => {
   const t = a?.trim().replace(/^<|>$/g, "").toLowerCase();
-  return t && EMAIL.test(t) ? t : undefined;
+  return t && t.length <= ADDRESS_MAX && EMAIL.test(t) ? t : undefined;
 };
 
 const clip = (s: string, n = 160) => (s.length > n ? `${s.slice(0, n)}...` : s);
@@ -78,7 +83,8 @@ async function processMessage(env: Env, key: MailboxKey, m: { uid: number; raw: 
   if (!row) {
     await db.prepare(`INSERT INTO messages (id, direction, mailbox_key, business_id, enrollment_id, message_id, in_reply_to, counterpart, subject, text, status, kind, imap_uid, created_at)
       VALUES (?, 'in', ?, ?, ?, ?, ?, ?, ?, ?, 'received', ?, ?, ?) ON CONFLICT (mailbox_key, imap_uid) WHERE imap_uid IS NOT NULL DO NOTHING`)
-      .bind(crypto.randomUUID(), key, match.businessId, match.enrollmentId, parsed.messageId, parsed.inReplyTo, parsed.from, parsed.subject, parsed.text, kind, m.uid, now).run();
+      .bind(crypto.randomUUID(), key, match.businessId, match.enrollmentId, parsed.messageId?.slice(0, ID_MAX) ?? null, parsed.inReplyTo?.slice(0, ID_MAX) ?? null,
+        parsed.from.slice(0, ADDRESS_MAX), parsed.subject.slice(0, SUBJECT_MAX), parsed.text, kind, m.uid, now).run();
     row = await findStored(db, key, m.uid);
     if (!row) throw new Error(`could not store message ${m.uid}`);
     if (row.processed_at) return; // another run finished it between our two reads
@@ -112,12 +118,12 @@ async function processMessage(env: Env, key: MailboxKey, m: { uid: number; raw: 
       await db.batch([activityStmt(db, businessId, "email_bounce", `Temporary delivery problem (${parsed.dsn?.status ?? "4.x.x"}); nothing changed`), stamp]);
       return;
     case "auto_reply": {
+      // The push is one SQL expression on the current value, so an overlapping run (or a send) that moved the step meanwhile is never overwritten.
       const enrollment = match.enrollmentId ? await getEnrollment(db, match.enrollmentId) : null;
-      const delay = enrollment?.status === "active" && enrollment.next_due_at;
-      const pushed = delay ? new Date(Date.parse(enrollment.next_due_at!) + AUTO_REPLY_DELAY_MS).toISOString() : null;
+      const delays = enrollment?.status === "active" && enrollment.next_due_at !== null;
       await db.batch([
-        ...(pushed ? [db.prepare(`UPDATE enrollments SET next_due_at = ? WHERE id = ? AND status = 'active' AND next_due_at IS NOT NULL`).bind(pushed, enrollment!.id)] : []),
-        activityStmt(db, businessId, "note", `Automatic reply from ${sender}${pushed ? "; the next step is delayed 7 days" : ""}`),
+        ...(delays ? [db.prepare(`UPDATE enrollments SET next_due_at = strftime('%Y-%m-%dT%H:%M:%fZ', next_due_at, '+7 days') WHERE id = ? AND status = 'active' AND next_due_at IS NOT NULL`).bind(enrollment!.id)] : []),
+        activityStmt(db, businessId, "note", `Automatic reply from ${sender}${delays ? "; the next step is delayed 7 days" : ""}`),
         stamp,
       ]);
       return;
@@ -128,7 +134,13 @@ async function processMessage(env: Env, key: MailboxKey, m: { uid: number; raw: 
 /**
  * Pulls new mail for one mailbox and acts on it. Throws only when the mailbox cannot be synced at all (no password secret, not configured).
  * Anything that goes wrong while syncing (IMAP, storage) is written to `last_sync_error` and returned as `error`: the cursor stays where it was,
- * so the next run retries the same window.
+ * so the next run retries the same window. Each message is applied in isolation, so one bad message cannot keep the others in its window
+ * (a later stop, say) from being applied; after MAX_ATTEMPTS failing runs on the same cursor the window is skipped past.
+ *
+ * SECURITY: inbound mail is NOT authenticated. There is no SPF, DKIM or Authentication-Results check, and a message is matched to a lead by the
+ * Message-ID it answers or simply by its From address. A forged reply, stop or bounce notice can therefore end a lead's sequence or add an address
+ * to the do-not-contact list. That fails safe (it only ever stops outreach) and is reversible from the do-not-contact list and the lead page.
+ * Mail is matched to any enrollment's address, past or present, whichever mailbox it arrives in, so `main` mail from an old lead's address matches too.
  */
 export async function syncMailbox(env: Env, key: MailboxKey): Promise<SyncSummary> {
   const db = env.DB;
@@ -141,34 +153,67 @@ export async function syncMailbox(env: Env, key: MailboxKey): Promise<SyncSummar
   const now = deps.now().toISOString();
   const tally: SyncSummary = { fetched: 0, matched: 0, replies: 0, stopped: 0, bounced: 0 };
   const notes: string[] = [];
+  let gaveUp: string | null = null;
   try {
     // First run: remember where the mailbox ends now. Old mail is history, never imported.
     if (mb.imap_last_uid === null) {
       const r = await deps.imap(mb, password, null);
-      await saveMailbox(db, key, { imap_last_uid: r.uidNext - 1, imap_uid_validity: r.uidValidity, last_sync_at: now, last_sync_error: null });
+      await saveMailbox(db, key, { imap_last_uid: r.uidNext - 1, imap_uid_validity: r.uidValidity, last_sync_at: now, last_sync_error: null, imap_fail_count: 0, imap_fail_cursor: null });
       return tally;
     }
     let cursor = mb.imap_last_uid;
     let validity = mb.imap_uid_validity;
+    let failCount = mb.imap_fail_count ?? 0;
+    let failCursor = mb.imap_fail_cursor ?? null;
     for (let window = 0; window < MAX_WINDOWS; window++) {
       const r = await deps.imap(mb, password, cursor);
       if (validity !== null && r.uidValidity !== validity) {
-        // The UIDs we hold mean nothing any more: start over from the end of the mailbox, importing nothing.
-        await saveMailbox(db, key, { imap_last_uid: r.uidNext - 1, imap_uid_validity: r.uidValidity, last_sync_at: now, last_sync_error: "mailbox UID validity changed; baseline reset" });
+        // The UIDs we hold mean nothing any more: start over from the end of the mailbox, importing nothing. Stored UIDs are released in the
+        // same batch (the unique index ignores NULLs) so a new-epoch mail that reuses one is not mistaken for a message already done.
+        const note = "mailbox UID validity changed; baseline reset";
+        await db.batch([
+          db.prepare(`UPDATE messages SET imap_uid = NULL WHERE mailbox_key = ? AND direction = 'in'`).bind(key),
+          db.prepare(`UPDATE mailboxes SET imap_last_uid = ?, imap_uid_validity = ?, last_sync_at = ?, last_sync_error = ?, imap_fail_count = 0, imap_fail_cursor = NULL WHERE key = ?`)
+            .bind(r.uidNext - 1, r.uidValidity, now, note, key),
+        ]);
+        console.warn(`mail sync ${key}: ${note}`);
         return tally;
       }
       tally.fetched += r.messages.length;
-      for (const m of [...r.messages].sort((a, b) => a.uid - b.uid)) await processMessage(env, key, m, now, tally);
-      if (r.skipped.length) notes.push(`skipped ${r.skipped.length} oversized message(s): uids ${r.skipped.map((s) => s.uid).join(", ")}`);
+      const failures: { uid: number; error: string }[] = [];
+      for (const m of [...r.messages].sort((a, b) => a.uid - b.uid)) {
+        try { await processMessage(env, key, m, now, tally); }
+        catch (e) { failures.push({ uid: m.uid, error: errorText(e, password) }); }
+      }
+      if (r.skipped.length) {
+        const note = `skipped ${r.skipped.length} oversized message(s): uids ${r.skipped.map((x) => x.uid).join(", ")}`;
+        notes.push(note);
+        console.warn(`mail sync ${key}: ${note}`);
+      }
+      if (failures.length) {
+        const first = failures[0];
+        const count = failCursor === cursor ? failCount + 1 : 1;
+        if (count < MAX_ATTEMPTS) {
+          // Hold the cursor: the whole window is read again next run. Messages already applied are skipped there (processed_at), and the failing one retried.
+          const error = `failed on uid ${first.uid}${failures.length > 1 ? ` (and ${failures.length - 1} more)` : ""}: ${first.error}`;
+          await saveMailbox(db, key, { imap_fail_count: count, imap_fail_cursor: cursor, last_sync_error: error });
+          return { ...tally, error };
+        }
+        // Everything else in the window was applied (and the effects are idempotent), so the only loss is the message that keeps failing.
+        gaveUp = `gave up on uid ${first.uid} after ${MAX_ATTEMPTS} attempts: ${first.error}`;
+        console.warn(`mail sync ${key}: ${gaveUp}`);
+        notes.push(gaveUp);
+      }
       // Only after the whole window was applied: the highest UID examined, so an oversized mail never blocks the ones behind it.
       const next = Math.max(cursor, r.highestUid);
-      await saveMailbox(db, key, { imap_last_uid: next, imap_uid_validity: r.uidValidity });
+      await saveMailbox(db, key, { imap_last_uid: next, imap_uid_validity: r.uidValidity, imap_fail_count: 0, imap_fail_cursor: null });
+      failCount = 0; failCursor = null;
       const progressed = next > cursor;
       cursor = next; validity = r.uidValidity;
       if (!progressed || cursor >= r.uidNext - 1) break;
     }
     await saveMailbox(db, key, { last_sync_at: now, last_sync_error: notes.length ? notes.join("; ") : null });
-    return tally;
+    return gaveUp ? { ...tally, error: gaveUp } : tally;
   } catch (e) {
     const error = errorText(e, password);
     await saveMailbox(db, key, { last_sync_error: error }).catch(() => { /* the error is still returned and logged by the caller */ });

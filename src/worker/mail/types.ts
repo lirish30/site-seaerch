@@ -16,6 +16,9 @@ export interface Mailbox {
   imap_last_uid: number | null;
   last_sync_at: string | null;
   last_sync_error: string | null;
+  /** Consecutive sync runs that failed to apply a message while the cursor sat at `imap_fail_cursor`. */
+  imap_fail_count: number;
+  imap_fail_cursor: number | null;
 }
 
 export interface OutboundMessage {

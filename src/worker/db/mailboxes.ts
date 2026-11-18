@@ -11,7 +11,7 @@ export async function getMailbox(db: D1Database, key: MailboxKey): Promise<Mailb
 
 const COLUMNS = new Set<string>([
   "enabled", "smtp_host", "smtp_port", "imap_host", "imap_port", "username", "from_email", "from_name",
-  "warmup_started_at", "imap_uid_validity", "imap_last_uid", "last_sync_at", "last_sync_error",
+  "warmup_started_at", "imap_uid_validity", "imap_last_uid", "last_sync_at", "last_sync_error", "imap_fail_count", "imap_fail_cursor",
 ]);
 
 export async function saveMailbox(db: D1Database, key: MailboxKey, patch: Partial<Omit<Mailbox, "key">>): Promise<Mailbox> {

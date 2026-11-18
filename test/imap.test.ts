@@ -212,7 +212,7 @@ function fakeServer(opts: {
 const mb = (over: Partial<Mailbox> = {}): Mailbox => ({
   key: "outreach", enabled: 1, smtp_host: "smtp.test", smtp_port: 465, imap_host: "imap.test", imap_port: 993,
   username: "outreach@hellositeline.test", from_email: "outreach@hellositeline.test", from_name: "Logan",
-  warmup_started_at: null, imap_uid_validity: null, imap_last_uid: null, last_sync_at: null, last_sync_error: null, ...over,
+  warmup_started_at: null, imap_uid_validity: null, imap_last_uid: null, last_sync_at: null, last_sync_error: null, imap_fail_count: 0, imap_fail_cursor: null, ...over,
 });
 const cmds = (seen: string[]) => seen.map((l) => l.split(" ")[1]);
 

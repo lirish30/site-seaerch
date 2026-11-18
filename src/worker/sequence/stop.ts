@@ -1,5 +1,5 @@
 import { reject } from "../approvals/decide";
-import { addDoNotContact } from "../db/doNotContact";
+import { InvalidDoNotContact, addDoNotContact } from "../db/doNotContact";
 import { isDuplicateKey } from "../db/services";
 import { getBusiness, updateLead } from "../db/businesses";
 import { suppressLead } from "../db/suppression";
@@ -54,7 +54,7 @@ export async function stopOutreach(
   }
   if (email && (o.reason === "opt_out" || o.reason === "bounced")) {
     try { await addDoNotContact(db, { kind: "email", value: email, reason: o.reason, note: "added by the sequence stop" }); }
-    catch (e) { if (!isDuplicateKey(e)) throw e; }
+    catch (e) { if (!isDuplicateKey(e) && !(e instanceof InvalidDoNotContact)) throw e; } // an unusable stored address must not undo the stop
   }
   if (business) await logActivity(db, o.businessId, "note", `Outreach stopped (${o.reason}); ${rejectedApprovals} pending approval${rejectedApprovals === 1 ? "" : "s"} rejected`);
   return { rejectedApprovals };
