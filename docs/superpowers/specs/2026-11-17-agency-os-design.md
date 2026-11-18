@@ -34,7 +34,7 @@ His stated biggest pains **[Logan]**: scope creep and not following up on invoic
 2. Every client, project, task, document, invoice, meeting, time entry and Claude action is tied together in one place. **[Logan]** He liked that ActiveCollab ties time, people and projects together "so you can tie it to an invoice."
 3. Every piece of delivery work runs from an SOP. A package-level SOP becomes a per-client copy, and each step says who does it (Claude / Logan / Claude drafts → Logan approves) and when it's done.
 4. Recurring work batches across clients (for example, all Care updates on one weekday), so 40–50 clients stay manageable.
-5. Claude can operate the app two ways **[Logan]**: through an MCP server from Claude Code or the Claude app, and through scheduled background jobs. Anything outbound waits as a draft for Logan's approval.
+5. Claude operates the app **only through Logan's Claude subscription, never the paid Claude API** **[Logan, 2026-11-18]**. It works via the MCP server from Claude Code or the Claude app, in Logan's sessions. The app queues the work (drafts to write, audits to review, reports to fill) and Claude picks it up there. Anything outbound waits as a draft for Logan's approval.
 6. Professional client experience **[Logan: "it needs to be more professional"]**: branded proposals, e-signing, Stripe invoices with card and ACH, private client links.
 7. Setup cost close to $0 **[Logan]**, running cost at or under **$150/month** **[Logan]**.
 
@@ -91,9 +91,10 @@ Also considered and rejected: Linear for tasks (no time tracking, built for soft
  │ Job queue table (work for the Mac helper)                        │
  └─────────┬──────────────────────┬───────────────────┬─────────────┘
            │                      │                   │
-   Google APIs             Stripe (invoices,     Claude API
-   (Gmail send/sync,       subscriptions,        (scheduled jobs,
-   Calendar, Drive)        webhooks)             spend-capped)
+   Google APIs             Stripe (invoices,     Claude task queue
+   (Gmail send/sync,       subscriptions,        (worked by Claude Code
+   Calendar, Drive)        webhooks)             on Logan's subscription
+                                                 via MCP; no API)
            ▲
            │ polls for jobs, uploads results (device token)
  ┌─────────┴──────── Mac helper (Logan's laptop) ───────────────────┐
@@ -367,10 +368,13 @@ Stored as editable settings (the package catalog). Prices end in 7 for one-time 
   - read: search records, read a record and its timeline
   - act: run an audit, create drafts, complete `Claude` steps, log time, attach files
   - **Outbound actions only ever create Approvals.**
-- **Scheduled jobs:** cron + Workflows call the Claude API for batch work: morning prospect prep, follow-up drafts, Friday updates, monthly reports, meeting summaries.
+- **Claude work queue (no API) [Logan]:** cron and Workflows never call the Claude API. When they need AI work, they add a *Claude task* to a queue. Examples: morning prospect prep, audit AI review, follow-up drafts, Friday updates, monthly reports, meeting summaries.
+  - Claude Code works the queue through MCP tools such as `next_claude_task` and `complete_claude_task` during Logan's session, which is billed to his subscription.
+  - Today's site-search pipelines (drafting in `drafter/draft.ts`, audit review in `audit/review.ts`, CRO in `cro/ai.ts`) call the API with `ANTHROPIC_API_KEY`. They must be moved onto this queue, and the key then removed.
+  - Work is ready after the morning session, not overnight.
 - **Approval inbox:** every outbound item (email, invoice send, document send, social draft, client-link publish) waits here. Bulk approve, edit-then-approve, reject with a note. Later, Logan can turn on auto-approve rules per type (e.g. "invoice reminders on schedule").
 - **Action log:** every agent action is logged with cost and the records it touched, and shows on those records' timelines.
-- **Spend control:** one tracker across Claude API, lead data, Cloudflare, Workspace seats (once active) and domains.
+- **Spend control:** one tracker across lead data, Cloudflare, Workspace seats (once active) and domains. Claude costs $0 extra, because it runs on the subscription.
   - total cap $150/month, with per-service sub-caps
   - warn at 80%
   - at the cap, optional jobs pause (radar searches, re-renders); approved and in-flight work continues
@@ -456,7 +460,7 @@ All clauses need review by an Oregon lawyer before first use. They include:
 | Email: existing WPMU DEV hosted mail until first client (builder confirms any extra-mailbox cost) | ~$0 |
 | Google Workspace, 2 seats, **only from the first deposit** (counts toward the cap then) | $0 now, ~$14 later |
 | Brand domain + outreach domain | ~$2 (about $20–24/yr) |
-| Claude API (capped) | ~$15–60 |
+| Claude (Logan's existing subscription, no API) | $0 extra |
 | Lead data (Places / Bright Data pay-as-you-go) | ~$5–20 |
 | Voice: local open-source models (Qwen3-TTS, Chatterbox, OpenVoice V2) | $0 |
 | MainWP core, HyperFrames, mlx-audio, Playwright, Uptime checks | $0 |
@@ -511,7 +515,7 @@ Stripe fees are per transaction and paid out of client revenue; the Stripe Invoi
 - Exact schema and migrations, and how existing tables are extended vs added.
 - UI component choices within the existing React app.
 - Workflow boundaries and retry policies.
-- Which Claude model handles which job, within the spend cap.
+- Which Claude model Claude Code uses for which queued task.
 - MCP tool names and shapes, and the auth mechanism details.
 - How the Mac helper is packaged (launchd agent, CLI, menu-bar app) and its polling interval.
 - Health-score formula.

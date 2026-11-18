@@ -12,6 +12,16 @@ Plan 1 (Foundations) shipped on `feat/agency-os-foundations` (c1b9dba..3f2bb1b):
   - deploy
   - export and then delete the job-hunting drafts (plan Task 2 Step 7)
 
+## Decision since Plan 1 shipped (2026-11-18)
+- **Claude runs only through Logan's Claude subscription, never the paid API.** Plan 2 must add a Claude task queue with MCP tools such as `next_claude_task` and `complete_claude_task`. It must also move today's API callers onto that queue and then remove `ANTHROPIC_API_KEY`:
+  - `src/worker/drafter/draft.ts` (`anthropicCaller`)
+  - `src/worker/audit/review.ts`
+  - `src/worker/cro/ai.ts` (`anthropicCroCaller`)
+  - the wiring in `src/worker/workflows.ts`
+
+  Until then, the existing audit, draft and CRO pipelines still bill the API.
+- Job-watch was also removed when merging into main. Its tables and data remain until Logan approves deleting them.
+
 ## Plan 2 must (before any outbound approval kind such as `email.send`)
 - The inbox must render the approval from its **payload** (recipient, subject, body), or the handler must build the preview. Preview and payload are independent today, so a prompt-injected agent could pair a harmless preview with a harmful payload.
 - Validate the payload with the kind's `parse` at `createApproval` / `propose_approval` time, not only at approve time.
