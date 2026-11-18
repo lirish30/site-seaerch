@@ -46,18 +46,29 @@ export const PageReviewSchema = PageReviewResult.transform((v) => ({
     catalog_id: i.catalog_id ?? null, crop_evidence_id: i.crop_evidence_id ?? null })),
 }));
 
-const nul = () => z.string().nullish().transform((v) => v ?? null);
-const RecSchema = z.object({
-  title: z.string().min(1), observation: z.string().min(1), change: z.string().min(1), why: z.string().min(1),
+const RecResult = z.object({
+  title: z.string().min(1).describe("Short, specific"),
+  observation: z.string().min(1).describe("What we saw on their site; quote exact words in double quotes"),
+  change: z.string().min(1).describe("The exact change to make"),
+  why: z.string().min(1).describe("Plain-English reason tied to how this business makes money"),
   area: z.enum(REC_AREAS), mode: z.enum(["fix", "fix_measure", "test", "strategic"]), impact: level, effort: level,
-  evidence_ids: z.array(z.string()).default([]), catalog_id: nul(), we_can_do_it: z.string().default(""),
+  evidence_ids: ids.optional(),
+  catalog_id: z.string().nullish().describe("Matching catalog id, or omit"),
+  we_can_do_it: z.string().optional().describe("One line starting 'Quick fix:', 'Project:' or 'Ongoing:' describing the work we'd do"),
 });
-export const SynthesisSchema = z.object({
-  strengths: z.array(z.string()).default([]),
-  positioning: z.object({ says_now: z.string(), should_say: z.string() }),
-  tracking_plan: z.array(z.object({ event: z.string(), why: z.string() })).default([]),
-  recommendations: z.array(RecSchema),
+/** The result of a `cro.synthesize` task. */
+export const SynthesisResult = z.object({
+  strengths: z.array(z.string()).optional().describe("2 to 6 genuine strengths"),
+  positioning: z.object({
+    says_now: z.string().describe("What the site currently says they are, quoted where possible"), should_say: z.string().describe("What it should say"),
+  }),
+  tracking_plan: z.array(z.object({ event: z.string(), why: z.string() })).optional().describe("Events to track for this business model"),
+  recommendations: z.array(RecResult).describe("Up to 25, most valuable first"),
 });
+export const SynthesisSchema = SynthesisResult.transform((v) => ({
+  strengths: v.strengths ?? [], positioning: v.positioning, tracking_plan: v.tracking_plan ?? [],
+  recommendations: v.recommendations.map((r) => ({ ...r, evidence_ids: r.evidence_ids ?? [], catalog_id: r.catalog_id ?? null, we_can_do_it: r.we_can_do_it ?? "" })),
+}));
 
 // ---- system prompts (stable, marked for caching) ----
 // Caching only engages when the cached prefix reaches the model's minimum (Haiku 5.5's minimum is not measured here). We do not measure or

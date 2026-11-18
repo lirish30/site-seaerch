@@ -1,5 +1,4 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
-import { NonRetryableError } from "cloudflare:workflows";
 import type { Env } from "./env";
 import { runLead, type LeadDeps, type StepLike } from "./pipeline/lead";
 import { browserRenderer } from "./render/render";
@@ -11,7 +10,6 @@ import { BrightDataListingSource } from "./listings/brightdata";
 import { GooglePlacesListingSource } from "./listings/places";
 import { FallbackListingSource } from "./listings/fallback";
 import { runCroWithErrorHandling, startCroStages, type CroDeps, type CroParams } from "./cro/pipeline";
-import { CroFatalError } from "./cro/ai";
 import { puppeteerCroBrowser } from "./cro/capture";
 
 const RETRY = { retries: { limit: 3, delay: "10 seconds" as const, backoff: "exponential" as const }, timeout: "5 minutes" as const };
@@ -21,10 +19,6 @@ const RETRY = { retries: { limit: 3, delay: "10 seconds" as const, backoff: "exp
 // aborts a request at 45s, and the Places-then-Bright Data fallback can run both), so a source gives up first and the failure is
 // recorded rather than the engine killing the step silently.
 export const LISTING_RETRY = { retries: { limit: 3, delay: "20 seconds" as const, backoff: "exponential" as const }, timeout: "5 minutes" as const };
-
-// The CRO AI steps run up to four sequential long calls (the roadmap) or one big call per page, so they get longer than the default.
-const AI_RETRY = { ...RETRY, timeout: "10 minutes" as const };
-const AI_STEP = /^(model|synthesize|page-\d+)$/;
 
 export function depsFromEnv(env: Env): LeadDeps {
   return {
@@ -36,9 +30,7 @@ export function depsFromEnv(env: Env): LeadDeps {
 
 export function adaptStep(step: WorkflowStep): StepLike {
   return {
-    // A refusal or 4xx fails the step at once instead of being retried (and paid for) three more times.
-    do: (name, fn) => step.do(name, /^fetch-listings(-\d+)?$/.test(name) ? LISTING_RETRY : AI_STEP.test(name) ? AI_RETRY : RETRY,
-      (async () => { try { return await fn(); } catch (e) { throw e instanceof CroFatalError ? new NonRetryableError(e.message) : e; } }) as any) as any,
+    do: (name, fn) => step.do(name, /^fetch-listings(-\d+)?$/.test(name) ? LISTING_RETRY : RETRY, fn as any) as any,
     sleep: (name, ms) => step.sleep(name, ms),
   };
 }

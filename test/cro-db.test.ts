@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { describe, it, expect } from "vitest";
-import { createCroAudit, getCroAudit, latestCroAudit, listCroAudits, updateCroAudit, addCroCost, runningCroAudit,
+import { createCroAudit, getCroAudit, latestCroAudit, listCroAudits, updateCroAudit, runningCroAudit, finishRoadmap,
   replaceCroItems, failCroAudit, listCroItems, updateCroItem, croItemsForBusiness } from "../src/worker/db/cro";
 import { deleteBusiness } from "../src/worker/db/businesses";
 import { seedBusiness, model, ev, ranked } from "./fixtures/cro";
@@ -18,14 +18,20 @@ describe("cro db", () => {
     expect(r.model_overrides).toEqual({ traffic_tier: "medium" });
   });
 
-  it("accumulates cost and records the model per stage", async () => {
+  it("finishRoadmap writes the roadmap only while the audit waits on it, for the run the task belongs to", async () => {
     const b = await seedBusiness();
     const a = await createCroAudit(env.DB, b.id);
-    await addCroCost(env.DB, a.id, 0.01, "model", "claude-haiku-5-5");
-    await addCroCost(env.DB, a.id, 0.02, "pages", "claude-haiku-5-5");
-    const r = (await getCroAudit(env.DB, a.id))!;
-    expect(r.est_cost_usd).toBeCloseTo(0.03);
-    expect(r.models_used).toEqual({ model: "claude-haiku-5-5", pages: "claude-haiku-5-5" });
+    const roadmap = { strengths: ["Fast"], positioning: { says_now: "a", should_say: "b" }, tracking_plan: [{ event: "e", why: "w" }],
+      scenario_inputs: { visitors: 1, currentRate: 0.02, targetRate: 0.03, closeRate: 0.2, dealValue: 100 }, warning: "careful",
+      completedAt: "2026-10-04T00:00:00.000Z" };
+    await updateCroAudit(env.DB, a.id, { status: "waiting", step: "pages", stages_at: "2026-10-03T00:00:00.000Z" });
+    expect(await finishRoadmap(env.DB, a.id, { ...roadmap, notBefore: "2026-10-03T00:00:01.000Z" })).toBe(false); // still on the pages
+    await updateCroAudit(env.DB, a.id, { step: "synthesize" });
+    expect(await finishRoadmap(env.DB, a.id, { ...roadmap, notBefore: "2026-10-02T00:00:00.000Z" })).toBe(false); // queued before the run began
+    expect(await finishRoadmap(env.DB, a.id, { ...roadmap, notBefore: "2026-10-03T00:00:01.000Z" })).toBe(true);
+    expect(await getCroAudit(env.DB, a.id)).toMatchObject({ status: "done", step: "done", error: null, strengths: ["Fast"], tracking_plan: [{ event: "e", why: "w" }],
+      positioning: { says_now: "a", should_say: "b" }, scenario_inputs: roadmap.scenario_inputs, warning: "careful", completed_at: "2026-10-04T00:00:00.000Z" });
+    expect(await finishRoadmap(env.DB, a.id, { ...roadmap, notBefore: "2026-10-03T00:00:01.000Z" })).toBe(false); // done already: a second completion changes nothing
   });
 
   it("latest/list return newest first; latest can require done", async () => {

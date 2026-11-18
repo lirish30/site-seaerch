@@ -1,4 +1,4 @@
-import type { BizModelKey, BusinessModel, CroAudit, CroItem, CroStage, CroStatus, PageReview, RankedItem } from "../cro/types";
+import type { BizModelKey, BusinessModel, CroAudit, CroItem, CroStatus, PageReview, Positioning, RankedItem, ScenarioInputs, TrackingEvent } from "../cro/types";
 import { CRO_LIMITS } from "../cro/config";
 import { chunks } from "./chunks";
 
@@ -57,12 +57,6 @@ export async function updateCroAudit(db: D1Database, id: string, patch: CroAudit
   await db.prepare(`UPDATE cro_audits SET ${keys.map((k) => `${k} = ?`).join(", ")} WHERE id = ?`).bind(...vals, id).run();
 }
 
-export async function addCroCost(db: D1Database, id: string, usd: number, stage: CroStage, model: string | null) {
-  await db.prepare(
-    `UPDATE cro_audits SET est_cost_usd = est_cost_usd + ?, models_used = CASE WHEN ? IS NULL THEN models_used ELSE json_set(models_used, '$.' || ?, ?) END WHERE id = ?`,
-  ).bind(usd, model, stage, model, id).run();
-}
-
 // An audit that completed once (completed_at is kept across rebuilds) keeps its last good roadmap when a later run fails:
 // it goes back to done and the failure is noted in `error`. A run that never finished is failed, so Retry shows.
 const FAIL_SET = `status = CASE WHEN completed_at IS NOT NULL THEN 'done' ELSE 'failed' END,
@@ -109,6 +103,21 @@ export async function finishPageReviews(db: D1Database, id: string, p: { partial
   const r = await db.prepare(
     `UPDATE cro_audits SET step = 'synthesize', partial = ?, warning = ? WHERE id = ? AND status = 'waiting' AND step = 'pages' AND json_array_length(pending_pages) = 0`,
   ).bind(p.partial ? 1 : 0, p.warning, id).run();
+  return (r.meta?.changes ?? 0) > 0;
+}
+
+/**
+ * The roadmap is written: the audit is done. Runs only while the audit is still waiting on the roadmap of the run the task belongs to, so a result
+ * for an audit that was rebuilt or moved on in the meantime changes nothing. True when this call finished the audit.
+ */
+export async function finishRoadmap(db: D1Database, id: string, p: {
+  strengths: string[]; positioning: Positioning; tracking_plan: TrackingEvent[]; scenario_inputs: ScenarioInputs; warning: string | null; completedAt: string; notBefore: string;
+}): Promise<boolean> {
+  const r = await db.prepare(
+    `UPDATE cro_audits SET strengths = ?, positioning = ?, tracking_plan = ?, scenario_inputs = ?, warning = ?, status = 'done', step = 'done', error = NULL, completed_at = ?
+     WHERE id = ? AND status = 'waiting' AND step = 'synthesize' AND ${FRESH}`,
+  ).bind(JSON.stringify(p.strengths), JSON.stringify(p.positioning), JSON.stringify(p.tracking_plan), JSON.stringify(p.scenario_inputs), p.warning, p.completedAt,
+    id, p.notBefore, p.notBefore).run();
   return (r.meta?.changes ?? 0) > 0;
 }
 

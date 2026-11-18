@@ -1,10 +1,12 @@
 import { z } from "zod";
 import type { Env } from "../env";
 import { getBusiness } from "../db/businesses";
-import { beginPageReviews, failCroAudit, finishPageReviews, getCroAudit, settlePage, updateCroAudit } from "../db/cro";
-import { BusinessModelResult, BusinessModelSchema, PageReviewResult, PageReviewSchema, type ShotKeys } from "../cro/prompts";
-import { buildModelRequest, buildPageRequest } from "../cro/stages";
-import { factQuotes, needsRetry, validateReview, type Drop } from "../cro/validate";
+import { beginPageReviews, failCroAudit, finishPageReviews, finishRoadmap, getCroAudit, replaceCroItems, settlePage, updateCroAudit } from "../db/cro";
+import { BusinessModelResult, BusinessModelSchema, PageReviewResult, PageReviewSchema, SynthesisResult, SynthesisSchema, type ShotKeys } from "../cro/prompts";
+import { buildModelRequest, buildPageRequest, buildSynthRequest } from "../cro/stages";
+import { MAX_STRENGTHS, applyModeRules, factQuotes, hasTrackingGap, lowItemsWarning, needsRetry, validateRecommendations, validateReview, type Drop } from "../cro/validate";
+import { rankRecommendations } from "../cro/pxl";
+import { scenarioFor } from "../cro/scenario";
 import { shotKey, textKey } from "../cro/keys";
 import { startSynthesis } from "../cro/synthesis";
 import type { Business } from "../types";
@@ -12,13 +14,15 @@ import type { BusinessModel, CroAudit, CroStep, Device, Evidence } from "../cro/
 import { cancelTasksFor, enqueueTask, type ClaudeTask } from "./db";
 import { registerTaskKind, type TaskKindDef } from "./registry";
 
-/** The task kinds this file handles: Claude works out how the business makes money, then reviews each captured page of its site. */
+/** The task kinds this file handles: Claude works out how the business makes money, reviews each captured page of its site, then writes the roadmap. */
 export const CRO_MODEL_KIND = "cro.model";
 export const CRO_PAGE_KIND = "cro.page";
+export const CRO_SYNTH_KIND = "cro.synthesize";
 /** What the CRO tasks are about, so `cancelTasksFor(db, CRO_TARGET, auditId)` closes the open ones of one audit. */
 export const CRO_TARGET = "cro_audit";
 export const NOT_PICKED_UP = "Claude didn't pick this up in time. Rebuild to try again.";
 export const COULDNT_FINISH_MODEL = "Claude couldn't finish reading this business. Rebuild to try again.";
+export const COULDNT_FINISH_ROADMAP = "Claude couldn't finish writing the roadmap. Rebuild to try again.";
 
 export const CroModelPayload = z.object({ auditId: z.string().min(1) });
 export type CroModelPayload = z.infer<typeof CroModelPayload>;
@@ -27,6 +31,11 @@ export const CroPagePayload = z.object({
   auditId: z.string().min(1), pageIndex: z.number().int().min(0), attempt: z.union([z.literal(1), z.literal(2)]), rejected: z.array(z.string()).optional(),
 });
 export type CroPagePayload = z.infer<typeof CroPagePayload>;
+/** `attempt` 2 is the one retry of a roadmap whose first answer had too much thrown away; `rejected` says what and why. */
+export const CroSynthPayload = z.object({
+  auditId: z.string().min(1), attempt: z.union([z.literal(1), z.literal(2)]), rejected: z.array(z.string()).optional(),
+});
+export type CroSynthPayload = z.infer<typeof CroSynthPayload>;
 
 const target = (auditId: string) => ({ targetType: CRO_TARGET, targetId: auditId });
 // The first try of a page is still claimed while its result is applied, so the retry needs a key of its own to be queued at all.
@@ -140,13 +149,22 @@ async function failModel(env: Env, auditId: string, message: string, task?: Clau
   if (a && a.status === "waiting" && a.step === "model" && current(a, task)) await failCroAudit(env.DB, a.id, message);
 }
 
+/** The roadmap can never be written (nobody picked it up, or Claude gave up on it): the audit fails with `message`. Only an audit still waiting on the roadmap of this run. */
+async function failRoadmap(env: Env, auditId: string, message: string, task?: ClaudeTask): Promise<void> {
+  const a = await getCroAudit(env.DB, auditId);
+  if (a && a.status === "waiting" && a.step === "synthesize" && current(a, task)) await failCroAudit(env.DB, a.id, message);
+}
+
 /**
  * A page can never be reviewed: it leaves `pending_pages` (counted as skipped; `finishPages` writes the warning) and, if it was the last one, the audit
- * moves on. Safe to run again: a page already settled changes nothing, and the hand-over is retried in case an earlier run stopped before it.
+ * moves on. Safe to run again: a page already settled changes nothing, and the hand-over is retried in case an earlier run stopped before it. That
+ * retry is also what heals an audit whose last page was settled but whose roadmap was never queued: any page task of the audit ending (expired or
+ * failed) re-runs the hand-over, even with the step already on the roadmap.
  */
 async function skipPage(env: Env, auditId: string, pageIndex: number, task?: ClaudeTask): Promise<void> {
   const a = await getCroAudit(env.DB, auditId);
-  if (!a || a.status !== "waiting" || a.step !== "pages" || !current(a, task)) return;
+  // At the roadmap step already: an earlier hand-over may have stopped before queuing the roadmap, and this is a chance to finish it (`finishPages` is idempotent).
+  if (!a || a.status !== "waiting" || (a.step !== "pages" && a.step !== "synthesize") || !current(a, task)) return;
   const settled = await settlePage(env.DB, a.id, pageIndex, null);
   await finishPages(env, a.id, settled === null);
 }
@@ -258,5 +276,69 @@ const croPage: TaskKindDef<CroPagePayload, z.infer<typeof PageReviewResult>> = {
   async onFail(env, p, _error, task) { await skipPage(env, p.auditId, p.pageIndex, task); },
 };
 
+/** The roadmap's second try needs a key of its own for the same reason a page's does: the first is still claimed while its result is applied. */
+const synthKey = (auditId: string, attempt: 1 | 2) => (attempt === 1 ? auditId : `${auditId}:2`);
+
+const croSynth: TaskKindDef<CroSynthPayload, z.infer<typeof SynthesisResult>> = {
+  kind: CRO_SYNTH_KIND,
+  label: "Write the conversion roadmap for a website",
+  suggestedModel: "sonnet",
+  payload: CroSynthPayload,
+  result: SynthesisResult,
+
+  /** The page reviews quote the site, and the business, the model card and the ledger are derived from it: all untrusted, like the reasons an earlier try was thrown away. */
+  async build(env, p, task) {
+    const t = await loadTarget(env, p.auditId, task, ["synthesize"]);
+    if ("stale" in t) return t;
+    const { audit, business } = t;
+    if (!audit.business_model || !audit.page_reviews.length) return { stale: "there is nothing to build a roadmap on" };
+    const model: BusinessModel = { ...audit.business_model, ...audit.model_overrides };
+    return buildSynthRequest({ business, model, reviews: audit.page_reviews, evidence: audit.evidence }, p.rejected ?? []);
+  },
+
+  /**
+   * Checks the recommendations against the evidence ledger and the captured pages' text, as the inline stage did. A first try with too much thrown away
+   * is asked for once more (with the reasons), and the second try is kept as it is. A kept roadmap is ranked and written, and the audit finished in one
+   * guarded statement. A crash-retry rewrites the items (replacing them is idempotent) and finishes; one that finds the audit already done is stale,
+   * so the same roadmap is never written twice and a second answer never overwrites the first.
+   */
+  async apply(env, p, r, task) {
+    const t = await loadTarget(env, p.auditId, task, ["synthesize"]);
+    if ("stale" in t) return t;
+    const { audit, business } = t;
+    if (!audit.business_model) return { stale: "there is no business model to build on" };
+    const model: BusinessModel = { ...audit.business_model, ...audit.model_overrides };
+    const log = (what: string) => ({ log: { summary: `${what} ${business.name.slice(0, 100)}`, recordType: "lead", recordId: business.id } });
+
+    const ids = new Set(audit.evidence.map((e) => e.id));
+    // Quotes are checked against the text of every captured page plus phrases a fact quotes; never whole facts.
+    const pageTexts = await Promise.all(audit.pages.filter((x) => x.ok).map(async (x) => (await (await env.RAW.get(textKey(audit.id, x.index)))?.text()) ?? ""));
+    const out = SynthesisSchema.parse(r);
+    const v = validateRecommendations(out.recommendations, ids, [...pageTexts, ...factQuotes(audit.evidence.map((e) => e.fact))]);
+    // The drop share is measured against what the model returned, before any cap.
+    if (p.attempt === 1 && needsRetry(out.recommendations.length, v.dropped.length)) {
+      await enqueueTask(env.DB, CRO_SYNTH_KIND, { auditId: audit.id, attempt: 2, rejected: retryReasons(v.dropped) }, { dedupeKey: synthKey(audit.id, 2), ...target(audit.id) });
+      return log("asked again for the roadmap of");
+    }
+    const ranked = rankRecommendations(applyModeRules(v.kept, model.traffic_tier), audit.evidence, model.model, { trackingGap: hasTrackingGap(audit.evidence) });
+    await replaceCroItems(env.DB, audit.id, ranked);
+    const done = await finishRoadmap(env.DB, audit.id, {
+      strengths: out.strengths.slice(0, MAX_STRENGTHS), positioning: out.positioning, tracking_plan: out.tracking_plan,
+      scenario_inputs: scenarioFor(audit.scenario_inputs, model),
+      // The note about skipped pages was written when the reviews were in; this adds the one about a thin roadmap in front of it.
+      warning: [lowItemsWarning(ranked.length), audit.warning].filter(Boolean).join(" ") || null,
+      completedAt: new Date().toISOString(), notBefore: task.created_at,
+    });
+    if (!done) return { stale: "the audit changed while the result was being applied" };
+    return log(`wrote the roadmap (${ranked.length} recommendation${ranked.length === 1 ? "" : "s"}) for`);
+  },
+
+  /** Nobody picked it up: the audit fails and says how to try again. */
+  async onExpire(env, p) { await failRoadmap(env, p.auditId, NOT_PICKED_UP); },
+  /** Claude gave up on it: same, with its own message. A failure from a superseded run leaves the rebuilt audit alone. */
+  async onFail(env, p, _error, task) { await failRoadmap(env, p.auditId, COULDNT_FINISH_ROADMAP, task); },
+};
+
 registerTaskKind(croModel);
 registerTaskKind(croPage);
+registerTaskKind(croSynth);

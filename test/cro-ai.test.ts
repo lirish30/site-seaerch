@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
 import { buildModelRequest, buildPageRequest, buildSynthRequest } from "../src/worker/cro/stages";
-import { BusinessModelResult, BusinessModelSchema, PageReviewResult, PageReviewSchema, SYSTEM_MODEL, SYSTEM_PAGE, SYSTEM_SYNTH, ledger } from "../src/worker/cro/prompts";
+import { BusinessModelResult, BusinessModelSchema, PageReviewResult, PageReviewSchema, SynthesisResult, SynthesisSchema, SYSTEM_MODEL, SYSTEM_PAGE, SYSTEM_SYNTH, ledger } from "../src/worker/cro/prompts";
 import type { QueuePart } from "../src/worker/queue/registry";
 import type { Business } from "../src/worker/types";
 import { ev, model } from "./fixtures/cro";
@@ -21,6 +21,21 @@ describe("result schemas", () => {
     expect(p).toContain("At most 10, most important first");
     expect(p).toContain("Evidence ids from the ledger");
     expect(p).not.toContain('"page"'); // the task knows which page it is about
+    // The roadmap's result schema has no transforms or defaults, so Claude is handed the exact shape and the zod issues come back on a mistake.
+    const r = JSON.stringify(z.toJSONSchema(SynthesisResult));
+    expect(r).toContain("Up to 25, most valuable first");
+    expect(r).toContain("The exact change to make");
+    expect(r).toContain("One line starting 'Quick fix:'");
+    expect(JSON.stringify(z.toJSONSchema(SynthesisResult).required)).not.toContain("strengths");
+  });
+
+  it("the roadmap fills what an answer leaves out", () => {
+    const r = SynthesisSchema.parse({ positioning: { says_now: "a", should_say: "b" },
+      recommendations: [{ title: "t", observation: "o", change: "c", why: "w", area: "hero", mode: "fix", impact: "high", effort: "low" }] });
+    expect(r).toMatchObject({ strengths: [], tracking_plan: [] });
+    expect(r.recommendations[0]).toMatchObject({ evidence_ids: [], catalog_id: null, we_can_do_it: "" });
+    expect(SynthesisSchema.safeParse({ strengths: [] }).success).toBe(false);
+    expect(SynthesisSchema.safeParse({ positioning: { says_now: "a", should_say: "b" }, recommendations: [{ title: "t" }] }).success).toBe(false);
   });
 
   it("the business model fills the optional fields an answer leaves out", () => {

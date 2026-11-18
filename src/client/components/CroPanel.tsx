@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError } from "../api";
 import { pollDelay } from "../poll";
 import {
-  EVIDENCE_FAMILY_LABEL, STEP_LABEL, auditStamp, neighborOf, rebuildNeedsPatch, splitRoadmap, stepIndex,
+  EVIDENCE_FAMILY_LABEL, STEP_LABEL, auditStamp, croWaitingLine, neighborOf, rebuildNeedsPatch, splitRoadmap, stepIndex,
   type AssumptionOverrides, type CroAudit, type CroHistoryRow, type CroItem, type CroResponse, type Horizon, type ScenarioInputs,
 } from "../cro";
 import CroItemCard, { type CroCardVariant, type CroItemPatch } from "./CroItemCard";
@@ -107,7 +107,9 @@ export default function CroPanel({ leadId, onError }: { leadId: string; onError:
     return (
       <div className="cro"><div className="section-card cro-card">
         <h3>{a.status === "waiting" ? "CRO audit waiting for Claude…" : "CRO audit running…"}</h3>
-        <p role="status" aria-live="polite">Step {cur + 1} of {STEP_LABEL.length}: {STEP_LABEL[cur][1]}</p>
+        <p role="status" aria-live="polite">{a.status === "waiting"
+          ? croWaitingLine({ step: a.step, pending: a.pending_pages.length, total: a.pages.filter((p) => p.ok).length })
+          : `Step ${cur + 1} of ${STEP_LABEL.length}: ${STEP_LABEL[cur][1]}`}</p>
         <ol className="cro-steps">{STEP_LABEL.map(([s, label], i) => (
           <li key={s} className={i < cur ? "done" : i === cur ? "on" : ""} aria-current={i === cur ? "step" : undefined}>
             {label}{i < cur && <span className="sr-only"> (done)</span>}

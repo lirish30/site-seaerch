@@ -15,6 +15,15 @@ export const STEP_LABEL: [CroStep, string][] = [
   ["model", "Working out how the business makes money"], ["pages", "Reviewing each page"], ["synthesize", "Writing the roadmap"],
 ];
 export const stepIndex = (s: CroStep) => (s === "done" ? STEP_LABEL.length : STEP_LABEL.findIndex(([k]) => k === s));
+/** The status line of an audit that is waiting for Claude: which stage it is on, and for the page reviews how many are in. */
+export function croWaitingLine(a: { step: string; pending: number; total: number }): string {
+  switch (a.step) {
+    case "model": return "Waiting for Claude: reading the business";
+    case "pages": return `Waiting for Claude: reviewing pages (${Math.min(Math.max(a.total - a.pending, 0), a.total)} of ${a.total} done)`;
+    case "synthesize": return "Waiting for Claude: writing the roadmap";
+    default: return "Waiting for Claude";
+  }
+}
 export const effectiveModel = (a: Pick<CroAudit, "business_model" | "model_overrides">): BusinessModel | null =>
   a.business_model ? { ...a.business_model, ...a.model_overrides } : null;
 export const money = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
