@@ -112,7 +112,15 @@ describe("runLead stage", () => {
     expect(calls).toMatchObject({ render: 1, pagespeed: 1, review: 1, claude: 1 });
     expect(calls.steps).toEqual(["render", "crawl", "pagespeed", "dns", "review", "score", "draft", "progress"]);
     expect((await getBusiness(env.DB, b.id))!.scan_stage).toBe("full");
-    expect(new Set((await usage()).map((u) => u.service))).toEqual(new Set(["browser", "pagespeed", "claude"]));
+    expect(new Set((await usage()).map((u) => u.service))).toEqual(new Set(["browser", "pagespeed"]));
+  });
+
+  it("a full lead run records no claude usage", async () => {
+    const { s, b } = await lead("NC1");
+    const { deps, step, calls } = setup();
+    await runLead(deps, step, { businessId: b.id, searchId: s.id });
+    expect(calls).toMatchObject({ review: 1, claude: 1 }); // the Claude steps still ran; they just cost nothing
+    expect((await usage()).filter((u) => u.service.startsWith("claude"))).toEqual([]);
   });
 
   it("a full run after a quick run promotes the lead to 'full' with screenshots, review and a draft", async () => {
@@ -377,12 +385,12 @@ describe("per-lead paid scans respect the monthly spend limit", () => {
     it(`POST /:id/${name} answers 402 with the spend-limit body at the cap, starts no workflow and logs no activity`, async () => {
       const b = await seedQuick({ name: `SPEND-${name}` });
       const before = await activityCount(b.id);
-      await recordUsage(env.DB, "claude", 1, 24.99); // 24.99 + PER_LEAD_COST (~0.0455) is over 25
+      await recordUsage(env.DB, "claude", 1, 24.9999); // an old Claude row still counts; + PER_LEAD_COST (the render, 0.0005) is over 25
       const r = await api(`/api/leads/${b.id}/${path}`, { method: "POST", body: JSON.stringify({}) });
       expect(r.status).toBe(402);
       const body = await r.json<any>();
       expect(body).toMatchObject({ error: "spend limit", ok: false, limit: 25 });
-      expect(body.spent).toBeCloseTo(24.99);
+      expect(body.spent).toBeCloseTo(24.9999, 4);
       expect(created).toHaveLength(0);
       expect(await activityCount(b.id)).toBe(before);
     });

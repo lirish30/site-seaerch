@@ -32,10 +32,16 @@ describe("GET /api/searches/estimate agrees with the POST guard", () => {
     expect((await start()).status).toBe(201);
   });
 
-  it("quickUsd is the listing pages only, so a quick scan is far cheaper than the full estimate", async () => {
+  it("the full estimate is the listing pages plus one render per lead, with no Claude cost", async () => {
+    const e = await estimate();
+    expect(e.estUsd).toBeCloseTo(0.13, 10);
+    expect(e.estUsd).toBeCloseTo(3 * PRICES.listingPerRequest + 50 * PRICES.browserPerRender, 10);
+  });
+
+  it("quickUsd is the listing pages only; a quick scan saves just the renders", async () => {
     const e = await estimate();
     expect(e.quickUsd).toBeCloseTo(3 * PRICES.listingPerRequest);
-    expect(e.quickUsd).toBeLessThan(e.estUsd / 10);
+    expect(e.quickUsd).toBeLessThan(e.estUsd);
   });
 
   it("a running search is reported and flips ok, exactly when POST would answer 402", async () => {

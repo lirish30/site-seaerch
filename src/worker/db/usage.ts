@@ -1,3 +1,4 @@
+// The three claude* services are no longer written (Claude runs on the user's subscription) but stay here so old rows read.
 export type Service = "brightdata" | "places" | "pagespeed" | "claude" | "browser" | "claude_cro" | "claude_agent";
 
 export async function recordUsage(db: D1Database, service: Service, units: number, estCostUsd: number) {

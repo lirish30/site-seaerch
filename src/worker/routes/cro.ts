@@ -5,6 +5,7 @@ import type { Env } from "../env";
 import { getBusiness } from "../db/businesses";
 import { isSocialOnlyUrl } from "../crawler/extract";
 import { checkSpend, PRICES } from "../cost";
+import { CRO_LIMITS } from "../cro/config";
 import { logActivity } from "../db/activity";
 import { createCroAudit, failCroAudit, getCroAudit, latestCroAudit, listCroAudits, listCroItems, runningCroAudit, updateCroAudit, updateCroItem, type CroItemPatch } from "../db/cro";
 import { shotKey, textKey } from "../cro/pipeline";
@@ -12,6 +13,9 @@ import { scenarioFor } from "../cro/scenario";
 import { BIZ_MODEL_KEYS, type BusinessModel, type CroAudit, type CroFrom, type CroStep } from "../cro/types";
 
 export const croRoutes = new Hono<{ Bindings: Env }>();
+
+/** What an audit that captures pages costs to start: two browser renders (desktop and mobile) per page, at most. The Claude stages are free. */
+const CAPTURE_USD = CRO_LIMITS.maxPages * 2 * PRICES.browserPerRender;
 
 const withScheme = (u: string) => (/^https?:\/\//i.test(u) ? u : `https://${u}`);
 /** The site to audit, or null when the lead has none, it isn't a parseable address, or it's only a social profile. */
@@ -60,7 +64,7 @@ croRoutes.post("/leads/:id/cro-audit", async (c) => {
   if (!b) return c.json({ error: "not found" }, 404);
   if (!auditableSite(b.website_url)) return c.json({ error: "This lead has no website to audit" }, 400);
   if (await runningCroAudit(c.env.DB, id, new Date())) return c.json({ error: "A CRO audit is already running for this lead" }, 409);
-  const spend = await checkSpend(c.env.DB, PRICES.croAudit);
+  const spend = await checkSpend(c.env.DB, CAPTURE_USD);
   if (!spend.ok) return c.json({ error: "spend limit", ...spend }, 402);
   const a = await createCroAudit(c.env.DB, id);
   const failed = await launch(c, a.id);
@@ -141,7 +145,7 @@ croRoutes.post("/cro-audits/:id/rebuild", async (c) => {
   const inFlight = await busy(c, a);
   if (inFlight) return inFlight;
   if (!a.business_model || !a.pages.some((p) => p.ok)) return c.json({ error: "Nothing to rebuild yet; run the audit first" }, 409);
-  const spend = await checkSpend(c.env.DB, PRICES.croAudit / 2);
+  const spend = await checkSpend(c.env.DB, 0); // rebuilding reuses the captured pages, so only Claude work (free) remains
   if (!spend.ok) return c.json({ error: "spend limit", ...spend }, 402);
   // Page reviews are written for a specific business model, so a changed model re-runs them.
   const from: CroFrom = effectiveModel(a) !== a.reviewed_as ? "pages" : "synthesize";
@@ -172,7 +176,7 @@ croRoutes.post("/cro-audits/:id/retry", async (c) => {
   const inFlight = await busy(c, a);
   if (inFlight) return inFlight;
   const from = resumePoint(a);
-  const spend = await checkSpend(c.env.DB, from === "synthesize" ? PRICES.croAudit / 2 : PRICES.croAudit);
+  const spend = await checkSpend(c.env.DB, from === "capture" ? CAPTURE_USD : 0);
   if (!spend.ok) return c.json({ error: "spend limit", ...spend }, 402);
   if (!(await claim(c.env.DB, a.id, from))) return c.json({ error: "This audit is still running" }, 409);
   const failed = await launch(c, a.id, from);

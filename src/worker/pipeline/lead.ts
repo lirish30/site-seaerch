@@ -82,7 +82,6 @@ async function draftFor(deps: LeadDeps, businessId: string, o: DraftOptions = {}
     purpose,
     revise: o.tweak && current ? { subject: current.subject, body: current.body, instruction: TWEAKS[o.tweak] } : undefined,
   }, deps.claude, pocContact?.id ?? null);
-  await recordUsage(deps.db, "claude", 1, PRICES.claudePerDraft);
   // Variants share a timestamp, so the first-written leads; a tweak keeps the current draft's footer choice.
   const group = crypto.randomUUID();
   const at = new Date().toISOString();
@@ -198,7 +197,6 @@ export async function runLead(
           business: { name: business.name, category: business.category, address: business.address, website: crawl.finalUrl ?? site ?? "" },
           facts: crawl.facts, pagespeedScore: ps?.performanceScore ?? null, desktopJpegB64: desktop, mobileJpegB64: mobile,
         }, deps.reviewer!);
-        await recordUsage(deps.db, "claude", 1, PRICES.claudePerReview);
         return r;
       });
     } catch { review = null; }

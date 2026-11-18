@@ -5,7 +5,7 @@ import { parseSpendLimit } from "../../spend";
 import { useSettingsDoc } from "../../settingsData";
 import type { ServiceSpend } from "../../spendView";
 import ServiceCaps from "./ServiceCaps";
-import { chartBars, monthName, spendBreakdown, spendPercent, usageRows, usageTotal, usd } from "../../settingsView";
+import { chartBars, monthName, spendBreakdown, spendPercent, usageCostLabel, usageRows, usageTotal, usd } from "../../settingsView";
 
 interface FixedCost { id: string; name: string; monthly_usd: number; active: 0 | 1 }
 interface History { months: { month: string; est_cost_usd: number }[] }
@@ -72,7 +72,7 @@ export default function Usage() {
             <div className="us-row head" role="row"><span role="columnheader">Service</span><span role="columnheader" className="r">Calls</span><span role="columnheader" className="r">Cost</span></div>
             {rows.map((r) => (
               <div key={r.service} className="us-row" role="row">
-                <span role="cell">{r.label}</span><span role="cell" className="r">{r.calls.toLocaleString("en-US")}</span><span role="cell" className="r mono">{usd(r.cost)}</span>
+                <span role="cell">{r.label}</span><span role="cell" className="r">{r.calls.toLocaleString("en-US")}</span><span role="cell" className="r mono">{usageCostLabel(r.service, r.cost)}</span>
               </div>
             ))}
             {spend.fixed.map((f) => (

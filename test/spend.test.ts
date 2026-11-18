@@ -3,6 +3,7 @@ import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { saveSettings } from "../src/worker/db/settings";
 import { recordUsage } from "../src/worker/db/usage";
 import { setFixedCostActive } from "../src/worker/db/fixedCosts";
+import { PER_LEAD_COST } from "../src/worker/cost";
 import { spendStatus, allowOptionalJob } from "../src/worker/spend";
 import { runDueRadars } from "../src/worker/radar-run";
 
@@ -35,6 +36,17 @@ describe("spend cap with fixed costs", () => {
     expect(s.spentUsd).toBe(120);
     expect(s.level).toBe("warn");
     expect(s.ok).toBe(true);
+  });
+
+  it("old Claude usage rows still count, and a lead's render-only cost barely moves the cap", async () => {
+    await recordUsage(env.DB, "claude", 1, 100);
+    await recordUsage(env.DB, "claude_cro", 1, 20);
+    const s = await spendStatus(env.DB, NOW, PER_LEAD_COST);
+    expect(s.spentUsd).toBe(127);
+    expect(s.level).toBe("warn");
+    expect(PER_LEAD_COST).toBeLessThan(0.001);
+    expect((await spendStatus(env.DB, NOW, 23 - PER_LEAD_COST)).ok).toBe(true);
+    expect((await spendStatus(env.DB, NOW, 23 + PER_LEAD_COST)).ok).toBe(false);
   });
 
   it("capped month skips optional radar run", async () => {

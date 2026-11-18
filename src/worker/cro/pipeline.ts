@@ -41,7 +41,6 @@ async function loadCaptured(raw: R2Bucket, refs: CroPageRef[]): Promise<Captured
 async function spend(deps: CroDeps, id: string, stage: CroStage, r: { costUsd: number; model: string | null }) {
   if (!r.costUsd) return;
   await addCroCost(deps.db, id, r.costUsd, stage, r.model);
-  await recordUsage(deps.db, "claude_cro", 1, r.costUsd);
 }
 
 // One step per page so a slow or broken page is retried on its own and never sinks the audit.
