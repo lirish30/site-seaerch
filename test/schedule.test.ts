@@ -9,6 +9,10 @@ import { runScheduled } from "../src/worker/schedule";
 import { setMailDeps } from "../src/worker/mail/deps";
 import { saveMailbox } from "../src/worker/db/mailboxes";
 import type { ImapFetch } from "../src/worker/mail/types";
+import { getTask } from "../src/worker/queue/db";
+import { createCroAudit, updateCroAudit } from "../src/worker/db/cro";
+import { seedBusiness } from "./fixtures/cro";
+import "../src/worker/queue/replyClassify"; // registers reply.classify
 
 const NOW = new Date("2026-10-03T12:00:00.000Z");
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -94,6 +98,51 @@ describe("runScheduled", () => {
     await expect(runScheduled(failing(/radars/), DAILY, NOW)).resolves.toBeUndefined();
     expect(await enrollmentStep()).toBe(3);
     expect(errors.some((e) => String(e[0]).includes("radar run"))).toBe(true);
+  });
+
+  describe("the queue upkeep", () => {
+    const old = (n: number) => iso(NOW.getTime() - n * 86_400_000);
+    const seedTask = async (id: string, createdAt: string, status = "pending") =>
+      env.DB.prepare(`INSERT INTO claude_tasks (id, kind, payload, status, attempts, created_at) VALUES (?, 'reply.classify', '{}', ?, 0, ?)`).bind(id, status, createdAt).run();
+    beforeEach(() => env.DB.batch(["claude_tasks", "cro_audits"].map((t) => env.DB.prepare(`DELETE FROM ${t}`))));
+
+    it("the daily cron expires tasks nobody picked up in 14 days, and leaves newer ones", async () => {
+      await seedTask("t-old", old(15)); await seedTask("t-new", old(13)); await seedTask("t-done", old(30), "done");
+      await runScheduled(env, DAILY, NOW);
+      expect((await getTask(env.DB, "t-old"))!.status).toBe("expired");
+      expect((await getTask(env.DB, "t-new"))!.status).toBe("pending");
+      expect((await getTask(env.DB, "t-done"))!.status).toBe("done");
+      expect(logs.some((l) => l[0] === "expire tasks" && String(l[1]) === "1")).toBe(true);
+    });
+
+    it("the 15-minute cron leaves the queue alone", async () => {
+      await seedTask("t-old", old(15));
+      await runScheduled(env, EVERY_15, NOW);
+      expect((await getTask(env.DB, "t-old"))!.status).toBe("pending");
+    });
+
+    it("a failing expiry does not stop the radar run or the scan, and is logged", async () => {
+      await seedRadar(); await seedDueCall();
+      await expect(runScheduled(failing(/claude_tasks/), DAILY, NOW)).resolves.toBeUndefined();
+      expect(created).toHaveLength(1);
+      expect(await enrollmentStep()).toBe(3);
+      expect(errors.some((e) => String(e[0]).includes("expire tasks"))).toBe(true);
+    });
+
+    it("the daily cron sweeps for a CRO audit stuck waiting for its roadmap task", async () => {
+      const b = await seedBusiness();
+      const a = await createCroAudit(env.DB, b.id);
+      await updateCroAudit(env.DB, a.id, { status: "waiting", step: "synthesize" });
+      await runScheduled(env, DAILY, NOW);
+      expect(logs.some((l) => l[0] === "cro heal" && String(l[1]) === "1")).toBe(true);
+    });
+
+    it("a failing CRO heal does not stop the scan, and is logged", async () => {
+      await seedDueCall();
+      await expect(runScheduled(failing(/cro_audits/), DAILY, NOW)).resolves.toBeUndefined();
+      expect(await enrollmentStep()).toBe(3);
+      expect(errors.some((e) => String(e[0]).includes("cro heal"))).toBe(true);
+    });
   });
 
   describe("the 15-minute mail sync", () => {

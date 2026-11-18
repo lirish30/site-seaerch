@@ -34,10 +34,10 @@ describe("Home rows", () => {
     expect(dueBadge(item("follow_up_due", "b", { due: null }), now)).toBeNull();
     expect(dueBadge(item("stalled_deal", "b", { due: "2026-10-12" }), now)).toBeNull();
   });
-  it("adds the contact date to a follow-up and the scan price to a quick scan, and leaves other reasons alone", () => {
+  it("adds the contact date to a follow-up and the scan score to a quick scan (no dollar amount: AI work is not billed per scan), and leaves other reasons alone", () => {
     expect(itemReason({ kind: "follow_up_due", reason: "Follow-up was due 3 days ago" }, { contactedAt: "2026-10-02T15:00:00Z" })).toMatch(/^Follow-up was due 3 days ago · contacted Oct [12]$/);
     expect(itemReason({ kind: "follow_up_due", reason: "R" }, { contactedAt: null })).toBe("R");
-    expect(itemReason({ kind: "promising_quick_scan", reason: "R" }, { score: 72, fullScanCostUsd: 0.0455 })).toBe("Quick scan scored 72 · full scan ≈ $0.05");
+    expect(itemReason({ kind: "promising_quick_scan", reason: "R" }, { score: 72 })).toBe("Quick scan scored 72 · full scan has no AI cost");
     expect(itemReason({ kind: "promising_quick_scan", reason: "R" }, {})).toBe("R");
     expect(itemReason({ kind: "draft_unsent", reason: "R" }, { score: 1 })).toBe("R");
   });

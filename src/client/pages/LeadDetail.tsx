@@ -22,10 +22,11 @@ import SequencePanel from "../components/SequencePanel";
 import InlineError from "../components/InlineError";
 import type { Draft } from "../emailView";
 import type { CroResponse } from "../cro";
+import { reviewPendingNote } from "../queueView";
 import { NICHE_LABEL, OFFER_LABEL, STATUSES, type Activity, type Audit, type AuditChanges, type BestOffer, type Business, type Contact, type FitProfile, type FitResult, type LeadStatus, type LeadSuppression, type Person, type SuppressionReason } from "../types";
 
 interface ShareReport { token: string; url: string; expiresAt: string; }
-interface Data { business: Business; audit: Audit | null; contacts: Contact[]; draft: Draft | null; draftPlaceholder?: boolean; variants: Draft[]; toContact: Contact | null; people: Person[]; activity: Activity[]; changes: AuditChanges | null; urgency: number; best_offer: BestOffer | null; fit: FitResult; suppressed: LeadSuppression | null; }
+interface Data { business: Business; audit: Audit | null; contacts: Contact[]; draft: Draft | null; draftPlaceholder?: boolean; reviewPending?: boolean; variants: Draft[]; toContact: Contact | null; people: Person[]; activity: Activity[]; changes: AuditChanges | null; urgency: number; best_offer: BestOffer | null; fit: FitResult; suppressed: LeadSuppression | null; }
 
 const LINK_LABEL: Record<string, string> = {
   contact: "Contact page", careers: "Careers / jobs", menu: "Menu", services: "Services", about: "About", team: "Team",
@@ -336,6 +337,7 @@ export default function LeadDetail() {
         <div className={`lead-content${tab === "issues" ? " tight" : ""}`} role="tabpanel">
           {tab === "overview" && (a ? <>
             {a.mail_warning && <div className="notice" role="status"><span><Icon name="alert" size={14} /> {a.mail_warning}</span></div>}
+            {reviewPendingNote(d.reviewPending) && <div className="notice" role="status"><span><Icon name="clock" size={14} /> {reviewPendingNote(d.reviewPending)}: it is in the queue for your next Claude session.</span></div>}
             <Scorecard audit={a} business={b} fit={d.fit} profile={profile} urgency={d.urgency} />
             <div className="pitch-row">
               <BestOfferCard offer={d.best_offer} fallbackName={OFFER_LABEL[a.offer] ?? a.offer} onWriteEmail={writeEmail} canWrite={!d.suppressed} />

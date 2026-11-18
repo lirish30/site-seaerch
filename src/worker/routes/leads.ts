@@ -22,6 +22,7 @@ import { activeReportFor, createReport, otherActiveCount, revokeReports, type Re
 import { pickRecipient } from "../recipient";
 import { TWEAKS, createManualDraft, draftTaskState, requestDraft, type Tweak } from "../queue/leadDraft"; // also registers the lead.draft task kind
 import { cancelTasksFor } from "../queue/db";
+import { SITE_REVIEW_KIND } from "../queue/siteReview";
 import { checkSpend, PER_LEAD_COST } from "../cost";
 import { getSettings } from "../db/settings";
 import { composeEmail } from "../email/render";
@@ -158,7 +159,9 @@ leadRoutes.get("/:id", async (c) => {
   const shown = audit && { ...audit, findings: audit.findings.map((f) => ({ ...f, stale: isStale(f, audit.created_at, now) })) };
   // Matched on the stale-flagged findings so `because` carries each finding's `stale` for the evidence badge.
   const best_offer = shown ? bestOffer(shown.findings, await listServices(c.env.DB, { activeOnly: true }), shown.offer) : null;
-  return c.json({ business, audit: shown, contacts, draft, draftPlaceholder: !!draft && isPlaceholderDraft(draft), variants, toContact, people, activity, changes, urgency: audit ? urgencyOf(audit.findings) : 0, best_offer,
+  // True while Claude has not reviewed the latest audit yet: its site.review task (keyed by the audit id) is still open.
+  const reviewPending = !!audit && !!(await c.env.DB.prepare(`SELECT 1 AS x FROM claude_tasks WHERE kind = ? AND dedupe_key = ? AND status IN ('pending','claimed')`).bind(SITE_REVIEW_KIND, audit.id).first());
+  return c.json({ business, audit: shown, reviewPending, contacts, draft, draftPlaceholder: !!draft && isPlaceholderDraft(draft), variants, toContact, people, activity, changes, urgency: audit ? urgencyOf(audit.findings) : 0, best_offer,
     fit: scoreFit(business, audit, profiles), suppressed: hit ? { reason: hit.reason, note: hit.note } : null });
 });
 

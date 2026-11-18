@@ -66,13 +66,13 @@ export function dueBadge(item: Pick<TodayItem, "kind" | "due">, now = new Date()
   return late > 0 ? { tone: "critical", label: `${late} ${late === 1 ? "day" : "days"} late` } : { tone: "warning", label: "Due today" };
 }
 
-/** The second line of a row. A follow-up adds when you last contacted them; a quick scan adds what the full scan costs. */
-export function itemReason(item: Pick<TodayItem, "kind" | "reason">, ctx: { contactedAt?: string | null; score?: number | null; fullScanCostUsd?: number | null }): string {
+/** The second line of a row. A follow-up adds when you last contacted them; a quick scan adds its score and that a full scan has no AI cost (the AI review runs in a Claude session, not on a paid API). */
+export function itemReason(item: Pick<TodayItem, "kind" | "reason">, ctx: { contactedAt?: string | null; score?: number | null }): string {
   if (item.kind === "follow_up_due" && ctx.contactedAt) {
     const t = Date.parse(ctx.contactedAt);
     if (Number.isFinite(t)) return `${item.reason} · contacted ${new Date(t).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
   }
-  if (item.kind === "promising_quick_scan" && ctx.score != null && ctx.fullScanCostUsd != null) return `Quick scan scored ${ctx.score} · full scan ≈ $${ctx.fullScanCostUsd.toFixed(2)}`;
+  if (item.kind === "promising_quick_scan" && ctx.score != null) return `Quick scan scored ${ctx.score} · full scan has no AI cost`;
   return item.reason;
 }
 
