@@ -9,10 +9,13 @@ import InlineError from "./InlineError";
 import StartSequence from "./StartSequence";
 import type { CroItem, CroResponse } from "../cro";
 import type { Audit, Contact } from "../types";
-import { mailtoHref, snippet, TWEAK_BUTTONS, variantTitle, wordCount, type Draft } from "../emailView";
+import { draftStateLine, mailtoHref, snippet, TWEAK_BUTTONS, variantTitle, wordCount, type Draft, type DraftStatus } from "../emailView";
 
 const TONE_OPTIONS: [string, string][] = [["", "Default tone (from Settings)"], ["friendly_local", "Friendly local"], ["consultative", "Consultative expert"], ["direct", "Direct & short"], ["formal", "Formal"]];
 const MAX_PICKS = 5;
+/** How often a queued draft is checked on while the lead is open. */
+const POLL_MS = 10_000;
+const IDLE: DraftStatus = { state: "idle", since: null };
 
 export interface ComposerHandle {
   /** Saves any edits. Resolves true when nothing is left unsaved. */
@@ -21,7 +24,9 @@ export interface ComposerHandle {
 
 interface Composed { html: string; text: string }
 interface Props {
-  leadId: string; draft: Draft | null; variants: Draft[]; toContact: Contact | null; suppressed: boolean; lowPriority: boolean;
+  leadId: string; draft: Draft | null;
+  /** The draft is the untouched starter from "Write it myself": nothing can be copied, started or sent from it until it is written. */
+  placeholder: boolean; variants: Draft[]; toContact: Contact | null; suppressed: boolean; lowPriority: boolean;
   findings: Audit["findings"];
   /** Reloads the lead after the draft changed on the server. */
   onChanged: () => Promise<void>;
@@ -43,7 +48,7 @@ const toggle = <T,>(set: React.Dispatch<React.SetStateAction<Set<T>>>, key: T) =
  * live preview of the real email (signature and all), and nudge it with quick rewrites.
  */
 const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p, ref) {
-  const { leadId, draft, variants, toContact, suppressed } = p;
+  const { leadId, draft, variants, toContact, suppressed, placeholder } = p;
   const [subject, setSubject] = useState(draft?.subject ?? ""); const [body, setBody] = useState(draft?.body ?? "");
   const [footer, setFooter] = useState(draft?.include_footer ?? false);
   const [side, setSide] = useState<"preview" | "write">("preview");
@@ -57,6 +62,11 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
   const [busy, setBusy] = useState(""); const [error, setError] = useState("");
   const [showAllChips, setShowAllChips] = useState(false); const [versionsOpen, setVersionsOpen] = useState(false);
   const previewDialog = useRef<HTMLDialogElement>(null);
+  const [status, setStatus] = useState<DraftStatus>(IDLE);
+  const openLead = useRef(leadId); openLead.current = leadId;
+  const waiting = status.state !== "idle";
+  /** The draft that was current when a queued one finished: when a different one shows up, the new options are in. */
+  const finishedFrom = useRef<string | null | undefined>(undefined);
 
   const saved = useRef({ subject: draft?.subject ?? "", body: draft?.body ?? "", footer: draft?.include_footer ?? false });
   const latest = useRef({ subject, body, footer, draftId: draft?.id ?? null });
@@ -79,6 +89,35 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
     }).catch(() => { setCroItems([]); setCroFocus(new Set()); });
   }, [leadId]);
   useEffect(() => { api.get<Draft[]>(`/leads/${leadId}/drafts`).then(setVersions).catch(() => setVersions([])); }, [leadId, draft?.id]);
+
+  // A draft asked for is written in the next Claude queue session, so look in on it every 10 seconds while it is open. When it finishes, any edits in the
+  // editor are saved first (a new draft replaces the editor's contents) and the lead is reloaded.
+  const wasWaiting = useRef(false);
+  useEffect(() => { setStatus(IDLE); wasWaiting.current = false; }, [leadId]);
+  useEffect(() => {
+    let live = true;
+    const look = () => api.get<DraftStatus>(`/leads/${leadId}/draft-status`).then((s) => { if (live) setStatus(s); }).catch(() => {});
+    void look();
+    return () => { live = false; };
+  }, [leadId]);
+  useEffect(() => {
+    if (!waiting) return;
+    let live = true; // an answer for the lead that was open before must not set this lead's status
+    const t = setInterval(() => { api.get<DraftStatus>(`/leads/${leadId}/draft-status`).then((s) => { if (live) setStatus(s); }).catch(() => {}); }, POLL_MS);
+    return () => { live = false; clearInterval(t); };
+  }, [leadId, waiting]);
+  useEffect(() => {
+    if (waiting) { wasWaiting.current = true; return; }
+    if (!wasWaiting.current) return;
+    wasWaiting.current = false;
+    finishedFrom.current = latest.current.draftId;
+    void save().then(() => p.onChanged());
+  }, [waiting]);
+  useEffect(() => {
+    if (finishedFrom.current === undefined || finishedFrom.current === (draft?.id ?? null)) return;
+    finishedFrom.current = undefined;
+    p.onMessage("Claude finished writing: the new draft is below.");
+  }, [draft?.id]);
 
   // The preview is the email as it will be sent, so it reflects unsaved edits and the footer choice.
   useEffect(() => {
@@ -109,22 +148,29 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
   const tab = draft ? side : "write";
   const words = wordCount(body);
 
-  async function write(extra: Record<string, unknown>, done: string) {
+  async function write(extra: Record<string, unknown>) {
     if (!(await save())) return;
     setBusy(extra.tweak ? String(extra.tweak) : "write"); setError(""); p.onMessage("");
-    try { await api.post(`/leads/${leadId}/regenerate`, extra); await p.onChanged(); p.onMessage(done); }
+    try {
+      await api.post(`/leads/${leadId}/regenerate`, extra);
+      const s = await api.get<DraftStatus>(`/leads/${leadId}/draft-status`);
+      if (openLead.current === leadId) setStatus(s);
+    } catch (e) { setError((e as Error).message); } finally { setBusy(""); }
+  }
+  /** The manual editor, for a lead with no draft: an empty draft is created and the lead reloads with it. */
+  async function writeMyself() {
+    setBusy("manual"); setError("");
+    try { await api.post(`/leads/${leadId}/draft/manual`, {}); await p.onChanged(); }
     catch (e) { setError((e as Error).message); } finally { setBusy(""); }
   }
   function writeOptions() {
     // Finding keys are "code:index" into the audit's findings.
     const focusIdx = [...focus].map((k) => Number(k.split(":").pop())).filter(Number.isInteger);
     const picked = focusIdx.length + croFocus.size;
-    void write({
-      steeringNote: steer, focus: focusIdx, croFocus: [...croFocus], tone: tone || null,
-    }, picked ? `New options focused on ${picked} chosen issue(s).` : "New options written.");
+    void write({ steeringNote: steer, focus: focusIdx, croFocus: [...croFocus], tone: tone || null });
     setSteer("");
   }
-  const tweak = (key: string, label: string) => void write({ tweak: key }, `Rewrote it: ${label.toLowerCase()}.`);
+  const tweak = (key: string) => void write({ tweak: key });
 
   async function pick(v: Draft) {
     if (v.id === draft?.id) return;
@@ -148,7 +194,10 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
   }
   async function copyAndMark() { if (await copy() && await p.onMarkContacted()) p.onMessage("Copied and marked contacted"); }
 
-  const mailto = toContact && preview ? mailtoHref(toContact.value, subject, preview.text) : null;
+  // Still the untouched starter: copying or starting a sequence from it would send "Hi," to a business. The first edit makes it a draft.
+  const starter = placeholder && !!draft && subject === draft.subject && body === draft.body;
+  const starterWhy = "Write the email first: this is only the starter";
+  const mailto = toContact && preview && !starter ? mailtoHref(toContact.value, subject, preview.text) : null;
 
   const ranked = p.findings.map((f, i) => ({ f, key: `${f.code}:${i}` }))
     .sort((a, b) => ({ critical: 0, important: 1, nice: 2 }[a.f.severity] - { critical: 0, important: 1, nice: 2 }[b.f.severity]) || b.f.points - a.f.points);
@@ -159,10 +208,12 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
   // Picked chips always stay visible, even past the first eight.
   const shownChips = showAllChips ? chips : chips.filter((c, i) => i < 8 || c.on);
   const picked = focus.size + croFocus.size;
+  const stateLine = draftStateLine(status, new Date());
   const toName = toContact?.person_name ?? null;
 
   return (
     <div className="composer">
+      {stateLine && <p className="muted small" role="status">{stateLine}</p>}
       {variants.length > 1 && <section aria-label="Options" className="variants">
         <p className="kicker">Pick a starting point</p>
         <div className="variant-grid">
@@ -202,12 +253,12 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
           <div className="c-row c-tweaks" role="group" aria-label="Quick rewrites">
             <Icon name="sparkles" size={14} className="spark" /><b>Quick rewrite</b>
             {TWEAK_BUTTONS.map((t) => (
-              <button key={t.key} className="pill" onClick={() => tweak(t.key, t.label)} disabled={!!busy || suppressed}
-                title={suppressed ? "Suppressed: drafting is turned off" : ""}>{busy === t.key ? "Rewriting…" : t.label}</button>
+              <button key={t.key} className="pill" onClick={() => tweak(t.key)} disabled={!!busy || waiting || suppressed}
+                title={suppressed ? "Suppressed: drafting is turned off" : waiting ? "A draft is already waiting for Claude" : ""}>{busy === t.key ? "Queuing…" : t.label}</button>
             ))}
           </div>
           <div className="c-row c-actions">
-            <button className="btn" onClick={() => void copy()}><Icon name="copy" size={16} />Copy email</button>
+            <button className="btn" onClick={() => void copy()} disabled={starter} title={starter ? starterWhy : ""}><Icon name="copy" size={16} />Copy email</button>
             {mailto && !suppressed && <a className="btn" href={mailto} onClick={() => void save()}><Icon name="external" size={16} />Open in mail app</a>}
             <button className="btn icon-only" onClick={() => previewDialog.current?.showModal()} disabled={!preview} aria-label="Preview the email" title="Preview the email as it will appear"><Icon name="eye" size={16} /></button>
             {versions.length > 1 && (
@@ -226,8 +277,8 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
               </span>
             )}
             <span className="grow" />
-            <StartSequence leadId={leadId} disabled={suppressed} why="Suppressed: outreach is turned off" beforeStart={save} onStarted={p.onSequenceStarted} />
-            <button className="btn primary" onClick={() => void copyAndMark()} disabled={suppressed}><Icon name="check" size={16} />Copy & mark contacted</button>
+            <StartSequence leadId={leadId} disabled={suppressed || starter} why={suppressed ? "Suppressed: outreach is turned off" : starterWhy} beforeStart={save} onStarted={p.onSequenceStarted} />
+            <button className="btn primary" onClick={() => void copyAndMark()} disabled={suppressed || starter} title={starter ? starterWhy : ""}><Icon name="check" size={16} />Copy & mark contacted</button>
           </div>
           <dialog ref={previewDialog} className="preview-dialog" onClick={(e) => { if (e.target === previewDialog.current) previewDialog.current?.close(); }}>
             <div className="pd-head"><b>Email preview</b><span className="muted small">Subject: {subject || "—"}</span><span className="grow" /><button className="btn sm" onClick={() => previewDialog.current?.close()}>Close</button></div>
@@ -235,15 +286,20 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
             <p className="muted small">This is how the email will look when it goes out. Nothing is sent until you approve it on Home.</p>
           </dialog>
         </section>
-      ) : <p className="muted">No email yet{p.lowPriority ? " (low priority lead)" : ""}. Write the options to get started.</p>}
+      ) : (
+        <p className="muted">
+          No email yet{p.lowPriority ? " (low priority lead)" : ""}. {waiting ? "You can wait for Claude, or " : "Write the options to get started, or "}
+          <button className="link-btn" onClick={() => void writeMyself()} disabled={!!busy || suppressed}>{busy === "manual" ? "Opening…" : "Write it myself"}</button>.
+        </p>
+      )}
 
       <section className="write-card" aria-label="Write new options">
         <div className="w-head">
           <Icon name="refresh" size={15} /><h3>{draft ? "Write new options" : "Write the email"}</h3>
           <span className="grow" />
           {picked > 0 && <button className="link-btn" onClick={() => { setFocus(new Set()); setCroFocus(new Set()); }}>Clear {picked} selected</button>}
-          <button className="btn primary sm" onClick={writeOptions} disabled={!!busy || suppressed} title={suppressed ? "Suppressed: drafting is turned off" : ""}>
-            <Icon name="sparkles" size={14} />{busy === "write" ? "Writing…" : draft ? "Write 3 options" : "Write options"}
+          <button className="btn primary sm" onClick={writeOptions} disabled={!!busy || waiting || suppressed} title={suppressed ? "Suppressed: drafting is turned off" : waiting ? "A draft is already waiting for Claude" : ""}>
+            <Icon name="sparkles" size={14} />{busy === "write" ? "Queuing…" : waiting ? "Waiting for Claude…" : draft ? "Write 3 options" : "Write options"}
           </button>
         </div>
         <div className="w-fields">

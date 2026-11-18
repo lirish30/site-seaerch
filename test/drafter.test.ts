@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from "vitest";
-import { anthropicCaller, buildPrompt, generateDraft, wordCount, type DraftInput } from "../src/worker/drafter/draft";
+import { describe, it, expect } from "vitest";
+import { DraftResult, buildDraftRequest, buildPrompt, resolveDraft, wordCount, type DraftInput } from "../src/worker/drafter/draft";
 import { matchSamples } from "../src/worker/drafter/samples";
 import type { Business, Contact, Finding, Settings, WorkSample } from "../src/worker/types";
 
@@ -74,71 +74,58 @@ describe("buildPrompt", () => {
   });
 });
 
-describe("generateDraft", () => {
-  it("returns validated draft", async () => {
-    const d = await generateDraft(input, async () => ({ subject: "Quick note about ace.com", body: body(), to_contact_id: "c1", recipient_reason: "info inbox" }));
+/** What `apply` does with a result Claude sent: the schema first (the queue refuses a malformed one), then the recipient and the footer logic. */
+const resolve = (raw: unknown, i: DraftInput = input, preferred: string | null = null) => resolveDraft(DraftResult.parse(raw), i, preferred);
+
+describe("resolveDraft", () => {
+  it("returns validated draft", () => {
+    const d = resolve({ subject: "Quick note about ace.com", body: body(), to_contact_id: "c1", recipient_reason: "info inbox" });
     expect(d.to_contact_id).toBe("c1");
     expect(d.variants[0].subject).toBe("Quick note about ace.com");
   });
 
-  it("the chosen point of contact overrides the model's recipient", async () => {
+  it("the chosen point of contact overrides the model's recipient", () => {
     const ann: Contact = { ...contacts[0], id: "c2", value: "ann@ace.com", person_name: "Ann Lee" };
-    const d = await generateDraft({ ...input, contacts: [...contacts, ann] },
-      async () => ({ subject: "s", body: body(), to_contact_id: "c1", recipient_reason: "x" }), "c2");
+    const d = resolve({ subject: "s", body: body(), to_contact_id: "c1", recipient_reason: "x" }, { ...input, contacts: [...contacts, ann] }, "c2");
     expect([d.to_contact_id, d.recipient_reason]).toEqual(["c2", "Your chosen point of contact"]);
   });
 
-  it("rejects hallucinated contact id and falls back to recipient ranking", async () => {
-    const d = await generateDraft(input, async () => ({ subject: "s", body: body(), to_contact_id: "made-up", recipient_reason: "x" }));
-    expect(d.to_contact_id).toBe("c1");
+  it("rejects hallucinated contact id and falls back to recipient ranking", () => {
+    expect(resolve({ subject: "s", body: body(), to_contact_id: "made-up", recipient_reason: "x" }).to_contact_id).toBe("c1");
   });
 
-  it("null contact when no email contacts exist, reason from ranking", async () => {
+  it("null contact when no email contacts exist, reason from ranking", () => {
     const form: Contact = { ...contacts[0], id: "f1", type: "form", value: "https://ace.com/contact" };
-    const d = await generateDraft({ ...input, contacts: [form] }, async () => ({ subject: "s", body: body(), to_contact_id: "f1", recipient_reason: "x" }));
+    const d = resolve({ subject: "s", body: body(), to_contact_id: "f1", recipient_reason: "x" }, { ...input, contacts: [form] });
     expect(d.to_contact_id).toBeNull();
     expect(d.recipient_reason).toMatch(/contact form/);
   });
 
-  it("returns each variant with its angle, up to three", async () => {
+  it("returns each variant with its angle, up to three; a fourth is malformed", () => {
     const v = (n: number) => ({ angle: `Angle ${n}`, subject: `S${n}`, body: `Body ${n}` });
-    const d = await generateDraft(input, async () => ({ variants: [v(1), v(2), v(3)], to_contact_id: "c1", recipient_reason: "x" }));
+    const d = resolve({ variants: [v(1), v(2), v(3)], to_contact_id: "c1", recipient_reason: "x" });
     expect(d.variants.map((x) => [x.angle, x.subject])).toEqual([["Angle 1", "S1"], ["Angle 2", "S2"], ["Angle 3", "S3"]]);
-    // A fourth variant is malformed output: retried once, then thrown.
-    await expect(generateDraft(input, async () => ({ variants: [v(1), v(2), v(3), v(4)], to_contact_id: "c1", recipient_reason: "x" }))).rejects.toThrow(/malformed/i);
+    expect(DraftResult.safeParse({ variants: [v(1), v(2), v(3), v(4)], to_contact_id: "c1", recipient_reason: "x" }).success).toBe(false);
+    expect(DraftResult.safeParse({ nope: true }).success).toBe(false);
+    expect(DraftResult.safeParse({ variants: [], to_contact_id: null, recipient_reason: "x" }).success).toBe(false);
   });
 
-  it("does not append the address or opt-out line: they are added when the email is composed", async () => {
-    const d = await generateDraft(input, async () => ({ subject: "s", body: "Hi,\n\nShort note.\n\nLogan", to_contact_id: "c1", recipient_reason: "x" }));
-    expect(d.variants[0].body).toBe("Hi,\n\nShort note.\n\nLogan");
+  it("does not append the address or opt-out line: they are added when the email is composed", () => {
+    expect(resolve({ subject: "s", body: "Hi,\n\nShort note.\n\nLogan", to_contact_id: "c1", recipient_reason: "x" }).variants[0].body).toBe("Hi,\n\nShort note.\n\nLogan");
   });
 
-  it("strips a signature, address or opt-out line the model wrote anyway", async () => {
-    const d = await generateDraft(input, async () => ({ subject: "s", body: body(), to_contact_id: "c1", recipient_reason: "x" }));
-    expect(d.variants[0].body).toBe("Hi Ace team,\n\nYour site takes about 8 seconds to load on a phone.");
+  it("strips a signature, address or opt-out line the model wrote anyway", () => {
+    expect(resolve({ subject: "s", body: body(), to_contact_id: "c1", recipient_reason: "x" }).variants[0].body).toBe("Hi Ace team,\n\nYour site takes about 8 seconds to load on a phone.");
   });
 
-  it("accepts one flat email as a single variant", async () => {
-    const d = await generateDraft(input, async () => ({ subject: "Flat", body: "Hello", to_contact_id: null, recipient_reason: "x" }));
-    expect(d.variants).toEqual([{ angle: "", subject: "Flat", body: "Hello" }]);
+  it("accepts one flat email as a single variant", () => {
+    expect(resolve({ subject: "Flat", body: "Hello", to_contact_id: null, recipient_reason: "x" }).variants).toEqual([{ angle: "", subject: "Flat", body: "Hello" }]);
   });
 
-  it("keeps only one variant when revising a draft", async () => {
+  it("keeps only one variant when revising a draft", () => {
     const v = (n: number) => ({ angle: `A${n}`, subject: `S${n}`, body: `B${n}` });
-    const d = await generateDraft({ ...input, revise: { subject: "s", body: "b", instruction: "shorter" } },
-      async () => ({ variants: [v(1), v(2)], to_contact_id: "c1", recipient_reason: "x" }));
+    const d = resolve({ variants: [v(1), v(2)], to_contact_id: "c1", recipient_reason: "x" }, { ...input, revise: { subject: "s", body: "b", instruction: "shorter" } });
     expect(d.variants).toHaveLength(1);
-  });
-
-  it("retries once on malformed output, then succeeds", async () => {
-    let n = 0;
-    const d = await generateDraft(input, async () => (n++ === 0 ? { nope: true } : { subject: "s", body: body(), to_contact_id: "c1", recipient_reason: "x" }));
-    expect(n).toBe(2);
-    expect(d.variants[0].subject).toBe("s");
-  });
-
-  it("throws after two malformed outputs", async () => {
-    await expect(generateDraft(input, async () => ({ nope: true }))).rejects.toThrow(/malformed/i);
   });
 
   it("wordCount counts words", () => {
@@ -146,38 +133,24 @@ describe("generateDraft", () => {
   });
 });
 
-describe("anthropicCaller request", () => {
-  it("does not force tool_choice (forcing would skip thinking)", async () => {
-    let sent: any = null;
-    const orig = globalThis.fetch;
-    globalThis.fetch = (async (_url: any, init: any) => {
-      sent = JSON.parse(init.body);
-      return new Response(JSON.stringify({
-        id: "msg_1", type: "message", role: "assistant", model: sent.model, stop_reason: "tool_use",
-        content: [{ type: "tool_use", id: "t1", name: "write_email", input: { subject: "s", body: "b", to_contact_id: null, recipient_reason: "r" } }],
-        usage: { input_tokens: 1, output_tokens: 1 },
-      }), { status: 200, headers: { "content-type": "application/json" } });
-    }) as typeof fetch;
-    try {
-      const out = await anthropicCaller("sk-test")({ system: "sys", user: "usr" });
-      expect(out).toMatchObject({ subject: "s" });
-      expect(sent.tool_choice?.type ?? "auto").toBe("auto");
-    } finally { globalThis.fetch = orig; }
+describe("buildDraftRequest", () => {
+  it("keeps what the lead's site said out of the instructions, and what the sender typed out of the untrusted part", () => {
+    const r = buildDraftRequest({ ...input, steeringNote: "mention I'm local", revise: { subject: "Old subject", body: "Old body", instruction: "Make it shorter" } });
+    expect(r.untrusted).toHaveLength(1);
+    const facts = r.untrusted[0].type === "text" ? r.untrusted[0].text : "";
+    for (const s of ["Ace Plumbing", "Scores 34/100", "c1: info@ace.com", "Old subject", "Old body"]) {
+      expect(facts, s).toContain(s);
+      expect(r.instructions, s).not.toContain(s);
+    }
+    for (const s of ["mention I'm local", "Change requested: Make it shorter", "Plain, friendly, no hype.", "mini proposal"]) {
+      expect(r.instructions, s).toContain(s);
+      expect(facts, s).not.toContain(s);
+    }
+    expect(r.instructions).toContain("must not contain the signature, the address or the opt-out line");
+    expect(r.instructions).not.toContain("123 Main St, Boise, ID 83702");
   });
-});
-
-describe("anthropicCaller", () => {
-  it("does not force tool use, which the draft model rejects", async () => {
-    const create = vi.fn(async () => ({ content: [{ type: "tool_use", input: { subject: "s" } }] }));
-    vi.doMock("@anthropic-ai/sdk", () => ({ default: class { messages = { create }; } }));
-    vi.resetModules();
-    const { anthropicCaller: caller } = await import("../src/worker/drafter/draft");
-    const out = await caller("k")({ system: "sys", user: "usr" });
-    const req = (create.mock.calls[0] as unknown as [any])[0];
-    expect(req.tool_choice).toEqual({ type: "auto" });
-    expect(req.system).toContain("write_email");
-    expect(out).toEqual({ subject: "s" });
-    vi.doUnmock("@anthropic-ai/sdk");
+  it("has no steering or change lines when the sender asked for none", () => {
+    expect(buildDraftRequest(input).instructions).not.toMatch(/Extra instruction|Change requested/);
   });
 });
 

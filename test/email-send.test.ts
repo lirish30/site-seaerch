@@ -176,10 +176,10 @@ describe("email.send", () => {
 
   describe("an answer to a message the lead sent is not cold mail", () => {
     const INBOUND = "<their-reply-1@lead.test>";
-    const inbound = async (over: { business?: string; counterpart?: string; messageId?: string } = {}) => {
+    const inbound = async (over: { business?: string; counterpart?: string; messageId?: string; kind?: string | null } = {}) => {
       await env.DB.prepare(`INSERT INTO messages (id, direction, mailbox_key, business_id, message_id, counterpart, subject, text, status, kind, created_at)
-        VALUES (?, 'in', 'outreach', ?, ?, ?, 'Re: hello', 'Yes please', 'received', 'reply', ?)`)
-        .bind(crypto.randomUUID(), over.business ?? businessId, over.messageId ?? INBOUND, over.counterpart ?? "dana@acme.test", NOW.toISOString()).run();
+        VALUES (?, 'in', 'outreach', ?, ?, ?, 'Re: hello', 'Yes please', 'received', ?, ?)`)
+        .bind(crypto.randomUUID(), over.business ?? businessId, over.messageId ?? INBOUND, over.counterpart ?? "dana@acme.test", over.kind === undefined ? "reply" : over.kind, NOW.toISOString()).run();
     };
 
     it("sends during warm-up day 5", async () => {
@@ -226,6 +226,18 @@ describe("email.send", () => {
       await env.DB.prepare(`INSERT INTO messages (id, direction, mailbox_key, business_id, message_id, counterpart, subject, text, status, created_at)
         VALUES (?, 'out', 'outreach', ?, ?, 'dana@acme.test', 's', 't', 'sent', ?)`).bind(crypto.randomUUID(), businessId, INBOUND, NOW.toISOString()).run();
       expect(await approve(env, (await mk({ inReplyTo: INBOUND })).id)).toMatchObject({ ok: false });
+      expect(smtpCalls).toHaveLength(0);
+    });
+
+    it("only an inbound message of kind reply counts: an auto reply, a bounce or a stop does not", async () => {
+      for (const kind of ["auto_reply", "bounce_hard", "bounce_soft", "stop", null]) {
+        await env.DB.prepare(`DELETE FROM messages`).run();
+        await saveMailbox(env.DB, "outreach", { warmup_started_at: daysAgo(4) });
+        await inbound({ kind });
+        const r = await approve(env, (await mk({ inReplyTo: INBOUND })).id);
+        expect(r, String(kind)).toMatchObject({ ok: false });
+        expect((r as { error: string }).error, String(kind)).toContain("warm-up");
+      }
       expect(smtpCalls).toHaveLength(0);
     });
 

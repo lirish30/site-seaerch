@@ -5,13 +5,19 @@ import type { Env } from "../env";
 import { getBusiness } from "../db/businesses";
 import { isSocialOnlyUrl } from "../crawler/extract";
 import { checkSpend, PRICES } from "../cost";
+import { CRO_LIMITS } from "../cro/config";
 import { logActivity } from "../db/activity";
 import { createCroAudit, failCroAudit, getCroAudit, latestCroAudit, listCroAudits, listCroItems, runningCroAudit, updateCroAudit, updateCroItem, type CroItemPatch } from "../db/cro";
-import { shotKey, textKey } from "../cro/pipeline";
+import { shotKey } from "../cro/keys";
+import { CRO_TARGET, healCroHandover } from "../queue/cro";
+import { cancelTasksFor } from "../queue/db";
 import { scenarioFor } from "../cro/scenario";
 import { BIZ_MODEL_KEYS, type BusinessModel, type CroAudit, type CroFrom, type CroStep } from "../cro/types";
 
 export const croRoutes = new Hono<{ Bindings: Env }>();
+
+/** What an audit that captures pages costs to start: two browser renders (desktop and mobile) per page, at most. The Claude stages are free. */
+const CAPTURE_USD = CRO_LIMITS.maxPages * 2 * PRICES.browserPerRender;
 
 const withScheme = (u: string) => (/^https?:\/\//i.test(u) ? u : `https://${u}`);
 /** The site to audit, or null when the lead has none, it isn't a parseable address, or it's only a social profile. */
@@ -49,18 +55,13 @@ async function busy(c: Ctx, a: CroAudit) {
   return c.json({ error: running.id === a.id ? "This audit is still running" : "A CRO audit is already running for this lead" }, 409);
 }
 
-const b64 = async (raw: R2Bucket, key: string) => {
-  const o = await raw.get(key);
-  return o ? Buffer.from(await o.arrayBuffer()).toString("base64") : null;
-};
-
 croRoutes.post("/leads/:id/cro-audit", async (c) => {
   const id = c.req.param("id");
   const b = await getBusiness(c.env.DB, id);
   if (!b) return c.json({ error: "not found" }, 404);
   if (!auditableSite(b.website_url)) return c.json({ error: "This lead has no website to audit" }, 400);
   if (await runningCroAudit(c.env.DB, id, new Date())) return c.json({ error: "A CRO audit is already running for this lead" }, 409);
-  const spend = await checkSpend(c.env.DB, PRICES.croAudit);
+  const spend = await checkSpend(c.env.DB, CAPTURE_USD);
   if (!spend.ok) return c.json({ error: "spend limit", ...spend }, 402);
   const a = await createCroAudit(c.env.DB, id);
   const failed = await launch(c, a.id);
@@ -74,6 +75,8 @@ croRoutes.get("/leads/:id/cro-audit", async (c) => {
   await runningCroAudit(c.env.DB, id, new Date()); // fails a dead run so the UI stops polling it
   const a = which ? await getCroAudit(c.env.DB, which) : await latestCroAudit(c.env.DB, id);
   if (!a || a.business_id !== id) return c.json({ audit: null, items: [] });
+  // The panel polls this while the audit waits: an audit whose roadmap never got queued (the hand-over failed) is put right here.
+  if (a.status === "waiting" && a.step === "synthesize") await healCroHandover(c.env, a.id);
   return c.json({ audit: a, items: await listCroItems(c.env.DB, a.id) });
 });
 
@@ -140,12 +143,15 @@ croRoutes.post("/cro-audits/:id/rebuild", async (c) => {
   if (!a) return c.json({ error: "not found" }, 404);
   const inFlight = await busy(c, a);
   if (inFlight) return inFlight;
-  if (!a.business_model || !a.pages.some((p) => p.ok)) return c.json({ error: "Nothing to rebuild yet; run the audit first" }, 409);
-  const spend = await checkSpend(c.env.DB, PRICES.croAudit / 2);
+  // Page reviews are written for a specific business model, so a changed model re-runs them. An audit still waiting on Claude restarts the stage it is in.
+  const waitingOn: CroFrom = a.status === "waiting" && (a.step === "model" || a.step === "pages") ? a.step : "synthesize";
+  const from: CroFrom = waitingOn === "synthesize" && effectiveModel(a) !== a.reviewed_as ? "pages" : waitingOn;
+  if ((!a.business_model && from !== "model") || !a.pages.some((p) => p.ok)) return c.json({ error: "Nothing to rebuild yet; run the audit first" }, 409);
+  const spend = await checkSpend(c.env.DB, 0); // rebuilding reuses the captured pages, so only Claude work (free) remains
   if (!spend.ok) return c.json({ error: "spend limit", ...spend }, 402);
-  // Page reviews are written for a specific business model, so a changed model re-runs them.
-  const from: CroFrom = effectiveModel(a) !== a.reviewed_as ? "pages" : "synthesize";
   if (!(await claim(c.env.DB, a.id, from))) return c.json({ error: "This audit is still running" }, 409);
+  // Whatever Claude was still asked about belongs to the run being replaced; a result that arrives for it later is discarded.
+  await cancelTasksFor(c.env.DB, CRO_TARGET, a.id);
   const failed = await launch(c, a.id, from);
   return failed ?? c.json({ ok: true, from }, 202);
 });
@@ -172,9 +178,10 @@ croRoutes.post("/cro-audits/:id/retry", async (c) => {
   const inFlight = await busy(c, a);
   if (inFlight) return inFlight;
   const from = resumePoint(a);
-  const spend = await checkSpend(c.env.DB, from === "synthesize" ? PRICES.croAudit / 2 : PRICES.croAudit);
+  const spend = await checkSpend(c.env.DB, from === "capture" ? CAPTURE_USD : 0);
   if (!spend.ok) return c.json({ error: "spend limit", ...spend }, 402);
   if (!(await claim(c.env.DB, a.id, from))) return c.json({ error: "This audit is still running" }, 409);
+  await cancelTasksFor(c.env.DB, CRO_TARGET, a.id);
   const failed = await launch(c, a.id, from);
   return failed ?? c.json({ ok: true, from }, 202);
 });
@@ -190,15 +197,4 @@ croRoutes.get("/cro-audits/:id/shot/:page/:device", async (c) => {
   const o = await c.env.RAW.get(shotKey(a.id, index, device, c.req.query("top") === "1"));
   if (!o) return c.json({ error: "not found" }, 404);
   return new Response(o.body, { headers: { "content-type": "image/jpeg", "cache-control": "private, max-age=86400" } });
-});
-
-croRoutes.get("/cro-audits/:id/eval-fixture", async (c) => {
-  const a = await getCroAudit(c.env.DB, c.req.param("id"));
-  if (!a || a.status !== "done") return c.json({ error: "not found" }, 404);
-  const business = await getBusiness(c.env.DB, a.business_id);
-  const pages = await Promise.all(a.pages.filter((p) => p.ok).map(async (ref) => ({
-    ref, text: await c.env.RAW.get(textKey(a.id, ref.index)).then((o) => o?.text() ?? ""),
-    shots: { desktop: await b64(c.env.RAW, shotKey(a.id, ref.index, "desktop", true)), mobile: await b64(c.env.RAW, shotKey(a.id, ref.index, "mobile", true)) },
-  })));
-  return c.json({ business, evidence: a.evidence, pages }, 200, { "content-disposition": `attachment; filename="cro-fixture-${a.id}.json"` });
 });

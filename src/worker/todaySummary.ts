@@ -1,7 +1,6 @@
 import { listAllBusinesses } from "./db/businesses";
 import { latestDraftsByBusiness } from "./db/drafts";
 import { suppressedLeadIds } from "./db/suppression";
-import { PER_LEAD_COST } from "./cost";
 import { DRAFT_UNSENT_DAYS } from "./today";
 import type { ActivityKind, LeadStatus } from "./types";
 
@@ -23,7 +22,6 @@ export interface TodaySummary {
   won: { thisMonth: number; valueThisMonth: number; openValue: number };
   pipeline: Record<LeadStatus, number>;
   totalLeads: number;
-  fullScanCostUsd: number;
   recent: RecentActivity[];
 }
 
@@ -66,7 +64,6 @@ export async function buildSummary(db: D1Database, now: Date): Promise<TodaySumm
     hot: { total: 0, newThisWeek: 0 }, drafts: { ready: 0, waiting: 0 }, replied: { total: 0, thisWeek: 0 },
     won: { thisMonth: 0, valueThisMonth: 0, openValue: 0 },
     pipeline: { new: 0, reviewed: 0, contacted: 0, replied: 0, won: 0, lost: 0, skip: 0 }, totalLeads: leads.length,
-    fullScanCostUsd: PER_LEAD_COST,
     recent: recent.results.map((r) => ({ id: r.id, businessId: r.business_id, businessName: r.name, kind: r.kind, detail: r.detail, at: r.created_at })),
   };
   const staleDraft = new Date(t - DRAFT_UNSENT_DAYS * DAY).toISOString();

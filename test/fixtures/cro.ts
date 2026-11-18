@@ -3,7 +3,7 @@ import { createSearch } from "../../src/worker/db/searches";
 import { upsertBusiness } from "../../src/worker/db/businesses";
 import { insertAudit } from "../../src/worker/db/audits";
 import type { Offer, PageKind } from "../../src/worker/types";
-import type { BusinessModel, Evidence, PageSnapshot, RankedItem, Recommendation } from "../../src/worker/cro/types";
+import type { BusinessModel, Evidence, PageCapture, PageSnapshot, RankedItem, Recommendation } from "../../src/worker/cro/types";
 
 export async function seedBusiness(o: { websiteUrl?: string | null; name?: string } = {}) {
   const s = await createSearch(env.DB, { location: "Boise", businessType: "plumber", radiusKm: 10, maxResults: 5 });
@@ -25,6 +25,13 @@ export function snapshot(o: Partial<PageSnapshot> = {}): PageSnapshot {
     ...o,
   };
 }
+
+/** A page as the browser would hand it back (the four screenshots are tiny stand-ins). */
+export const capture = (url: string, o: Partial<PageCapture> = {}): PageCapture => ({
+  ok: true, finalUrl: url, desktop: snapshot({ url }), mobile: snapshot({ url, viewport: { w: 390, h: 844 } }),
+  desktopJpeg: new Uint8Array([1]), mobileJpeg: new Uint8Array([2]), desktopTopJpeg: new Uint8Array([3]), mobileTopJpeg: new Uint8Array([4]),
+  axe: null, consoleErrors: [], failedRequests: [], requestHosts: [], flow: null, ...o,
+});
 
 export const model = (o: Partial<BusinessModel> = {}): BusinessModel => ({
   model: "lead_gen_phone", secondary_model: null, primary_conversion: "Quote request or phone call",

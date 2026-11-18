@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { applyModeRules, factQuotes, hasTrackingGap, needsRetry, quoteFound, validateRecommendations, validateReview } from "../src/worker/cro/validate";
+import { applyModeRules, factQuotes, hasTrackingGap, lowItemsWarning, needsRetry, quoteFound, validateRecommendations, validateReview } from "../src/worker/cro/validate";
 import { pxlScore, rankRecommendations } from "../src/worker/cro/pxl";
 import { defaultScenario, scenarioRange, SCENARIO_LABEL } from "../src/worker/cro/scenario";
 import type { PageReview } from "../src/worker/cro/types";
@@ -115,5 +115,15 @@ describe("factQuotes", () => {
   it("keeps only the phrases a fact quotes, never the wording the code wrote around them", () => {
     expect(factQuotes(['Desktop header button: "Get a Quote"', "No guarantee or warranty wording found", 'Generic phrases used: "welcome to our website", "quality service"']))
       .toEqual(["Get a Quote", "welcome to our website", "quality service"]);
+  });
+});
+
+describe("lowItemsWarning", () => {
+  it("says plainly when too little had solid evidence, instead of padding the roadmap", () => {
+    expect(lowItemsWarning(0)).toBe("Only 0 recommendations had solid evidence behind them. The site may be hard to read automatically; check it by hand before presenting.");
+    expect(lowItemsWarning(1)).toBe("Only 1 recommendation had solid evidence behind it. The site may be hard to read automatically; check it by hand before presenting.");
+    expect(lowItemsWarning(2)).toMatch(/^Only 2 recommendations /);
+    expect(lowItemsWarning(3)).toBeNull();
+    expect(lowItemsWarning(25)).toBeNull();
   });
 });

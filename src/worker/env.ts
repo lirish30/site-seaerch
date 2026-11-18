@@ -16,7 +16,6 @@ export interface Env {
   /** Optional: Google Places API (New) key. When set, listings come from Places first and Bright Data is the fallback. */
   GOOGLE_PLACES_API_KEY?: string;
   PAGESPEED_API_KEY: string;
-  ANTHROPIC_API_KEY: string;
   /** Optional: Google OAuth client for the Drive export. */
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;

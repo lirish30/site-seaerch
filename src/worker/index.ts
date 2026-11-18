@@ -25,6 +25,7 @@ import { mailboxRoutes } from "./routes/mailboxes";
 import { campaignRoutes } from "./routes/campaigns";
 import { sequenceRoutes } from "./routes/sequence";
 import { nicheRoutes } from "./routes/niche";
+import { queueRoutes } from "./routes/queue";
 import "./approvals/leadNote";
 import "./approvals/emailSend";
 import { mcpRoute } from "./mcp/route";
@@ -58,6 +59,7 @@ app.route("/api/agent-actions", agentActionRoutes);
 app.route("/api/mailboxes", mailboxRoutes);
 app.route("/api/campaigns", campaignRoutes);
 app.route("/api/niche", nicheRoutes);
+app.route("/api/queue", queueRoutes);
 // Mounted last at /api: /api/leads/:id/cro-audit(s), /api/cro-items/:id, /api/cro-audits/:id/... (all behind requireAuth).
 app.route("/api", croRoutes);
 

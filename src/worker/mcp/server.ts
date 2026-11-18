@@ -10,15 +10,16 @@ import { getHandler, registeredKinds } from "../approvals/registry";
 import { checkConflict } from "../conflict";
 import { logAgentAction } from "../db/agentActions";
 import { getBusiness } from "../db/businesses";
+import { isKnownRecipient } from "../db/contacts";
 import { latestAudit, latestAuditsFor } from "../db/audits";
 import { listActivity } from "../db/activity";
-import { claimNextClaudeTask } from "../db/claudeTasks";
-import { REPLY_TASK_KIND, buildReplyContext, completeReplyTask, renderReplyTask } from "../sequence/replies";
+import "../queue/kinds"; // registers the built-in task kinds for this entry path too
+import { claimNextTask, completeTask, markTaskStale, queueCounts, releaseTask } from "../queue/db";
+import { buildBundle } from "../queue/bundle";
+import { getTaskKind, registeredTaskKinds } from "../queue/registry";
 
 const MAX_LEADS = 50;
-/** The task kinds this server can brief and complete. A claimed task of any other kind would be stranded, so it is never handed out. */
-const TASK_KINDS: readonly string[] = [REPLY_TASK_KIND];
-/** Tasks skipped in one call because their lead or message was deleted (each is failed, so the loop always makes progress). */
+/** Tasks skipped in one call because their target is gone (each is closed, so the loop always makes progress). */
 const MAX_SKIPPED = 10;
 const text = (v: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(v) }] });
 const fail = (msg: string) => ({ isError: true as const, content: [{ type: "text" as const, text: msg }] });
@@ -96,11 +97,22 @@ export function buildMcpServer(env: Env): McpServer {
       await log("propose_approval", `refused email.send from the ${p.mailbox} mailbox`, { type: "business", id: p.businessId });
       return fail('email.send proposals must use mailbox "outreach"');
     }
+    // The lead must exist: a made-up id would skip every lead-level check below (suppression, client status, the domain lists).
+    const lead = await getBusiness(db, p.businessId);
+    if (!lead) {
+      await log("propose_approval", `refused email.send: no such lead ${p.businessId.slice(0, 100)}`);
+      return fail(`lead not found: ${p.businessId}`);
+    }
     // The gate runs when the approval is made, not only when it is approved: a listed recipient, a suppressed lead or a client never gets a card.
     const c = await checkConflict(db, { email: p.to, businessId: p.businessId });
     if (c.blocked) {
       await log("propose_approval", `refused email.send to ${p.to.slice(0, 100)}: ${c.reason}`.slice(0, 300), { type: "business", id: p.businessId });
       return fail(`blocked: ${c.reason} (${c.source})`);
+    }
+    // Claude reads scraped pages and inbound mail and could be steered to write to someone else, so the recipient must be an address we know for THIS lead.
+    if (!(await isKnownRecipient(db, p.businessId, p.to))) {
+      await log("propose_approval", `refused email.send to ${p.to.slice(0, 100)}: not a known address for the lead`, { type: "business", id: p.businessId });
+      return fail(`${p.to} is not a known address for ${lead.name} (only a contact found for the lead, or an address we already wrote to, can be proposed).`);
     }
     const title = a.title.replace(/\s+/g, " ").trim().slice(0, 120).trim() || `Email to ${p.to}`;
     const spec = buildEmailSendApproval({ ...p, title, drafted_by: "mcp" }, await getSettings(db), await mailboxFromEmail(db, p.mailbox));
@@ -131,34 +143,59 @@ export function buildMcpServer(env: Env): McpServer {
   });
 
   server.registerTool("next_claude_task", {
-    description: "Claim the next queued Claude task (for now: classify a prospect's reply and draft the answer) and get everything needed to do it, including the JSON schema of the result. Returns \"no tasks\" when the queue is empty. Finish it with complete_claude_task.",
+    description: "Claim the next queued Claude task and get everything needed to do it: the instructions, the suggested model, the JSON schema of the result, and the untrusted content (a delimited block, with any screenshots as images). Returns \"no tasks\" when the queue is empty. Finish it with complete_claude_task, or hand it back with release_claude_task.",
     inputSchema: { kinds: z.array(z.string().max(100)).max(10).optional() },
   }, async ({ kinds }) => {
-    const wanted = kinds ? kinds.filter((k) => TASK_KINDS.includes(k)) : [...TASK_KINDS];
+    // Only kinds this server can brief and complete are handed out: a claimed task of any other kind would be stranded.
+    const known = registeredTaskKinds();
+    const wanted = kinds ? kinds.filter((k) => known.includes(k)) : known;
     for (let skipped = 0; skipped <= MAX_SKIPPED && wanted.length; skipped++) {
-      const task = await claimNextClaudeTask(db, new Date(), wanted);
+      const task = await claimNextTask(env, new Date(), wanted);
       if (!task) break;
-      const ctx = await buildReplyContext(env, task);
-      if (!ctx) { await log("next_claude_task", `skipped task ${task.id}: its lead or message was deleted`); continue; } // the task was failed
-      const p = task.payload as { businessId?: string };
-      await log("next_claude_task", `claimed ${task.kind} task ${task.id}`, p.businessId ? { type: "lead", id: p.businessId } : undefined);
-      return { content: [{ type: "text" as const, text: renderReplyTask(task, ctx) }] };
+      const bundle = await buildBundle(env, task);
+      if ("stale" in bundle) { // the task is closed (a kind may already have failed it), so the next claim moves on
+        await markTaskStale(db, task.id, bundle.stale);
+        await log("next_claude_task", `skipped ${task.kind} task ${task.id}: ${bundle.stale}`);
+        continue;
+      }
+      await log("next_claude_task", `claimed ${task.kind} task ${task.id}`, task.target_type && task.target_id ? { type: task.target_type, id: task.target_id } : undefined);
+      return { content: [{ type: "text" as const, text: bundle.text }, ...bundle.images.map((i) => ({ type: "image" as const, data: i.data, mimeType: i.mimeType }))] };
     }
     await log("next_claude_task", "no tasks");
     return { content: [{ type: "text" as const, text: "no tasks" }] };
   });
 
   server.registerTool("complete_claude_task", {
-    description: "Finish a claimed Claude task with its result (see the schema next_claude_task returned). The app validates it and applies the effects: it can stop outreach, schedule a check-in, or create an email approval for Logan. It never sends anything. An invalid result is refused with the reasons and the task stays claimed so you can try again.",
+    description: "Finish a claimed Claude task with its result (see the schema next_claude_task returned). The app validates it and applies the effects: it can stop outreach, schedule a check-in, or create an approval for Logan. It never sends anything. An invalid result is refused with the reasons and the task stays claimed so you can try again.",
     inputSchema: { id: z.string().min(1).max(100), result: z.unknown() },
   }, async ({ id, result }) => {
-    const r = await completeReplyTask(env, id, result);
-    // A success is logged by `completeReplyTask` itself, against the lead; a refusal is logged here.
+    const r = await completeTask(env, id, result);
+    // A success is logged by `completeTask` itself, against the target; a refusal is logged here.
     if (!r.ok) {
       await log("complete_claude_task", `refused task ${id.slice(0, 100)}: ${r.error.replace(/\s+/g, " ")}`);
       return fail(r.error);
     }
     return { content: [{ type: "text" as const, text: "done" }] };
+  });
+
+  server.registerTool("release_claude_task", {
+    description: "Hand a claimed Claude task back unfinished, with the reason you could not do it. It goes back to the queue (and fails for good after its fourth claim).",
+    inputSchema: { id: z.string().min(1).max(100), reason: z.string().min(1).max(500) },
+  }, async ({ id, reason }) => {
+    const ok = await releaseTask(env, id, reason);
+    await log("release_claude_task", `${ok ? "released" : "could not release"} task ${id.slice(0, 100)}: ${reason.replace(/\s+/g, " ").slice(0, 200)}`);
+    return ok ? { content: [{ type: "text" as const, text: "released" }] } : fail("task is not claimed");
+  });
+
+  server.registerTool("queue_status", {
+    description: "How much Claude work is waiting, per task kind: pending (not yet picked up), claimed (being worked) and the model that kind suggests. Kinds with nothing open, or that this server cannot work, are left out.",
+    inputSchema: {},
+  }, async () => {
+    // Only kinds this server can brief and complete: next_claude_task never hands out the others, so counting them would send a worker round in circles.
+    const counts = Object.fromEntries(Object.entries(await queueCounts(db)).filter(([kind]) => getTaskKind(kind)));
+    await log("queue_status", `queue_status -> ${Object.values(counts).reduce((n, c) => n + c.pending + c.claimed, 0)} open`);
+    // The model each kind suggests rides along, so the worker can pick the right subagent without opening a task.
+    return text(Object.fromEntries(Object.entries(counts).map(([kind, c]) => [kind, { ...c, suggested_model: getTaskKind(kind)?.suggestedModel ?? null }])));
   });
 
   return server;

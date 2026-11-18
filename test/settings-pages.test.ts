@@ -1,6 +1,6 @@
 import { env, SELF } from "cloudflare:test";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { regenerateDraft, type LeadDeps } from "../src/worker/pipeline/lead";
+import { writeDraft } from "./fixtures/draftTask";
 import { saveSettings } from "../src/worker/db/settings";
 import { lastMonths, monthlySpend, recordUsage } from "../src/worker/db/usage";
 import { saveGoogleAuth } from "../src/worker/db/google";
@@ -56,14 +56,12 @@ describe("mailing footer and email defaults", () => {
     expect((await put({ footer_freelance: "yes" })).status).toBe(400);
   });
 
-  const deps = (): LeadDeps => ({ db: env.DB, raw: env.RAW, pagespeedKey: "K", fetch: async () => new Response(""), now: () => new Date(),
-    claude: async () => ({ variants: [{ angle: "A", subject: "S", body: "B" }], to_contact_id: null, recipient_reason: "r" }) }) as unknown as LeadDeps;
   it("new drafts take their footer default from the settings", async () => {
     const b = await seedBusiness(); await seedLeadAudit(b.id);
     await saveSettings(env.DB, { footer_freelance: 0 });
-    expect((await regenerateDraft(deps(), b.id)).include_footer).toBe(false);
+    expect((await writeDraft(b.id)).include_footer).toBe(false);
     await saveSettings(env.DB, { footer_freelance: 1 });
-    expect((await regenerateDraft(deps(), b.id)).include_footer).toBe(true);
+    expect((await writeDraft(b.id)).include_footer).toBe(true);
   });
 });
 

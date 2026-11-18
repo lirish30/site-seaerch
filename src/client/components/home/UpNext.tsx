@@ -83,7 +83,7 @@ export default function UpNext(p: Props) {
         <>
           <ul className="hm-rows" aria-label="Up next">
             {shown.map((it) => (
-              <UpNextRow key={it.id} item={it} facts={p.leads.data?.get(it.businessId)} fullScanCostUsd={p.summary.data?.fullScanCostUsd ?? null}
+              <UpNextRow key={it.id} item={it} facts={p.leads.data?.get(it.businessId)}
                 busy={p.busy.has(it.id)} scan={p.scans[it.id]} error={p.errs[it.id]}
                 onDone={() => p.onDone(it)} onSnooze={(d) => p.onSnooze(it, d)} onFullScan={() => p.onFullScan(it)} />
             ))}

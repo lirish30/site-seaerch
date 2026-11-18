@@ -17,11 +17,12 @@ import { scoreFit } from "../scoring/fit";
 import { rankPromising } from "../scoring/promising";
 import { bestOffer } from "../services/best-offer";
 import { listContacts, contactsFor } from "../db/contacts";
-import { draftedIds, latestDraft, updateDraftBody, listDrafts, selectDraft, variantsOf } from "../db/drafts";
+import { draftedIds, isPlaceholderDraft, latestDraft, updateDraftBody, listDrafts, selectDraft, variantsOf } from "../db/drafts";
 import { activeReportFor, createReport, otherActiveCount, revokeReports, type ReportRow } from "../db/reports";
 import { pickRecipient } from "../recipient";
-import { regenerateDraft, TWEAKS, type Tweak } from "../pipeline/lead";
-import { depsFromEnv } from "../workflows";
+import { TWEAKS, createManualDraft, draftTaskState, requestDraft, type Tweak } from "../queue/leadDraft"; // also registers the lead.draft task kind
+import { cancelTasksFor } from "../queue/db";
+import { SITE_REVIEW_KIND } from "../queue/siteReview";
 import { checkSpend, PER_LEAD_COST } from "../cost";
 import { getSettings } from "../db/settings";
 import { composeEmail } from "../email/render";
@@ -158,7 +159,9 @@ leadRoutes.get("/:id", async (c) => {
   const shown = audit && { ...audit, findings: audit.findings.map((f) => ({ ...f, stale: isStale(f, audit.created_at, now) })) };
   // Matched on the stale-flagged findings so `because` carries each finding's `stale` for the evidence badge.
   const best_offer = shown ? bestOffer(shown.findings, await listServices(c.env.DB, { activeOnly: true }), shown.offer) : null;
-  return c.json({ business, audit: shown, contacts, draft, variants, toContact, people, activity, changes, urgency: audit ? urgencyOf(audit.findings) : 0, best_offer,
+  // True while Claude has not reviewed the latest audit yet: its site.review task (keyed by the audit id) is still open.
+  const reviewPending = !!audit && !!(await c.env.DB.prepare(`SELECT 1 AS x FROM claude_tasks WHERE kind = ? AND dedupe_key = ? AND status IN ('pending','claimed')`).bind(SITE_REVIEW_KIND, audit.id).first());
+  return c.json({ business, audit: shown, reviewPending, contacts, draft, draftPlaceholder: !!draft && isPlaceholderDraft(draft), variants, toContact, people, activity, changes, urgency: audit ? urgencyOf(audit.findings) : 0, best_offer,
     fit: scoreFit(business, audit, profiles), suppressed: hit ? { reason: hit.reason, note: hit.note } : null });
 });
 
@@ -208,7 +211,7 @@ leadRoutes.post("/:id/drive", (c) => exportGuard(c, async () => {
   if (folder !== row.folder_id) await setGoogleFolder(c.env.DB, folder);
   const name = r.data.business.name;
   const draft = await latestDraft(c.env.DB, id);
-  const email = draft ? composeEmail(await getSettings(c.env.DB), draft) : null;
+  const email = draft && !isPlaceholderDraft(draft) ? composeEmail(await getSettings(c.env.DB), draft) : null;
   const doc = await uploadFile(fetch, token, { name: `${name} – website audit & proposal`, parents: [folder], mimeType: "application/vnd.google-apps.document" },
     { type: "text/html", bytes: renderDoc(r.data, email ? { subject: email.subject, body: email.text } : null) });
   let pdfUrl: string | null = null;
@@ -289,6 +292,7 @@ leadRoutes.delete("/:id", async (c) => {
   const id = c.req.param("id");
   if (!(await getBusiness(c.env.DB, id))) return c.json({ error: "not found" }, 404);
   await deleteBusiness(c.env.DB, id);
+  await cancelTasksFor(c.env.DB, "lead", id); // Claude work still queued for this lead (an AI review, say) is closed, so nobody does it
   return c.json({ ok: true });
 });
 
@@ -349,21 +353,37 @@ const Regenerate = z.object({
   purpose: z.literal("freelance").optional(),
   tweak: z.enum(Object.keys(TWEAKS) as [Tweak, ...Tweak[]]).optional(),
 });
+// Asking for a draft queues it for Claude (the next queue session writes it) and answers at once. A second ask while one is queued gets that task back.
 leadRoutes.post("/:id/regenerate", async (c) => {
   const blocked = await suppressedResponse(c, c.req.param("id"));
   if (blocked) return blocked;
   const p = Regenerate.safeParse(await c.req.json().catch(() => ({})));
   if (!p.success) return c.json({ error: "invalid" }, 400);
-  const id = c.req.param("id");
   try {
-    const d = await regenerateDraft(depsFromEnv(c.env), id, {
+    const r = await requestDraft(c.env.DB, c.req.param("id"), {
       steeringNote: p.data.steeringNote?.trim() || null, focus: p.data.focus, croFocus: p.data.croFocus, tone: p.data.tone,
       purpose: p.data.purpose, tweak: p.data.tweak,
     });
-    const picked = (p.data.focus?.length ?? 0) + (p.data.croFocus?.length ?? 0);
-    await logActivity(c.env.DB, id, "draft", p.data.tweak ? `Rewrote the draft (${p.data.tweak.replace("_", " ")})`
-      : picked ? `Regenerated around ${picked} chosen issue(s)` : "Regenerated");
-    return c.json({ ...d, variants: await variantsOf(c.env.DB, d) });
+    return c.json({ queued: true, taskId: r.taskId }, 202);
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 400);
+  }
+});
+
+// Whether this lead's draft is waiting for Claude, so the composer can say so and poll.
+leadRoutes.get("/:id/draft-status", async (c) => {
+  const id = c.req.param("id");
+  if (!(await getBusiness(c.env.DB, id))) return c.json({ error: "not found" }, 404);
+  return c.json(await draftTaskState(c.env.DB, id));
+});
+
+// "Write it myself": an editable placeholder draft with nothing from Claude in it, for a lead that has none yet (a lead that has one gets it back).
+leadRoutes.post("/:id/draft/manual", async (c) => {
+  const blocked = await suppressedResponse(c, c.req.param("id"));
+  if (blocked) return blocked;
+  try {
+    const { draft: d, created } = await createManualDraft(c.env.DB, c.req.param("id"));
+    return c.json({ ...d, variants: await variantsOf(c.env.DB, d) }, created ? 201 : 200);
   } catch (e) {
     return c.json({ error: (e as Error).message }, 400);
   }

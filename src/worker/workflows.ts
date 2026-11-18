@@ -1,9 +1,6 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
-import { NonRetryableError } from "cloudflare:workflows";
 import type { Env } from "./env";
 import { runLead, type LeadDeps, type StepLike } from "./pipeline/lead";
-import { anthropicCaller } from "./drafter/draft";
-import { anthropicReviewer } from "./audit/review";
 import { browserRenderer } from "./render/render";
 import { setBusinessError } from "./db/businesses";
 import { incrementProcessed } from "./db/searches";
@@ -12,8 +9,7 @@ import type { ScanStage } from "./types";
 import { BrightDataListingSource } from "./listings/brightdata";
 import { GooglePlacesListingSource } from "./listings/places";
 import { FallbackListingSource } from "./listings/fallback";
-import { runCroWithErrorHandling, type CroDeps, type CroParams } from "./cro/pipeline";
-import { CroFatalError, anthropicCroCaller } from "./cro/ai";
+import { runCroWithErrorHandling, startCroStages, type CroDeps, type CroParams } from "./cro/pipeline";
 import { puppeteerCroBrowser } from "./cro/capture";
 
 const RETRY = { retries: { limit: 3, delay: "10 seconds" as const, backoff: "exponential" as const }, timeout: "5 minutes" as const };
@@ -24,24 +20,17 @@ const RETRY = { retries: { limit: 3, delay: "10 seconds" as const, backoff: "exp
 // recorded rather than the engine killing the step silently.
 export const LISTING_RETRY = { retries: { limit: 3, delay: "20 seconds" as const, backoff: "exponential" as const }, timeout: "5 minutes" as const };
 
-// The CRO AI steps run up to four sequential long calls (the roadmap) or one big call per page, so they get longer than the default.
-const AI_RETRY = { ...RETRY, timeout: "10 minutes" as const };
-const AI_STEP = /^(model|synthesize|page-\d+)$/;
-
 export function depsFromEnv(env: Env): LeadDeps {
   return {
     db: env.DB, raw: env.RAW, fetch: (u, i) => fetch(u, i), pagespeedKey: env.PAGESPEED_API_KEY,
-    claude: anthropicCaller(env.ANTHROPIC_API_KEY), now: () => new Date(),
+    now: () => new Date(),
     render: env.BROWSER ? browserRenderer(env.BROWSER) : undefined,
-    reviewer: anthropicReviewer(env.ANTHROPIC_API_KEY),
   };
 }
 
 export function adaptStep(step: WorkflowStep): StepLike {
   return {
-    // A refusal or 4xx fails the step at once instead of being retried (and paid for) three more times.
-    do: (name, fn) => step.do(name, /^fetch-listings(-\d+)?$/.test(name) ? LISTING_RETRY : AI_STEP.test(name) ? AI_RETRY : RETRY,
-      (async () => { try { return await fn(); } catch (e) { throw e instanceof CroFatalError ? new NonRetryableError(e.message) : e; } }) as any) as any,
+    do: (name, fn) => step.do(name, /^fetch-listings(-\d+)?$/.test(name) ? LISTING_RETRY : RETRY, fn as any) as any,
     sleep: (name, ms) => step.sleep(name, ms),
   };
 }
@@ -59,7 +48,7 @@ export async function runLeadWithErrorHandling(deps: LeadDeps, step: WorkflowSte
       if (p.searchId) await incrementProcessed(deps.db, p.searchId);
       return true;
     });
-    return { auditId: null, draftId: null };
+    return { auditId: null };
   }
 }
 
@@ -100,8 +89,9 @@ export class SearchWorkflow extends WorkflowEntrypoint<Env, SearchParams> {
 }
 
 export function croDepsFromEnv(env: Env): CroDeps {
-  return { db: env.DB, raw: env.RAW, browser: env.BROWSER ? puppeteerCroBrowser(env.BROWSER) : undefined,
-    ai: anthropicCroCaller(env.ANTHROPIC_API_KEY), now: () => new Date() };
+  // No AI caller: the Claude stages are queued for Claude Code to work (startCroStages), and the workflow ends after capture and evidence.
+  return { db: env.DB, raw: env.RAW, browser: env.BROWSER ? puppeteerCroBrowser(env.BROWSER) : undefined, now: () => new Date(),
+    start: (auditId, from) => startCroStages(env, auditId, from) };
 }
 
 export class CroAuditWorkflow extends WorkflowEntrypoint<Env, CroParams> {

@@ -3,8 +3,9 @@ import { MAILBOX_KEYS, getMailbox, mailboxPassword, saveMailbox } from "../db/ma
 import { activityStmt } from "../db/activity";
 import { getEnrollment } from "../db/enrollments";
 import { getBusiness } from "../db/businesses";
-import { enqueueClaudeTaskStmt } from "../db/claudeTasks";
-import { REPLY_TASK_KIND } from "../sequence/replies";
+import { listableAddress } from "./listable";
+import { enqueueTaskStmt } from "../queue/db";
+import { REPLY_TASK_KIND } from "../queue/replyClassify";
 import { stopOutreach } from "../sequence/stop";
 import { getMailDeps } from "./deps";
 import { classifyInbound, parseInbound, type InboundMessage } from "./inbound";
@@ -27,13 +28,6 @@ const ADDRESS_MAX = 320;
 const ID_MAX = 998;
 /** References lists grow with the thread (and can be hostile); the newest entries are the ones that name our message. */
 const MAX_REFERENCES = 10;
-
-const EMAIL = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
-/** An address fit for the do-not-contact list, or undefined. A mail system's odd Final-Recipient must never make the stop throw (it would block the mailbox on that message). */
-const usable = (a: string | null | undefined): string | undefined => {
-  const t = a?.trim().replace(/^<|>$/g, "").toLowerCase();
-  return t && t.length <= ADDRESS_MAX && EMAIL.test(t) ? t : undefined;
-};
 
 const clip = (s: string, n = 160) => (s.length > n ? `${s.slice(0, n)}...` : s);
 
@@ -67,22 +61,6 @@ async function matchLead(db: D1Database, key: MailboxKey, m: InboundMessage): Pr
     `SELECT e.id, e.business_id, b.lead_status FROM enrollments e LEFT JOIN businesses b ON b.id = e.business_id WHERE LOWER(e.to_email) = ? ORDER BY e.started_at DESC, e.id LIMIT 1`,
   ).bind(address).first<{ id: string; business_id: string; lead_status: string | null }>();
   return e && e.lead_status !== "won" ? { businessId: e.business_id, enrollmentId: e.id } : null;
-}
-
-/**
- * The address to list as do-not-contact for a stop or a hard bounce. `claimed` is what the mail says (a DSN's Final-Recipient, a sender's From),
- * and a forged message can claim anyone. It is used only when it is an address we wrote to for this lead (the enrollment's `to_email`, or an outbound
- * message's recipient); otherwise it is the enrollment's `to_email`, the address we actually wrote to. Undefined when there is neither.
- */
-async function listableAddress(db: D1Database, businessId: string, enrollmentTo: string | null | undefined, claimed: string | null | undefined): Promise<string | undefined> {
-  const known = usable(enrollmentTo);
-  const c = usable(claimed);
-  if (c && c === known) return c;
-  if (c) {
-    const sent = await db.prepare(`SELECT 1 AS x FROM messages WHERE direction = 'out' AND business_id = ? AND LOWER(counterpart) = ? LIMIT 1`).bind(businessId, c).first();
-    if (sent) return c;
-  }
-  return known;
 }
 
 interface StoredRow { id: string; business_id: string | null; enrollment_id: string | null; processed_at: string | null }
@@ -129,7 +107,7 @@ async function processMessage(env: Env, key: MailboxKey, m: { uid: number; raw: 
       await stopOutreach(db, { businessId, reason: "replied" });
       // Claude classifies the reply (and drafts the answer) through the task queue. The task goes in the same batch as the stamp, so a message
       // is either fully applied (stamped, one task) or not at all, and a failure to enqueue fails the message like any other effect.
-      const classify = enqueueClaudeTaskStmt(db, REPLY_TASK_KIND, { messageId: row.id, businessId, enrollmentId: match.enrollmentId }, { dedupeKey: row.id });
+      const classify = enqueueTaskStmt(db, REPLY_TASK_KIND, { messageId: row.id, businessId, enrollmentId: match.enrollmentId }, { dedupeKey: row.id, targetType: "lead", targetId: businessId });
       await db.batch([activityStmt(db, businessId, "email_reply", `Reply from ${sender}: ${subject}`), classify.stmt, stamp]);
       tally.replies++;
       return;

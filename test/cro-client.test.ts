@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   effectiveModel, stepIndex, STEP_LABEL, MODE_LABEL, EVIDENCE_FAMILY_LABEL,
-  splitRoadmap, neighborOf, parseScenarioForm, scenarioToForm, parseAssumptionsForm, rebuildVisible, rebuildNeedsPatch,
+  splitRoadmap, neighborOf, croWaitingLine, parseScenarioForm, scenarioToForm, parseAssumptionsForm, rebuildVisible, rebuildNeedsPatch,
 } from "../src/client/cro";
 import type { CroItem } from "../src/client/cro";
 import { model, ranked } from "./fixtures/cro";
@@ -22,6 +22,22 @@ describe("client CRO helpers", () => {
       expect(EVIDENCE_FAMILY_LABEL[f]).toBeTruthy();
       expect(EVIDENCE_FAMILY_LABEL[f]).not.toMatch(/\bcta\b|lcp|cro|pxl/i);
     }
+  });
+});
+
+describe("croWaitingLine", () => {
+  it("says what Claude is working on at each waiting stage", () => {
+    expect(croWaitingLine({ step: "model", pending: 0, total: 0 })).toBe("Waiting for Claude: reading the business");
+    expect(croWaitingLine({ step: "pages", pending: 2, total: 5 })).toBe("Waiting for Claude: reviewing pages (3 of 5 done)");
+    expect(croWaitingLine({ step: "pages", pending: 5, total: 5 })).toBe("Waiting for Claude: reviewing pages (0 of 5 done)");
+    expect(croWaitingLine({ step: "synthesize", pending: 0, total: 5 })).toBe("Waiting for Claude: writing the roadmap");
+  });
+  it("never counts below zero or past the total", () => {
+    expect(croWaitingLine({ step: "pages", pending: 7, total: 5 })).toBe("Waiting for Claude: reviewing pages (0 of 5 done)");
+    expect(croWaitingLine({ step: "pages", pending: -1, total: 5 })).toBe("Waiting for Claude: reviewing pages (5 of 5 done)");
+  });
+  it("falls back to a plain line for a step Claude has no part in", () => {
+    expect(croWaitingLine({ step: "evidence", pending: 0, total: 0 })).toBe("Waiting for Claude");
   });
 });
 

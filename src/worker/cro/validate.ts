@@ -5,7 +5,7 @@ export interface Drop { title: string; reason: string }
 
 // The zod schemas carry no .max(), so the code enforces the caps.
 const MAX_ISSUES_PER_PAGE = 10;
-const MAX_STRENGTHS = 6;
+export const MAX_STRENGTHS = 6;
 
 export const normalize = (s: string) => s.normalize("NFKC")
   .replace(/[‘’‛′]/g, "'").replace(/[“”″]/g, '"').replace(/[–—]/g, "-")
@@ -47,6 +47,10 @@ export function validateRecommendations(recs: Recommendation[], ids: Set<string>
   });
   return { kept, dropped };
 }
+
+/** Never pad a thin roadmap with generic advice: when too little had solid evidence behind it, say so plainly. Null when there is enough. */
+export const lowItemsWarning = (n: number): string | null => n < CRO_LIMITS.minItems
+  ? `Only ${n} recommendation${n === 1 ? "" : "s"} had solid evidence behind ${n === 1 ? "it" : "them"}. The site may be hard to read automatically; check it by hand before presenting.` : null;
 
 export const needsRetry = (total: number, dropped: number) => total > 0 && dropped / total > CRO_LIMITS.retryDropShare;
 

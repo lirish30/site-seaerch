@@ -1,23 +1,18 @@
 import type { Business } from "../types";
-import { callStage, type CroCaller, type StageResult } from "./ai";
-import { BusinessModelSchema, MODEL_TOOL, PAGE_TOOL, PageReviewSchema, SYNTH_TOOL, SynthesisSchema, SYSTEM_MODEL, SYSTEM_PAGE, SYSTEM_SYNTH,
-  modelContent, pageContent, synthContent } from "./prompts";
-import type { BusinessModel, CroPageRef, Evidence, PageReview, Synthesis } from "./types";
+import type { QueuePart } from "../queue/registry";
+import { SYSTEM_MODEL, SYSTEM_PAGE, SYSTEM_SYNTH, modelContent, pageContent, synthContent, type ShotKeys } from "./prompts";
+import type { BusinessModel, CroPageRef, Evidence, PageReview } from "./types";
 
-type Shots = { desktop: string | null; mobile: string | null };
-export interface ModelStageInput { business: Business; evidence: Evidence[]; shots: Shots }
-export interface PageStageInput { business: Business; model: BusinessModel; page: CroPageRef; evidence: Evidence[]; shots: Shots }
+/** What one Claude stage is given: the stage's fixed prompt, and everything copied from the site (the ledger, the business, the screenshots) as untrusted parts. */
+export interface StageRequest { instructions: string; untrusted: QueuePart[] }
+
+export interface ModelStageInput { business: Business; evidence: Evidence[]; shots: ShotKeys }
+export interface PageStageInput { business: Business; model: BusinessModel; page: CroPageRef; evidence: Evidence[]; shots: ShotKeys }
 export interface SynthInput { business: Business; model: BusinessModel; reviews: PageReview[]; evidence: Evidence[] }
 
-export function inferBusinessModel(i: ModelStageInput, call: CroCaller): Promise<StageResult<BusinessModel>> {
-  return callStage(call, { stage: "model", system: SYSTEM_MODEL, content: modelContent(i), tool: MODEL_TOOL }, BusinessModelSchema);
-}
+export const buildModelRequest = (i: ModelStageInput): StageRequest => ({ instructions: SYSTEM_MODEL, untrusted: modelContent(i) });
 
-export async function reviewPage(i: PageStageInput, call: CroCaller, rejected: string[] = []): Promise<StageResult<PageReview>> {
-  const r = await callStage(call, { stage: "pages", system: SYSTEM_PAGE, content: pageContent(i, rejected), tool: PAGE_TOOL }, PageReviewSchema);
-  return r.value ? { ...r, value: { ...r.value, page: i.page.url } } : r;
-}
+/** `rejected` lists what an earlier answer for this page had thrown away, so the second try can avoid it. */
+export const buildPageRequest = (i: PageStageInput, rejected: string[] = []): StageRequest => ({ instructions: SYSTEM_PAGE, untrusted: pageContent(i, rejected) });
 
-export function synthesizeRoadmap(i: SynthInput, call: CroCaller, rejected: string[] = []): Promise<StageResult<Synthesis>> {
-  return callStage(call, { stage: "synthesize", system: SYSTEM_SYNTH, content: synthContent(i, rejected), tool: SYNTH_TOOL }, SynthesisSchema);
-}
+export const buildSynthRequest = (i: SynthInput, rejected: string[] = []): StageRequest => ({ instructions: SYSTEM_SYNTH, untrusted: synthContent(i, rejected) });

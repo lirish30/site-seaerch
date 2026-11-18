@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chartBars, criteriaRows, footerLines, monthAbbr, monthName, plural, serviceBadge, shortDate, shortPlaceId, signatureLine, sinceLabel, spendBreakdown, spendPercent, suppressionBadge, usageRows, usageTotal, usd, visibleServices } from "../src/client/settingsView";
+import { chartBars, criteriaRows, footerLines, monthAbbr, monthName, plural, serviceBadge, shortDate, shortPlaceId, signatureLine, sinceLabel, spendBreakdown, spendPercent, suppressionBadge, usageCostLabel, usageRows, usageTotal, usd, visibleServices } from "../src/client/settingsView";
 import type { Service } from "../src/client/types";
 
 const svc = (o: Partial<Service>): Service => ({ id: o.name ?? "x", key: o.name ?? "x", name: "S", category: "Websites", summary: "", deliverables: [], prerequisites: [], first_engagement: null,
@@ -67,6 +67,20 @@ describe("usage page", () => {
     expect(usageRows([{ service: "newthing", units: 1, est_cost_usd: 1 }]).at(-1)?.service).toBe("newthing");
     expect(usageTotal(rows)).toEqual({ calls: 210, cost: 36.5 });
     expect(usageRows([{ service: "places", units: 9, est_cost_usd: 0.3 }]).find((r) => r.service === "places")?.label).toBe("Google Maps listings (Places API)");
+  });
+  it("shows Claude as free on the subscription, but a real old cost as money", () => {
+    expect(usageCostLabel("claude", 0)).toBe("$0 (runs on your subscription)");
+    expect(usageCostLabel("claude_cro", 0)).toBe("$0 (runs on your subscription)");
+    expect(usageCostLabel("claude_agent", 0)).toBe("$0 (runs on your subscription)");
+    expect(usageCostLabel("claude", 24.1)).toBe("$24.10"); // earlier estimates from before the move are not hidden
+    expect(usageCostLabel("brightdata", 0)).toBe("$0.00");
+  });
+  it("hides zero-cost rows from earlier months and the optional Claude audit row when it cost nothing", () => {
+    const rows = usageRows([{ service: "places", units: 4, est_cost_usd: 0, month: "2026-09" }, { service: "brightdata", units: 2, est_cost_usd: 0, month: "2026-10" },
+      { service: "newthing", units: 1, est_cost_usd: 0, month: "2026-08" }, { service: "pagespeed", units: 9, est_cost_usd: 0.4, month: "2026-09" }], "2026-10");
+    expect(rows.map((r) => r.service)).toEqual(["brightdata", "claude", "browser", "pagespeed"]);
+    expect(usageRows([{ service: "claude_cro", units: 3, est_cost_usd: 0 }]).map((r) => r.service)).not.toContain("claude_cro");
+    expect(usageRows([]).map((r) => r.service)).toContain("claude"); // always listed, so the subscription line is visible
   });
   it("formats dollars and the share of the limit, uncapped", () => {
     expect(usd(41.2)).toBe("$41.20"); expect(usd(1234.5)).toBe("$1,234.50");

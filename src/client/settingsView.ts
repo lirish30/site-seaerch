@@ -70,13 +70,24 @@ export const USAGE_SERVICES: { key: string; label: string; always: boolean }[] =
   { key: "pagespeed", label: "Google PageSpeed", always: true },
 ];
 
-/** One row per paid service, in a fixed order, with its month-to-date calls and estimated cost. Services we don't know are listed last. */
-export function usageRows(usage: { service: string; units: number; est_cost_usd: number }[]) {
-  const by = new Map(usage.map((u) => [u.service, u]));
-  const known = USAGE_SERVICES.filter((s) => s.always || by.has(s.key)).map((s) => ({ service: s.key, label: s.label, calls: by.get(s.key)?.units ?? 0, cost: by.get(s.key)?.est_cost_usd ?? 0 }));
-  const extra = usage.filter((u) => !USAGE_SERVICES.some((s) => s.key === u.service)).map((u) => ({ service: u.service, label: u.service, calls: u.units, cost: u.est_cost_usd }));
+/** The Claude services run on the user's subscription, so new work records nothing; old rows from before that keep their estimate. */
+const CLAUDE_SERVICES = ["claude", "claude_cro", "claude_agent"];
+
+type UsageInput = { service: string; units: number; est_cost_usd: number; month?: string };
+
+/** One row per paid service, in a fixed order, with its month-to-date calls and estimated cost. Services we don't know are listed last.
+ *  A row from an earlier month that cost nothing is left out; the optional Claude audits row shows only when it carries an old cost. */
+export function usageRows(usage: UsageInput[], currentMonth = new Date().toISOString().slice(0, 7)) {
+  const live = usage.filter((u) => !(u.month && u.month < currentMonth && u.est_cost_usd === 0));
+  const by = new Map(live.map((u) => [u.service, u]));
+  const shown = (s: { key: string; always: boolean }) => s.always || (by.has(s.key) && (!CLAUDE_SERVICES.includes(s.key) || by.get(s.key)!.est_cost_usd > 0));
+  const known = USAGE_SERVICES.filter(shown).map((s) => ({ service: s.key, label: s.label, calls: by.get(s.key)?.units ?? 0, cost: by.get(s.key)?.est_cost_usd ?? 0 }));
+  const extra = live.filter((u) => !USAGE_SERVICES.some((s) => s.key === u.service)).map((u) => ({ service: u.service, label: u.service, calls: u.units, cost: u.est_cost_usd }));
   return [...known, ...extra];
 }
+
+/** A row's cost cell: Claude with nothing recorded reads as free on the subscription, anything else as dollars. */
+export const usageCostLabel = (service: string, cost: number) => (CLAUDE_SERVICES.includes(service) && cost === 0 ? "$0 (runs on your subscription)" : usd(cost));
 export const usageTotal = (rows: { calls: number; cost: number }[]) => ({ calls: rows.reduce((s, r) => s + r.calls, 0), cost: rows.reduce((s, r) => s + r.cost, 0) });
 
 /** Month spend as enforced: metered usage plus the active fixed costs, each fixed cost on its own line so the parts add up to `total`. */

@@ -22,10 +22,11 @@ import SequencePanel from "../components/SequencePanel";
 import InlineError from "../components/InlineError";
 import type { Draft } from "../emailView";
 import type { CroResponse } from "../cro";
+import { reviewPendingNote } from "../queueView";
 import { NICHE_LABEL, OFFER_LABEL, STATUSES, type Activity, type Audit, type AuditChanges, type BestOffer, type Business, type Contact, type FitProfile, type FitResult, type LeadStatus, type LeadSuppression, type Person, type SuppressionReason } from "../types";
 
 interface ShareReport { token: string; url: string; expiresAt: string; }
-interface Data { business: Business; audit: Audit | null; contacts: Contact[]; draft: Draft | null; variants: Draft[]; toContact: Contact | null; people: Person[]; activity: Activity[]; changes: AuditChanges | null; urgency: number; best_offer: BestOffer | null; fit: FitResult; suppressed: LeadSuppression | null; }
+interface Data { business: Business; audit: Audit | null; contacts: Contact[]; draft: Draft | null; draftPlaceholder?: boolean; reviewPending?: boolean; variants: Draft[]; toContact: Contact | null; people: Person[]; activity: Activity[]; changes: AuditChanges | null; urgency: number; best_offer: BestOffer | null; fit: FitResult; suppressed: LeadSuppression | null; }
 
 const LINK_LABEL: Record<string, string> = {
   contact: "Contact page", careers: "Careers / jobs", menu: "Menu", services: "Services", about: "About", team: "Team",
@@ -191,7 +192,7 @@ export default function LeadDetail() {
   const sequenceChanged = () => { setSeqTick((n) => n + 1); void load().catch(fail); };
   async function reaudit(reason?: string) {
     await flush();
-    try { await api.post(`/leads/${id}/reaudit`, reason ? { reason } : {}); setMsg("Re-audit started. Refresh in a minute or two."); await load(); }
+    try { await api.post(`/leads/${id}/reaudit`, reason ? { reason } : {}); setMsg("Re-audit started. The scan takes a minute or two; the AI review and a new draft are written in your next Claude queue session."); await load(); }
     catch (e) { if (isSpendLimit(e)) setMsg(SPEND_LIMIT_REACHED); else fail(e); }
   }
   async function flagScore() {
@@ -328,7 +329,7 @@ export default function LeadDetail() {
         <button role="tab" aria-selected={tab === "overview"} onClick={() => setTab("overview")}>Overview</button>
         <button role="tab" aria-selected={tab === "issues"} onClick={() => setTab("issues")}>Website issues{a && <span className="count">{issueCount}</span>}</button>
         <button role="tab" aria-selected={tab === "plan"} onClick={() => setTab("plan")}>Conversion plan{croCount ? <span className="count">{croCount}</span> : null}</button>
-        <button role="tab" aria-selected={tab === "email"} onClick={() => setTab("email")}>Email draft{d.draft && <span className="count ready">Ready</span>}</button>
+        <button role="tab" aria-selected={tab === "email"} onClick={() => setTab("email")}>Email draft{d.draft && !d.draftPlaceholder && <span className="count ready">Ready</span>}</button>
         <button role="tab" aria-selected={tab === "activity"} onClick={() => setTab("activity")}>Activity{d.activity.length > 0 && <span className="count">{d.activity.length}</span>}</button>
       </nav>
 
@@ -336,6 +337,7 @@ export default function LeadDetail() {
         <div className={`lead-content${tab === "issues" ? " tight" : ""}`} role="tabpanel">
           {tab === "overview" && (a ? <>
             {a.mail_warning && <div className="notice" role="status"><span><Icon name="alert" size={14} /> {a.mail_warning}</span></div>}
+            {reviewPendingNote(d.reviewPending) && <div className="notice" role="status"><span><Icon name="clock" size={14} /> {reviewPendingNote(d.reviewPending)}: it is in the queue for your next Claude session.</span></div>}
             <Scorecard audit={a} business={b} fit={d.fit} profile={profile} urgency={d.urgency} />
             <div className="pitch-row">
               <BestOfferCard offer={d.best_offer} fallbackName={OFFER_LABEL[a.offer] ?? a.offer} onWriteEmail={writeEmail} canWrite={!d.suppressed} />
@@ -357,7 +359,7 @@ export default function LeadDetail() {
           {tab === "plan" && <CroPanel leadId={b.id} onError={setMsg} />}
 
           {tab === "email" && (
-            <EmailComposer ref={composer} leadId={b.id} draft={d.draft} variants={d.variants ?? []} toContact={d.toContact} suppressed={!!d.suppressed}
+            <EmailComposer ref={composer} leadId={b.id} draft={d.draft} placeholder={!!d.draftPlaceholder} variants={d.variants ?? []} toContact={d.toContact} suppressed={!!d.suppressed}
               lowPriority={!!a && a.score < 25} findings={a?.findings ?? []} onChanged={load} onMessage={setMsg}
               focus={focus} onFocusChange={setFocus} onSequenceStarted={sequenceChanged}
               onMarkContacted={async () => { const ok = await setStatus("contacted"); return ok; }} />
@@ -429,7 +431,7 @@ export default function LeadDetail() {
 
           <PropSection icon="send" title="Sequence">
             <SequencePanel leadId={b.id} leadName={b.name} refreshKey={seqTick} onChanged={() => void load().catch(fail)}
-              startDisabled={!d.draft || !!d.suppressed} startWhy={d.suppressed ? "Suppressed: outreach is turned off" : "Write a draft first"}
+              startDisabled={!d.draft || !!d.draftPlaceholder || !!d.suppressed} startWhy={d.suppressed ? "Suppressed: outreach is turned off" : "Write a draft first"}
               beforeStart={async () => (await composer.current?.save()) ?? true} />
           </PropSection>
 

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError } from "../api";
 import { pollDelay } from "../poll";
 import {
-  EVIDENCE_FAMILY_LABEL, STEP_LABEL, auditStamp, neighborOf, rebuildNeedsPatch, splitRoadmap, stepIndex,
+  EVIDENCE_FAMILY_LABEL, STEP_LABEL, auditStamp, croWaitingLine, neighborOf, rebuildNeedsPatch, splitRoadmap, stepIndex,
   type AssumptionOverrides, type CroAudit, type CroHistoryRow, type CroItem, type CroResponse, type Horizon, type ScenarioInputs,
 } from "../cro";
 import CroItemCard, { type CroCardVariant, type CroItemPatch } from "./CroItemCard";
@@ -11,7 +11,7 @@ import Icon from "./Icon";
 import { Badge } from "./Score";
 
 const HORIZONS: readonly (readonly [Horizon, string])[] = [[30, "Also this month"], [60, "Days 31–60"], [90, "Days 61–90"]];
-const STATUS_TONE = { done: "positive", running: "info", failed: "critical" } as const;
+const STATUS_TONE = { done: "positive", running: "info", waiting: "info", failed: "critical" } as const;
 
 const messageOf = (e: unknown) =>
   e instanceof ApiError && e.status === 402 ? "That would go over your monthly spend limit (see Settings)." : (e as Error).message || "Something went wrong";
@@ -44,10 +44,10 @@ export default function CroPanel({ leadId, onError }: { leadId: string; onError:
     return () => { seq.current++; };
   }, [leadId]);
 
-  // While an audit runs, poll for progress; a failed poll backs off (4s, 8s, 15s) and never interrupts the page.
+  // While an audit runs or waits for Claude, poll for progress; a failed poll backs off (4s, 8s, 15s) and never interrupts the page.
   useEffect(() => {
     const a = data?.audit;
-    if (a?.status !== "running") return;
+    if (a?.status !== "running" && a?.status !== "waiting") return;
     const t = setTimeout(() => load(a.id)
       .then(() => { failures.current = 0; setLagging(false); })
       .catch(() => { failures.current++; setLagging(true); setTick((n) => n + 1); }), pollDelay(failures.current));
@@ -97,22 +97,30 @@ export default function CroPanel({ leadId, onError }: { leadId: string; onError:
     <div className="cro"><div className="section-card cro-card cro-empty">
       <h3>CRO audit</h3>
       <p>A deeper scan of up to 7 key pages on desktop and phone. It works out how this business makes money, then builds a specific roadmap: what to fix this month, the next 90 days, what to measure, and what it could be worth.</p>
-      <p className="cro-hint">Takes about 2–4 minutes and roughly $0.15–0.40.</p>
+      <p className="cro-hint">Pages are captured now; Claude writes the review in your next queue session. No AI cost.</p>
       <div className="cro-actions"><button className="btn primary" onClick={run} disabled={!!busy}>{busy ? "Starting…" : "Run CRO audit"}</button></div>
     </div></div>
   );
 
-  if (a.status === "running") {
+  if (a.status === "running" || a.status === "waiting") {
     const cur = Math.min(Math.max(stepIndex(a.step), 0), STEP_LABEL.length - 1);
     return (
       <div className="cro"><div className="section-card cro-card">
-        <h3>CRO audit running…</h3>
-        <p role="status" aria-live="polite">Step {cur + 1} of {STEP_LABEL.length}: {STEP_LABEL[cur][1]}</p>
+        <h3>{a.status === "waiting" ? "CRO audit waiting for Claude…" : "CRO audit running…"}</h3>
+        <p role="status" aria-live="polite">{a.status === "waiting"
+          ? croWaitingLine({ step: a.step, pending: a.pending_pages.length, total: a.pages.filter((p) => p.ok).length })
+          : `Step ${cur + 1} of ${STEP_LABEL.length}: ${STEP_LABEL[cur][1]}`}</p>
         <ol className="cro-steps">{STEP_LABEL.map(([s, label], i) => (
           <li key={s} className={i < cur ? "done" : i === cur ? "on" : ""} aria-current={i === cur ? "step" : undefined}>
             {label}{i < cur && <span className="sr-only"> (done)</span>}
           </li>))}</ol>
         <p className="cro-hint">You can leave this page; it keeps going.</p>
+        {a.status === "waiting" && (
+          <div className="cro-actions">
+            <button className="btn sm" onClick={() => act("rebuild", () => api.post(`/cro-audits/${a.id}/rebuild`), a.id)} disabled={!!busy}>{busy === "rebuild" ? "Trying again…" : "Rebuild"}</button>
+            <span className="cro-hint">Queues this step for Claude again. No AI cost.</span>
+          </div>
+        )}
         {lagging && <p className="cro-hint" role="status">Having trouble checking progress. Trying again shortly.</p>}
       </div></div>
     );
@@ -165,7 +173,7 @@ export default function CroPanel({ leadId, onError }: { leadId: string; onError:
         <Badge tone={STATUS_TONE[a.status]} dot>{a.status[0].toUpperCase() + a.status.slice(1)}</Badge>
         <span className="cro-grow" />
         <button className="btn-plain" onClick={(e) => openEvidence("all", e.currentTarget)}><Icon name="list" size={16} />All evidence ({a.evidence.length})</button>
-        <button className="btn" onClick={run} disabled={!!busy} title="Starts a fresh scan; roughly $0.15–0.40"><Icon name="refresh" size={16} />{busy === "run" ? "Starting…" : "Run again"}</button>
+        <button className="btn" onClick={run} disabled={!!busy} title="Starts a fresh scan"><Icon name="refresh" size={16} />{busy === "run" ? "Starting…" : "Run again"}</button>
       </div>
       {a.error && (
         <div className="cro-note err">

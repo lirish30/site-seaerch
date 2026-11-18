@@ -2,23 +2,32 @@ import { env } from "cloudflare:test";
 import { describe, it, expect } from "vitest";
 import { runLeadWithErrorHandling } from "../src/worker/workflows";
 import { getBusiness } from "../src/worker/db/businesses";
-import { runLead, regenerateDraft, type LeadDeps, type StepLike } from "../src/worker/pipeline/lead";
+import { runLead, type LeadDeps, type StepLike } from "../src/worker/pipeline/lead";
 import { createSearch, getSearch } from "../src/worker/db/searches";
 import { upsertBusiness } from "../src/worker/db/businesses";
 import { latestAudit } from "../src/worker/db/audits";
-import { latestDraft } from "../src/worker/db/drafts";
 import { listContacts } from "../src/worker/db/contacts";
 import { createPerson } from "../src/worker/db/people";
+import { buildBundle } from "../src/worker/queue/bundle";
+import { completeTask, getTask } from "../src/worker/queue/db";
+import { SITE_REVIEW_KIND } from "../src/worker/queue/siteReview";
+import { three, writeDraft } from "./fixtures/draftTask";
 import type { Listing } from "../src/worker/types";
 
 const step: StepLike = { do: (_n, fn) => fn(), sleep: async () => {} };
+/** The AI review tasks a lead has waiting for Claude. */
+const claimReview = async (auditId: string) => {
+  await env.DB.prepare(`UPDATE claude_tasks SET status = 'claimed', claimed_at = ?, attempts = 1 WHERE kind = ? AND dedupe_key = ? AND status = 'pending'`).bind(new Date().toISOString(), SITE_REVIEW_KIND, auditId).run();
+  return (await getTask(env.DB, (await env.DB.prepare(`SELECT id FROM claude_tasks WHERE kind = ? AND dedupe_key = ?`).bind(SITE_REVIEW_KIND, auditId).first<{ id: string }>())!.id))!;
+};
+const reviewTasks = async (businessId: string) => (await env.DB.prepare(`SELECT * FROM claude_tasks WHERE kind = ? AND target_id = ?`).bind(SITE_REVIEW_KIND, businessId).all<Record<string, any>>()).results;
 const page = (b: string, h = "") => new Response(`<html><head>${h}</head><body>${b}</body></html>`, { headers: { "content-type": "text/html" } });
 const psiSlow = { lighthouseResult: { categories: { performance: { score: 0.3 } }, audits: {
   "largest-contentful-paint": { numericValue: 7000 }, "cumulative-layout-shift": { numericValue: 0 }, viewport: { score: 1 } } } };
 
-function deps(over: Partial<LeadDeps> = {}): LeadDeps & { claudeCalls: number } {
+function deps(over: Partial<LeadDeps> = {}): LeadDeps {
   const d: any = {
-    db: env.DB, raw: env.RAW, pagespeedKey: "K", now: () => new Date("2026-10-02T00:00:00Z"), claudeCalls: 0,
+    db: env.DB, raw: env.RAW, pagespeedKey: "K", now: () => new Date("2026-10-02T00:00:00Z"),
     fetch: async (u: string) => {
       if (u.startsWith("https://www.googleapis.com/pagespeedonline")) return Response.json(psiSlow);
       if (u === "https://ace.com/") return page(`<a href="mailto:info@ace.com">m</a><p>© 2019</p>`, `<title>Ace</title><meta name="viewport" content="x"><meta name="generator" content="WordPress 6.4">`);
@@ -26,7 +35,6 @@ function deps(over: Partial<LeadDeps> = {}): LeadDeps & { claudeCalls: number } 
     },
     ...over,
   };
-  d.claude = over.claude ?? (async () => { d.claudeCalls++; return { subject: "Hi", body: "Body", to_contact_id: null, recipient_reason: "r" }; });
   return d;
 }
 const listing = (o: Partial<Listing>): Listing => ({ placeId: null, name: "Ace", category: "Plumber", address: "Boise", phone: null,
@@ -39,7 +47,7 @@ const GOOD_SITE_BODY = `<header><nav><a href="/services">Services</a><a href="/p
   <form><input name="email"><textarea></textarea></form><footer>© 2026 Ace Plumbing</footer>`;
 
 describe("runLead", () => {
-  it("crawls, scores, drafts, stores contacts and raw, increments progress", async () => {
+  it("crawls, scores, queues the AI review, stores contacts and raw, increments progress", async () => {
     const s = await createSearch(env.DB, { location: "Boise", businessType: "plumber", radiusKm: 10, maxResults: 5 });
     const b = await upsertBusiness(env.DB, listing({ placeId: "L1" }), s.id);
     const d = deps();
@@ -53,8 +61,9 @@ describe("runLead", () => {
     expect(a.raw_r2_key).toMatch(/^audits\//);
     expect(await env.RAW.get(a.raw_r2_key!)).not.toBeNull();
     expect((await listContacts(env.DB, b.id))[0].value).toBe("info@ace.com");
-    expect(r.draftId).not.toBeNull();
-    expect((await latestDraft(env.DB, b.id))!.to_contact_id).toBe((await listContacts(env.DB, b.id))[0].id);
+    const tasks = await reviewTasks(b.id);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toMatchObject({ status: "pending", dedupe_key: r.auditId });
     expect((await getSearch(env.DB, s.id))!.processed_count).toBe(1);
   });
 
@@ -87,13 +96,14 @@ describe("runLead", () => {
     expect(a.findings.find((f) => f.code === "low_seo_score")!.evidence).toContain("links that just say things like 'click here'");
   });
 
-  it("pagespeed failure → partial audit, still drafts", async () => {
+  it("pagespeed failure → partial audit, still queues the review", async () => {
     const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 5 });
     const b = await upsertBusiness(env.DB, listing({ placeId: "L2" }), s.id);
     const base = deps();
     const d = deps({ fetch: async (u, i) => u.includes("pagespeedonline") ? new Response("x", { status: 500 }) : base.fetch(u, i) });
     await runLead(d, step, { businessId: b.id, searchId: s.id });
     expect((await latestAudit(env.DB, b.id))!.partial).toBe(true);
+    expect(await reviewTasks(b.id)).toHaveLength(1);
   });
 
   it("Lighthouse runtimeError → partial audit with no speed findings (never a fake 0/100)", async () => {
@@ -141,7 +151,7 @@ describe("runLead", () => {
     expect(a.findings).toEqual([]);
   });
 
-  it("low-priority lead is not drafted unless forced", async () => {
+  it("the review task carries lowPriority, forceDraft and the steering note; whether to draft is decided when the review comes back", async () => {
     const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 5 });
     const b = await upsertBusiness(env.DB, listing({ placeId: "L3", websiteUrl: "https://good.com" }), s.id);
     const good = async (u: string) => u.includes("pagespeedonline")
@@ -150,10 +160,10 @@ describe("runLead", () => {
       : new Response("", { status: 404, headers: { "content-type": "text/html" } });
     const d = deps({ fetch: good });
     const r = await runLead(d, step, { businessId: b.id, searchId: s.id });
-    expect(r.draftId).toBeNull();
-    expect(d.claudeCalls).toBe(0);
-    const forced = await runLead(d, step, { businessId: b.id, searchId: null, forceDraft: true });
-    expect(forced.draftId).not.toBeNull();
+    const forced = await runLead(d, step, { businessId: b.id, searchId: null, forceDraft: true, steeringNote: "short" });
+    const payloads = (await reviewTasks(b.id)).map((t) => JSON.parse(t.payload));
+    expect(payloads).toContainEqual({ auditId: r.auditId, lowPriority: true, steeringNote: null });
+    expect(payloads).toContainEqual({ auditId: forced.auditId, lowPriority: true, forceDraft: true, steeringNote: "short" });
   });
 
   it("no website → score 100, new_site, no pagespeed call", async () => {
@@ -169,26 +179,24 @@ describe("runLead", () => {
     expect(psiCalled).toBe(false);
   });
 
-  it("regenerateDraft passes steering note and keeps history", async () => {
+  it("a requested draft passes the steering note to Claude and keeps history", async () => {
     const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 5 });
     const b = await upsertBusiness(env.DB, listing({ placeId: "L5" }), s.id);
     let lastUser = "";
-    const d = deps({ claude: async (p) => { lastUser = p.user; return { subject: "S2", body: "B2", to_contact_id: null, recipient_reason: "r" }; } });
-    await runLead(d, step, { businessId: b.id, searchId: s.id });
-    const dr = await regenerateDraft(d, b.id, { steeringNote: "shorter" });
+    await runLead(deps(), step, { businessId: b.id, searchId: s.id });
+    const dr = await writeDraft(b.id, { steeringNote: "shorter" }, (shown) => { lastUser = shown; return three(); });
     expect(lastUser).toContain("shorter");
     expect(dr.steering_note).toBe("shorter");
   });
 
-  it("regenerateDraft focuses on chosen findings and addresses the point of contact", async () => {
+  it("a requested draft focuses on chosen findings and addresses the point of contact", async () => {
     const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 5 });
     const b = await upsertBusiness(env.DB, listing({ placeId: "L5b" }), s.id);
     let lastUser = "";
-    const d = deps({ claude: async (p) => { lastUser = p.user; return { subject: "S", body: "B", to_contact_id: null, recipient_reason: "r" }; } });
-    await runLead(d, step, { businessId: b.id, searchId: s.id, forceDraft: true });
+    await runLead(deps(), step, { businessId: b.id, searchId: s.id, forceDraft: true });
     const a = (await latestAudit(env.DB, b.id))!;
     await createPerson(env.DB, b.id, { name: "Ann Lee", role: "Owner", email: "ann@ace.com", is_poc: true });
-    const dr = await regenerateDraft(d, b.id, { focus: [a.findings.length - 1], purpose: "freelance" });
+    const dr = await writeDraft(b.id, { focus: [a.findings.length - 1], purpose: "freelance" }, (shown) => { lastUser = shown; return three(); });
     expect(lastUser).toContain("Lead with these issues");
     expect(lastUser).toContain(a.findings.at(-1)!.evidence);
     expect(lastUser).toContain("Address the email to: Ann Lee (Owner)");
@@ -197,14 +205,14 @@ describe("runLead", () => {
     expect(dr.recipient_reason).toBe("Your chosen point of contact");
   });
 
-  it("pagespeed step failing after retries → partial audit, draft still runs", async () => {
+  it("pagespeed step failing after retries → partial audit, review still queued", async () => {
     const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 5 });
     const b = await upsertBusiness(env.DB, listing({ placeId: "L6" }), s.id);
     const d = deps();
     const failing: StepLike = { do: (n, fn) => (n === "pagespeed" ? Promise.reject(new Error("rate limited")) : fn()), sleep: async () => {} };
     const r = await runLead(d, failing, { businessId: b.id, searchId: s.id, forceDraft: true });
     expect((await latestAudit(env.DB, b.id))!.partial).toBe(true);
-    expect(r.draftId).not.toBeNull();
+    expect((await reviewTasks(b.id)).map((t) => t.dedupe_key)).toEqual([r.auditId]);
   });
 });
 
@@ -215,31 +223,38 @@ const aiReview = { niche: "trades", value_proposition: "Boise plumbing", scores:
   findings: [{ category: "cro", severity: "important", title: "No quote button", evidence: "Only a phone number", recommendation: "Add a quote form" }] };
 
 describe("runLead with browser render + AI review", () => {
-  it("stores screenshots, uses the rendered DOM, and records the review, niche and health", async () => {
+  it("stores screenshots, uses the rendered DOM, shows Claude both screenshots, and records the review, niche and health once it is done", async () => {
     const s = await createSearch(env.DB, { location: "B", businessType: "plumber", radiusKm: 1, maxResults: 5 });
     const b = await upsertBusiness(env.DB, listing({ placeId: "R1" }), s.id);
-    let reviewContent: any[] = [];
     const d = deps({
       // The raw HTML has no form; the rendered DOM has a HubSpot form injected by JS.
       render: async (url) => ({ finalUrl: url.endsWith("/") ? url : `${url}/`, desktopJpeg: jpeg, mobileJpeg: jpeg,
         mobile: { overflowX: true, smallTextPct: 0.1 },
         html: `<html><head><title>Ace</title></head><body><nav><a href="/services">Services</a><a href="/contact">Contact</a></nav>
           <h1>Ace Plumbing</h1><div class="hs-form-frame"></div>${"<p>Plumbing services for Boise homes and businesses.</p>".repeat(10)}</body></html>` }),
-      reviewer: async (p) => { reviewContent = p.content; return aiReview; },
     });
-    await runLead(d, step, { businessId: b.id, searchId: s.id });
+    const r = await runLead(d, step, { businessId: b.id, searchId: s.id });
     const a = (await latestAudit(env.DB, b.id))!;
     expect(a.screenshots.desktop).toMatch(/^shots\/.+-desktop\.jpg$/);
     expect(await env.RAW.get(a.screenshots.mobile!)).not.toBeNull();
-    expect(reviewContent.filter((c) => c.type === "image")).toHaveLength(2);
-    expect(a.ai_review?.niche).toBe("trades");
-    expect(a.niche).toBe("trades");
-    expect(a.category_scores.design).toBe(82);
+    expect(a.ai_review).toBeNull(); // not yet: Claude has not done it
+    expect(a.category_scores.design).toBeUndefined();
     expect(a.health_score).toBeGreaterThan(0);
     expect(a.findings.map((f) => f.code)).toContain("mobile_overflow");
     expect(a.findings.map((f) => f.code)).not.toContain("no_contact_path");
     expect(a.site_links.services).toBe("https://ace.com/services");
     expect(a.mobile_friendly).toBe(false);
+
+    const task = await claimReview(r.auditId);
+    const bundle = await buildBundle(env, task);
+    if ("stale" in bundle) throw new Error(bundle.stale);
+    expect(bundle.images).toHaveLength(2);
+    expect(await completeTask(env, task.id, aiReview)).toEqual({ ok: true });
+    const done = (await latestAudit(env.DB, b.id))!;
+    expect(done.ai_review?.niche).toBe("trades");
+    expect(done.niche).toBe("trades");
+    expect(done.category_scores.design).toBe(82);
+    expect(done.findings.map((f) => f.code)).toContain("mobile_overflow"); // the rule findings are still there
   });
 
   it("a site that blocks plain fetches but renders in a browser is audited, not marked blocked", async () => {
@@ -257,16 +272,20 @@ describe("runLead with browser render + AI review", () => {
     expect(a.has_title).toBe(true);
   });
 
-  it("render or review failures degrade to a rules-only audit", async () => {
+  it("a render failure degrades to a rules-only audit; the review is still queued from the crawl facts alone", async () => {
     const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 5 });
     const b = await upsertBusiness(env.DB, listing({ placeId: "R3" }), s.id);
-    const d = deps({ render: async () => { throw new Error("browser down"); }, reviewer: async () => ({ junk: true }) });
+    const d = deps({ render: async () => { throw new Error("browser down"); } });
     await runLead(d, step, { businessId: b.id, searchId: s.id });
     const a = (await latestAudit(env.DB, b.id))!;
     expect(a.site_status).toBe("ok");
     expect(a.ai_review).toBeNull();
     expect(a.screenshots).toEqual({ desktop: null, mobile: null });
     expect(a.category_scores.design).toBeUndefined();
+    const bundle = await buildBundle(env, await claimReview(a.id));
+    if ("stale" in bundle) throw new Error(bundle.stale);
+    expect(bundle.images).toEqual([]);
+    expect(bundle.text).toContain("Crawl facts:");
   });
 });
 
@@ -387,14 +406,18 @@ describe("runLead mail DNS", () => {
     expect(a.mail_warning).toBe(WARNING);
   });
 
-  it("the warning never reaches the draft prompt", async () => {
+  it("the warning never reaches the draft prompt or the review brief", async () => {
     const b = await seed("M5");
     let user = "";
-    const { d } = withDoh({ mx: false, txt: [] }, { fetch: siteFetch("ace.com", ["info@ace.com"]), claude: async (p) => { user = p.user; return { subject: "S", body: "B", to_contact_id: null, recipient_reason: "r" }; } });
-    await runLead(d, step, { businessId: b.id, searchId: null, forceDraft: true });
+    const { d } = withDoh({ mx: false, txt: [] }, { fetch: siteFetch("ace.com", ["info@ace.com"]) });
+    const r = await runLead(d, step, { businessId: b.id, searchId: null, forceDraft: true });
     expect((await latestAudit(env.DB, b.id))!.mail_warning).toBe(WARNING);
+    await writeDraft(b.id, {}, (shown) => { user = shown; return three(); });
     expect(user.length).toBeGreaterThan(0);
     expect(user).not.toMatch(/mail records|bounce|spf|dmarc/i);
+    const bundle = await buildBundle(env, await claimReview(r.auditId));
+    if ("stale" in bundle) throw new Error(bundle.stale);
+    expect(bundle.text).not.toMatch(/mail records|bounce|spf|dmarc/i);
   });
 
   it("DoH throwing or SERVFAIL → normal audit, no finding, no warning, lead does not fail", async () => {
@@ -462,7 +485,7 @@ describe("runLeadWithErrorHandling", () => {
     const b = await upsertBusiness(env.DB, listing({ placeId: "L7" }), s.id);
     const fake: any = { do: (n: string, c: any, f?: () => Promise<unknown>) => (n === "score" ? Promise.reject("boom-string") : (f ?? c)()), sleep: async () => {} };
     const r = await runLeadWithErrorHandling(deps(), fake, { businessId: b.id, searchId: s.id });
-    expect(r).toEqual({ auditId: null, draftId: null });
+    expect(r).toEqual({ auditId: null });
     expect((await getBusiness(env.DB, b.id))!.last_error).toBe("boom-string");
     expect((await getSearch(env.DB, s.id))!.processed_count).toBe(1);
   });

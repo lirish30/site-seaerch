@@ -4,17 +4,18 @@ import { getMailDeps } from "../mail/deps";
 import { checkConflict } from "../conflict";
 import { buildEmailSendApproval, mailboxFromEmail } from "../approvals/emailSend";
 import { createApprovalForTask } from "../db/approvals";
-import { logAgentAction } from "../db/agentActions";
 import { logActivity } from "../db/activity";
 import { getBusiness } from "../db/businesses";
 import { listSteps, type SequenceStep } from "../db/campaigns";
-import { enrollmentsFor } from "../db/enrollments";
+import { enrollmentsFor, getEnrollment } from "../db/enrollments";
+import { listableAddress } from "../mail/listable";
 import { getSettings } from "../db/settings";
-import { finishClaudeTask, getClaudeTask, type ClaudeTask } from "../db/claudeTasks";
-import { stopOutreach } from "./stop";
-import type { Enrollment } from "./types";
+import { stopOutreach } from "../sequence/stop";
+import type { Enrollment } from "../sequence/types";
+import { finishClaudeTask, type ClaudeTask } from "./db";
+import { TaskFailed, TaskRefused, registerTaskKind, type TaskKindDef } from "./registry";
 
-/** The task kind this file handles. A later registry of kinds can map it to `buildReplyContext` and `completeReplyTask`. */
+/** The task kind this file handles: classify a prospect's reply and draft the answer. */
 export const REPLY_TASK_KIND = "reply.classify";
 
 const NURTURE_DAYS = 90;
@@ -37,7 +38,7 @@ export const ReplyResult = z.discriminatedUnion("label", [
 ]);
 export type ReplyResult = z.infer<typeof ReplyResult>;
 
-const Payload = z.object({ messageId: z.string().min(1), businessId: z.string().min(1), enrollmentId: z.string().min(1).nullable() });
+export const ReplyPayload = z.object({ messageId: z.string().min(1), businessId: z.string().min(1), enrollmentId: z.string().min(1).nullable() });
 
 const INSTRUCTIONS = [
   "You are classifying one reply from a prospect to Logan's cold outreach about their website. Read the lead facts, the last email we sent, and the reply.",
@@ -49,22 +50,20 @@ const INSTRUCTIONS = [
 ].join("\n\n");
 
 interface Target {
-  payload: z.infer<typeof Payload>;
+  payload: z.infer<typeof ReplyPayload>;
   message: { id: string; business_id: string | null; message_id: string | null; counterpart: string; subject: string; text: string };
   business: NonNullable<Awaited<ReturnType<typeof getBusiness>>>;
 }
 
 /** The message and lead a task is about, or why they cannot be loaded (deleted since the reply was queued). */
-async function loadTarget(db: D1Database, task: ClaudeTask): Promise<Target | { error: string }> {
-  const payload = Payload.safeParse(task.payload);
-  if (!payload.success) return { error: "the task payload is not a reply task" };
+async function loadTarget(db: D1Database, payload: z.infer<typeof ReplyPayload>): Promise<Target | { error: string }> {
   const message = await db.prepare(`SELECT id, business_id, message_id, counterpart, subject, text FROM messages WHERE id = ? AND direction = 'in'`)
-    .bind(payload.data.messageId).first<Target["message"]>();
+    .bind(payload.messageId).first<Target["message"]>();
   if (!message) return { error: "the reply message no longer exists" };
-  const business = await getBusiness(db, payload.data.businessId);
+  const business = await getBusiness(db, payload.businessId);
   if (!business) return { error: "the lead no longer exists" };
   if (message.business_id !== business.id) return { error: "the reply message does not belong to this lead" };
-  return { payload: payload.data, message, business };
+  return { payload, message, business };
 }
 
 /** The lead's most recent sequence of any state: the one the reply belongs to. */
@@ -86,15 +85,10 @@ export interface ReplyContext {
   checkinTemplate: { subject: string; variants: string[] } | null;
 }
 
-/**
- * Everything Claude needs to classify one reply. The prospect's words (sender, subject, text) go only into `replyText`, inside an
- * `<untrusted_email>` block under a preamble that says so; `instructions` is fixed text. Null when the reply or the lead was deleted after the
- * task was queued: the task is then failed with that reason, so the queue does not hand it out again.
- */
-export async function buildReplyContext(env: Env, task: ClaudeTask): Promise<ReplyContext | null> {
+async function loadContext(env: Env, payload: z.infer<typeof ReplyPayload>): Promise<ReplyContext | { error: string }> {
   const db = env.DB;
-  const t = await loadTarget(db, task);
-  if ("error" in t) { await finishClaudeTask(db, task.id, "failed", t.error); return null; }
+  const t = await loadTarget(db, payload);
+  if ("error" in t) return t;
   const { business, message } = t;
   const out = await db.prepare(
     `SELECT subject, text, sent_at FROM messages WHERE business_id = ? AND direction = 'out' AND status = 'sent' ORDER BY COALESCE(sent_at, created_at) DESC, id DESC LIMIT 1`,
@@ -125,79 +119,40 @@ export async function buildReplyContext(env: Env, task: ClaudeTask): Promise<Rep
   };
 }
 
-/** The task and its context as the text Claude reads: instructions first, the reply last. */
-export function renderReplyTask(task: ClaudeTask, ctx: ReplyContext): string {
-  return [
-    `Task ${task.id} (${task.kind}), attempt ${task.attempts}`,
-    `## Instructions\n${ctx.instructions}`,
-    `## Result schema (JSON Schema). Pass an object of this shape as \`result\` to complete_claude_task with id ${task.id}\n${JSON.stringify(z.toJSONSchema(ReplyResult), null, 2)}`,
-    `## Lead\n${ctx.leadText}`,
-    `## Last email we sent\n${ctx.lastOutbound ? `Subject: ${ctx.lastOutbound.subject}\nSent: ${ctx.lastOutbound.sentAt ?? "unknown"}\n\n${ctx.lastOutbound.body}` : "none on record"}`,
-    `## Campaign check-in template (sent by the app after a not_now)\n${ctx.checkinTemplate
-      ? `Subject: ${ctx.checkinTemplate.subject}\n\n${ctx.checkinTemplate.variants.map((v, i) => `Variant ${i + 1}:\n${v}`).join("\n\n")}` : "none"}`,
-    `## Their reply\n${ctx.replyText}`,
-  ].join("\n\n");
+/**
+ * Everything Claude needs to classify one reply. The prospect's words (sender, subject, text) go only into `replyText`, inside an
+ * `<untrusted_email>` block under a preamble that says so; `instructions` is fixed text. Null when the reply or the lead was deleted after the
+ * task was queued: the task is then failed with that reason, so the queue does not hand it out again.
+ */
+export async function buildReplyContext(env: Env, task: ClaudeTask): Promise<ReplyContext | null> {
+  const payload = ReplyPayload.safeParse(task.payload);
+  const ctx = payload.success ? await loadContext(env, payload.data) : { error: "the task payload is not a reply task" };
+  if ("error" in ctx) { await finishClaudeTask(env, task.id, "failed", ctx.error); return null; }
+  return ctx;
 }
 
-export type CompleteResult = { ok: true } | { ok: false; error: string };
+const checkinSection = (c: ReplyContext["checkinTemplate"]) =>
+  `## Campaign check-in template (sent by the app after a not_now)\n${c ? `Subject: ${c.subject}\n\n${c.variants.map((v, i) => `Variant ${i + 1}:\n${v}`).join("\n\n")}` : "none"}`;
 
-const EMAIL = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
+/** Our last email to the lead. Its subject and body can carry the lead's scraped business name, so it is delivered with the untrusted parts. */
+const lastOutboundText = (o: ReplyContext["lastOutbound"]) =>
+  `## Last email we sent\n${o ? defang(`Subject: ${o.subject}\nSent: ${o.sentAt ?? "unknown"}\n\n${o.body}`) : "none on record"}`;
+
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}...` : s);
 const oneLine = (e: unknown) => String((e as Error)?.message ?? e).replace(/\s+/g, " ").slice(0, 400);
 const isUniqueViolation = (e: unknown) => /UNIQUE/i.test(String((e as Error)?.message ?? e));
-
-/** A pasted JSON string is accepted too: some clients serialize an object argument. */
-function asValue(result: unknown): unknown {
-  if (typeof result !== "string") return result;
-  try { return JSON.parse(result); } catch { return result; }
-}
-
-/**
- * Validates Claude's result for a claimed reply task, applies its effects ONCE and marks the task done.
- *  - Anything wrong with the result is refused with the zod issues listed, nothing is applied and the task stays claimed (Claude can retry).
- *  - `stop` ends every channel for the lead (the sender goes on do-not-contact); `not_now` parks the lead's replied sequence in nurture for
- *    90 days (when its campaign has a check-in step); `interested` and `question` create ONE `email.send` approval for Logan per task
- *    (record `claude_task`/task id, in one statement), after the conflict gate (a blocked recipient refuses the whole completion); `other`
- *    leaves a note. Nothing is ever sent from here.
- *  - Every effect is guarded so it can be repeated: a completion that crashed after its effects is simply run again from the reclaimed task.
- */
-export async function completeReplyTask(env: Env, taskId: string, result: unknown): Promise<CompleteResult> {
-  const db = env.DB;
-  const task = await getClaudeTask(db, taskId);
-  if (!task) return { ok: false, error: "task not found" };
-  if (task.status === "done") return { ok: false, error: "already done" };
-  if (task.status !== "claimed") return { ok: false, error: `task is ${task.status}, not claimed` };
-  if (task.kind !== REPLY_TASK_KIND) return { ok: false, error: `unsupported task kind: ${task.kind}` };
-
-  const parsed = ReplyResult.safeParse(asValue(result));
-  if (!parsed.success) {
-    return { ok: false, error: `invalid result:\n${parsed.error.issues.map((i) => `- ${i.path.join(".") || "result"}: ${i.message}`).join("\n")}` };
-  }
-  const t = await loadTarget(db, task);
-  if ("error" in t) {
-    await finishClaudeTask(db, task.id, "failed", t.error);
-    return { ok: false, error: t.error };
-  }
-
-  const r = parsed.data;
-  const applied = await applyEffects(env, t, r, task.id);
-  if (!applied.ok) return applied;
-
-  if (!(await finishClaudeTask(db, task.id, "done", r))) return { ok: false, error: "already done" }; // another completion got there first
-  await logAgentAction(db, {
-    actor: "mcp", tool: "complete_claude_task", record_type: "lead", record_id: t.business.id,
-    summary: `classified reply from ${clip(t.message.counterpart, 100)} as ${r.label}${applied.note ? `; ${applied.note}` : ""}`,
-  });
-  return { ok: true };
-}
 
 async function applyEffects(env: Env, t: Target, r: ReplyResult, taskId: string): Promise<{ ok: true; note?: string } | { ok: false; error: string }> {
   const db = env.DB, businessId = t.business.id;
   const sender = t.message.counterpart.trim().toLowerCase();
   switch (r.label) {
-    case "stop":
-      await stopOutreach(db, { businessId, reason: "opt_out", ...(EMAIL.test(sender) ? { email: sender } : {}) });
+    case "stop": {
+      // The From is unvalidated and a forged reply can claim anyone: only an address we wrote to for this lead is listed (else the one the sequence wrote to).
+      const enrollment = t.payload.enrollmentId ? await getEnrollment(db, t.payload.enrollmentId) : await latestEnrollment(db, businessId);
+      const address = await listableAddress(db, businessId, enrollment?.to_email, t.message.counterpart);
+      await stopOutreach(db, { businessId, reason: "opt_out", ...(address ? { email: address } : {}) });
       return { ok: true, note: "the lead is suppressed" };
+    }
 
     case "interested":
     case "question": {
@@ -248,3 +203,47 @@ async function applyEffects(env: Env, t: Target, r: ReplyResult, taskId: string)
       return { ok: true };
   }
 }
+
+const replyClassify: TaskKindDef<z.infer<typeof ReplyPayload>, ReplyResult> = {
+  kind: REPLY_TASK_KIND,
+  label: "Classify a reply",
+  suggestedModel: "sonnet",
+  payload: ReplyPayload,
+  result: ReplyResult,
+
+  /** The lead facts, our last email and the reply are all untrusted, the reply last. A reply or lead deleted since the task was queued fails the task, as before. */
+  async build(env, p, task) {
+    const ctx = await loadContext(env, p);
+    if ("error" in ctx) { await finishClaudeTask(env, task.id, "failed", ctx.error); return { stale: ctx.error }; }
+    return {
+      instructions: `${ctx.instructions}\n\n${checkinSection(ctx.checkinTemplate)}`,
+      untrusted: [
+        { type: "text", text: `## Lead\n${ctx.leadText}` },
+        { type: "text", text: lastOutboundText(ctx.lastOutbound) },
+        { type: "text", text: `## Their reply\n${ctx.replyText}` },
+      ],
+    };
+  },
+
+  /**
+   * Applies Claude's classification ONCE:
+   *  - `stop` ends every channel for the lead (the sender goes on do-not-contact); `not_now` parks the lead's replied sequence in nurture for
+   *    90 days (when its campaign has a check-in step); `interested` and `question` create ONE `email.send` approval for Logan per task
+   *    (record `claude_task`/task id, in one statement), after the conflict gate (a blocked recipient refuses the whole completion); `other`
+   *    leaves a note. Nothing is ever sent from here.
+   *  - Every effect is guarded so it can be repeated: a completion that crashed after its effects is simply run again from the reclaimed task.
+   */
+  async apply(env, p, r, task) {
+    const t = await loadTarget(env.DB, p);
+    if ("error" in t) throw new TaskFailed(t.error);
+    const applied = await applyEffects(env, t, r, task.id);
+    if (!applied.ok) throw new TaskRefused(applied.error);
+    return {
+      log: {
+        summary: `classified reply from ${clip(t.message.counterpart, 100)} as ${r.label}${applied.note ? `; ${applied.note}` : ""}`,
+        recordType: "lead", recordId: t.business.id,
+      },
+    };
+  },
+};
+registerTaskKind(replyClassify);

@@ -2,7 +2,7 @@ import { env, SELF } from "cloudflare:test";
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
 import { saveSettings } from "../src/worker/db/settings";
 import { createCroAudit, getCroAudit, latestCroAudit, listCroItems, replaceCroItems, updateCroAudit } from "../src/worker/db/cro";
-import { shotKey, textKey } from "../src/worker/cro/pipeline";
+import { shotKey } from "../src/worker/cro/pipeline";
 import { defaultScenario } from "../src/worker/cro/scenario";
 import { seedBusiness, model, ranked, ev } from "./fixtures/cro";
 import type { PageReview } from "../src/worker/cro/types";
@@ -114,6 +114,14 @@ describe("CRO routes", () => {
     await env.DB.prepare(`UPDATE cro_audits SET started_at = '2020-01-01T00:00:00.000Z' WHERE id = ?`).bind(a.id).run();
     const r = await (await api(`/api/leads/${b.id}/cro-audit`)).json<any>();
     expect(r.audit).toMatchObject({ id: a.id, status: "failed" });
+  });
+
+  it("never fails an audit that is waiting for Claude as a dead run, however long it waits", async () => {
+    const b = await seedBusiness();
+    const a = await createCroAudit(env.DB, b.id);
+    await env.DB.prepare(`UPDATE cro_audits SET status = 'waiting', step = 'pages', started_at = '2020-01-01T00:00:00.000Z' WHERE id = ?`).bind(a.id).run();
+    const r = await (await api(`/api/leads/${b.id}/cro-audit`)).json<any>();
+    expect(r.audit).toMatchObject({ id: a.id, status: "waiting", step: "pages", pending_pages: [], error: null });
   });
 
   it("edits an item and validates the body", async () => {
@@ -291,19 +299,14 @@ describe("CRO routes", () => {
     expect(await getCroAudit(env.DB, a.id)).toMatchObject({ status: "running", error: null, completed_at: "2026-10-01T00:00:00.000Z" });
   });
 
-  it("serves screenshots and the eval fixture", async () => {
+  it("serves screenshots", async () => {
     const { a } = await doneAudit();
     expect((await api(`/api/cro-audits/${a.id}/shot/0/desktop`)).status).toBe(404);
     await env.RAW.put(shotKey(a.id, 0, "desktop"), new Uint8Array([1, 2]));
     await env.RAW.put(shotKey(a.id, 0, "mobile", true), new Uint8Array([3]));
-    await env.RAW.put(textKey(a.id, 0), "Welcome to Our Website");
     const s = await api(`/api/cro-audits/${a.id}/shot/0/desktop`);
     expect(s.headers.get("content-type")).toBe("image/jpeg");
     expect((await api(`/api/cro-audits/${a.id}/shot/0/mobile?top=1`)).status).toBe(200);
-    const fx = await (await api(`/api/cro-audits/${a.id}/eval-fixture`)).json<any>();
-    expect(fx.pages[0]).toMatchObject({ text: "Welcome to Our Website", shots: { desktop: null, mobile: "Aw==" } });
-    expect(fx.evidence[0].id).toBe("E1");
-    expect(fx.business.name).toBe("Ace Plumbing");
   });
 
   it("only serves shots for pages that belong to the audit, never a caller-chosen key", async () => {
@@ -319,14 +322,5 @@ describe("CRO routes", () => {
       `/api/cro-audits/${a.id}/shot/..%2F..%2Fsecret.jpg/desktop`, `/api/cro-audits/..%2Fsecret/shot/0/desktop`])
       expect([p, (await api(p)).status]).toEqual([p, 404]);
     expect((await api(`/api/cro-audits/${a.id}/shot/0/desktop`)).status).toBe(200);
-  });
-
-  it("only exports the eval fixture for a finished audit", async () => {
-    const { a } = await doneAudit();
-    const r = await api(`/api/cro-audits/${a.id}/eval-fixture`);
-    expect(r.headers.get("content-disposition")).toContain(`cro-fixture-${a.id}.json`);
-    await updateCroAudit(env.DB, a.id, { status: "failed" });
-    expect((await api(`/api/cro-audits/${a.id}/eval-fixture`)).status).toBe(404);
-    expect((await api(`/api/cro-audits/nope/eval-fixture`)).status).toBe(404);
   });
 });

@@ -1,5 +1,5 @@
 import { env, SELF } from "cloudflare:test";
-import { describe, it, expect, beforeAll, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { addSuppression, isSuppressed, listSuppressions, removeSuppression, InvalidSuppression } from "../src/worker/db/suppression";
 import { isDuplicateKey } from "../src/worker/db/services";
 import { createSearch, getSearch } from "../src/worker/db/searches";
@@ -11,6 +11,8 @@ import { runSearch } from "../src/worker/pipeline/search";
 import { runLead, type LeadDeps } from "../src/worker/pipeline/lead";
 import { latestAudit } from "../src/worker/db/audits";
 import { latestDraft } from "../src/worker/db/drafts";
+import { completeTask } from "../src/worker/queue/db";
+import * as leadDraft from "../src/worker/queue/leadDraft";
 import { FakeListingSource } from "../src/worker/listings/fake";
 import type { StepLike } from "../src/worker/pipeline/lead";
 import type { Listing } from "../src/worker/types";
@@ -223,20 +225,32 @@ describe("runLead draft step", () => {
     d.claude = async () => { d.claudeCalls++; return { subject: "Hi", body: "Body", to_contact_id: null, recipient_reason: "r" }; };
     return d as LeadDeps & { claudeCalls: number };
   }
-  const seed = async (placeId: string) => {
+  const seed = async (placeId: string, websiteUrl: string | null = "https://ace-supp.example.com") => {
     const s = await createSearch(env.DB, { location: "Boise", businessType: "plumber", radiusKm: 10, maxResults: 5 });
-    return upsertBusiness(env.DB, { placeId, name: "Ace", category: "Plumber", address: "Boise", phone: null, websiteUrl: "https://ace-supp.example.com", mapsUrl: null, rating: null, reviewCount: null }, s.id);
+    return upsertBusiness(env.DB, { placeId, name: "Ace", category: "Plumber", address: "Boise", phone: null, websiteUrl, mapsUrl: null, rating: null, reviewCount: null }, s.id);
   };
   const drafts = (id: string) => env.DB.prepare(`SELECT COUNT(*) AS n FROM drafts WHERE business_id = ?`).bind(id).first<number>("n");
+  // The draft is queued by enqueueDraftFor (a later task makes it create the real task); only whether it is called matters here.
+  const draftCalls = vi.spyOn(leadDraft, "enqueueDraftFor").mockImplementation(async () => ({ created: false }));
+  beforeEach(() => { draftCalls.mockClear(); });
+  const reviewTasks = async (id: string) => (await env.DB.prepare(`SELECT id, status FROM claude_tasks WHERE kind = 'site.review' AND target_id = ?`).bind(id).all<{ id: string; status: string }>()).results;
+  const claim = async (id: string) => { await env.DB.prepare(`UPDATE claude_tasks SET status = 'claimed', claimed_at = ?, attempts = 1 WHERE id = ?`).bind(new Date().toISOString(), id).run(); };
+  const review = { niche: "trades", value_proposition: "v", scores: { design: 70, content: 60, cro: 50, mobile: 65 },
+    summaries: { design: "", content: "", cro: "", mobile: "" }, strengths: [], niche_checklist: [], findings: [] };
 
-  it("a suppressed lead is still re-audited with forceDraft, but gets no draft and no drafting spend", async () => {
+  it("a suppressed lead is still re-audited with forceDraft, but its review result is discarded and it gets no draft", async () => {
     const b = await seed("RL-SUP");
     await addSuppression(env.DB, { kind: "place_id", value: "RL-SUP", reason: "opt_out" });
     const d = deps();
     const r = await runLead(d, step, { businessId: b.id, searchId: null, forceDraft: true });
-    expect(r.draftId).toBeNull();
     expect(r.auditId).toBeTruthy();
     expect((await latestAudit(env.DB, b.id))?.id).toBe(r.auditId);
+    const [t] = await reviewTasks(b.id);
+    await claim(t.id);
+    expect(await completeTask(env, t.id, review)).toEqual({ ok: true });
+    expect((await reviewTasks(b.id))[0].status).toBe("stale");
+    expect((await latestAudit(env.DB, b.id))!.ai_review).toBeNull();
+    expect(draftCalls).not.toHaveBeenCalled();
     expect(await latestDraft(env.DB, b.id)).toBeNull();
     expect(await drafts(b.id)).toBe(0);
     expect(d.claudeCalls).toBe(0);
@@ -245,16 +259,34 @@ describe("runLead draft step", () => {
   it("a lead suppressed by domain only (after its workflow was queued) is also not drafted", async () => {
     const b = await seed("RL-SUP-DOM");
     await addSuppression(env.DB, { kind: "domain", value: "ace-supp.example.com", reason: "client" });
-    expect((await runLead(deps(), step, { businessId: b.id, searchId: null, forceDraft: true })).draftId).toBeNull();
+    await runLead(deps(), step, { businessId: b.id, searchId: null, forceDraft: true });
+    const [t] = await reviewTasks(b.id);
+    await claim(t.id);
+    await completeTask(env, t.id, review);
+    expect(draftCalls).not.toHaveBeenCalled();
     expect(await drafts(b.id)).toBe(0);
   });
 
-  it("a lead that is not suppressed still drafts with forceDraft", async () => {
+  it("a lead with nothing to review is queued for a draft at once unless it is suppressed", async () => {
+    const free = await seed("RL-NOSITE", null);
+    await runLead(deps(), step, { businessId: free.id, searchId: null, forceDraft: true });
+    expect(draftCalls).toHaveBeenCalledOnce();
+    draftCalls.mockClear();
+    const held = await seed("RL-NOSITE-SUP", null);
+    await addSuppression(env.DB, { kind: "place_id", value: "RL-NOSITE-SUP", reason: "opt_out" });
+    await runLead(deps(), step, { businessId: held.id, searchId: null, forceDraft: true });
+    expect(draftCalls).not.toHaveBeenCalled();
+  });
+
+  it("a lead that is not suppressed gets its draft queued when the review comes back with forceDraft carried over", async () => {
     const b = await seed("RL-OK");
-    const d = deps();
-    const r = await runLead(d, step, { businessId: b.id, searchId: null, forceDraft: true });
-    expect(r.draftId).not.toBeNull();
-    expect(await drafts(b.id)).toBe(1);
-    expect(d.claudeCalls).toBe(1);
+    const r = await runLead(deps(), step, { businessId: b.id, searchId: null, forceDraft: true });
+    expect(draftCalls).not.toHaveBeenCalled(); // not before the review
+    const [t] = await reviewTasks(b.id);
+    await claim(t.id);
+    expect(await completeTask(env, t.id, review)).toEqual({ ok: true });
+    expect((await reviewTasks(b.id))[0].status).toBe("done");
+    expect(draftCalls).toHaveBeenCalledOnce();
+    expect(draftCalls).toHaveBeenCalledWith(expect.anything(), { businessId: b.id, auditId: r.auditId, forceDraft: true, steeringNote: null });
   });
 });

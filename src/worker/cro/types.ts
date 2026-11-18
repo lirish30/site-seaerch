@@ -5,7 +5,8 @@ export type BizModelKey = (typeof BIZ_MODEL_KEYS)[number];
 export type CroStage = "model" | "pages" | "synthesize";
 export type CroStep = "capture" | "evidence" | CroStage | "done";
 export type CroFrom = "capture" | CroStage;
-export type CroStatus = "running" | "done" | "failed";
+/** `waiting`: the capture is done and Claude has work queued (the business model, the page reviews, the roadmap) that nobody has finished yet. */
+export type CroStatus = "running" | "waiting" | "done" | "failed";
 export type Device = "desktop" | "mobile";
 export type CroPageKind = PageKind | "home";
 
@@ -110,6 +111,11 @@ export interface CroAudit {
   partial: boolean; pages: CroPageRef[]; evidence: Evidence[];
   business_model: BusinessModel | null; model_overrides: Partial<BusinessModel>; reviewed_as: BizModelKey | null;
   page_reviews: PageReview[]; strengths: string[]; positioning: Positioning | null; tracking_plan: TrackingEvent[];
-  scenario_inputs: ScenarioInputs | null; models_used: Partial<Record<CroStage, string>>; est_cost_usd: number;
+  scenario_inputs: ScenarioInputs | null;
+  /** Indexes of the pages whose review is still queued. */
+  pending_pages: number[];
+  /** When the queued stages were last started; a task queued before it is from a superseded run. */
+  stages_at: string | null;
+  models_used: Partial<Record<CroStage, string>>; est_cost_usd: number;
   created_at: string; started_at: string; completed_at: string | null;
 }

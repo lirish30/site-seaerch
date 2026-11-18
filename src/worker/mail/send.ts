@@ -79,15 +79,15 @@ export function linkProblem(c: Pick<ComposedEmail, "text" | "html">, mailbox: Ma
 }
 
 /**
- * True when this send is an answer to something the lead actually wrote to us: `inReplyTo` is the Message-ID of an INBOUND message stored for the
- * SAME business, and the recipient is that message's sender. Such a send is not cold mail, so the warm-up lock and the daily cap do not apply.
+ * True when this send is an answer to something the lead actually wrote to us: `inReplyTo` is the Message-ID of an INBOUND message of kind `reply`
+ * (not an auto-reply, a bounce or a stop) stored for the SAME business, and the recipient is that message's sender. Such a send is not cold mail, so the warm-up lock and the daily cap do not apply.
  * A caller-supplied `inReplyTo` alone never qualifies.
  */
 async function isReplyToInbound(db: D1Database, p: SendInput): Promise<boolean> {
   const id = p.inReplyTo?.trim().replace(/^<|>$/g, "");
   if (!p.businessId || !id) return false;
   const row = await db.prepare(
-    `SELECT 1 AS x FROM messages WHERE direction = 'in' AND business_id = ? AND message_id IN (?, ?) AND LOWER(TRIM(counterpart)) = ? LIMIT 1`,
+    `SELECT 1 AS x FROM messages WHERE direction = 'in' AND kind = 'reply' AND business_id = ? AND message_id IN (?, ?) AND LOWER(TRIM(counterpart)) = ? LIMIT 1`,
   ).bind(p.businessId, id, `<${id}>`, p.to.trim().toLowerCase()).first();
   return row !== null;
 }

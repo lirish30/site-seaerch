@@ -5,9 +5,14 @@ import { recordUsage } from "../src/worker/db/usage";
 import { saveSettings } from "../src/worker/db/settings";
 
 describe("cost", () => {
-  it("estimates listing pages + per-lead render, review and draft", () => {
-    expect(PER_LEAD_COST).toBeCloseTo(PRICES.browserPerRender + PRICES.claudePerReview + PRICES.claudePerDraft);
-    expect(estimateSearchCost(50)).toBeCloseTo(3 * PRICES.listingPerRequest + 50 * PER_LEAD_COST);
+  it("prices nothing for Claude: a lead costs its render only", () => {
+    expect(Object.keys(PRICES).filter((k) => /claude|cro/i.test(k))).toEqual([]);
+    expect(PER_LEAD_COST).toBe(PRICES.browserPerRender);
+  });
+
+  it("estimates listing pages + one render per lead", () => {
+    expect(estimateSearchCost(50)).toBeCloseTo(3 * PRICES.listingPerRequest + 50 * PRICES.browserPerRender);
+    expect(estimateSearchCost(50)).toBeCloseTo(0.13, 10);
   });
 
   it("blocks when this month's spend + estimate exceeds limit", async () => {

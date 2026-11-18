@@ -12,7 +12,6 @@ export interface TodaySummary {
   won: { thisMonth: number; valueThisMonth: number; openValue: number };
   pipeline: Record<LeadStatus, number>;
   totalLeads: number;
-  fullScanCostUsd: number;
   recent: RecentActivity[];
 }
 /** One row of GET /api/settings `usage`. */

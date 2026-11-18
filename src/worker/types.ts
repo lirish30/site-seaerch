@@ -139,8 +139,10 @@ export interface Audit {
   platform: Platform | null; seo_score: number | null; accessibility_score: number | null;
   /** A note for the owner only (mail domain has no MX): never a finding, never scored, never sent to the drafter or the report. */
   mail_warning: string | null;
+  /** R2 key of the JSON of everything `score()` was given except the review, so the audit can be re-scored when the AI review arrives. Null for older audits. */
+  score_inputs_key: string | null;
 }
-export type AuditInsert = Omit<Audit, "id" | "created_at">;
+export type AuditInsert = Omit<Audit, "id" | "created_at" | "score_inputs_key"> & { score_inputs_key?: string | null };
 
 export type ContactType = "email" | "form" | "phone" | "social";
 export interface ContactInput {

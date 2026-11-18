@@ -8,7 +8,7 @@ import { createApproval, createApprovalUnlessOpen } from "../db/approvals";
 import { getBusiness, businessDomain, updateLead } from "../db/businesses";
 import { getCampaign, listSteps, type SequenceStep } from "../db/campaigns";
 import { listContacts } from "../db/contacts";
-import { latestDraft } from "../db/drafts";
+import { isPlaceholderDraft, latestDraft } from "../db/drafts";
 import { latestAudit } from "../db/audits";
 import { ensureReport } from "../db/reports";
 import { logActivity } from "../db/activity";
@@ -46,6 +46,7 @@ export async function startSequence(env: Env, o: { businessId: string; campaignI
   if (!first || first.kind !== "email") return { ok: false, error: "the campaign has no first email step", status: 400 };
   const draft = await latestDraft(db, o.businessId);
   if (!draft) return { ok: false, error: "write a draft for this lead first", status: 400 };
+  if (isPlaceholderDraft(draft)) return { ok: false, error: "this lead's draft is only the empty starter: write the email first", status: 400 };
   const contacts = await listContacts(db, o.businessId);
   const chosen = draft.to_contact_id ? contacts.find((c) => c.id === draft.to_contact_id && c.type === "email") : undefined;
   const to = (chosen ?? pickRecipient(contacts, businessDomain(business)).emailContact)?.value.trim();
