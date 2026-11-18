@@ -137,6 +137,15 @@ export async function completeTask(env: Env, id: string, result: unknown): Promi
     return { ok: false, error };
   }
 
+  // The lease: refresh `claimed_at`, but only if it is still what we read. Two sessions can both hold a claim (one stalled past 30 minutes, the other
+  // reclaimed it), so exactly one of them gets to run `apply`; the other is told so. The refresh also keeps the task from being reclaimed while `apply` runs.
+  const leaseAt = new Date(Math.max(Date.now(), Date.parse(task.claimed_at ?? "") + 1 || 0)).toISOString();
+  const leased = await db.prepare(`UPDATE claude_tasks SET claimed_at = ? WHERE id = ? AND status = 'claimed' AND claimed_at IS ?`).bind(leaseAt, task.id, task.claimed_at).run();
+  if ((leased.meta.changes ?? 0) === 0) {
+    const now = await getTask(db, id);
+    return { ok: false, error: now?.status === "done" ? "already done" : "already being completed by another session" };
+  }
+
   let outcome: Awaited<ReturnType<typeof def.apply>>;
   try {
     outcome = await def.apply(env, payload.data, parsed.data, task);
@@ -178,10 +187,9 @@ export async function releaseTask(db: D1Database, id: string, reason: string): P
 /**
  * Gives up on work nobody picked up: open tasks (pending, or claimed and never finished) created more than `maxAgeDays` ago become `expired`, and
  * each kind's `onExpire` hook runs for its tasks (a failing hook is logged and does not stop the rest). Takes the whole `env` because a hook may
- * need more than the database; a bare database works too, for a kind whose hook only uses `env.DB`. Returns how many tasks expired.
+ * need more than the database. Returns how many tasks expired.
  */
-export async function expireOldTasks(envOrDb: Env | D1Database, now: Date, maxAgeDays: number = EXPIRE_AFTER_DAYS): Promise<number> {
-  const env = "DB" in envOrDb ? envOrDb : ({ DB: envOrDb } as Env);
+export async function expireOldTasks(env: Env, now: Date, maxAgeDays: number = EXPIRE_AFTER_DAYS): Promise<number> {
   const cutoff = new Date(now.getTime() - maxAgeDays * 86_400_000).toISOString();
   const expired = (await env.DB.prepare(
     `UPDATE claude_tasks SET status = 'expired', error = ?, done_at = ? WHERE status IN ('pending','claimed') AND created_at < ? RETURNING kind, payload`,

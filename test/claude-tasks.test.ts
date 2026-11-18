@@ -348,7 +348,8 @@ describe("completeTask", () => {
       const s = await seedReply();
       const results = await Promise.all([completeTask(env, s.taskId, ok), completeTask(env, s.taskId, ok)]);
       expect(results.filter((r) => r.ok)).toHaveLength(1);
-      expect(results.filter((r) => !r.ok)).toEqual([{ ok: false, error: "already done" }]);
+      // the loser is told "already done", or (when it lost the lease while the winner was still applying) "already being completed"
+      expect(results.filter((r) => !r.ok)).toEqual([{ ok: false, error: expect.stringMatching(/^already (done|being completed by another session)$/) }]);
       expect(await forDraftTask(s.taskId)).toHaveLength(1);
       expect(await approvalRows()).toHaveLength(1);
       expect((await taskRow(s.taskId)).status).toBe("done");

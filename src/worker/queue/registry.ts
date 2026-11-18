@@ -15,8 +15,9 @@ export type ApplyOutcome = { stale: string } | { log?: ApplyLog } | void;
  *
  *  - `build` returns the fixed `instructions` (trusted text the app wrote, never anything scraped) and the `untrusted` parts (everything copied
  *    from a site or an email). Return `{ stale }` when the target is gone. `task` is the claimed row, for a kind that must close it itself.
- *  - `apply` validates nothing (the result schema already did) and must be safe to run twice: a completion that crashed after its effects is run
- *    again. Return `{ stale }` when the target changed since the task was queued: the task is marked stale, nothing more happens.
+ *  - `apply` validates nothing (the result schema already did). It runs under a lease: `completeTask` takes it atomically first, so two sessions
+ *    completing the same task (one stalled, one reclaimed it) never both run `apply`. A completion that crashes mid-`apply` is still run
+ *    again after the lease lapses (30 minutes), so `apply` must tolerate a crash-retry: be idempotent wherever that is cheap. Return `{ stale }` when the target changed since the task was queued: the task is marked stale, nothing more happens.
  *    Throw `TaskRefused` to refuse the result (the task stays claimed so Claude can retry) or `TaskFailed` to give the task up.
  *  - `onExpire` runs for a task nobody picked up in time.
  */

@@ -137,6 +137,36 @@ describe("completeTask", () => {
     expect(testKindLog.applied).toHaveLength(1);
   });
 
+  it("concurrent completions of one task apply once", async () => {
+    const { id } = await enqueueTask(env.DB, "test.echo", { n: 1 });
+    await claimNextTask(env.DB, NOW);
+    const results = await Promise.all([completeTask(env, id, { echo: "a" }), completeTask(env, id, { echo: "b" }), completeTask(env, id, { echo: "c" })]);
+    expect(testKindLog.applied).toHaveLength(1); // test.echo's apply is deliberately not idempotent
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    expect(results.filter((r) => !r.ok).every((r) => /already (done|being completed)/.test((r as { error: string }).error))).toBe(true);
+    expect((await getTask(env.DB, id))!.status).toBe("done");
+  });
+
+  it("two sessions completing after a reclaim apply once", async () => {
+    const { id } = await enqueueTask(env.DB, "test.echo", { n: 1 });
+    await claimNextTask(env.DB, NOW); // session A claims and stalls
+    expect((await claimNextTask(env.DB, new Date(NOW.getTime() + 31 * MIN)))!.attempts).toBe(2); // session B reclaims
+    const results = await Promise.all([completeTask(env, id, { echo: "A" }), completeTask(env, id, { echo: "B" })]);
+    expect(testKindLog.applied).toHaveLength(1);
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    expect(await completeTask(env, id, { echo: "late" })).toEqual({ ok: false, error: "already done" });
+    expect(testKindLog.applied).toHaveLength(1);
+  });
+
+  it("an invalid result takes no lease and leaves the claim as it was", async () => {
+    const { id } = await enqueueTask(env.DB, "test.echo", { n: 1 });
+    await claimNextTask(env.DB, NOW);
+    const before = (await getTask(env.DB, id))!.claimed_at!;
+    expect(await completeTask(env, id, { echo: 5 })).toMatchObject({ ok: false }); // invalid: no lease taken
+    expect((await getTask(env.DB, id))!.claimed_at).toBe(before);
+    expect(await completeTask(env, id, { echo: "ok" })).toEqual({ ok: true });
+  });
+
   it("apply returning stale marks the task stale", async () => {
     const { id } = await enqueueTask(env.DB, "test.stale", {});
     await claimNextTask(env.DB, NOW);
@@ -233,7 +263,8 @@ describe("queue maintenance", () => {
     const a2 = await enqueueTask(env.DB, "test.echo", { n: 2 }, { targetType: "lead", targetId: "A" });
     const b = await enqueueTask(env.DB, "test.echo", { n: 3 }, { targetType: "lead", targetId: "B" });
     const c = await enqueueTask(env.DB, "test.echo", { n: 4 }, { targetType: "page", targetId: "A" });
-    await claimNextTask(env.DB, NOW); // a is claimed: open too
+    await env.DB.prepare(`UPDATE claude_tasks SET created_at = '2026-01-01T00:00:00.000Z' WHERE id = ?`).bind(a.id).run(); // oldest, so the claim takes it
+    expect((await claimNextTask(env.DB, NOW))!.id).toBe(a.id); // a is claimed: open too
     expect(await cancelTasksFor(env.DB, "lead", "A")).toBe(2);
     expect((await getTask(env.DB, a.id))!.status).not.toMatch(/pending|claimed/);
     expect((await getTask(env.DB, a2.id))!.status).not.toMatch(/pending|claimed/);
@@ -252,6 +283,14 @@ describe("queue maintenance", () => {
     await env.DB.prepare(`UPDATE claude_tasks SET attempts = ? WHERE id = ?`).bind(MAX_ATTEMPTS, id).run();
     expect(await releaseTask(env.DB, id, "still cannot")).toBe(true);
     expect(await getTask(env.DB, id)).toMatchObject({ status: "failed", error: expect.stringContaining("still cannot") });
+  });
+
+  it("queueCounts counts open tasks per kind, and queue_status leaves out kinds nobody can work", async () => {
+    await env.DB.prepare(`INSERT INTO claude_tasks (id, kind, payload, status, attempts, created_at) VALUES (?, 'future.kind', '{}', 'pending', 0, ?)`).bind(crypto.randomUUID(), NOW.toISOString()).run();
+    expect(Object.keys(await queueCounts(env.DB))).toEqual(["future.kind"]);
+    const r = await call("queue_status", {});
+    expect(JSON.parse(r.content[0].text!)).toEqual({});
+    await env.DB.prepare(`DELETE FROM claude_tasks`).run();
   });
 
   it("queueCounts counts open tasks per kind", async () => {

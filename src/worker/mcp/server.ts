@@ -188,10 +188,11 @@ export function buildMcpServer(env: Env): McpServer {
   });
 
   server.registerTool("queue_status", {
-    description: "How much Claude work is waiting, per task kind: pending (not yet picked up), claimed (being worked) and the model that kind suggests. Kinds with nothing open are left out.",
+    description: "How much Claude work is waiting, per task kind: pending (not yet picked up), claimed (being worked) and the model that kind suggests. Kinds with nothing open, or that this server cannot work, are left out.",
     inputSchema: {},
   }, async () => {
-    const counts = await queueCounts(db);
+    // Only kinds this server can brief and complete: next_claude_task never hands out the others, so counting them would send a worker round in circles.
+    const counts = Object.fromEntries(Object.entries(await queueCounts(db)).filter(([kind]) => getTaskKind(kind)));
     await log("queue_status", `queue_status -> ${Object.values(counts).reduce((n, c) => n + c.pending + c.claimed, 0)} open`);
     // The model each kind suggests rides along, so the worker can pick the right subagent without opening a task.
     return text(Object.fromEntries(Object.entries(counts).map(([kind, c]) => [kind, { ...c, suggested_model: getTaskKind(kind)?.suggestedModel ?? null }])));
