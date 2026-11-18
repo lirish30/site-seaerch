@@ -144,8 +144,8 @@ export interface ContactInput {
 }
 export interface Contact extends ContactInput { id: string; business_id: string; }
 
-export type Purpose = "full_time" | "freelance";
-export const PURPOSES: readonly Purpose[] = ["full_time", "freelance"];
+export type Purpose = "freelance";
+export const PURPOSES: readonly Purpose[] = ["freelance"];
 
 export interface Draft {
   id: string; business_id: string; audit_id: string | null; to_contact_id: string | null;
@@ -179,9 +179,8 @@ export interface Settings {
   role_title: string; bio: string; availability: string; resume_url: string; goal_line: string;
   /** JSON of a Signature, or "" to use the plain-text `signature`. */
   signature_json: string;
-  default_purpose: Purpose;
-  /** 1/0: new freelance / full-time drafts carry the mailing footer; Gmail drafts attach the audit PDF unless the request says otherwise. */
-  footer_freelance?: number; footer_full_time?: number; attach_audit_pdf?: number;
+  /** 1/0: new drafts carry the mailing footer; Gmail drafts attach the audit PDF unless the request says otherwise. */
+  footer_freelance?: number; attach_audit_pdf?: number;
 }
 export type TonePreset = "friendly_local" | "consultative" | "direct" | "formal";
 export type EmailLength = "short" | "medium" | "long";

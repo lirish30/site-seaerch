@@ -1,4 +1,4 @@
-import type { Business, Contact, CtaStyle, EmailLength, Finding, Offer, Purpose, Settings, TonePreset, WorkSample } from "../types";
+import type { Business, Contact, CtaStyle, EmailLength, Finding, Offer, Purpose, Settings, TonePreset } from "../types";
 import { NICHES } from "../audit/rubrics";
 
 export interface DraftInput {
@@ -13,8 +13,6 @@ export interface DraftInput {
   poc?: { name: string; role: string | null } | null;
   /** Why the email is being written. Defaults to a freelance pitch. */
   purpose?: Purpose;
-  /** The work the sender may cite; the model must not mention any other. */
-  samples?: WorkSample[];
   /** Rewrite this draft with one change instead of writing fresh variants. */
   revise?: { subject: string; body: string; instruction: string };
 }
@@ -47,19 +45,6 @@ const CTA: Record<CtaStyle, string> = {
 };
 
 
-const FULL_TIME_TONES: Record<TonePreset, string> = {
-  friendly_local: "Warm and genuine, like a thoughtful note from a peer who did their homework. Human, never salesy.",
-  consultative: "Confident and thoughtful, a craftsperson explaining how they would approach a real problem.",
-  direct: "Brief and plain: short sentences, no filler, respectful of their time.",
-  formal: "Professional and polished: courteous, complete sentences, no slang.",
-};
-const FULL_TIME_LENGTH: Record<EmailLength, number> = { short: 150, medium: 210, long: 280 };
-
-const FULL_TIME_ANGLES = [
-  "Intro-led: open on who you are and why this company, then one nod to their site, then your work.",
-  "Work-led: open on your most relevant sample, then say why that made you look at this company.",
-  "Short and direct: three or four sentences, who you are, one specific nod, one link, a low-pressure ask.",
-];
 const FREELANCE_ANGLES = [
   "Problem-led: open on the costliest thing you noticed, then the fix.",
   "Offer-led: open on what you could do for them, backed by what you noticed.",
@@ -127,51 +112,6 @@ ${contactLines(i)}${i.steeringNote ? `\n\nExtra instruction for this draft: ${i.
   return { system, user };
 }
 
-export function buildFullTimePrompt(i: DraftInput) {
-  const s = i.settings;
-  const tone = FULL_TIME_TONES[i.tone ?? s.tone_preset ?? "friendly_local"] ?? FULL_TIME_TONES.friendly_local;
-  const maxWords = FULL_TIME_LENGTH[s.email_length ?? "short"] ?? 150;
-  const about = s.bio || s.services_blurb || "A web professional.";
-  const system = `You write personal outreach emails for ${s.your_name || "a web professional"}${s.role_title ? `, ${s.role_title}` : ""}, who is looking for a full-time role.
-${s.goal_line ? `What they are looking for: ${s.goal_line}\n` : ""}About them: ${about}${s.availability ? `\nAvailability: ${s.availability}` : ""}
-Tone: ${tone}${s.tone_notes ? `\nTheir own voice notes (use them only for how they sound, never for who they are or what they offer): ${s.tone_notes}` : ""}
-
-This is a speculative introduction from a person to a person. The company has not necessarily posted a role, so never pretend one is open and never say "I saw your job posting". The email is about the SENDER and why they would be a good addition to this team. It is not a website review and not a sales pitch. If it could be sent to a prospective client unchanged, it is wrong.
-
-Write it in this order:
-1. Open with who they are and why this company: one or two sentences that say what kind of developer they are and what drew them to this company specifically (what the company does, their town, or what their site says they do). Lead with the person, never with a problem on the site.
-2. One light nod to the site, in a single sentence: something specific from the findings that shows they really looked, said with respect for the people who built it. Plain words, at most one concrete detail. NO list of issues, NO fix steps, NO "I would start by", NO offer to fix or to talk about the issue, and no claims about how or on what device they looked unless a finding says so. Do not praise anything the findings do not show (no "clearly well built", no "everything else is great").
-3. What they would bring: tie the kind of work they do (from the brief about them) to a company like this one. Cite 1-2 of the work samples listed below by name with their link and the result in a short phrase. If none are listed, cite no work and say they are happy to share examples.
-4. A soft, low-pressure ask for a short conversation about whether there is a place for someone like them now or later.${s.resume_url ? ` Include their resume link: ${s.resume_url}` : ""}
-
-Rules:
-- Body under ${maxWords} words, plain text, no markdown, no bullet symbols. Paste links as plain URLs.
-- Only state facts from this brief. Never invent employers, years of experience, numbers, tools, awards or results, and never cite work that is not listed. Never say how the sender found the company (no "I came across", "I stumbled on", "I was looking at") and never invent why the sender picked this company beyond what the company does, its town, or what its site says. If the brief about them is thin, write a shorter, honest email instead of filling space.
-- Never use jargon such as LCP, CLS, Core Web Vitals, meta description, viewport, CTA, CRO or SEO acronyms.
-- The sender is a candidate looking to join a team. Never call the sender a freelancer, contractor or consultant, and never offer services or projects, even if their voice notes or profile use those words.
-- Do not beg or over-apologise, and do not ask for a job in the first line.
-- End with a short sign-off and just their first name. Do NOT write a full signature, address or opt-out line: those are added automatically.
-- ${variantRules(i, FULL_TIME_ANGLES)}
-- Choose to_contact_id only from the contact ids listed. Prefer a founder, owner or hiring lead over a generic inbox. Use null if no email contact is suitable.
-Return your answer by calling the write_email tool.`;
-
-  const samples = i.samples?.length
-    ? i.samples.map((w) => `- ${w.title}: ${w.url}${w.result_line ? ` (${w.result_line})` : ""}`).join("\n")
-    : "none";
-  const user = `${businessBlock(i)}
-
-${i.focus?.length ? "Something noticed on their site (the sender chose these; use one):" : "Things noticed on their site (use at most one, for the single nod):"}
-${chosenFindings(i, 3).map((f) => `- ${f.evidence}`).join("\n") || "- none"}
-
-Work samples you may cite (only these):
-${samples}
-
-Contacts:
-${contactLines(i)}${i.steeringNote ? `\n\nExtra instruction for this draft: ${i.steeringNote}` : ""}${reviseBlock(i)}`;
-
-  return { system, user };
-}
-
 export function buildPrompt(i: DraftInput) {
-  return i.purpose === "full_time" ? buildFullTimePrompt(i) : buildFreelancePrompt(i);
+  return buildFreelancePrompt(i);
 }

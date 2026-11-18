@@ -83,7 +83,7 @@ function LeadsSidebar() {
 function OutreachSidebar() {
   const { search } = useLocation();
   const p = new URLSearchParams(search);
-  const view = p.get("view") ?? "drafts", purpose = p.get("purpose");
+  const view = p.get("view") ?? "drafts";
   const [counts, setCounts] = useState<OutreachCounts | null>(null);
   useEffect(() => {
     const load = () => api.get<{ counts: OutreachCounts }>("/outreach?counts=1").then((r) => setCounts(r.counts)).catch(() => setCounts(null));
@@ -91,7 +91,7 @@ function OutreachSidebar() {
     window.addEventListener(LEADS_CHANGED, load);
     return () => window.removeEventListener(LEADS_CHANGED, load);
   }, []);
-  const drafts = view === "drafts" && !purpose;
+  const drafts = view === "drafts";
   return (
     <>
       <SideTitle title="Outreach" />
@@ -99,9 +99,6 @@ function OutreachSidebar() {
       <SideItem to="/outreach?view=followups" icon="clock" label="Follow-ups due" count={counts?.followups} active={view === "followups"} />
       <SideItem to="/outreach?view=contacted" icon="send" label="Contacted" count={counts?.contacted} active={view === "contacted"} />
       <SideItem to="/outreach?view=replied" icon="inbox" label="Replied" count={counts?.replied} active={view === "replied"} />
-      <p className="side-head static">Purpose</p>
-      <SideItem to="/outreach?view=drafts&purpose=full_time" icon="briefcase" label="Full-time role" count={counts?.full_time} active={view === "drafts" && purpose === "full_time"} />
-      <SideItem to="/outreach?view=drafts&purpose=freelance" icon="zap" label="Freelance work" count={counts?.freelance} active={view === "drafts" && purpose === "freelance"} />
       <div className="side-spacer" />
       <SideItem to="/settings" icon="sliders" label="Email voice" active={false} />
       <SideItem to="/settings" icon="pen" label="Signature" active={false} />

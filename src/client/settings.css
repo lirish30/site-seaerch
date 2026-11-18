@@ -1,5 +1,5 @@
 /* Settings: the shared frame (st-*: header, breadcrumb, cards, fields, callouts, save bar) and the pages built on it.
-   Page rules are prefixed per page: sh- home, sp- profile, sj- job search, sg- signature, vo- voice, sw- work samples. Measured from the Figma file at 1x. */
+   Page rules are prefixed per page: sh- home, sp- profile, sg- signature, vo- voice, sw- work samples. Measured from the Figma file at 1x. */
 .settings-page { min-height:100%; display:flex; flex-direction:column; }
 
 /* Header: breadcrumb, title (+ badge), subtitle, optional action on the right */
@@ -100,9 +100,6 @@
 .sp-lf { flex:1; min-width:0; }
 .sp-tile { width:60px; height:60px; flex:none; align-self:flex-end; margin-bottom:0; display:grid; place-items:center; border-radius:12px; background:var(--bg-muted); border:1px solid var(--border); color:var(--text-3); overflow:hidden; }
 .sp-tile img { width:32px; height:32px; object-fit:contain; border-radius:6px; display:block; }
-
-/* ---------- Job search (sj-) ---------- */
-.st-field textarea.sj-bio { min-height:88px; }
 
 /* ---------- Email signature (sg-) ---------- */
 .sg-layout { display:grid; grid-template-columns:minmax(0,560px) minmax(280px,420px); gap:24px; align-items:start; }

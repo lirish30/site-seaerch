@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { emptySignature, gapsMessage, isBlankSignature, mailtoHref, profileGaps, purposeSwitchNotice, readSignature, snippet, variantTitle, wordCount, writeSignature } from "../src/client/emailView";
+import { emptySignature, isBlankSignature, mailtoHref, readSignature, snippet, variantTitle, wordCount, writeSignature } from "../src/client/emailView";
 
 describe("signature editing", () => {
   it("reads nothing, junk and partial data as a usable empty or partial signature", () => {
@@ -23,23 +23,6 @@ describe("signature editing", () => {
   });
 });
 
-describe("profileGaps", () => {
-  const full = { role_title: "Dev", bio: "Bio", goal_line: "Full-time" };
-  it("lists what a full-time email still lacks", () => {
-    expect(profileGaps("full_time", {}, 0)).toEqual(["your role", "a short bio", "what you're looking for", "at least one work sample"]);
-    expect(profileGaps("full_time", full, 0)).toEqual(["at least one work sample"]);
-    expect(profileGaps("full_time", full, 2)).toEqual([]);
-  });
-  it("asks nothing of a freelance email", () => {
-    expect(profileGaps("freelance", {}, 0)).toEqual([]);
-  });
-  it("reads as a sentence", () => {
-    expect(gapsMessage([])).toBe("");
-    expect(gapsMessage(["your role"])).toBe("Add your role in Settings so the email can talk about real work.");
-    expect(gapsMessage(["your role", "a short bio", "a work sample"])).toBe("Add your role, a short bio and a work sample in Settings so the email can talk about real work.");
-  });
-});
-
 describe("small helpers", () => {
   it("counts words and trims snippets", () => {
     expect(wordCount("")).toBe(0);
@@ -53,19 +36,5 @@ describe("small helpers", () => {
   });
   it("encodes a mailto link", () => {
     expect(mailtoHref("a@b.com", "Hi & bye", "Line 1\nLine 2")).toBe("mailto:a@b.com?subject=Hi%20%26%20bye&body=Line%201%0ALine%202");
-  });
-});
-
-describe("purposeSwitchNotice", () => {
-  it("says nothing while the draft matches the chosen purpose", () => {
-    expect(purposeSwitchNotice("full_time", "full_time")).toBeNull();
-    expect(purposeSwitchNotice("freelance", "freelance")).toBeNull();
-  });
-  it("explains that quick rewrites keep the draft's purpose and how to switch", () => {
-    const n = purposeSwitchNotice("freelance", "full_time")!;
-    expect(n).toContain("freelance work");
-    expect(n).toContain("full-time role");
-    expect(n).toMatch(/Quick rewrites keep that/);
-    expect(n).toMatch(/Write new options/);
   });
 });

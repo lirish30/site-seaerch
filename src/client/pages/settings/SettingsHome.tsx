@@ -6,7 +6,7 @@ import SettingsPage from "../../components/SettingsPage";
 import type { WorkSample } from "../../emailView";
 import type { SettingsDoc, UsageRow } from "../../settingsData";
 import {
-  hasBuiltSignature, jobMissing, profileMissing, samplesNeeded, setupItems, setupSentence, suppressionWord, voiceSummary,
+  hasBuiltSignature, profileMissing, samplesNeeded, setupItems, setupSentence, suppressionWord, voiceSummary,
 } from "../../settingsPagesView";
 import type { FitProfile, Service, Suppression } from "../../types";
 
@@ -27,11 +27,9 @@ const limitText = (n: number) => (Number.isInteger(n) ? `$${n}` : dollars(n));
 function chips(d: Data): Record<string, Chip | null> {
   const wait = (v: unknown, make: () => Chip): Chip | null => (v === null ? null : v === false ? { tone: "", text: "Couldn't load" } : make());
   const doc = d.doc || {};
-  const missingJob = jobMissing(doc);
   const missingProfile = profileMissing(doc);
   return {
     profile: wait(d.doc, () => (missingProfile.length ? { tone: "warning", text: `Add ${missingProfile[0]}` } : { tone: "positive", text: "Complete" })),
-    "job-search": wait(d.doc, () => (!String(doc.resume_url ?? "").trim() ? { tone: "warning", text: "Resume link missing" } : missingJob.length ? { tone: "warning", text: `Add ${missingJob[0]}` } : { tone: "positive", text: "Complete" })),
     signature: wait(d.doc, () => (hasBuiltSignature(doc) ? { tone: "positive", text: "Complete" } : String(doc.signature ?? "").trim() ? { tone: "", text: "Plain text only" } : { tone: "warning", text: "Not set up" })),
     voice: wait(d.doc, () => ({ tone: "", text: voiceSummary(String(doc.tone_preset), String(doc.email_length)) })),
     "work-samples": wait(d.samples, () => {
@@ -61,12 +59,11 @@ interface CardDef { slug: string; title: string; icon: IconName; text: string }
 const SECTIONS: { name: string; tint: "signal" | "info" | "positive" | "plain"; cards: CardDef[] }[] = [
   { name: "You", tint: "signal", cards: [
     { slug: "profile", title: "Profile", icon: "user", text: "Your name, business, contact email and logo. Shown on shared reports." },
-    { slug: "job-search", title: "Job search", icon: "briefcase", text: "Role, short bio, what you’re looking for and your resume link." },
     { slug: "signature", title: "Email signature", icon: "pen", text: "Name, title, links and a graphic, added to every draft." },
   ] },
   { name: "Outreach", tint: "info", cards: [
     { slug: "voice", title: "Email voice", icon: "mail", text: "Tone, length, what you ask for, and phrases you use or avoid." },
-    { slug: "work-samples", title: "Work samples", icon: "image", text: "Projects your full-time emails can point to." },
+    { slug: "work-samples", title: "Work samples", icon: "image", text: "Your best projects. Agency emails can link to what is listed here." },
     { slug: "services", title: "Services you sell", icon: "list", text: "The catalog behind “Recommended pitch”." },
   ] },
   { name: "Lead scoring", tint: "positive", cards: [

@@ -8,7 +8,7 @@ import { SideItem, SideLabel, SideTitle } from "./parts";
 export interface SettingsPageDef { slug: string; label: string; icon: IconName; group: "You" | "Outreach" | "Lead scoring" | "Account" }
 /** Every settings page, in sidebar order. `slug` is the path under /settings. */
 export const SETTINGS_PAGES: SettingsPageDef[] = [
-  { slug: "profile", label: "Profile", icon: "user", group: "You" }, { slug: "job-search", label: "Job search", icon: "briefcase", group: "You" },
+  { slug: "profile", label: "Profile", icon: "user", group: "You" },
   { slug: "signature", label: "Email signature", icon: "pen", group: "You" },
   { slug: "voice", label: "Email voice", icon: "mail", group: "Outreach" }, { slug: "work-samples", label: "Work samples", icon: "image", group: "Outreach" },
   { slug: "services", label: "Services you sell", icon: "list", group: "Outreach" },

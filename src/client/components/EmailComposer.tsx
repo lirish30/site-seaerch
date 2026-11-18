@@ -1,5 +1,4 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { Link } from "react-router-dom";
 import { api } from "../api";
 import Icon from "./Icon";
 import ParagraphEditor from "./ParagraphEditor";
@@ -9,10 +8,7 @@ import { EmailFrame } from "./SignatureBuilder";
 import InlineError from "./InlineError";
 import type { CroItem, CroResponse } from "../cro";
 import type { Audit, Contact } from "../types";
-import {
-  gapsMessage, mailtoHref, profileGaps, PURPOSE_HINT, PURPOSE_LABEL, purposeSwitchNotice, snippet, TWEAK_BUTTONS, variantTitle, wordCount,
-  type Draft, type Purpose, type WorkSample,
-} from "../emailView";
+import { mailtoHref, snippet, TWEAK_BUTTONS, variantTitle, wordCount, type Draft } from "../emailView";
 
 const TONE_OPTIONS: [string, string][] = [["", "Default tone (from Settings)"], ["friendly_local", "Friendly local"], ["consultative", "Consultative expert"], ["direct", "Direct & short"], ["formal", "Formal"]];
 const MAX_PICKS = 5;
@@ -22,7 +18,6 @@ export interface ComposerHandle {
   save(): Promise<boolean>;
 }
 
-interface Profile { role_title: string; bio: string; goal_line: string; default_purpose: Purpose }
 interface Composed { html: string; text: string }
 interface Props {
   leadId: string; draft: Draft | null; variants: Draft[]; toContact: Contact | null; suppressed: boolean; lowPriority: boolean;
@@ -43,23 +38,21 @@ const toggle = <T,>(set: React.Dispatch<React.SetStateAction<Set<T>>>, key: T) =
   set((p) => { const n = new Set(p); if (n.has(key)) n.delete(key); else if (n.size < MAX_PICKS) n.add(key); return n; });
 
 /**
- * Writing an email for a lead: choose what it's for, pick one of a few differently-angled options, edit it next to a
+ * Writing an email for a lead: pick one of a few differently-angled options, edit it next to a
  * live preview of the real email (signature and all), and nudge it with quick rewrites.
  */
 const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p, ref) {
   const { leadId, draft, variants, toContact, suppressed } = p;
   const [subject, setSubject] = useState(draft?.subject ?? ""); const [body, setBody] = useState(draft?.body ?? "");
   const [footer, setFooter] = useState(draft?.include_footer ?? false);
-  const [purpose, setPurpose] = useState<Purpose | null>(null);
   const [side, setSide] = useState<"preview" | "write">("preview");
-  const [profile, setProfile] = useState<Profile | null>(null); const [samples, setSamples] = useState<WorkSample[] | null>(null);
   const [preview, setPreview] = useState<Composed | null>(null);
   const [versions, setVersions] = useState<Draft[]>([]);
   const [croItems, setCroItems] = useState<CroItem[]>([]);
   const [tone, setTone] = useState(""); const [steer, setSteer] = useState("");
   const [ownFocus, setOwnFocus] = useState<Set<string>>(new Set());
   const focus = p.focus ?? ownFocus; const setFocus = p.onFocusChange ?? setOwnFocus;
-  const [croFocus, setCroFocus] = useState<Set<string>>(new Set()); const [pickIds, setPickIds] = useState<Set<string>>(new Set());
+  const [croFocus, setCroFocus] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(""); const [error, setError] = useState("");
   const [showAllChips, setShowAllChips] = useState(false); const [versionsOpen, setVersionsOpen] = useState(false);
   const previewDialog = useRef<HTMLDialogElement>(null);
@@ -74,12 +67,10 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
   useEffect(() => {
     saved.current = { subject: draft?.subject ?? "", body: draft?.body ?? "", footer: draft?.include_footer ?? false };
     setSubject(saved.current.subject); setBody(saved.current.body); setFooter(saved.current.footer);
-    setPurpose(null); setError("");
+    setError("");
   }, [draft?.id]);
 
   useEffect(() => {
-    api.get<{ settings: Profile }>("/settings").then((r) => setProfile(r.settings)).catch(() => setProfile(null));
-    api.get<WorkSample[]>("/work-samples").then(setSamples).catch(() => setSamples([]));
     api.get<CroResponse>(`/leads/${leadId}/cro-audit`).then((r) => {
       const usable = r.audit?.status === "done" ? r.items.filter((i) => i.included) : [];
       setCroItems(usable);
@@ -114,8 +105,6 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
   useImperativeHandle(ref, () => ({ save }));
   useEffect(() => { if (footer !== saved.current.footer) void save(); }, [footer]);
 
-  const eff: Purpose = purpose ?? draft?.purpose ?? profile?.default_purpose ?? "full_time";
-  const gaps = profile && samples ? gapsMessage(profileGaps(eff, profile, samples.length)) : "";
   const tab = draft ? side : "write";
   const words = wordCount(body);
 
@@ -130,8 +119,7 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
     const focusIdx = [...focus].map((k) => Number(k.split(":").pop())).filter(Number.isInteger);
     const picked = focusIdx.length + croFocus.size;
     void write({
-      purpose: eff, steeringNote: steer, focus: focusIdx, croFocus: [...croFocus], tone: tone || null,
-      ...(eff === "full_time" && pickIds.size ? { sampleIds: [...pickIds] } : {}),
+      steeringNote: steer, focus: focusIdx, croFocus: [...croFocus], tone: tone || null,
     }, picked ? `New options focused on ${picked} chosen issue(s).` : "New options written.");
     setSteer("");
   }
@@ -160,35 +148,20 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
   async function copyAndMark() { if (await copy() && await p.onMarkContacted()) p.onMessage("Copied and marked contacted"); }
 
   const mailto = toContact && preview ? mailtoHref(toContact.value, subject, preview.text) : null;
-  const switchNotice = draft ? purposeSwitchNotice(draft.purpose, eff) : null;
-  const sampleChoices = eff === "full_time" ? samples ?? [] : [];
 
   const ranked = p.findings.map((f, i) => ({ f, key: `${f.code}:${i}` }))
     .sort((a, b) => ({ critical: 0, important: 1, nice: 2 }[a.f.severity] - { critical: 0, important: 1, nice: 2 }[b.f.severity]) || b.f.points - a.f.points);
-  const chips: { id: string; label: string; on: boolean; disabled: boolean; toggle: () => void; kind: "finding" | "cro" | "sample" }[] = [
+  const chips: { id: string; label: string; on: boolean; disabled: boolean; toggle: () => void; kind: "finding" | "cro" }[] = [
     ...ranked.map(({ f, key }) => ({ id: `f:${key}`, label: findingChip(f), on: focus.has(key), disabled: !focus.has(key) && focus.size >= MAX_PICKS, toggle: () => toggle(setFocus, key), kind: "finding" as const })),
     ...croItems.map((i) => ({ id: `c:${i.id}`, label: i.title.length > 32 ? `${i.title.slice(0, 31)}…` : i.title, on: croFocus.has(i.id), disabled: !croFocus.has(i.id) && croFocus.size >= MAX_PICKS, toggle: () => toggle(setCroFocus, i.id), kind: "cro" as const })),
-    ...sampleChoices.map((w) => ({ id: `s:${w.id}`, label: w.title, on: pickIds.has(w.id), disabled: !pickIds.has(w.id) && pickIds.size >= 2,
-      toggle: () => setPickIds((s) => { const n = new Set(s); if (n.has(w.id)) n.delete(w.id); else if (n.size < 2) n.add(w.id); return n; }), kind: "sample" as const })),
   ];
   // Picked chips always stay visible, even past the first eight.
   const shownChips = showAllChips ? chips : chips.filter((c, i) => i < 8 || c.on);
-  const picked = focus.size + croFocus.size + pickIds.size;
+  const picked = focus.size + croFocus.size;
   const toName = toContact?.person_name ?? null;
 
   return (
     <div className="composer">
-      <div className="purpose-row">
-        <div className="purpose-seg" role="group" aria-label="What is this email for?">
-          {(["full_time", "freelance"] as Purpose[]).map((x) => (
-            <button key={x} className={eff === x ? "on" : ""} aria-pressed={eff === x} onClick={() => setPurpose(x)}><Icon name={x === "full_time" ? "briefcase" : "zap"} size={14} />{PURPOSE_LABEL[x]}</button>
-          ))}
-        </div>
-        <p>{PURPOSE_HINT[eff]}</p>
-      </div>
-      {switchNotice && <p className="hint">{switchNotice}</p>}
-      {gaps && <p className="hint">{gaps} <Link to="/settings">Open Settings</Link></p>}
-
       {variants.length > 1 && <section aria-label="Options" className="variants">
         <p className="kicker">Pick a starting point</p>
         <div className="variant-grid">
@@ -227,9 +200,9 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
           </div>
           <div className="c-row c-tweaks" role="group" aria-label="Quick rewrites">
             <Icon name="sparkles" size={14} className="spark" /><b>Quick rewrite</b>
-            {TWEAK_BUTTONS.filter((t) => !t.fullTimeOnly || draft.purpose === "full_time").map((t) => (
-              <button key={t.key} className="pill" onClick={() => tweak(t.key, t.label)} disabled={!!busy || suppressed || !!switchNotice}
-                title={suppressed ? "Suppressed: drafting is turned off" : switchNotice ?? ""}>{busy === t.key ? "Rewriting…" : t.label}</button>
+            {TWEAK_BUTTONS.map((t) => (
+              <button key={t.key} className="pill" onClick={() => tweak(t.key, t.label)} disabled={!!busy || suppressed}
+                title={suppressed ? "Suppressed: drafting is turned off" : ""}>{busy === t.key ? "Rewriting…" : t.label}</button>
             ))}
           </div>
           <div className="c-row c-actions">
@@ -261,13 +234,13 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
             <p className="muted small">This is how it will look in the Gmail draft. Nothing is ever sent from here.</p>
           </dialog>
         </section>
-      ) : <p className="muted">No email yet{p.lowPriority ? " (low priority lead)" : ""}. Choose what it's for, then write the options.</p>}
+      ) : <p className="muted">No email yet{p.lowPriority ? " (low priority lead)" : ""}. Write the options to get started.</p>}
 
       <section className="write-card" aria-label="Write new options">
         <div className="w-head">
           <Icon name="refresh" size={15} /><h3>{draft ? "Write new options" : "Write the email"}</h3>
           <span className="grow" />
-          {picked > 0 && <button className="link-btn" onClick={() => { setFocus(new Set()); setCroFocus(new Set()); setPickIds(new Set()); }}>Clear {picked} selected</button>}
+          {picked > 0 && <button className="link-btn" onClick={() => { setFocus(new Set()); setCroFocus(new Set()); }}>Clear {picked} selected</button>}
           <button className="btn primary sm" onClick={writeOptions} disabled={!!busy || suppressed} title={suppressed ? "Suppressed: drafting is turned off" : ""}>
             <Icon name="sparkles" size={14} />{busy === "write" ? "Writing…" : draft ? "Write 3 options" : "Write options"}
           </button>
@@ -282,7 +255,7 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
           <div className="w-chips" role="group" aria-label="Build the options on">
             <span className="c-lbl">Build on</span>
             {shownChips.map((c) => (
-              <button key={c.id} className={`chip-pick${c.on ? " on" : ""}`} aria-pressed={c.on} disabled={c.disabled} title={c.disabled ? `Up to ${c.kind === "sample" ? 2 : MAX_PICKS} can be picked` : undefined} onClick={c.toggle}>
+              <button key={c.id} className={`chip-pick${c.on ? " on" : ""}`} aria-pressed={c.on} disabled={c.disabled} title={c.disabled ? `Up to ${MAX_PICKS} can be picked` : undefined} onClick={c.toggle}>
                 {c.on && <Icon name="check" size={12} />}{c.label}
               </button>
             ))}

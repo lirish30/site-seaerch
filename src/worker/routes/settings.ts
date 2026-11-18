@@ -33,8 +33,7 @@ const S = z.object({
   logo_url: logoUrl,
   role_title: z.string().max(200), bio: z.string().max(2000), availability: z.string().max(300),
   resume_url: optionalUrl, goal_line: z.string().max(500), signature_json: signatureJson,
-  default_purpose: z.enum(["full_time", "freelance"]),
-  footer_freelance: z.number().int().min(0).max(1), footer_full_time: z.number().int().min(0).max(1), attach_audit_pdf: z.number().int().min(0).max(1),
+  footer_freelance: z.number().int().min(0).max(1), attach_audit_pdf: z.number().int().min(0).max(1),
 }).partial();
 
 export const settingsRoutes = new Hono<{ Bindings: Env }>();

@@ -395,12 +395,6 @@ a.chip-link:hover { background:var(--bg-hover); color:var(--text); } .chip-link 
 
 /* ---------- Email draft tab ---------- */
 .composer { display:flex; flex-direction:column; gap:18px; }
-.purpose-row { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
-.purpose-seg { display:inline-flex; gap:2px; padding:3px; border-radius:8px; background:var(--bg-muted); }
-.purpose-seg button { display:inline-flex; align-items:center; gap:6px; height:31px; padding:0 12px; border:0; border-radius:6px; background:none; color:var(--text-2); font:500 13px/19px var(--font); }
-.purpose-seg button.on { background:var(--bg-surface); color:var(--text); }
-.purpose-seg button:hover:not(.on) { background:none; color:var(--text); }
-.purpose-row > p { margin:0; font-size:13px; line-height:19px; color:var(--text-2); flex:1; min-width:240px; }
 .hint { margin:0; padding:8px 12px; border:1px solid var(--warning); border-radius:8px; font-size:13px; background:var(--warning-soft); }
 .variants { display:contents; }
 .variant-grid { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:12px; } @media (max-width: 900px) { .variant-grid { grid-template-columns:1fr; } }

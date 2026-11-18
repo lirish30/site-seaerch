@@ -7,7 +7,6 @@ import { footerLines, signatureLine } from "../../settingsView";
 /** One "when to include it" row: the setting, an icon, and a line that says what the switch currently means. */
 const WHEN: { key: string; icon: IconName; title: string; on: string; off: string }[] = [
   { key: "footer_freelance", icon: "zap", title: "Freelance emails", on: "On by default. Proposal-style outreach.", off: "Off by default. Proposal-style outreach." },
-  { key: "footer_full_time", icon: "briefcase", title: "Full-time emails", on: "On by default. Personal notes can read better without it.", off: "Off by default. Personal notes read better without it." },
 ];
 
 /** Settings > Mailing footer: the address and opt-out line under an email, and which kinds of email carry them by default. */
@@ -17,7 +16,7 @@ export default function Footer() {
   const lines = footerLines(address, optOut);
   const sign = signatureLine(doc.value("your_name"), doc.value("role_title"));
   // The default for each kind of email is on unless the stored value says 0 (older databases have no value until the first save).
-  const on = (k: string) => (k === "footer_full_time" ? doc.value(k) === "1" : doc.value(k) !== "0");
+  const on = (k: string) => doc.value(k) !== "0";
   return (
     <SettingsPage title="Mailing footer" width={720} doc={doc} sub="A mailing address and opt-out line you can add to the bottom of an email.">
       <div className="bx mf">

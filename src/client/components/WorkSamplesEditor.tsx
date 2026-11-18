@@ -112,7 +112,7 @@ export default function WorkSamplesEditor({ state, adding, onAdd, closeAdd }: { 
   if (!samples.length && !adding) return (
     <div className="sw-empty">
       <h2>No work samples yet</h2>
-      <p>Add your best two or three projects. Full-time emails link only to what is listed here, and never mention work that isn't.</p>
+      <p>Add your best two or three projects. Agency emails can link to what is listed here.</p>
       <button type="button" className="btn primary" onClick={onAdd}><Icon name="plus" size={16} />Add sample</button>
     </div>
   );

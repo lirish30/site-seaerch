@@ -13,7 +13,6 @@ import Outreach from "./pages/Outreach";
 import SearchHistory from "./pages/SearchHistory";
 import SettingsHome from "./pages/settings/SettingsHome";
 import Profile from "./pages/settings/Profile";
-import JobSearch from "./pages/settings/JobSearch";
 import Signature from "./pages/settings/Signature";
 import Voice from "./pages/settings/Voice";
 import WorkSamples from "./pages/settings/WorkSamples";
@@ -47,7 +46,6 @@ export default function App() {
             <Route path="/radar" element={<Radar />} />
             <Route path="/settings" element={<SettingsHome />} />
             <Route path="/settings/profile" element={<Profile />} />
-            <Route path="/settings/job-search" element={<JobSearch />} />
             <Route path="/settings/signature" element={<Signature />} />
             <Route path="/settings/voice" element={<Voice />} />
             <Route path="/settings/work-samples" element={<WorkSamples />} />

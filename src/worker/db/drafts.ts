@@ -1,7 +1,9 @@
-import type { Draft, DraftInsert } from "../types";
+import type { Draft, DraftInsert, Purpose } from "../types";
 
 type Row = Omit<Draft, "edited" | "include_footer"> & { edited: number; include_footer: number };
-const fromRow = (r: Row): Draft => ({ ...r, edited: r.edited === 1, include_footer: r.include_footer === 1 });
+/** Job-hunting drafts (`full_time`) were removed; any left in the table are treated as freelance until deleted. */
+export const normalizePurpose = (_: string): Purpose => "freelance";
+const fromRow = (r: Row): Draft => ({ ...r, purpose: normalizePurpose(r.purpose), edited: r.edited === 1, include_footer: r.include_footer === 1 });
 
 /** Newest first; within one variant group (same created_at) the first-written variant leads. */
 const NEWEST = `ORDER BY created_at DESC, variant_index ASC`;
