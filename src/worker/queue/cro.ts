@@ -18,6 +18,7 @@ export const CRO_PAGE_KIND = "cro.page";
 /** What the CRO tasks are about, so `cancelTasksFor(db, CRO_TARGET, auditId)` closes the open ones of one audit. */
 export const CRO_TARGET = "cro_audit";
 export const NOT_PICKED_UP = "Claude didn't pick this up in time. Rebuild to try again.";
+export const COULDNT_FINISH_MODEL = "Claude couldn't finish reading this business. Rebuild to try again.";
 
 export const CroModelPayload = z.object({ auditId: z.string().min(1) });
 export type CroModelPayload = z.infer<typeof CroModelPayload>;
@@ -130,6 +131,26 @@ export async function startCroStages(env: Env, auditId: string, from: "model" | 
   }
 }
 
+/** Whether a task that ended (expired or failed) belongs to the audit's current run; an old run's must not disturb a rebuilt audit. */
+const current = (a: CroAudit, task?: ClaudeTask) => !(task && a.stages_at && task.created_at < a.stages_at);
+
+/** The model stage can never be answered (nobody picked it up, or Claude gave up on it): the audit fails with `message`. */
+async function failModel(env: Env, auditId: string, message: string, task?: ClaudeTask): Promise<void> {
+  const a = await getCroAudit(env.DB, auditId);
+  if (a && a.status === "waiting" && a.step === "model" && current(a, task)) await failCroAudit(env.DB, a.id, message);
+}
+
+/**
+ * A page can never be reviewed: it leaves `pending_pages` (counted as skipped; `finishPages` writes the warning) and, if it was the last one, the audit
+ * moves on. Safe to run again: a page already settled changes nothing, and the hand-over is retried in case an earlier run stopped before it.
+ */
+async function skipPage(env: Env, auditId: string, pageIndex: number, task?: ClaudeTask): Promise<void> {
+  const a = await getCroAudit(env.DB, auditId);
+  if (!a || a.status !== "waiting" || a.step !== "pages" || !current(a, task)) return;
+  const settled = await settlePage(env.DB, a.id, pageIndex, null);
+  await finishPages(env, a.id, settled === null);
+}
+
 const croModel: TaskKindDef<CroModelPayload, z.infer<typeof BusinessModelResult>> = {
   kind: CRO_MODEL_KIND,
   label: "Work out how a business makes money",
@@ -167,10 +188,9 @@ const croModel: TaskKindDef<CroModelPayload, z.infer<typeof BusinessModelResult>
   },
 
   /** Nobody picked it up: there is nothing to build on, so the audit fails and says how to try again. */
-  async onExpire(env, p) {
-    const a = await getCroAudit(env.DB, p.auditId);
-    if (a && a.status === "waiting" && a.step === "model") await failCroAudit(env.DB, a.id, NOT_PICKED_UP);
-  },
+  async onExpire(env, p) { await failModel(env, p.auditId, NOT_PICKED_UP); },
+  /** Claude gave up on it (claimed over and over, or refused for good): same, with its own message. A failure from a superseded run leaves the rebuilt audit alone. */
+  async onFail(env, p, _error, task) { await failModel(env, p.auditId, COULDNT_FINISH_MODEL, task); },
 };
 
 const croPage: TaskKindDef<CroPagePayload, z.infer<typeof PageReviewResult>> = {
@@ -233,14 +253,9 @@ const croPage: TaskKindDef<CroPagePayload, z.infer<typeof PageReviewResult>> = {
   },
 
   /** Nobody picked the page up: it is counted as skipped and the audit goes on with the rest. With no review at all it fails, like the model stage. */
-  async onExpire(env, p) {
-    const a = await getCroAudit(env.DB, p.auditId);
-    if (!a || a.status !== "waiting" || a.step !== "pages") return;
-    if ((await settlePage(env.DB, a.id, p.pageIndex, null)) === null) return;
-    const now = (await getCroAudit(env.DB, a.id))!;
-    await updateCroAudit(env.DB, a.id, { partial: true, warning: skippedWarning(now) });
-    await finishPages(env, a.id);
-  },
+  async onExpire(env, p) { await skipPage(env, p.auditId, p.pageIndex); },
+  /** Claude gave up on the page: counted as skipped, exactly like an expiry. A failure from a superseded run leaves the rebuilt audit alone. */
+  async onFail(env, p, _error, task) { await skipPage(env, p.auditId, p.pageIndex, task); },
 };
 
 registerTaskKind(croModel);

@@ -20,6 +20,11 @@ export type ApplyOutcome = { stale: string } | { log?: ApplyLog } | void;
  *    again after the lease lapses (30 minutes), so `apply` must tolerate a crash-retry: be idempotent wherever that is cheap. Return `{ stale }` when the target changed since the task was queued: the task is marked stale, nothing more happens.
  *    Throw `TaskRefused` to refuse the result (the task stays claimed so Claude can retry) or `TaskFailed` to give the task up.
  *  - `onExpire` runs for a task nobody picked up in time.
+ *  - `onFail` runs once for a task that ended `failed` (it was claimed `MAX_ATTEMPTS` times and never completed, it was released at the cap, or `apply`
+ *    threw `TaskFailed`): after the status write, best effort (a throwing hook is logged and never breaks the claim or completion that failed the task).
+ *    `task` is the failed row, so a hook can tell whether it still belongs to its target's current run. A kind whose target waits on the task (the
+ *    CRO stages: the audit would wait for it forever) must implement it, as it does `onExpire`; `cro.synthesize` has to as well. It only runs when
+ *    the queue function was given the whole `env` rather than a bare database.
  */
 export interface TaskKindDef<P, R> {
   kind: string;
@@ -30,6 +35,7 @@ export interface TaskKindDef<P, R> {
   build(env: Env, p: P, task: ClaudeTask): Promise<{ instructions: string; untrusted: QueuePart[] } | { stale: string }>;
   apply(env: Env, p: P, r: R, task: ClaudeTask): Promise<ApplyOutcome>;
   onExpire?(env: Env, p: P): Promise<void>;
+  onFail?(env: Env, p: P, error: string, task: ClaudeTask): Promise<void>;
 }
 
 /** Thrown from `apply` to refuse the result: `completeTask` returns the message as the error and the task stays claimed. */

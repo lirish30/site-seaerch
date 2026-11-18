@@ -105,6 +105,59 @@ describe("claimNextTask", () => {
     expect(await getTask(env.DB, id)).toMatchObject({ status: "failed", attempts: 4 });
   });
 
+  it("onFail runs once when the fourth reclaim gives the task up, and not before", async () => {
+    const { id } = await enqueueTask(env.DB, "test.echo", { n: 7 });
+    let now = NOW;
+    await claimNextTask(env, now);
+    for (let i = 0; i < 3; i++) { now = new Date(now.getTime() + 31 * MIN); await claimNextTask(env, now); }
+    expect(testKindLog.failed).toEqual([]);
+    now = new Date(now.getTime() + 31 * MIN);
+    expect(await claimNextTask(env, now)).toBeNull();
+    expect(await claimNextTask(env, now)).toBeNull(); // the next claim finds nothing more to fail
+    expect(testKindLog.failed).toEqual([{ id, payload: { n: 7 }, error: expect.stringContaining("gave up") }]);
+    expect(await getTask(env.DB, id)).toMatchObject({ status: "failed" });
+  });
+
+  it("onFail runs when apply gives the task up, and when a release hits the cap; not for an ordinary release, completion or a bare-database call", async () => {
+    const a = await enqueueTask(env.DB, "test.echo", { text: "fail" });
+    await claimNextTask(env, NOW);
+    expect(await completeTask(env, a.id, { echo: "x" })).toEqual({ ok: false, error: "cannot be done" });
+    expect(testKindLog.failed).toEqual([{ id: a.id, payload: { text: "fail" }, error: "cannot be done" }]);
+    const b = await enqueueTask(env.DB, "test.echo", { n: 2 });
+    await claimNextTask(env, NOW);
+    await releaseTask(env, b.id, "later");
+    await claimNextTask(env, NOW);
+    expect(testKindLog.failed).toHaveLength(1);
+    await env.DB.prepare(`UPDATE claude_tasks SET attempts = ? WHERE id = ?`).bind(MAX_ATTEMPTS, b.id).run();
+    expect(await releaseTask(env, b.id, "still cannot")).toBe(true);
+    expect(testKindLog.failed.map((f) => f.id)).toEqual([a.id, b.id]);
+    const c = await enqueueTask(env.DB, "test.echo", { n: 3 });
+    await claimNextTask(env, NOW);
+    await env.DB.prepare(`UPDATE claude_tasks SET attempts = ? WHERE id = ?`).bind(MAX_ATTEMPTS, c.id).run();
+    expect(await releaseTask(env.DB, c.id, "bare database")).toBe(true); // no env, no hook
+    expect(testKindLog.failed).toHaveLength(2);
+    const d = await enqueueTask(env.DB, "test.echo", { n: 4 });
+    await claimNextTask(env, NOW);
+    expect(await completeTask(env, d.id, { echo: "ok" })).toEqual({ ok: true });
+    expect(testKindLog.failed).toHaveLength(2);
+  });
+
+  it("a hook that throws never breaks the claim, the completion or the release that failed the task", async () => {
+    const a = await enqueueTask(env.DB, "test.echo", { text: "throw" });
+    await claimNextTask(env, NOW);
+    await env.DB.prepare(`UPDATE claude_tasks SET attempts = ? WHERE id = ?`).bind(MAX_ATTEMPTS, a.id).run();
+    const later = new Date(NOW.getTime() + 31 * MIN);
+    const b = await enqueueTask(env.DB, "test.echo", { n: 9 });
+    expect((await claimNextTask(env, later))!.id).toBe(b.id); // a failed (hook threw) and the claim still handed out b
+    expect(await getTask(env.DB, a.id)).toMatchObject({ status: "failed" });
+    expect(testKindLog.failed).toHaveLength(1);
+    const c = await enqueueTask(env.DB, "test.echo", { text: "throw" });
+    await claimNextTask(env, later);
+    await env.DB.prepare(`UPDATE claude_tasks SET attempts = ? WHERE id = ?`).bind(MAX_ATTEMPTS, c.id).run();
+    expect(await releaseTask(env, c.id, "x")).toBe(true);
+    expect(await getTask(env.DB, c.id)).toMatchObject({ status: "failed" });
+  });
+
   it("honours the kinds filter", async () => {
     const e = await enqueueTask(env.DB, "test.echo", { n: 1 });
     const s = await enqueueTask(env.DB, "test.stale", {});

@@ -153,7 +153,7 @@ export function buildMcpServer(env: Env): McpServer {
     const known = registeredTaskKinds();
     const wanted = kinds ? kinds.filter((k) => known.includes(k)) : known;
     for (let skipped = 0; skipped <= MAX_SKIPPED && wanted.length; skipped++) {
-      const task = await claimNextTask(db, new Date(), wanted);
+      const task = await claimNextTask(env, new Date(), wanted);
       if (!task) break;
       const bundle = await buildBundle(env, task);
       if ("stale" in bundle) { // the task is closed (a kind may already have failed it), so the next claim moves on
@@ -185,7 +185,7 @@ export function buildMcpServer(env: Env): McpServer {
     description: "Hand a claimed Claude task back unfinished, with the reason you could not do it. It goes back to the queue (and fails for good after its fourth claim).",
     inputSchema: { id: z.string().min(1).max(100), reason: z.string().min(1).max(500) },
   }, async ({ id, reason }) => {
-    const ok = await releaseTask(db, id, reason);
+    const ok = await releaseTask(env, id, reason);
     await log("release_claude_task", `${ok ? "released" : "could not release"} task ${id.slice(0, 100)}: ${reason.replace(/\s+/g, " ").slice(0, 200)}`);
     return ok ? { content: [{ type: "text" as const, text: "released" }] } : fail("task is not claimed");
   });

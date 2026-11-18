@@ -21,6 +21,18 @@ export const MAX_ATTEMPTS = 4;
 /** Open tasks older than this many days are given up on by `expireOldTasks`. */
 export const EXPIRE_AFTER_DAYS = 14;
 
+/** A queue function that can end a task as `failed` takes the whole `env` so the kind's `onFail` hook can run; a bare database still works but runs no hook. */
+const dbOf = (t: D1Database | Env): D1Database => ("DB" in t ? t.DB : t);
+
+/** Runs a kind's `onFail` after the task was marked failed. Best effort: a hook that throws is logged and never breaks the claim or completion that failed the task. */
+async function runOnFail(target: D1Database | Env, row: Row): Promise<void> {
+  if (!("DB" in target)) return;
+  const def = getTaskKind(row.kind);
+  if (!def?.onFail) return;
+  try { await def.onFail(target, JSON.parse(row.payload), row.error ?? "", toTask(row)); }
+  catch (e) { console.warn("onFail failed for", row.kind, e); }
+}
+
 const issues = (e: { issues: { path: PropertyKey[]; message: string }[] }) => e.issues.map((i) => `- ${i.path.join(".") || "value"}: ${i.message}`).join("\n");
 
 /** Thrown by the enqueue functions for a kind nobody registered, or a payload that kind refuses. Nothing is queued. */
@@ -69,10 +81,12 @@ export async function getTask(db: D1Database, id: string): Promise<ClaudeTask | 
  * and claims it, so two callers can never get the same task. `attempts` counts claims; a stale task already claimed `MAX_ATTEMPTS` times is
  * not handed out again but failed, so a task that keeps killing its worker cannot cycle forever.
  */
-export async function claimNextTask(db: D1Database, now: Date, kinds?: string[]): Promise<ClaudeTask | null> {
+export async function claimNextTask(target: D1Database | Env, now: Date, kinds?: string[]): Promise<ClaudeTask | null> {
+  const db = dbOf(target);
   const stale = new Date(now.getTime() - CLAIM_TTL_MS).toISOString();
-  await db.prepare(`UPDATE claude_tasks SET status = 'failed', error = ?, done_at = ? WHERE status = 'claimed' AND claimed_at < ? AND attempts >= ?`)
-    .bind(`gave up: claimed ${MAX_ATTEMPTS} times and never completed`, now.toISOString(), stale, MAX_ATTEMPTS).run();
+  const gaveUp = (await db.prepare(`UPDATE claude_tasks SET status = 'failed', error = ?, done_at = ? WHERE status = 'claimed' AND claimed_at < ? AND attempts >= ? RETURNING *`)
+    .bind(`gave up: claimed ${MAX_ATTEMPTS} times and never completed`, now.toISOString(), stale, MAX_ATTEMPTS).all<Row>()).results;
+  for (const row of gaveUp) await runOnFail(target, row);
   if (kinds && kinds.length === 0) return null;
   const kindFilter = kinds ? ` AND kind IN (${kinds.map(() => "?").join(",")})` : "";
   const r = await db.prepare(
@@ -87,11 +101,12 @@ export async function claimNextTask(db: D1Database, now: Date, kinds?: string[])
  * Ends a claimed task: `done` with its result, or `failed` with an error. True when this call finished it; false when the task was not
  * claimed (never handed out, or already finished), so a task is finished once.
  */
-export async function finishClaudeTask(db: D1Database, id: string, status: "done" | "failed", value: unknown): Promise<boolean> {
+export async function finishClaudeTask(target: D1Database | Env, id: string, status: "done" | "failed", value: unknown): Promise<boolean> {
   const done = status === "done";
-  const r = await db.prepare(`UPDATE claude_tasks SET status = ?, result = ?, error = ?, done_at = ? WHERE id = ? AND status = 'claimed'`)
-    .bind(status, done ? JSON.stringify(value ?? null) : null, done ? null : String(value).slice(0, 1000), new Date().toISOString(), id).run();
-  return (r.meta.changes ?? 0) > 0;
+  const row = await dbOf(target).prepare(`UPDATE claude_tasks SET status = ?, result = ?, error = ?, done_at = ? WHERE id = ? AND status = 'claimed' RETURNING *`)
+    .bind(status, done ? JSON.stringify(value ?? null) : null, done ? null : String(value).slice(0, 1000), new Date().toISOString(), id).first<Row>();
+  if (row && !done) await runOnFail(target, row);
+  return !!row;
 }
 
 /** Closes a claimed task whose target changed or went away: nothing was applied, and the dedupe key is free again. True when this call did it. */
@@ -133,7 +148,7 @@ export async function completeTask(env: Env, id: string, result: unknown): Promi
   const payload = def.payload.safeParse(task.payload);
   if (!payload.success) {
     const error = `the task payload is not a ${task.kind} task`;
-    await finishClaudeTask(db, task.id, "failed", error);
+    await finishClaudeTask(env, task.id, "failed", error);
     return { ok: false, error };
   }
 
@@ -151,7 +166,7 @@ export async function completeTask(env: Env, id: string, result: unknown): Promi
     outcome = await def.apply(env, payload.data, parsed.data, task);
   } catch (e) {
     if (e instanceof TaskRefused) return { ok: false, error: e.message };
-    if (e instanceof TaskFailed) { await finishClaudeTask(db, task.id, "failed", e.message); return { ok: false, error: e.message }; }
+    if (e instanceof TaskFailed) { await finishClaudeTask(env, task.id, "failed", e.message); return { ok: false, error: e.message }; }
     throw e;
   }
   if (outcome && "stale" in outcome) {
@@ -173,14 +188,18 @@ export async function completeTask(env: Env, id: string, result: unknown): Promi
  * Hands a claimed task back, for a worker that cannot do it (`reason` is kept on the task). It goes back to pending for the next claim. A task
  * that has already used all its claims fails instead, so a task nobody can do does not go round forever. False when the task is not claimed.
  */
-export async function releaseTask(db: D1Database, id: string, reason: string): Promise<boolean> {
+export async function releaseTask(target: D1Database | Env, id: string, reason: string): Promise<boolean> {
+  const db = dbOf(target);
   const t = await getTask(db, id);
   if (!t || t.status !== "claimed") return false;
   const why = reason.replace(/\s+/g, " ").trim().slice(0, 500);
-  const r = t.attempts >= MAX_ATTEMPTS
-    ? await db.prepare(`UPDATE claude_tasks SET status = 'failed', error = ?, done_at = ? WHERE id = ? AND status = 'claimed'`)
-      .bind(`gave up: released after ${t.attempts} claims (${why})`, new Date().toISOString(), id).run()
-    : await db.prepare(`UPDATE claude_tasks SET status = 'pending', claimed_at = NULL, error = ? WHERE id = ? AND status = 'claimed'`).bind(`released: ${why}`, id).run();
+  if (t.attempts >= MAX_ATTEMPTS) {
+    const row = await db.prepare(`UPDATE claude_tasks SET status = 'failed', error = ?, done_at = ? WHERE id = ? AND status = 'claimed' RETURNING *`)
+      .bind(`gave up: released after ${t.attempts} claims (${why})`, new Date().toISOString(), id).first<Row>();
+    if (row) await runOnFail(target, row);
+    return !!row;
+  }
+  const r = await db.prepare(`UPDATE claude_tasks SET status = 'pending', claimed_at = NULL, error = ? WHERE id = ? AND status = 'claimed'`).bind(`released: ${why}`, id).run();
   return (r.meta.changes ?? 0) > 0;
 }
 

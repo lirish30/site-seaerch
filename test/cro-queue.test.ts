@@ -1,12 +1,12 @@
 import { env, SELF } from "cloudflare:test";
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { runCroAudit, type CroDeps } from "../src/worker/cro/pipeline";
-import { CRO_MODEL_KIND, CRO_PAGE_KIND, startCroStages } from "../src/worker/queue/cro";
+import { COULDNT_FINISH_MODEL, CRO_MODEL_KIND, CRO_PAGE_KIND, NOT_PICKED_UP, startCroStages } from "../src/worker/queue/cro";
 import * as synthesis from "../src/worker/cro/synthesis";
 import { buildBundle } from "../src/worker/queue/bundle";
-import { completeTask, expireOldTasks, getTask } from "../src/worker/queue/db";
+import { MAX_ATTEMPTS, claimNextTask, completeTask, expireOldTasks, getTask } from "../src/worker/queue/db";
 import { getTaskKind } from "../src/worker/queue/registry";
-import { createCroAudit, getCroAudit, updateCroAudit } from "../src/worker/db/cro";
+import { createCroAudit, getCroAudit, settlePage, updateCroAudit } from "../src/worker/db/cro";
 import type { StepLike } from "../src/worker/pipeline/lead";
 import type { PageCapture } from "../src/worker/cro/types";
 import { capture, model, seedBusiness, seedLeadAudit, snapshot } from "./fixtures/cro";
@@ -343,6 +343,68 @@ describe("what Claude is shown", () => {
     const b = await buildBundle(env, await claimById(mt.id));
     if ("stale" in b) throw new Error(b.stale);
     expect(b.images).toHaveLength(0);
+  });
+});
+
+/** The task is claimed over and over until the queue gives up on it (its fourth claim lapses), as when a worker keeps dying on it. */
+async function giveUp(taskId: string, o: { keepKey?: boolean } = {}) {
+  await claimById(taskId);
+  await env.DB.prepare(`UPDATE claude_tasks SET status = 'claimed', attempts = ?, claimed_at = '2020-01-01T00:00:00.000Z'${o.keepKey ? "" : ", dedupe_key = NULL"} WHERE id = ?`).bind(MAX_ATTEMPTS, taskId).run();
+  await claimNextTask(env, new Date(Date.now() + 31 * 60_000));
+  expect((await getTask(env.DB, taskId))!.status).toBe("failed");
+}
+
+describe("a task Claude gave up on", () => {
+  it("a failed page is skipped and the audit goes on with the rest", async () => {
+    const { id } = await audited({ contact: "https://ace.com/contact" });
+    await modelDone(id);
+    const e = await evidenceId(id);
+    await complete((await pageTask(id, 0)).id, review([issue(e)]));
+    await giveUp((await pageTask(id, 1)).id, { keepKey: true });
+    expect(await audit(id)).toMatchObject({ status: "waiting", step: "synthesize", pending_pages: [], partial: true,
+      warning: "1 of 2 pages couldn't be reviewed, so the roadmap covers the rest." });
+    expect(startSynthesis).toHaveBeenCalledTimes(1);
+  });
+
+  it("every page failing fails the audit with the retry message; a failed model fails it too", async () => {
+    const { id } = await audited({ contact: "https://ace.com/contact" });
+    await modelDone(id);
+    await giveUp((await pageTask(id, 0)).id, { keepKey: true });
+    expect(await audit(id)).toMatchObject({ status: "waiting", pending_pages: [1] });
+    await giveUp((await pageTask(id, 1)).id, { keepKey: true });
+    expect(await audit(id)).toMatchObject({ status: "failed", error: NOT_PICKED_UP });
+    expect(startSynthesis).not.toHaveBeenCalled();
+
+    const m = await audited();
+    await giveUp((await taskRows(CRO_MODEL_KIND, m.id))[0].id, { keepKey: true });
+    expect(await audit(m.id)).toMatchObject({ status: "failed", error: COULDNT_FINISH_MODEL });
+  });
+
+  it("a failure from a superseded run leaves the rebuilt audit alone", async () => {
+    const { id } = await audited({ contact: "https://ace.com/contact" });
+    await modelDone(id);
+    const oldPage = await pageTask(id, 0);
+    const [oldModel] = await taskRows(CRO_MODEL_KIND, id);
+    await claimById(oldPage.id);
+    await startCroStages(env, id, "pages"); // a rebuild; the old tasks are cancelled
+    await giveUp(oldPage.id);               // a worker still on the old page task is given up on
+    expect(await audit(id)).toMatchObject({ status: "waiting", step: "pages", pending_pages: [0, 1] });
+    await startCroStages(env, id, "model");
+    await giveUp(oldModel.id);
+    expect(await audit(id)).toMatchObject({ status: "waiting", step: "model" });
+    expect(startSynthesis).not.toHaveBeenCalled();
+  });
+
+  it("finishing the hand-over is safe to repeat when the last page was settled but the audit never moved on", async () => {
+    const { id } = await audited({ contact: "https://ace.com/contact" });
+    await modelDone(id);
+    const e = await evidenceId(id);
+    await complete((await pageTask(id, 0)).id, review([issue(e)]));
+    expect(await settlePage(env.DB, id, 1, null)).toEqual([]); // the hook stopped right after this
+    expect(await audit(id)).toMatchObject({ step: "pages", pending_pages: [] });
+    await giveUp((await pageTask(id, 1)).id, { keepKey: true });
+    expect(await audit(id)).toMatchObject({ step: "synthesize", partial: true });
+    expect(startSynthesis).toHaveBeenCalledTimes(1);
   });
 });
 

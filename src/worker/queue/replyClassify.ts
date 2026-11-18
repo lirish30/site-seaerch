@@ -127,7 +127,7 @@ async function loadContext(env: Env, payload: z.infer<typeof ReplyPayload>): Pro
 export async function buildReplyContext(env: Env, task: ClaudeTask): Promise<ReplyContext | null> {
   const payload = ReplyPayload.safeParse(task.payload);
   const ctx = payload.success ? await loadContext(env, payload.data) : { error: "the task payload is not a reply task" };
-  if ("error" in ctx) { await finishClaudeTask(env.DB, task.id, "failed", ctx.error); return null; }
+  if ("error" in ctx) { await finishClaudeTask(env, task.id, "failed", ctx.error); return null; }
   return ctx;
 }
 
@@ -214,7 +214,7 @@ const replyClassify: TaskKindDef<z.infer<typeof ReplyPayload>, ReplyResult> = {
   /** The lead facts, our last email and the reply are all untrusted, the reply last. A reply or lead deleted since the task was queued fails the task, as before. */
   async build(env, p, task) {
     const ctx = await loadContext(env, p);
-    if ("error" in ctx) { await finishClaudeTask(env.DB, task.id, "failed", ctx.error); return { stale: ctx.error }; }
+    if ("error" in ctx) { await finishClaudeTask(env, task.id, "failed", ctx.error); return { stale: ctx.error }; }
     return {
       instructions: `${ctx.instructions}\n\n${checkinSection(ctx.checkinTemplate)}`,
       untrusted: [
