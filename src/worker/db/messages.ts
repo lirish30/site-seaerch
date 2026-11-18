@@ -44,3 +44,16 @@ export async function markSent(db: D1Database, id: string, at: string): Promise<
 export async function markFailed(db: D1Database, id: string): Promise<void> {
   await db.prepare(`UPDATE messages SET status = 'failed' WHERE id = ?`).bind(id).run();
 }
+
+/** A message as the lead page shows it: no transport ids, no IMAP position, and the text cut to `TEXT_CHARS`. */
+export type LeadMessage = Pick<MessageRow, "id" | "direction" | "mailbox_key" | "enrollment_id" | "step_index" | "counterpart" | "subject" | "text" | "status" | "kind" | "created_at" | "sent_at">;
+const TEXT_CHARS = 500;
+
+/** One lead's messages, newest first (by when they went out or arrived), at most `limit`. */
+export async function listForBusiness(db: D1Database, businessId: string, limit = 50): Promise<LeadMessage[]> {
+  const rows = (await db.prepare(
+    `SELECT id, direction, mailbox_key, enrollment_id, step_index, counterpart, subject, text, status, kind, created_at, sent_at
+       FROM messages WHERE business_id = ? ORDER BY COALESCE(sent_at, created_at) DESC, id DESC LIMIT ?`,
+  ).bind(businessId, limit).all<LeadMessage>()).results;
+  return rows.map((m) => ({ ...m, text: m.text.slice(0, TEXT_CHARS) }));
+}

@@ -23,6 +23,7 @@ import { approvalRoutes } from "./routes/approvals";
 import { agentActionRoutes } from "./routes/agentActions";
 import { mailboxRoutes } from "./routes/mailboxes";
 import { campaignRoutes } from "./routes/campaigns";
+import { sequenceRoutes } from "./routes/sequence";
 import "./approvals/leadNote";
 import "./approvals/emailSend";
 import { mcpRoute } from "./mcp/route";
@@ -37,6 +38,7 @@ app.route("/api", authRoutes);
 app.route("/api/passkey", passkeyRoutes);
 app.route("/api/searches", searchRoutes);
 app.route("/api/leads", leadRoutes);
+app.route("/api/leads", sequenceRoutes); // /:id/sequence/*; leadRoutes has no handler for these paths
 app.route("/api/settings", settingsRoutes);
 app.route("/api/google", googleRoutes);
 app.route("/api/public", publicRoutes);

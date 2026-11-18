@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api";
 import Icon from "../components/Icon";
+import StartSequence from "../components/StartSequence";
 import { announceLeadsChanged } from "../components/Shell";
 import { Badge, LeadScore } from "../components/Score";
 import { PURPOSE_LABEL, snippet, type Draft } from "../emailView";
@@ -64,10 +65,6 @@ export default function Outreach() {
     setBusy(name); setNote(""); setErr("");
     try { await fn(); } catch (e) { setErr(e instanceof ApiError ? e.message : (e as Error).message || "That didn't work."); } finally { setBusy(""); }
   }
-  const gmail = (it: Item) => run("gmail", async () => {
-    await api.post(`/leads/${it.row.business.id}/gmail-draft`, {});
-    setNote("Saved to your Gmail drafts. It hasn't been sent.");
-  });
   const copyMark = (it: Item) => run("copy", async () => {
     const d = it.draft; if (!d) return;
     const c = await api.post<{ text: string }>(`/leads/${it.row.business.id}/draft/preview`, { subject: d.subject, body: d.body, include_footer: d.include_footer });
@@ -102,16 +99,16 @@ export default function Outreach() {
 
       <section className="o-read" aria-label="Draft">
         {current ? <Reading it={current} index={index} total={sorted.length} counts={counts} view={view} busy={busy} note={note} err={err}
-          onGmail={() => void gmail(current)} onCopy={() => void copyMark(current)} onSkip={() => { setSkipped((s) => new Set(s).add(current.row.business.id)); next(current); }} />
+          onCopy={() => void copyMark(current)} onSkip={() => { setSkipped((s) => new Set(s).add(current.row.business.id)); next(current); }} />
           : <div className="o-none"><Icon name="mail" size={20} /><p>{err || (items ? EMPTY[view] : "Loading…")}</p></div>}
       </section>
     </div>
   );
 }
 
-function Reading({ it, index, total, view, busy, note, err, onGmail, onCopy, onSkip }: {
+function Reading({ it, index, total, view, busy, note, err, onCopy, onSkip }: {
   it: Item; index: number; total: number; counts: OutreachCounts | null; view: OutreachView; busy: string; note: string; err: string;
-  onGmail: () => void; onCopy: () => void; onSkip: () => void;
+  onCopy: () => void; onSkip: () => void;
 }) {
   const { row, draft } = it, b = row.business;
   const ago = draft ? age(draft.created_at) : null;
@@ -149,7 +146,7 @@ function Reading({ it, index, total, view, busy, note, err, onGmail, onCopy, onS
         <button className="btn-plain" onClick={onSkip} disabled={total < 2}><Icon name="clock" size={16} />Skip for now</button>
         <span className="grow" />
         <span className="o-count">{index + 1} of {total}</span>
-        {draft && <button className="btn" onClick={onGmail} disabled={busy !== ""}><Icon name="mail" size={16} />{busy === "gmail" ? "Saving…" : "Create Gmail draft"}</button>}
+        {draft && <StartSequence key={b.id} leadId={b.id} disabled={busy !== ""} />}
         {draft && view !== "contacted" && view !== "replied" && <button className="btn primary" onClick={onCopy} disabled={busy !== ""}><Icon name="check" size={16} />{busy === "copy" ? "Copying…" : "Copy & mark contacted"}</button>}
       </footer>
     </>

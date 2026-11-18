@@ -18,6 +18,7 @@ import { shareState } from "../reportView";
 import { REASONS, reasonLabel, suppressedMessage } from "../suppressionView";
 import { isSpendLimit, SPEND_LIMIT_REACHED } from "../spend";
 import EmailComposer, { type ComposerHandle } from "../components/EmailComposer";
+import SequencePanel from "../components/SequencePanel";
 import InlineError from "../components/InlineError";
 import type { Draft } from "../emailView";
 import type { CroResponse } from "../cro";
@@ -107,9 +108,7 @@ export default function LeadDetail() {
   const [notes, setNotes] = useState("");
   const [editingUrl, setEditingUrl] = useState<string | null>(null);
   const [starBusy, setStarBusy] = useState(false);
-  const [attachPdf, setAttachPdf] = useState(true);
-  // The default comes from Settings → Google; the menu checkbox overrides it for this lead.
-  useEffect(() => { api.get<{ settings: Record<string, string | number> }>("/settings").then((r) => setAttachPdf(Number(r.settings.attach_audit_pdf ?? 1) !== 0)).catch(() => {}); }, []);
+  const [seqTick, setSeqTick] = useState(0);
   const [exportLink, setExportLink] = useState<{ label: string; url: string }[]>([]);
   const [report, setReport] = useState<ShareReport | null>(null); const [otherActive, setOtherActive] = useState(0); const [shareMsg, setShareMsg] = useState("");
   const [profiles, setProfiles] = useState<FitProfile[]>([]);
@@ -180,19 +179,16 @@ export default function LeadDetail() {
     try { if (await patchLead({ starred: !d!.business.starred_at })) await load(); } finally { setStarBusy(false); }
   };
   const setStatus = (s: LeadStatus) => patchLead({ leadStatus: s }).then(async (ok) => { if (ok) await load(); return ok; });
-  async function exportTo(kind: "gmail" | "drive") {
-    await composer.current?.save(); await flush(); setBusy(kind); setMsg(""); setExportLink([]); setExportError("");
+  async function exportToDrive() {
+    await composer.current?.save(); await flush(); setBusy("drive"); setMsg(""); setExportLink([]); setExportError("");
     try {
-      if (kind === "gmail") {
-        const r = await api.post<{ url: string }>(`/leads/${id}/gmail-draft`, { attachReport: attachPdf });
-        setExportLink([{ label: "Open Gmail draft", url: r.url }]); setMsg("Saved to your Gmail drafts. It hasn't been sent.");
-      } else {
-        const r = await api.post<{ docUrl: string; pdfUrl: string | null }>(`/leads/${id}/drive`);
-        setExportLink([{ label: "Google Doc", url: r.docUrl }, ...(r.pdfUrl ? [{ label: "PDF in Drive", url: r.pdfUrl }] : [])]); setMsg("Saved to Google Drive.");
-      }
+      const r = await api.post<{ docUrl: string; pdfUrl: string | null }>(`/leads/${id}/drive`);
+      setExportLink([{ label: "Google Doc", url: r.docUrl }, ...(r.pdfUrl ? [{ label: "PDF in Drive", url: r.pdfUrl }] : [])]); setMsg("Saved to Google Drive.");
       await load();
     } catch (e) { setExportError((e as Error).message); } finally { setBusy(""); }
   }
+  // The composer started a sequence: reload the lead (its activity) and the sequence panel.
+  const sequenceChanged = () => { setSeqTick((n) => n + 1); void load().catch(fail); };
   async function reaudit(reason?: string) {
     await flush();
     try { await api.post(`/leads/${id}/reaudit`, reason ? { reason } : {}); setMsg("Re-audit started. Refresh in a minute or two."); await load(); }
@@ -363,7 +359,7 @@ export default function LeadDetail() {
           {tab === "email" && (
             <EmailComposer ref={composer} leadId={b.id} draft={d.draft} variants={d.variants ?? []} toContact={d.toContact} suppressed={!!d.suppressed}
               lowPriority={!!a && a.score < 25} findings={a?.findings ?? []} onChanged={load} onMessage={setMsg}
-              focus={focus} onFocusChange={setFocus} onGmailDraft={() => exportTo("gmail")} gmailBusy={busy === "gmail"}
+              focus={focus} onFocusChange={setFocus} onSequenceStarted={sequenceChanged}
               onMarkContacted={async () => { const ok = await setStatus("contacted"); return ok; }} />
           )}
 
@@ -431,16 +427,20 @@ export default function LeadDetail() {
               : foundPeople.length === 0 && <button className="link-btn" style={{ alignSelf: "flex-start", padding: 0 }} onClick={() => setManagePeople(true)}>{d.people.length ? "Manage people" : "Add a person"}</button>}
           </PropSection>
 
+          <PropSection icon="send" title="Sequence">
+            <SequencePanel leadId={b.id} leadName={b.name} refreshKey={seqTick} onChanged={() => void load().catch(fail)}
+              startDisabled={!d.draft || !!d.suppressed} startWhy={d.suppressed ? "Suppressed: outreach is turned off" : "Write a draft first"}
+              beforeStart={async () => (await composer.current?.save()) ?? true} />
+          </PropSection>
+
           {a && <PropSection icon="send" title="Share & export">
             <div className="btn-row nowrap">
               <a className="btn" href={`/api/leads/${b.id}/report.html`} target="_blank" rel="noreferrer"><Icon name="eye" size={16} />Report</a>
               <a className="btn" href={`/api/leads/${b.id}/report.pdf`}><Icon name="file-text" size={16} />PDF</a>
-              <button className="btn" onClick={() => exportTo("gmail")} disabled={!d.draft || busy === "gmail" || !!d.suppressed} title={d.suppressed ? "Suppressed: exports are turned off" : d.draft ? "" : "Write a draft first"}><Icon name="mail" size={16} />{busy === "gmail" ? "Saving…" : "Gmail draft"}</button>
               <details className="menu share-more">
                 <summary className="btn sm icon-only" aria-label="More export options" title="More export options"><Icon name="more" size={16} /></summary>
                 <div className="menu-list">
-                  <label className="menu-check"><input className="cb" type="checkbox" checked={attachPdf} onChange={(e) => setAttachPdf(e.target.checked)} />Attach the audit PDF to Gmail drafts</label>
-                  <button onClick={(e) => { closeMenu(e); void exportTo("drive"); }} disabled={busy === "drive" || !!d.suppressed} title={d.suppressed ? "Suppressed: exports are turned off" : ""}>{busy === "drive" ? "Saving to Drive…" : "Save to Google Drive"}</button>
+                  <button onClick={(e) => { closeMenu(e); void exportToDrive(); }} disabled={busy === "drive" || !!d.suppressed} title={d.suppressed ? "Suppressed: exports are turned off" : ""}>{busy === "drive" ? "Saving to Drive…" : "Save to Google Drive"}</button>
                   {share.canRevoke && <button className="danger" onClick={(e) => { closeMenu(e); void revokeReport(); }}>{share.revokeLabel}</button>}
                 </div>
               </details>

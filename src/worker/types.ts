@@ -184,7 +184,7 @@ export interface Settings {
   role_title: string; bio: string; availability: string; resume_url: string; goal_line: string;
   /** JSON of a Signature, or "" to use the plain-text `signature`. */
   signature_json: string;
-  /** 1/0: new drafts carry the mailing footer; Gmail drafts attach the audit PDF unless the request says otherwise. */
+  /** 1/0: new drafts carry the mailing footer. `attach_audit_pdf` is no longer used (cold email carries no attachment); the column and key stay so no migration is needed. */
   footer_freelance?: number; attach_audit_pdf?: number;
 }
 export type TonePreset = "friendly_local" | "consultative" | "direct" | "formal";

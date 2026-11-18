@@ -190,7 +190,6 @@ describe("suppression routes", () => {
     await post(`/api/leads/${b.id}/suppress`, { reason: "competitor" });
     const blocked = [
       api(`/api/leads/${b.id}/regenerate`, { method: "POST", body: "{}" }),
-      api(`/api/leads/${b.id}/gmail-draft`, { method: "POST", body: "{}" }),
       api(`/api/leads/${b.id}/drive`, { method: "POST", body: "{}" }),
       api(`/api/leads/${b.id}/report`, { method: "POST" }),
     ];
@@ -199,9 +198,8 @@ describe("suppression routes", () => {
       expect(await r.json()).toEqual({ error: "suppressed", reason: "competitor" });
     }
     for (const s of await listSuppressions(env.DB)) expect((await api(`/api/suppressions/${s.id}`, { method: "DELETE" })).status).toBe(200);
-    // Past the guard: report creation succeeds; the Google routes fail for the unrelated reason that Google isn't connected.
+    // Past the guard: report creation succeeds; the Drive route fails for the unrelated reason that Google isn't connected.
     expect((await api(`/api/leads/${b.id}/report`, { method: "POST" })).status).toBe(201);
-    expect((await api(`/api/leads/${b.id}/gmail-draft`, { method: "POST", body: "{}" })).status).toBe(400);
     expect((await api(`/api/leads/${b.id}/drive`, { method: "POST", body: "{}" })).status).toBe(400);
   });
 

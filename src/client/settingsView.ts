@@ -116,9 +116,8 @@ export function sinceLabel(iso: string, now = new Date()): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", ...(d.getUTCFullYear() !== now.getUTCFullYear() ? { year: "numeric" } : {}), timeZone: "UTC" });
 }
 
-/** The two Google permissions the app asks for (see SCOPES in src/worker/google/oauth.ts), in the words a person would use. */
-export const PERMISSIONS: { icon: "mail" | "upload"; title: string; text: string; scope: string }[] = [
-  { icon: "mail", title: "Create Gmail drafts", text: "Drafts land in your Drafts folder for you to review and send.", scope: "gmail.compose" },
+/** The Google permissions the app asks for (see SCOPES in src/worker/google/oauth.ts), in the words a person would use. */
+export const PERMISSIONS: { icon: "upload"; title: string; text: string; scope: string }[] = [
   { icon: "upload", title: "Save reports to Drive", text: "PDFs and Docs go into a “Site Search reports” folder it creates.", scope: "drive.file" },
 ];
 

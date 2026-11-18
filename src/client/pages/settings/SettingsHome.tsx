@@ -76,7 +76,7 @@ const SECTIONS: { name: string; tint: "signal" | "info" | "positive" | "plain"; 
     { slug: "scores", title: "How scores work", icon: "zap", text: "Plain-English guide to lead score, site health, fit and urgency." },
   ] },
   { name: "Account", tint: "plain", cards: [
-    { slug: "google", title: "Google", icon: "link", text: "Gmail drafts and Drive. Nothing is ever sent." },
+    { slug: "google", title: "Google", icon: "link", text: "Saving reports to Drive." },
     { slug: "usage", title: "Usage & limits", icon: "card", text: "Monthly spend limit and what each service cost." },
     { slug: "security", title: "Security", icon: "key", text: "Sign in with Touch ID. Your password stays as a fallback." },
     { slug: "footer", title: "Mailing footer", icon: "shield", text: "Mailing address and opt-out line for freelance emails." },

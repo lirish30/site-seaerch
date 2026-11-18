@@ -1,9 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { encryptSecret, decryptSecret } from "../src/worker/google/crypto";
 import { signState, verifyState, authUrl, SCOPES } from "../src/worker/google/oauth";
-import { buildMime, createGmailDraft, uploadFile, ensureFolder } from "../src/worker/google/api";
-
-const dec = (s: string) => Buffer.from(s.replace(/\r\n/g, ""), "base64").toString();
+import { uploadFile, ensureFolder } from "../src/worker/google/api";
 
 describe("google crypto + oauth state", () => {
   it("encrypts and decrypts with the session secret; other secrets fail", async () => {
@@ -23,42 +21,17 @@ describe("google crypto + oauth state", () => {
     expect(await verifyState("sec", st.replace(/.$/, "0"), "n1", 2000)).toBe(st.endsWith("0"));
   });
 
-  it("auth URL asks for offline access with compose + drive.file only", () => {
+  it("auth URL asks for offline access with drive.file only (no Gmail scope of any kind)", () => {
     const u = new URL(authUrl({ clientId: "cid", clientSecret: "x", redirectUri: "https://app/api/google/callback" }, "st"));
     expect(u.searchParams.get("scope")).toBe(SCOPES.join(" "));
-    expect(SCOPES).not.toContain("https://www.googleapis.com/auth/gmail.send");
+    expect(SCOPES).toEqual(["openid", "email", "https://www.googleapis.com/auth/drive.file"]);
+    expect(SCOPES.join(" ")).not.toContain("gmail");
     expect(u.searchParams.get("access_type")).toBe("offline");
     expect(u.searchParams.get("redirect_uri")).toBe("https://app/api/google/callback");
   });
 });
 
-describe("gmail + drive", () => {
-  it("builds a plain-text MIME message with an encoded subject", () => {
-    const m = buildMime({ to: "ann@ace.com", subject: "Café idea", body: "Hi Ann,\nLine two" });
-    expect(m).toContain("To: ann@ace.com");
-    expect(m).toMatch(/Subject: =\?UTF-8\?B\?.+\?=/);
-    expect(dec(m.split("\r\n\r\n")[1])).toBe("Hi Ann,\nLine two");
-  });
-
-  it("adds the PDF as a base64 attachment and omits To when there's no recipient", () => {
-    const m = buildMime({ to: null, subject: "S", body: "B", attachment: { name: "ace-website-audit.pdf", bytes: new Uint8Array([37, 80, 68, 70]) } });
-    expect(m).not.toContain("To:");
-    expect(m).toContain('Content-Type: multipart/mixed; boundary="');
-    expect(m).toContain('filename="ace-website-audit.pdf"');
-    expect(m).toContain(Buffer.from("%PDF").toString("base64"));
-  });
-
-  it("creates a draft (never sends) and returns a Gmail link", async () => {
-    const calls: [string, RequestInit][] = [];
-    const f = async (u: string, i?: RequestInit) => { calls.push([u, i!]); return Response.json({ id: "d1", message: { id: "m1" } }); };
-    const r = await createGmailDraft(f, "tok", "Subject: x\r\n\r\nhi");
-    expect(calls[0][0]).toBe("https://gmail.googleapis.com/gmail/v1/users/me/drafts");
-    expect(calls.some(([u]) => u.includes("/send"))).toBe(false);
-    expect((calls[0][1].headers as any).authorization).toBe("Bearer tok");
-    expect(Buffer.from(JSON.parse(calls[0][1].body as string).message.raw, "base64url").toString()).toBe("Subject: x\r\n\r\nhi");
-    expect(r.url).toContain("compose=m1");
-  });
-
+describe("drive", () => {
   it("uploads multipart with metadata then content; recreates a trashed folder", async () => {
     let body = "";
     const up = await uploadFile(async (_u, i) => { body = new TextDecoder().decode(i!.body as Uint8Array); return Response.json({ id: "f", webViewLink: "https://docs/x" }); },

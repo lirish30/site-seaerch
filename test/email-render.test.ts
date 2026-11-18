@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { escapeHtml, parseSignature, renderSignatureHtml, renderSignatureText, safeImageUrl, safeUrl } from "../src/worker/email/signature";
 import { bodyToHtml, composeEmail, footerLines } from "../src/worker/email/render";
-import { buildMime } from "../src/worker/google/api";
 import type { Settings, Signature } from "../src/worker/types";
 
 const sig: Signature = {
@@ -122,33 +121,5 @@ describe("composeEmail", () => {
   it("skips blank footer fields and an empty signature", () => {
     const e = composeEmail({ ...base, signature: "", physical_address: "", opt_out_line: "" }, { ...draft, include_footer: true });
     expect(e.text).toBe("Hi Ann,\n\nA short note.\n\nLogan");
-  });
-});
-
-describe("buildMime with html", () => {
-  it("is multipart/alternative with text first and html last", () => {
-    const m = buildMime({ to: "ann@ace.com", subject: "Hi", body: "plain body", html: "<p>html body</p>" });
-    const boundary = /multipart\/alternative; boundary="([^"]+)"/.exec(m)![1];
-    const parts = m.split(`--${boundary}`).slice(1, -1);
-    expect(parts).toHaveLength(2);
-    expect(parts[0]).toContain("text/plain");
-    expect(dec(parts[0].split("\r\n\r\n")[1])).toBe("plain body");
-    expect(parts[1]).toContain("text/html");
-    expect(dec(parts[1].split("\r\n\r\n")[1])).toBe("<p>html body</p>");
-  });
-
-  it("nests the alternative inside multipart/mixed when a PDF is attached", () => {
-    const m = buildMime({ to: null, subject: "Hi", body: "b", html: "<p>h</p>", attachment: { name: "r.pdf", bytes: new Uint8Array([1, 2, 3]) } });
-    expect(m).toMatch(/Content-Type: multipart\/mixed; boundary="ss_/);
-    expect(m).toMatch(/Content-Type: multipart\/alternative/);
-    expect(m).toContain('Content-Type: application/pdf; name="r.pdf"');
-    expect(m.indexOf("multipart/mixed")).toBeLessThan(m.indexOf("multipart/alternative"));
-    expect(m.indexOf("multipart/alternative")).toBeLessThan(m.indexOf("application/pdf"));
-  });
-
-  it("without html stays the old plain-text message", () => {
-    const m = buildMime({ to: "a@b.com", subject: "Hi", body: "plain" });
-    expect(m).not.toContain("multipart");
-    expect(dec(m.split("\r\n\r\n")[1])).toBe("plain");
   });
 });

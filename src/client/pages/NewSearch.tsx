@@ -199,7 +199,7 @@ export default function NewSearch() {
             <button className="btn primary ns-go" disabled={!canSubmit} title={blocker || undefined}>
               {busy ? <><span className="spinner light" aria-hidden="true" />Starting…</> : <><Icon name="search" size={16} />{count > 0 ? `Find up to ${count * maxResults} businesses` : "Find businesses"}</>}
             </button>
-            <p className="ns-safe"><Icon name="shield" size={13} /><span>Nothing is ever sent to these businesses. Drafts only.</span></p>
+            <p className="ns-safe"><Icon name="shield" size={13} /><span>Nothing is sent to these businesses until you approve it.</span></p>
           </div>
         </aside>
       </form>

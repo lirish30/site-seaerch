@@ -3,13 +3,13 @@ import { useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../../api";
 import Icon from "../../components/Icon";
 import SettingsPage, { Card } from "../../components/SettingsPage";
-import { Pill, Toggle } from "../../components/settingsBits";
+import { Pill } from "../../components/settingsBits";
 import { useSettingsDoc } from "../../settingsData";
 import { PERMISSIONS, sinceLabel } from "../../settingsView";
 
 interface GoogleStatus { configured: boolean; connected: boolean; email: string | null; connected_at?: string }
 
-/** Settings > Google: whether Gmail drafts and Drive saves are connected, and what the connection can do. */
+/** Settings > Google: whether Drive saves are connected, and what the connection can do. */
 export default function Google() {
   const doc = useSettingsDoc();
   const [params, setParams] = useSearchParams();
@@ -28,7 +28,7 @@ export default function Google() {
   useEffect(() => { void load(); }, [load]);
 
   async function disconnect() {
-    if (!window.confirm("Disconnect Google? Exports to Gmail and Drive will stop until you reconnect.")) return;
+    if (!window.confirm("Disconnect Google? Saving to Drive will stop until you reconnect.")) return;
     setBusy(true); setActionErr("");
     try {
       await api.post("/google/disconnect");
@@ -40,7 +40,7 @@ export default function Google() {
   const connected = !!status?.connected;
   const badge = !status ? null : connected ? <Pill tone="positive">Connected</Pill> : <Pill>{status.configured ? "Not connected" : "Not set up"}</Pill>;
   return (
-    <SettingsPage title="Google" width={720} doc={doc} badge={badge} sub="Gmail drafts and Drive files. Siteline never sends email.">
+    <SettingsPage title="Google" width={720} doc={doc} badge={badge} sub="Saving reports to Drive. Outreach email goes out through your mailboxes, after you approve it on Home.">
       <div className="bx gg">
         {result === "connected" && connected && <p className="gg-banner ok" role="status"><Icon name="check" size={14} />Google connected.</p>}
         {result === "failed" && <p className="gg-banner bad" role="alert"><Icon name="alert" size={14} />Couldn’t connect Google. Try again.</p>}
@@ -56,7 +56,7 @@ export default function Google() {
                     <span>{status.connected_at ? `Since ${sinceLabel(status.connected_at)} · ` : ""}token stored encrypted</span>
                   </> : status.configured ? <>
                     <b>Not connected</b>
-                    <span>Connect to create Gmail drafts and save reports to Drive.</span>
+                    <span>Connect to save reports to Drive.</span>
                   </> : <>
                     <b>Google isn’t set up yet</b>
                     <span>Add the <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code> secrets (see the README), then connect.</span>
@@ -68,7 +68,7 @@ export default function Google() {
             )}
           {actionErr && <p className="bx-err" role="alert">{actionErr}</p>}
         </Card>
-        <Card title="What Siteline can do" sub="Only these two permissions are requested.">
+        <Card title="What Siteline can do" sub="Only this permission is requested. Gmail is never touched.">
           {PERMISSIONS.map((p) => (
             <div key={p.scope} className="gg-perm">
               <span className="gg-tile"><Icon name={p.icon} size={15} /></span>
@@ -77,13 +77,7 @@ export default function Google() {
             </div>
           ))}
         </Card>
-        <Card title="Defaults">
-          <div className="gg-def">
-            <span id="gg-attach">Attach the audit PDF to Gmail drafts</span>
-            <Toggle checked={doc.value("attach_audit_pdf") !== "0"} onChange={(on) => doc.set("attach_audit_pdf", on ? 1 : 0)} label="Attach the audit PDF to Gmail drafts" />
-          </div>
-        </Card>
-        <p className="gg-note"><Icon name="shield" size={14} />Siteline only ever creates drafts. It never calls Gmail’s send endpoint.</p>
+        <p className="gg-note"><Icon name="shield" size={14} />Siteline never reads or sends mail through Google.</p>
       </div>
     </SettingsPage>
   );

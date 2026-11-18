@@ -96,7 +96,7 @@ export default function SignatureBuilder({ value, onChange }: { value: string; o
           <p className="lead">…happy to send the full write-up of your site.</p>
           {json && preview ? <EmailFrame fit html={preview} title="Signature preview" /> : <p className="empty">{json ? "Building the preview…" : "Fill in a field to see your signature here. Until then the plain-text signature is used."}</p>}
         </div>
-        <p className="sg-note"><Icon name="info" size={13} />This is how it looks in the Gmail draft.</p>
+        <p className="sg-note"><Icon name="info" size={13} />This is how it looks at the bottom of your emails.</p>
       </aside>
     </div>
   );
