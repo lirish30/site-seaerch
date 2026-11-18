@@ -104,6 +104,7 @@ describe("navigation mapping", () => {
   it("puts every existing route in a section", () => {
     const map: [string, string][] = [
       ["/today", "home"], ["/leads", "leads"], ["/leads/abc", "leads"], ["/promising", "leads"], ["/outreach", "outreach"],
+      ["/campaigns", "outreach"], ["/settings/mailboxes", "settings"],
       ["/", "find"], ["/searches", "find"], ["/searches/s1", "find"], ["/radar", "find"], ["/import", "find"], ["/settings", "settings"], ["/settings/voice", "settings"],
     ];
     for (const [path, section] of map) expect(sectionOf(path), path).toBe(section);
@@ -112,6 +113,7 @@ describe("navigation mapping", () => {
     expect(["/leads", "/promising"].map(sidebarOf)).toEqual(["leads", "leads"]);
     expect(["/", "/radar", "/import", "/searches", "/searches/s1"].map(sidebarOf)).toEqual(["find", "find", "find", "find", "find"]);
     expect(["/today", "/outreach", "/settings", "/settings/voice"].map(sidebarOf)).toEqual(["home", "outreach", "settings", "settings"]);
+    expect(["/campaigns", "/settings/mailboxes"].map(sidebarOf)).toEqual(["outreach", "settings"]);
     expect(sidebarOf("/leads/abc")).toBeNull();
   });
   it("counts stages and starred from the rows", () => {

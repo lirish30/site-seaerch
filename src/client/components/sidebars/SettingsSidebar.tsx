@@ -12,6 +12,7 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
   { slug: "signature", label: "Email signature", icon: "pen", group: "You" },
   { slug: "voice", label: "Email voice", icon: "mail", group: "Outreach" }, { slug: "work-samples", label: "Work samples", icon: "image", group: "Outreach" },
   { slug: "services", label: "Services you sell", icon: "list", group: "Outreach" },
+  { slug: "mailboxes", label: "Mailboxes", icon: "inbox", group: "Outreach" },
   { slug: "fit-profiles", label: "Fit profiles", icon: "target", group: "Lead scoring" }, { slug: "suppressions", label: "Suppressions", icon: "ban", group: "Lead scoring" },
   { slug: "scores", label: "How scores work", icon: "zap", group: "Lead scoring" },
   { slug: "google", label: "Google", icon: "link", group: "Account" }, { slug: "usage", label: "Usage & limits", icon: "card", group: "Account" },
@@ -21,7 +22,7 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
 const GROUPS = ["You", "Outreach", "Lead scoring", "Account"] as const;
 const COUNTED: [string, string][] = [["work-samples", "/work-samples"], ["services", "/services"], ["fit-profiles", "/fit-profiles"], ["suppressions", "/suppressions"]];
 
-/** Settings: an overview and the twelve pages, with counts where a page holds a list. The search icon filters the list. */
+/** Settings: an overview and the thirteen pages, with counts where a page holds a list. The search icon filters the list. */
 export default function SettingsSidebar() {
   const { pathname } = useLocation();
   const navigate = useNavigate();

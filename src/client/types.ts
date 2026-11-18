@@ -107,3 +107,29 @@ export interface TodayItem { id: string; kind: TodayKind; businessId: string; bu
 /** GET /api/outreach: the leads in one outreach queue with each one's current draft, and the size of every queue. */
 export interface OutreachCounts { drafts: number; followups: number; contacted: number; replied: number; freelance: number }
 export type OutreachView = "drafts" | "followups" | "contacted" | "replied";
+
+/** GET /api/mailboxes. The password is a Worker secret and never travels; `passwordSet` only says whether it exists. */
+export type MailboxKey = "outreach" | "main";
+export interface Mailbox {
+  key: MailboxKey; enabled: 0 | 1;
+  smtp_host: string; smtp_port: number; imap_host: string; imap_port: number;
+  username: string; from_email: string; from_name: string;
+  warmup_started_at: string | null; last_sync_at: string | null; last_sync_error: string | null;
+  passwordSet: boolean;
+}
+
+export type CampaignStatus = "testing" | "active" | "archived";
+export type StepKind = "email" | "call" | "checkin";
+export type OffsetKind = "business" | "calendar";
+/** GET /api/campaigns/:id (the list has no `steps`). */
+export interface Campaign {
+  id: string; name: string; niche: string; region: string; towns: string[];
+  status: CampaignStatus; est_job_value_usd: number | null; created_at: string;
+  steps?: SequenceStep[];
+}
+export interface SequenceStep {
+  id: string; campaign_id: string; idx: number; kind: StepKind;
+  offset_days: number; offset_kind: OffsetKind; subject: string; variants: string[];
+  /** 'draft': the body is written per lead from its draft (Email 1), so there are no variants to edit. */
+  body_source: "variants" | "draft";
+}

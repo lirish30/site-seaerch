@@ -191,3 +191,18 @@ button.sw-result.missing { padding:0; border:0; background:none; text-align:left
 .st-list-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 0; border-top:1px solid var(--border); font:500 13px/19px var(--font); color:var(--text); }
 .st-list-row:first-child { border-top:0; padding-top:0; }
 .st-list-row span { color:var(--text-3); }
+
+/* Mailboxes and Campaigns: the password-secret chip and command, action rows, and the polite result line. */
+.mb-secret { display:flex; flex-direction:column; align-items:flex-start; gap:8px; }
+.mb-cmd { display:block; max-width:100%; padding:8px 12px; border-radius:8px; background:var(--bg-muted); color:var(--text); font:400 12px/18px var(--font-mono); overflow-x:auto; user-select:all; }
+.mb-lines p { margin:0; font:400 13px/19px var(--font); color:var(--text-2); }
+.mb-actions, .cp-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.mb-result p { margin:0; font:500 13px/19px var(--font); color:var(--positive); } .mb-result.bad p { color:var(--critical); }
+.cp-form { display:flex; flex-direction:column; gap:16px; }
+.cp-head { display:flex; align-items:center; gap:10px; }
+.cp-editor { display:flex; flex-direction:column; gap:16px; }
+.cp-h { margin:4px 0 0; font:600 15px/22px var(--font); letter-spacing:-.1px; }
+.cp-step { display:flex; flex-direction:column; gap:14px; margin:0; padding:16px; border:1px solid var(--border); border-radius:10px; min-width:0; }
+.cp-step legend { padding:0 6px; font:600 13px/19px var(--font); color:var(--text); }
+.cp-remove { align-self:flex-start; }
+.cp-editor code, .bx-muted code { font:400 12px/18px var(--font-mono); }
