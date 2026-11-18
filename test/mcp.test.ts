@@ -29,6 +29,26 @@ describe("mcp", () => {
     expect((await rpc("tools/list", {}, "test-mcp-token-x")).status).toBe(401);
   });
 
+  it("throttles repeated bad tokens per IP with 429, and a valid token does not spend the budget", async () => {
+    const hit = (ip: string, token: string) => SELF.fetch("https://x/mcp", {
+      method: "POST", body: "{}",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${token}`, "cf-connecting-ip": ip },
+    });
+    for (let i = 0; i < 30; i++) expect((await hit("203.0.113.50", "test-mcp-token")).status).not.toBe(401);
+    for (let i = 0; i < 30; i++) expect((await hit("203.0.113.50", "test-mcp-token")).status).not.toBe(429);
+    const statuses: number[] = [];
+    for (let i = 0; i < 12; i++) statuses.push((await hit("203.0.113.51", "wrong")).status);
+    expect(statuses.slice(0, 10).every((s) => s === 401)).toBe(true);
+    expect(statuses.slice(10)).toEqual([429, 429]);
+  });
+
+  it("answers non-POST with 405 and allow: POST once authorized", async () => {
+    const r = await SELF.fetch("https://x/mcp", { method: "GET", headers: { authorization: "Bearer test-mcp-token", accept: "text/event-stream" } });
+    expect(r.status).toBe(405);
+    expect(r.headers.get("allow")).toBe("POST");
+    expect((await SELF.fetch("https://x/mcp", { method: "GET" })).status).toBe(401);
+  });
+
   it("lists exactly the four tools", async () => {
     const j = await result("tools/list", {});
     expect(j.result.tools.map((t: { name: string }) => t.name).sort()).toEqual(["get_lead", "list_approvals", "propose_approval", "search_leads"]);

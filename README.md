@@ -72,6 +72,11 @@ Radar re-runs saved searches on a schedule. Tick "Repeat this search (Radar)" on
 - Radar sends no email or push notification. New leads show as a count on the Radar page.
 - Test the cron locally: `npx wrangler dev -c wrangler.jsonc --local --test-scheduled`, then `curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=17+13+*+*+*"`. Keep `-c wrangler.jsonc`: a stale `.wrangler/deploy/config.json` can otherwise redirect to an old build.
 
+## Agency OS setup
+- Generate the MCP bearer token: `openssl rand -hex 32`. Put it in `.dev.vars` as `MCP_TOKEN=` for local runs, and for production run `npx wrangler secret put MCP_TOKEN`.
+- Add the MCP server to Claude Code: `claude mcp add --transport http agency-os <url>/mcp --header "Authorization: Bearer <token>"`. `/mcp` is POST only; wrong tokens are rate limited per IP.
+- Passkeys are bound to the domain (`WEBAUTHN_RP_ID` / `WEBAUTHN_ORIGIN`, default the request host). After a domain change, re-register your passkeys.
+
 ## Known limitations
 - The PageSpeed test fixture is hand-written, not a live capture. Capture one real PageSpeed response, then verify the Lighthouse audit ids in `src/worker/scoring/labels.ts` and the `viewport` / `font-size` / `tap-targets` audits used for mobile-friendliness (a missing audit counts as passing).
 - No email notification for Radar.
