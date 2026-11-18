@@ -15,6 +15,8 @@ interface Google { configured: boolean; connected: boolean; email: string | null
 interface Data {
   doc: SettingsDoc | null | false; usage: UsageRow[]; samples: WorkSample[] | null | false; services: Service[] | null | false;
   fits: FitProfile[] | null | false; supps: Suppression[] | null | false; google: Google | null | false;
+  /** GET /api/spend: usage plus active fixed costs against the cap, the same total the cap enforces. */
+  spend: { spentUsd: number; limitUsd: number } | null | false;
 }
 type Tone = "positive" | "warning" | "";
 interface Chip { tone: Tone; text: string }
@@ -51,7 +53,7 @@ function chips(d: Data): Record<string, Chip | null> {
       const g = d.google as Google;
       return !g.configured ? { tone: "", text: "Not set up" } : g.connected ? { tone: "positive", text: `Connected · ${g.email ?? "your account"}` } : { tone: "warning", text: "Not connected" };
     }),
-    usage: wait(d.doc, () => ({ tone: "", text: `${dollars(d.usage.reduce((t, u) => t + u.est_cost_usd, 0))} of ${limitText(Number(doc.monthly_spend_limit_usd) || 0)}` })),
+    usage: wait(d.spend, () => ({ tone: "", text: `${dollars((d.spend as { spentUsd: number }).spentUsd)} of ${limitText((d.spend as { limitUsd: number }).limitUsd)}` })),
     footer: wait(d.doc, () => (String(doc.physical_address ?? "").trim() ? { tone: "", text: "On for freelance only" } : { tone: "warning", text: "Add a mailing address" })),
   };
 }
@@ -82,7 +84,7 @@ const SECTIONS: { name: string; tint: "signal" | "info" | "positive" | "plain"; 
 
 /** Settings: the overview. A card per page with its real status, and a banner for what is still missing. */
 export default function SettingsHome() {
-  const [d, setD] = useState<Data>({ doc: null, usage: [], samples: null, services: null, fits: null, supps: null, google: null });
+  const [d, setD] = useState<Data>({ doc: null, usage: [], samples: null, services: null, fits: null, supps: null, google: null, spend: null });
   useEffect(() => {
     let live = true;
     const part = <T,>(p: Promise<T>, apply: (v: T | false) => void) => p.then((v) => live && apply(v)).catch(() => live && apply(false));
@@ -91,6 +93,7 @@ export default function SettingsHome() {
     void part(api.get<Service[]>("/services"), (v) => setD((o) => ({ ...o, services: v })));
     void part(api.get<FitProfile[]>("/fit-profiles"), (v) => setD((o) => ({ ...o, fits: v })));
     void part(api.get<Suppression[]>("/suppressions"), (v) => setD((o) => ({ ...o, supps: v })));
+    void part(api.get<{ spentUsd: number; limitUsd: number }>("/spend"), (v) => setD((o) => ({ ...o, spend: v })));
     void part(api.get<Google>("/google/status"), (v) => setD((o) => ({ ...o, google: v })));
     return () => { live = false; };
   }, []);

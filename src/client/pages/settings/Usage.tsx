@@ -3,8 +3,9 @@ import { api } from "../../api";
 import SettingsPage, { Card } from "../../components/SettingsPage";
 import { parseSpendLimit } from "../../spend";
 import { useSettingsDoc } from "../../settingsData";
-import { chartBars, monthName, spendPercent, usageRows, usageTotal, usd } from "../../settingsView";
+import { chartBars, monthName, spendBreakdown, spendPercent, usageRows, usageTotal, usd } from "../../settingsView";
 
+interface FixedCost { id: string; name: string; monthly_usd: number; active: 0 | 1 }
 interface History { months: { month: string; est_cost_usd: number }[] }
 
 /** Settings > Usage & limits: the monthly spend limit, this month's spend by service, and the last six months. */
@@ -13,8 +14,11 @@ export default function Usage() {
   const [history, setHistory] = useState<History | null>(null);
   const [historyErr, setHistoryErr] = useState(false);
   const [running, setRunning] = useState(0);
+  const [fixedCosts, setFixedCosts] = useState<FixedCost[]>([]);
   useEffect(() => {
     let live = true;
+    // Fixed monthly costs count against the same cap, so they are listed and summed with the metered usage.
+    api.get<{ fixedCosts: FixedCost[] }>("/spend").then((s) => { if (live) setFixedCosts(s.fixedCosts); }).catch(() => {});
     api.get<History>("/settings/usage-history").then((h) => { if (live) setHistory(h); }).catch(() => { if (live) setHistoryErr(true); });
     // Searches still running are counted at their estimated cost when the limit is checked, so the bar shows them too.
     api.get<{ inFlightUsd: number }>("/searches/estimate?maxResults=1").then((e) => { if (live) setRunning(e.inFlightUsd ?? 0); }).catch(() => {});
@@ -23,12 +27,13 @@ export default function Usage() {
 
   const rows = usageRows(doc.usage);
   const total = usageTotal(rows);
+  const spend = spendBreakdown(rows, fixedCosts);
   const raw = doc.value("monthly_spend_limit_usd");
   const limit = parseSpendLimit(raw);
   // While the field holds something unusable the bar keeps using the saved limit.
   const shownLimit = limit ?? parseSpendLimit(String(doc.saved?.monthly_spend_limit_usd ?? "")) ?? 0;
-  const pct = spendPercent(total.cost, shownLimit);
-  const usedW = shownLimit > 0 ? Math.min(100, (total.cost / shownLimit) * 100) : total.cost > 0 ? 100 : 0;
+  const pct = spendPercent(spend.total, shownLimit);
+  const usedW = shownLimit > 0 ? Math.min(100, (spend.total / shownLimit) * 100) : spend.total > 0 ? 100 : 0;
   const runW = shownLimit > 0 ? Math.min(100 - usedW, (running / shownLimit) * 100) : 0;
   const month = new Date().toISOString().slice(0, 7);
   const bars = history ? chartBars(history.months) : [];
@@ -46,7 +51,7 @@ export default function Usage() {
             </div>
             <div className="us-meter">
               <div className="us-line">
-                <span>{usd(total.cost)} used{running > 0 && ` · ${usd(running)} running`}</span>
+                <span>{usd(spend.total)} used{running > 0 && ` · ${usd(running)} running`}</span>
                 <b aria-label={`${pct} percent of the limit`}>{pct}%</b>
               </div>
               <div className="us-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.min(100, pct)} aria-label="Spend this month against the limit">
@@ -67,8 +72,13 @@ export default function Usage() {
                 <span role="cell">{r.label}</span><span role="cell" className="r">{r.calls.toLocaleString("en-US")}</span><span role="cell" className="r mono">{usd(r.cost)}</span>
               </div>
             ))}
+            {spend.fixed.map((f) => (
+              <div key={f.id} className="us-row" role="row">
+                <span role="cell">{f.label} (fixed monthly)</span><span role="cell" className="r">–</span><span role="cell" className="r mono">{usd(f.cost)}</span>
+              </div>
+            ))}
             <div className="us-row total" role="row">
-              <span role="cell">Total</span><span role="cell" className="r">{total.calls.toLocaleString("en-US")}</span><span role="cell" className="r mono">{usd(total.cost)}</span>
+              <span role="cell">Total</span><span role="cell" className="r">{total.calls.toLocaleString("en-US")}</span><span role="cell" className="r mono">{usd(spend.total)}</span>
             </div>
           </div>
         </Card>

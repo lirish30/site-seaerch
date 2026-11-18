@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chartBars, criteriaRows, footerLines, monthAbbr, monthName, plural, serviceBadge, shortDate, shortPlaceId, signatureLine, sinceLabel, spendPercent, suppressionBadge, usageRows, usageTotal, usd, visibleServices } from "../src/client/settingsView";
+import { chartBars, criteriaRows, footerLines, monthAbbr, monthName, plural, serviceBadge, shortDate, shortPlaceId, signatureLine, sinceLabel, spendBreakdown, spendPercent, suppressionBadge, usageRows, usageTotal, usd, visibleServices } from "../src/client/settingsView";
 import type { Service } from "../src/client/types";
 
 const svc = (o: Partial<Service>): Service => ({ id: o.name ?? "x", key: o.name ?? "x", name: "S", category: "Websites", summary: "", deliverables: [], prerequisites: [], first_engagement: null,
@@ -41,6 +41,20 @@ describe("suppressions table", () => {
   it("formats the added date in UTC", () => {
     expect(shortDate("2026-09-03T23:59:00.000Z")).toBe("Sep 3");
     expect(shortDate("nope")).toBe("");
+  });
+});
+
+describe("usage page spend breakdown", () => {
+  it("adds active fixed costs as their own lines so the parts add up to the enforced total", () => {
+    const rows = usageRows([{ service: "claude", units: 3, est_cost_usd: 1.5 }]);
+    const b = spendBreakdown(rows, [
+      { id: "a", name: "Hosting", monthly_usd: 5, active: 1 }, { id: "b", name: "Old tool", monthly_usd: 40, active: 0 }, { id: "c", name: "Domain", monthly_usd: 2, active: 1 },
+    ]);
+    expect(b.fixed.map((f) => [f.label, f.cost])).toEqual([["Hosting", 5], ["Domain", 2]]);
+    expect(b.variableUsd).toBeCloseTo(1.5, 5);
+    expect(b.fixedUsd).toBe(7);
+    expect(b.total).toBeCloseTo(8.5, 5);
+    expect(spendBreakdown(rows, []).total).toBeCloseTo(1.5, 5);
   });
 });
 

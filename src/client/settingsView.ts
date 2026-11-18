@@ -79,6 +79,14 @@ export function usageRows(usage: { service: string; units: number; est_cost_usd:
 }
 export const usageTotal = (rows: { calls: number; cost: number }[]) => ({ calls: rows.reduce((s, r) => s + r.calls, 0), cost: rows.reduce((s, r) => s + r.cost, 0) });
 
+/** Month spend as enforced: metered usage plus the active fixed costs, each fixed cost on its own line so the parts add up to `total`. */
+export function spendBreakdown(rows: { cost: number }[], fixedCosts: { id: string; name: string; monthly_usd: number; active: 0 | 1 | boolean }[]) {
+  const fixed = fixedCosts.filter((f) => f.active).map((f) => ({ id: f.id, label: f.name, cost: f.monthly_usd }));
+  const variableUsd = rows.reduce((s, r) => s + r.cost, 0);
+  const fixedUsd = fixed.reduce((s, f) => s + f.cost, 0);
+  return { fixed, variableUsd, fixedUsd, total: variableUsd + fixedUsd };
+}
+
 export const usd = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 /** Share of the limit already spent, as a whole percent (not capped, so an overrun reads as over 100%). A $0 limit with spend is 100%. */

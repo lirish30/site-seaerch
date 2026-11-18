@@ -6,7 +6,7 @@ import type { Money, Part, Spend } from "./useHome";
 
 /** This month's paid usage against the monthly limit from Settings. */
 export default function SpendCard({ money, spend, onRetry }: { money: Part<Money>; spend: Part<Spend>; onRetry: () => void }) {
-  const m = money.data, v = m ? spendView(m.usage, m.limit) : null, sp = spend.data;
+  const m = money.data, sp = spend.data, v = m && sp ? spendView(m.usage, m.limit, sp.fixedUsd) : null;
   const fixed = sp ? sp.fixedCosts.filter((f) => f.active) : [];
   return (
     <section className="hm-card" id="spend" aria-labelledby="hm-spend-h">
