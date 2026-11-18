@@ -9,7 +9,8 @@ import { cancelHelperJobsFor, helperJobsForVideo, helperStatus } from "../helper
 import "../helper/kinds"; // a helper job is only valid for a registered kind
 import { requestVideoScript } from "../queue/videoScript";
 import { MAX_MARKUPS, SegmentSchema, approvalBlockers, checkPlanRefs, hashText, type Segment, type VideoPlan } from "../video/plan";
-import { startProduction } from "../video/production";
+import { getSettings } from "../db/settings";
+import { startProduction, voiceBlockers } from "../video/production";
 
 export const videoRoutes = new Hono<{ Bindings: Env }>();
 
@@ -199,7 +200,7 @@ videoRoutes.post("/video-audits/:id/approve", async (c) => {
   if (!video) return c.json({ error: "not found" }, 404);
   if (video.status !== "review" || !video.plan) return c.json({ error: "Only a video in review can be approved" }, 409);
   const audit = await getAudit(c.env.DB, video.audit_id);
-  const blockers = approvalBlockers(video.plan, audit?.findings.map((f) => f.code) ?? []);
+  const blockers = [...approvalBlockers(video.plan, audit?.findings.map((f) => f.code) ?? []), ...voiceBlockers(video.plan, await getSettings(c.env.DB))];
   if (blockers.length) return c.json({ error: "The video can't be approved yet", blockers }, 409);
   if (!(await startProduction(c.env, video.id))) return c.json({ error: "Only a video in review can be approved" }, 409);
   return c.json({ ok: true }, 202);

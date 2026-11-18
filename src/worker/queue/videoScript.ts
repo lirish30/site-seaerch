@@ -24,9 +24,9 @@ export function requestVideoScript(db: D1Database, videoId: string, steeringNote
     .then((r) => ({ taskId: r.id, created: r.created }));
 }
 
-/** Who speaks the lines. Always "recorded" for now; the voice engine setting arrives with the voice step and changes this to "clone" when it is set. */
-export function defaultNarration(_settings: Settings): VideoPlan["narration"] {
-  return "recorded";
+/** Who speaks the lines: the cloned voice once the owner has picked an engine in the voice test, otherwise their own recordings. */
+export function defaultNarration(settings: Pick<Settings, "voice_engine">): VideoPlan["narration"] {
+  return settings.voice_engine ? "clone" : "recorded";
 }
 
 /** The words a script may have in all, so that it runs `SCRIPT_MS.min` to `SCRIPT_MS.max` with the pauses between its lines (and a little room either side). */

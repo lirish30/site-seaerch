@@ -9,6 +9,7 @@ import { settingsRoutes } from "./routes/settings";
 import { googleRoutes } from "./routes/google";
 import { croRoutes } from "./routes/cro";
 import { videoRoutes } from "./routes/video";
+import { voiceTestRoutes } from "./routes/voiceTest";
 import { publicRoutes } from "./routes/public";
 import { radarRoutes } from "./routes/radar";
 import { serviceRoutes } from "./routes/services";
@@ -70,6 +71,8 @@ app.route("/api/helper", helperAdminRoutes);
 app.route("/api", croRoutes);
 // Also mounted at /api: /api/leads/:id/video and /api/video-audits/:id/... (behind requireAuth).
 app.route("/api", videoRoutes);
+// /api/settings/voice-reference and /api/voice-tests/... (behind requireAuth).
+app.route("/api", voiceTestRoutes);
 
 export default {
   fetch: app.fetch,

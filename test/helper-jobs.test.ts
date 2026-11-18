@@ -20,6 +20,7 @@ let devA = "", devB = "";
 beforeAll(registerHelperTestKinds);
 afterAll(unregisterHelperTestKinds);
 beforeEach(async () => {
+  await env.DB.prepare(`UPDATE settings SET voice_engine = 'qwen3-tts', voice_ref_key = 'voice-reference/reference.wav' WHERE id = 1`).run(); // the cloned voice is set up
   resetHelperKindLog();
   await env.DB.batch(["helper_jobs", "helper_devices", "agent_actions", "video_audits"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
   devA = (await createDevice(env.DB, "Mac A")).device.id;

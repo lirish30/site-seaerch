@@ -9,6 +9,7 @@ const FIELD_ERRORS: Record<string, string> = {
   logo_url: "Logo URL must be an https:// link",
   signature_json: "A link or image in your signature isn't a valid address. Links need http(s):// and the image must be https://.",
   resume_url: "Resume link must be a web address, like https://yoursite.com/resume.pdf",
+  booking_url: "Booking link must be an https:// address, like https://cal.com/you",
   monthly_spend_limit_usd: "Enter a monthly spend limit between 0 and 10000.",
 };
 

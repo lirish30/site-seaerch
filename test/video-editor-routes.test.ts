@@ -19,6 +19,7 @@ beforeAll(async () => {
   cookie = r.headers.get("set-cookie")!.split(";")[0];
 });
 beforeEach(async () => {
+  await env.DB.prepare(`UPDATE settings SET voice_engine = 'qwen3-tts', voice_ref_key = 'voice-reference/reference.wav' WHERE id = 1`).run(); // the cloned voice is set up
   await env.DB.batch(["claude_tasks", "agent_actions", "helper_jobs", "helper_devices"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
 });
 

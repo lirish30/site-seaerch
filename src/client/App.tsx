@@ -28,6 +28,7 @@ import Usage from "./pages/settings/Usage";
 import Security from "./pages/settings/Security";
 import Footer from "./pages/settings/Footer";
 import Helper from "./pages/settings/Helper";
+import VoiceTest from "./pages/settings/VoiceTest";
 import Scores from "./pages/settings/Scores";
 import Shell from "./components/Shell";
 
@@ -67,6 +68,7 @@ export default function App() {
             <Route path="/settings/security" element={<Security />} />
             <Route path="/settings/footer" element={<Footer />} />
             <Route path="/settings/helper" element={<Helper />} />
+            <Route path="/settings/voice-test" element={<VoiceTest />} />
             <Route path="/settings/scores" element={<Scores />} />
           </Routes>
         </Shell>

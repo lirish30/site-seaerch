@@ -168,6 +168,13 @@ export async function cancelHelperJobsFor(db: D1Database, videoId: string): Prom
   return r.meta.changes ?? 0;
 }
 
+/** Closes every open job of one kind (a newer piece of work replaced it): they end `expired` with `why`. Returns how many. */
+export async function cancelOpenHelperJobsOfKind(db: D1Database, kind: string, why: string): Promise<number> {
+  const r = await db.prepare(`UPDATE helper_jobs SET status = 'expired', error = ?, done_at = ? WHERE kind = ? AND status IN ('pending','claimed')`)
+    .bind(`cancelled: ${why}`, new Date().toISOString(), kind).run();
+  return r.meta.changes ?? 0;
+}
+
 /**
  * Gives up on work nobody did: open jobs (pending, or claimed and never finished) created more than `maxAgeDays` ago become `expired`, and each
  * kind's `onExpire` hook runs for them (a failing hook is logged and does not stop the rest). Returns how many jobs expired.

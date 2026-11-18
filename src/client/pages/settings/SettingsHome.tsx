@@ -51,6 +51,7 @@ function chips(d: Data): Record<string, Chip | null> {
     suppressions: wait(d.supps, () => ({ tone: "", text: (d.supps as Suppression[]).length ? suppressionWord(d.supps as Suppression[]) : "Nothing suppressed" })),
     scores: { tone: "", text: "Guide" },
     security: { tone: "", text: "Passkeys" },
+    "voice-test": wait(d.doc, () => (doc.voice_engine ? { tone: "positive", text: "Voice picked" } : doc.voice_ref_key ? { tone: "warning", text: "Run the voice test" } : { tone: "", text: "Not set up" })),
     helper: wait(d.helper, () => ((d.helper as HelperStatus).online ? { tone: "positive", text: "Online" } : { tone: "", text: "Offline" })),
     google: wait(d.google, () => {
       const g = d.google as Google;
@@ -72,6 +73,7 @@ const SECTIONS: { name: string; tint: "signal" | "info" | "positive" | "plain"; 
     { slug: "work-samples", title: "Work samples", icon: "image", text: "Your best projects. Agency emails can link to what is listed here." },
     { slug: "services", title: "Services you sell", icon: "list", text: "The catalog behind “Recommended pitch”." },
     { slug: "mailboxes", title: "Mailboxes", icon: "inbox", text: "The sending and reply-checking mailboxes, and the warm-up clock." },
+    { slug: "voice-test", title: "Video voice", icon: "mail", text: "Your reference recording, the blind voice test, and the booking link in videos." },
   ] },
   { name: "Lead scoring", tint: "positive", cards: [
     { slug: "fit-profiles", title: "Fit profiles", icon: "target", text: "Who you want to work with. Drives the Fit score." },

@@ -51,6 +51,8 @@ export const VoiceSegmentPayload = z.object({
   segmentId: z.string().min(1),
   engine: z.enum(VOICE_ENGINES),
   text: z.string().min(1),
+  /** The reference recording to clone (`settings.voice_ref_key`). Optional in the schema so a job queued before it existed still parses; `startProduction` always sets it. */
+  refKey: z.string().min(1).optional(),
 });
 export type VoiceSegmentPayload = z.infer<typeof VoiceSegmentPayload>;
 export const VoiceSegmentResult = z.object({ key: z.string().min(1), durationMs: z.number().nonnegative() });
@@ -70,8 +72,8 @@ const voiceSegment: HelperKindDef<VoiceSegmentPayload, VoiceSegmentResult> = {
   kind: VOICE_SEGMENT_KIND,
   payload: VoiceSegmentPayload,
   result: VoiceSegmentResult,
-  // No input yet: Task 6 returns the voice reference key (settings.voice_ref_key) here once it exists.
-  inputs: () => [],
+  // The helper may read the reference recording and nothing else. A job queued before the reference existed has none.
+  inputs: (p) => (p.refKey ? [p.refKey] : []),
   outputs: (p) => [voiceSegmentKey(p)],
 
   /**
@@ -96,3 +98,30 @@ const voiceSegment: HelperKindDef<VoiceSegmentPayload, VoiceSegmentResult> = {
   async onExpire(env, p) { await failProducing(env, p.videoId, "Your Mac helper didn't pick up the voice work in time. Start the video again when it is running."); },
 };
 registerHelperKind(voiceSegment);
+
+/** One clip of the blind voice test: a line read by one engine in the owner's cloned voice. Not tied to a video. */
+export const VOICE_SAMPLE_KIND = "voice.sample";
+
+export const VoiceSamplePayload = z.object({
+  testId: z.string().min(1),
+  engine: z.enum(VOICE_ENGINES),
+  line: z.string().min(1),
+  refKey: z.string().min(1),
+});
+export type VoiceSamplePayload = z.infer<typeof VoiceSamplePayload>;
+export const VoiceSampleResult = z.object({ durationMs: z.number().nonnegative() });
+export type VoiceSampleResult = z.infer<typeof VoiceSampleResult>;
+
+/** Where a test's clip goes. The page serves it by label, so the engine's name is in the key only, never in a URL. */
+export const voiceSampleKey = (p: Pick<VoiceSamplePayload, "testId" | "engine">): string => `voice-tests/${p.testId}/${p.engine}.wav`;
+
+const voiceSample: HelperKindDef<VoiceSamplePayload, VoiceSampleResult> = {
+  kind: VOICE_SAMPLE_KIND,
+  payload: VoiceSamplePayload,
+  result: VoiceSampleResult,
+  inputs: (p) => [p.refKey],
+  outputs: (p) => [voiceSampleKey(p)],
+  /** Nothing to put anywhere: the clip is the file the helper uploaded, and the test page finds it by its key. */
+  async apply() {},
+};
+registerHelperKind(voiceSample);

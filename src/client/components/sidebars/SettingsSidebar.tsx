@@ -19,11 +19,12 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
   { slug: "security", label: "Security", icon: "key", group: "Account" },
   { slug: "footer", label: "Mailing footer", icon: "shield", group: "Account" },
   { slug: "helper", label: "Mac helper", icon: "zap", group: "Account" },
+  { slug: "voice-test", label: "Video voice", icon: "mail", group: "Outreach" },
 ];
 const GROUPS = ["You", "Outreach", "Lead scoring", "Account"] as const;
 const COUNTED: [string, string][] = [["work-samples", "/work-samples"], ["services", "/services"], ["fit-profiles", "/fit-profiles"], ["suppressions", "/suppressions"]];
 
-/** Settings: an overview and the fourteen pages, with counts where a page holds a list. The search icon filters the list. */
+/** Settings: an overview and the fifteen pages, with counts where a page holds a list. The search icon filters the list. */
 export default function SettingsSidebar() {
   const { pathname } = useLocation();
   const navigate = useNavigate();

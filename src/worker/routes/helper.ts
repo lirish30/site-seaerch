@@ -66,7 +66,7 @@ helperRoutes.get("/jobs/:id/input", async (c) => {
 });
 
 /** Reads a body that has no declared length, giving up as soon as it is over `max`. */
-async function readUpTo(body: ReadableStream<Uint8Array> | null, max: number): Promise<Uint8Array | null> {
+export async function readUpTo(body: ReadableStream<Uint8Array> | null, max: number): Promise<Uint8Array | null> {
   if (!body) return new Uint8Array();
   const chunks: Uint8Array[] = [];
   let size = 0;
