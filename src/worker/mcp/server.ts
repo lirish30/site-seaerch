@@ -10,12 +10,18 @@ import { logAgentAction } from "../db/agentActions";
 import { getBusiness } from "../db/businesses";
 import { latestAudit, latestAuditsFor } from "../db/audits";
 import { listActivity } from "../db/activity";
+import { claimNextClaudeTask } from "../db/claudeTasks";
+import { REPLY_TASK_KIND, buildReplyContext, completeReplyTask, renderReplyTask } from "../sequence/replies";
 
 const MAX_LEADS = 50;
+/** The task kinds this server can brief and complete. A claimed task of any other kind would be stranded, so it is never handed out. */
+const TASK_KINDS: readonly string[] = [REPLY_TASK_KIND];
+/** Tasks skipped in one call because their lead or message was deleted (each is failed, so the loop always makes progress). */
+const MAX_SKIPPED = 10;
 const text = (v: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(v) }] });
 const fail = (msg: string) => ({ isError: true as const, content: [{ type: "text" as const, text: msg }] });
 
-/** Read and propose only. There is deliberately no approve, reject or execute tool. */
+/** Read, propose, and work the Claude task queue. There is deliberately no approve, reject, send or execute tool: completing a task can only create approvals. */
 export function buildMcpServer(env: Env): McpServer {
   const db = env.DB;
   const server = new McpServer({ name: "agency-os", version: "1.0.0" });
@@ -100,6 +106,37 @@ export function buildMcpServer(env: Env): McpServer {
       }
       throw e;
     }
+  });
+
+  server.registerTool("next_claude_task", {
+    description: "Claim the next queued Claude task (for now: classify a prospect's reply and draft the answer) and get everything needed to do it, including the JSON schema of the result. Returns \"no tasks\" when the queue is empty. Finish it with complete_claude_task.",
+    inputSchema: { kinds: z.array(z.string().max(100)).max(10).optional() },
+  }, async ({ kinds }) => {
+    const wanted = kinds ? kinds.filter((k) => TASK_KINDS.includes(k)) : [...TASK_KINDS];
+    for (let skipped = 0; skipped <= MAX_SKIPPED && wanted.length; skipped++) {
+      const task = await claimNextClaudeTask(db, new Date(), wanted);
+      if (!task) break;
+      const ctx = await buildReplyContext(env, task);
+      if (!ctx) { await log("next_claude_task", `skipped task ${task.id}: its lead or message was deleted`); continue; } // the task was failed
+      const p = task.payload as { businessId?: string };
+      await log("next_claude_task", `claimed ${task.kind} task ${task.id}`, p.businessId ? { type: "lead", id: p.businessId } : undefined);
+      return { content: [{ type: "text" as const, text: renderReplyTask(task, ctx) }] };
+    }
+    await log("next_claude_task", "no tasks");
+    return { content: [{ type: "text" as const, text: "no tasks" }] };
+  });
+
+  server.registerTool("complete_claude_task", {
+    description: "Finish a claimed Claude task with its result (see the schema next_claude_task returned). The app validates it and applies the effects: it can stop outreach, schedule a check-in, or create an email approval for Logan. It never sends anything. An invalid result is refused with the reasons and the task stays claimed so you can try again.",
+    inputSchema: { id: z.string().min(1).max(100), result: z.unknown() },
+  }, async ({ id, result }) => {
+    const r = await completeReplyTask(env, id, result);
+    // A success is logged by `completeReplyTask` itself, against the lead; a refusal is logged here.
+    if (!r.ok) {
+      await log("complete_claude_task", `refused task ${id.slice(0, 100)}: ${r.error.replace(/\s+/g, " ")}`);
+      return fail(r.error);
+    }
+    return { content: [{ type: "text" as const, text: "done" }] };
   });
 
   return server;

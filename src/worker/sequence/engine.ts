@@ -175,10 +175,12 @@ const MAX_PER_SCAN = 200;
 
 /**
  * The daily pass over live sequences. First it ends any sequence whose Email 1 approval was rejected. Then, for every active enrollment
- * whose previous email was sent, whose next step is due and that has no approval in flight:
+ * whose previous email was sent, and every nurture enrollment (a lead that said "not now"), whose next step is due and that has no approval in flight:
  *  - a `call` step sets the lead's follow-up date and logs it, then moves on (no approval);
  *  - an `email` step is rendered (variant by `pickVariant(variants, businessId + idx)`) and proposed as an `email.send` approval
- *    (`drafted_by "job"`, `inReplyTo` the last sent message). Nothing is sent here.
+ *    (`drafted_by "job"`, `inReplyTo` the last sent message). Nothing is sent here;
+ *  - a nurture enrollment's step is its campaign's `checkin`, proposed the same way (`enrollmentId` and `stepIndex` in the payload: a nurture
+ *    enrollment is live). Once it is sent, or rejected, or the campaign no longer has it, the enrollment is `completed`.
  * A step Logan rejected is skipped, not proposed again. A conflict, an unfilled merge field, a missing link base or any other trouble sets
  * `last_error` and counts as skipped; one enrollment never stops the rest. Safe to run twice at once: see `createApprovalUnlessOpen`.
  */
@@ -186,7 +188,7 @@ export async function scanDueSteps(env: Env, now: Date): Promise<ScanResult> {
   const db = env.DB, out: ScanResult = { approvalsCreated: 0, calls: 0, skipped: 0 };
   await stopRejectedFirstEmails(db);
   const due = (await db.prepare(
-    `SELECT e.* FROM enrollments e WHERE e.status = 'active' AND e.last_sent_step IS NOT NULL AND e.next_due_at IS NOT NULL AND e.next_due_at <= ?
+    `SELECT e.* FROM enrollments e WHERE ((e.status = 'active' AND e.last_sent_step IS NOT NULL) OR e.status = 'nurture') AND e.next_due_at IS NOT NULL AND e.next_due_at <= ?
        AND NOT EXISTS (SELECT 1 FROM approvals a WHERE a.record_type = 'enrollment' AND a.record_id = e.id AND ${IN_FLIGHT})
      ORDER BY e.next_due_at, e.id LIMIT ?`,
   ).bind(now.toISOString(), MAX_PER_SCAN).all<Enrollment>()).results;
@@ -218,9 +220,11 @@ async function stopRejectedFirstEmails(db: D1Database): Promise<void> {
 async function scanOne(env: Env, e: Enrollment, now: Date): Promise<"approval" | "call" | "skipped" | "moved"> {
   const db = env.DB;
   const steps = await listSteps(db, e.campaign_id);
-  const step = stepFrom(steps, e.next_step_index);
+  const nurture = e.status === "nurture";
+  // A nurture enrollment waits on its check-in, which the sequence's own steps never include (see `stepFrom`).
+  const step = nurture ? steps.find((s) => s.idx === e.next_step_index && s.kind === "checkin") ?? null : stepFrom(steps, e.next_step_index);
   if (!step) { // the campaign's steps were edited away from under it
-    await db.prepare(`UPDATE enrollments SET status = 'completed', next_due_at = NULL, last_error = NULL WHERE id = ? AND status = 'active'`).bind(e.id).run();
+    await db.prepare(`UPDATE enrollments SET status = 'completed', next_due_at = NULL, last_error = NULL WHERE id = ? AND status = ?`).bind(e.id, e.status).run();
     return "moved";
   }
   const business = await getBusiness(db, e.business_id);
@@ -236,6 +240,11 @@ async function scanOne(env: Env, e: Enrollment, now: Date): Promise<"approval" |
   }
 
   const rejected = await db.prepare(`SELECT 1 AS x FROM enrollments e WHERE e.id = ? AND ${REJECTED_STEP("?")}`).bind(e.id, step.idx).first();
+  if (rejected && nurture) {
+    const done = await db.prepare(`UPDATE enrollments SET status = 'completed', next_due_at = NULL, last_error = NULL WHERE id = ? AND status = 'nurture'`).bind(e.id).run();
+    if ((done.meta.changes ?? 0) > 0) await logActivity(db, e.business_id, "note", "Check-in skipped: you rejected it");
+    return "moved";
+  }
   if (rejected) {
     if (await moveOn(db, e, steps, step.idx, now)) await logActivity(db, e.business_id, "note", `Email ${emailNumber(steps, step.idx)} skipped: you rejected it`);
     return "moved";
@@ -271,7 +280,7 @@ async function buildStepApproval(env: Env, e: Enrollment, step: SequenceStep, st
   const inReplyTo = await lastSentMessageId(db, e.id);
   const spec = buildEmailSendApproval({
     mailbox: e.mailbox_key, businessId: e.business_id, to: e.to_email, subject, body, includeFooter: true, enrollmentId: e.id, stepIndex: step.idx,
-    ...(inReplyTo ? { inReplyTo } : {}), title: `Email ${emailNumber(steps, step.idx)} to ${business.name}`, drafted_by: "job",
+    ...(inReplyTo ? { inReplyTo } : {}), title: step.kind === "checkin" ? `Check-in to ${business.name}` : `Email ${emailNumber(steps, step.idx)} to ${business.name}`, drafted_by: "job",
   }, await getSettings(db));
   return spec;
 }
