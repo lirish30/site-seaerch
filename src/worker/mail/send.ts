@@ -10,6 +10,9 @@ import { getByApproval, insertOutbound, markFailed, markSent, reclaimFailed } fr
 import { getMailDeps } from "./deps";
 import { errorText } from "./redact";
 import { checkConflict } from "../conflict";
+import { getEnrollment } from "../db/enrollments";
+import { advanceAfterSend } from "../sequence/advance";
+import { isLive } from "../sequence/types";
 import { dailyLimit, sentInLast24h, warmupUnlockDate } from "./limits";
 import type { Mailbox, MailboxKey } from "./types";
 
@@ -84,15 +87,22 @@ async function assertWithinLimit(db: D1Database, mb: Mailbox, now: Date): Promis
 }
 
 /**
- * Extension point for Task 7 (sequences): advances the enrollment once a message is recorded as sent. A no-op until then.
- * MUST be idempotent: it runs again on every retry of an approval whose row is already `sent` (after a failure here the
- * approval returns to pending, and the retry skips the send and only repeats this).
+ * What runs once a message is recorded as sent: a sequence step moves its enrollment on (`advanceAfterSend`). Other messages have nothing to do.
+ * IDEMPOTENT by contract: it runs again on every retry of an approval whose row is already `sent` (after a failure here the approval returns
+ * to pending, and the retry skips the send and only repeats this). `advanceAfterSend` guards itself with `last_sent_step`.
  */
-let afterSendImpl: (env: Env, p: SendInput) => Promise<void> = async () => {};
+async function advanceSequence(env: Env, p: SendInput): Promise<void> {
+  if (!p.enrollmentId || p.stepIndex === undefined) return;
+  // The time the message went out, so a retry hours later still schedules from the real send; the clock only if the row is not found.
+  const row = await env.DB.prepare(`SELECT sent_at FROM messages WHERE enrollment_id = ? AND step_index = ? AND direction = 'out' AND status = 'sent' ORDER BY sent_at DESC LIMIT 1`)
+    .bind(p.enrollmentId, p.stepIndex).first<{ sent_at: string | null }>();
+  await advanceAfterSend(env.DB, p.enrollmentId, p.stepIndex, row?.sent_at ? new Date(row.sent_at) : getMailDeps().now());
+}
+let afterSendImpl: (env: Env, p: SendInput) => Promise<void> = advanceSequence;
 export const afterSend = (env: Env, p: SendInput): Promise<void> => afterSendImpl(env, p);
-/** Tests only: replace the hook; null restores the no-op. */
+/** Tests only: replace the hook; null restores the real one. */
 export function setAfterSendForTests(fn: ((env: Env, p: SendInput) => Promise<void>) | null): void {
-  afterSendImpl = fn ?? (async () => {});
+  afterSendImpl = fn ?? advanceSequence;
 }
 
 /**
@@ -116,6 +126,10 @@ export async function sendEmail(env: Env, p: SendInput, opts: { approvalId: stri
   if (real) { // the conflict gate: a listed recipient, a suppressed lead or an existing client is never written to
     const c = await checkConflict(db, { email: p.to, businessId: p.businessId });
     if (c.blocked) throw new Error(`blocked: ${c.reason} (${c.source})`);
+    if (p.enrollmentId) { // stop beats approval: a reply, bounce or "stop" after the approval was made ends the sequence, and its leftover approvals send nothing
+      const e = await getEnrollment(db, p.enrollmentId);
+      if (!e || !isLive(e.status)) throw new Error(`sequence stopped: ${e ? e.status : "enrollment not found"}`);
+    }
   }
   const settings = await getSettings(db);
 

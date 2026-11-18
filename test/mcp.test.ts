@@ -4,6 +4,8 @@ import { createSearch } from "../src/worker/db/searches";
 import { upsertBusiness } from "../src/worker/db/businesses";
 import { createApproval } from "../src/worker/db/approvals";
 import { listAgentActions } from "../src/worker/db/agentActions";
+import { addDoNotContact } from "../src/worker/db/doNotContact";
+import { suppressLead } from "../src/worker/db/suppression";
 
 let rpcId = 0;
 const rpc = (method: string, params?: unknown, token: string | null = "test-mcp-token") =>
@@ -84,6 +86,55 @@ describe("mcp", () => {
     expect(acts.some((x) => x.actor === "mcp" && x.tool === "propose_approval")).toBe(true);
     const l = JSON.parse((await call("list_approvals", { status: "pending" })).result.content[0].text);
     expect(l.map((x: { id: string }) => x.id)).toContain(a.id);
+  });
+
+  describe("propose_approval for email.send runs the conflict gate", () => {
+    const lead = async (name: string, websiteUrl: string) => {
+      const s = await createSearch(env.DB, { location: "Boise", businessType: "plumber", radiusKm: 10, maxResults: 5 });
+      return upsertBusiness(env.DB, { placeId: crypto.randomUUID(), name, category: null, address: null, phone: null, websiteUrl, mapsUrl: null, rating: null, reviewCount: null }, s.id);
+    };
+    const propose = (businessId: string, to: string, extra: Record<string, unknown> = {}) =>
+      call("propose_approval", { kind: "email.send", title: "Email", preview: "p", payload: { mailbox: "outreach", businessId, to, subject: "Hello", body: "Hi there", includeFooter: true, ...extra } });
+    const countFor = async (businessId: string) =>
+      (await env.DB.prepare(`SELECT COUNT(*) AS n FROM approvals WHERE kind = 'email.send' AND payload LIKE ?`).bind(`%${businessId}%`).first<{ n: number }>())!.n;
+
+    it("refuses a recipient on the do-not-contact list and creates no approval", async () => {
+      const b = await lead("Blocked Plumbing", "https://blocked-plumbing.test");
+      await addDoNotContact(env.DB, { kind: "email", value: "owner@blocked-plumbing.test", reason: "opt_out" });
+      const j = await propose(b.id, "Owner@Blocked-Plumbing.test");
+      expect(j.result.isError).toBe(true);
+      expect(j.result.content[0].text).toContain("do-not-contact");
+      expect(await countFor(b.id)).toBe(0);
+    });
+
+    it("refuses a suppressed lead and an existing client", async () => {
+      const sup = await lead("Suppressed Plumbing", "https://suppressed-plumbing.test");
+      await suppressLead(env.DB, { domain: "suppressed-plumbing.test", place_id: null, website_url: null }, { reason: "opt_out" });
+      const a = await propose(sup.id, "hi@elsewhere.test");
+      expect(a.result.isError).toBe(true);
+      expect(a.result.content[0].text).toContain("suppression");
+      const won = await lead("Client Plumbing", "https://client-plumbing.test");
+      await env.DB.prepare(`UPDATE businesses SET lead_status = 'won' WHERE id = ?`).bind(won.id).run();
+      const b = await propose(won.id, "hi@client-plumbing-mail.test");
+      expect(b.result.isError).toBe(true);
+      expect(b.result.content[0].text).toContain("existing client");
+      expect(await countFor(sup.id) + await countFor(won.id)).toBe(0);
+    });
+
+    it("refuses a payload the send handler would not accept", async () => {
+      const b = await lead("Odd Plumbing", "https://odd-plumbing.test");
+      const j = await propose(b.id, "not-an-email");
+      expect(j.result.isError).toBe(true);
+      expect(await countFor(b.id)).toBe(0);
+    });
+
+    it("still creates a pending approval for a clear recipient", async () => {
+      const b = await lead("Clear Plumbing", "https://clear-plumbing.test");
+      const j = await propose(b.id, "owner@clear-plumbing.test");
+      expect(j.result.isError).toBeFalsy();
+      const a = JSON.parse(j.result.content[0].text);
+      expect(a).toMatchObject({ kind: "email.send", status: "pending", drafted_by: "mcp" });
+    });
   });
 
   it("mcp cannot approve", async () => {

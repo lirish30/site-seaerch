@@ -44,8 +44,8 @@ registerHandler({
   parse: (p) => EmailSendSchema.parse(p),
   async execute(env, p: EmailSendPayload, a) {
     // `sendEmail` runs the checks in order, AFTER its already-sent short-circuit so a retry of a sent message cannot fail on them:
-    // mailbox enabled, conflict gate, footer and address, link guard, warm-up and daily cap, once-only send.
-    // Task 7 adds the enrollment-status check there too.
+    // mailbox enabled, conflict gate, the enrollment is still active or nurture, footer and address, link guard, warm-up and daily cap, once-only send.
+    // After a send, `sendEmail` advances the enrollment (`advanceAfterSend`), also on a retry of an already-sent approval.
     await sendEmail(env, p, { approvalId: a.id });
   },
 });

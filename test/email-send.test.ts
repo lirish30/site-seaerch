@@ -39,7 +39,7 @@ beforeEach(async () => {
     smtp: async (_mb, _pw, msg) => { const f = smtpFailures.shift(); if (f) throw f; smtpCalls.push(msg); },
     now: () => now,
   });
-  await env.DB.batch([env.DB.prepare(`DELETE FROM messages`), env.DB.prepare(`DELETE FROM approvals`)]);
+  await env.DB.batch([env.DB.prepare(`DELETE FROM messages`), env.DB.prepare(`DELETE FROM approvals`), env.DB.prepare(`DELETE FROM enrollments`)]);
   await saveMailbox(env.DB, "outreach", { ...CONFIG, warmup_started_at: daysAgo(40) });
   await saveMailbox(env.DB, "main", { ...CONFIG, warmup_started_at: null, from_email: "logan@main.test", username: "logan@main.test" });
   await saveSettings(env.DB, { physical_address: ADDRESS, opt_out_line: OPT_OUT, signature: "Logan", signature_json: "" });
@@ -351,6 +351,8 @@ describe("email.send", () => {
     expect(await approve(env, (await mk()).id)).toEqual({ ok: true });
     expect((await getBusiness(env.DB, businessId))!.lead_status).toBe("replied");
     await env.DB.prepare(`UPDATE businesses SET lead_status = 'new' WHERE id = ?`).bind(businessId).run();
+    await env.DB.prepare(`INSERT INTO enrollments (id, business_id, campaign_id, mailbox_key, to_email, status, next_step_index, next_due_at, started_at, last_sent_step)
+      VALUES ('e', ?, 'c', 'outreach', 'dana@acme.test', 'active', 1, NULL, ?, 0)`).bind(businessId, NOW.toISOString()).run();
     expect(await approve(env, (await mk({ enrollmentId: "e", stepIndex: 1 })).id)).toEqual({ ok: true });
     expect((await getBusiness(env.DB, businessId))!.lead_status).toBe("new");
     expect((await messages())[1]).toMatchObject({ enrollment_id: "e", step_index: 1 });

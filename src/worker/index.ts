@@ -26,8 +26,7 @@ import { campaignRoutes } from "./routes/campaigns";
 import "./approvals/leadNote";
 import "./approvals/emailSend";
 import { mcpRoute } from "./mcp/route";
-import { runDueRadars } from "./radar-run";
-import { searchWorkflowStarter } from "./search-start";
+import { runScheduled } from "./schedule";
 
 const app = new Hono<{ Bindings: Env }>();
 // Outside /api/*, so the cookie middleware does not apply: /mcp does its own bearer-token check.
@@ -60,13 +59,9 @@ app.route("/api", croRoutes);
 
 export default {
   fetch: app.fetch,
-  // Cron Trigger: unattended spend, so a crash here must be logged, never thrown into a retry loop.
-  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(
-      runDueRadars({
-        db: env.DB, now: () => new Date(), startWorkflow: searchWorkflowStarter(env),
-      }).then((s) => console.log("radar run", JSON.stringify(s)), (e) => console.error("radar run failed", e)),
-    );
+  // Cron Trigger: unattended, so a crash here must be logged, never thrown into a retry loop (runScheduled contains every part's failure).
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(runScheduled(env, controller.cron, new Date()));
   },
 } satisfies ExportedHandler<Env>;
 export { LeadWorkflow, SearchWorkflow, CroAuditWorkflow } from "./workflows";

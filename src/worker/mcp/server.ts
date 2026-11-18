@@ -1,9 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Env } from "../env";
-import "../approvals/leadNote"; // registers the built-in kind for this entry path too
+import "../approvals/leadNote"; // registers the built-in kinds for this entry path too
+import "../approvals/emailSend";
 import { createApproval, listApprovals, UnknownKindError } from "../db/approvals";
-import { registeredKinds } from "../approvals/registry";
+import { getHandler, registeredKinds } from "../approvals/registry";
+import { checkConflict } from "../conflict";
 import { logAgentAction } from "../db/agentActions";
 import { getBusiness } from "../db/businesses";
 import { latestAudit, latestAuditsFor } from "../db/audits";
@@ -74,6 +76,20 @@ export function buildMcpServer(env: Env): McpServer {
     },
   }, async (a) => {
     try {
+      if (a.kind === "email.send") {
+        // The gate runs when the approval is made, not only when it is approved: a listed recipient, a suppressed lead or a client never gets a card.
+        let p: { to: string; businessId: string };
+        try { p = getHandler("email.send")!.parse(a.payload); }
+        catch (e) {
+          await log("propose_approval", "rejected an invalid email.send payload");
+          return fail(`invalid email.send payload: ${e instanceof Error ? e.message.replace(/\s+/g, " ").slice(0, 400) : "does not match the schema"}`);
+        }
+        const c = await checkConflict(db, { email: p.to, businessId: p.businessId });
+        if (c.blocked) {
+          await log("propose_approval", `refused email.send to ${p.to.slice(0, 100)}: ${c.reason}`.slice(0, 300), { type: "business", id: p.businessId });
+          return fail(`blocked: ${c.reason} (${c.source})`);
+        }
+      }
       const created = await createApproval(db, { ...a, drafted_by: "mcp" });
       await log("propose_approval", `proposed ${a.kind}: ${a.title}`, a.record_type && a.record_id ? { type: a.record_type, id: a.record_id } : undefined);
       return text(created);
