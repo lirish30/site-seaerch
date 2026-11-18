@@ -3,8 +3,8 @@ import { MAILBOX_KEYS, getMailbox, mailboxPassword, saveMailbox } from "../db/ma
 import { activityStmt } from "../db/activity";
 import { getEnrollment } from "../db/enrollments";
 import { getBusiness } from "../db/businesses";
-import { enqueueClaudeTaskStmt } from "../db/claudeTasks";
-import { REPLY_TASK_KIND } from "../sequence/replies";
+import { enqueueTaskStmt } from "../queue/db";
+import { REPLY_TASK_KIND } from "../queue/replyClassify";
 import { stopOutreach } from "../sequence/stop";
 import { getMailDeps } from "./deps";
 import { classifyInbound, parseInbound, type InboundMessage } from "./inbound";
@@ -129,7 +129,7 @@ async function processMessage(env: Env, key: MailboxKey, m: { uid: number; raw: 
       await stopOutreach(db, { businessId, reason: "replied" });
       // Claude classifies the reply (and drafts the answer) through the task queue. The task goes in the same batch as the stamp, so a message
       // is either fully applied (stamped, one task) or not at all, and a failure to enqueue fails the message like any other effect.
-      const classify = enqueueClaudeTaskStmt(db, REPLY_TASK_KIND, { messageId: row.id, businessId, enrollmentId: match.enrollmentId }, { dedupeKey: row.id });
+      const classify = enqueueTaskStmt(db, REPLY_TASK_KIND, { messageId: row.id, businessId, enrollmentId: match.enrollmentId }, { dedupeKey: row.id, targetType: "lead", targetId: businessId });
       await db.batch([activityStmt(db, businessId, "email_reply", `Reply from ${sender}: ${subject}`), classify.stmt, stamp]);
       tally.replies++;
       return;
