@@ -15,6 +15,7 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
   { slug: "fit-profiles", label: "Fit profiles", icon: "target", group: "Lead scoring" }, { slug: "suppressions", label: "Suppressions", icon: "ban", group: "Lead scoring" },
   { slug: "scores", label: "How scores work", icon: "zap", group: "Lead scoring" },
   { slug: "google", label: "Google", icon: "link", group: "Account" }, { slug: "usage", label: "Usage & limits", icon: "card", group: "Account" },
+  { slug: "security", label: "Security", icon: "key", group: "Account" },
   { slug: "footer", label: "Mailing footer", icon: "shield", group: "Account" },
 ];
 const GROUPS = ["You", "Outreach", "Lead scoring", "Account"] as const;

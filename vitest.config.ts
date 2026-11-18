@@ -14,6 +14,7 @@ export default defineConfig(async () => {
             SESSION_SECRET: "test-secret-test-secret-test-secret",
             BRIGHTDATA_API_KEY: "x", BRIGHTDATA_SERP_ZONE: "x",
             PAGESPEED_API_KEY: "x", ANTHROPIC_API_KEY: "x",
+            WEBAUTHN_RP_ID: "x", WEBAUTHN_ORIGIN: "https://x",
           },
         },
       }),

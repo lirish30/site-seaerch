@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api";
 import Icon from "../components/Icon";
 import { loginErrorText } from "../loginView";
+import { passkeysSupported, signInWithPasskey } from "../passkey";
 
 /** Same 16px grid and stroke as the icon set; "eye-off" is only used here. */
 const EyeOff = () => (
@@ -28,6 +29,14 @@ export default function Login() {
     catch (x) { setErr(loginErrorText(x instanceof ApiError ? x.status : undefined)); setBusy(false); field.current?.focus(); }
   }
 
+  async function usePasskey() {
+    if (busy) return;
+    setErr(""); setBusy(true);
+    const r = await signInWithPasskey();
+    if (r.ok) { location.href = "/"; return; }
+    setErr(r.message); setBusy(false);
+  }
+
   return (
     <main className="lg">
       <div className="lg-brand">
@@ -39,6 +48,7 @@ export default function Login() {
           <h1>Sign in</h1>
           <p>This is a private workspace.</p>
         </div>
+        {passkeysSupported() && <button type="button" className="btn lg-submit" disabled={busy} onClick={() => void usePasskey()}><Icon name="shield" size={15} />Sign in with passkey</button>}
         <div className="lg-field-group">
           <label htmlFor="lg-pw">Password</label>
           <div className={`lg-field${err ? " has-error" : ""}`}>

@@ -18,4 +18,7 @@ export interface Env {
   /** Optional: Google OAuth client for Gmail drafts and Drive export. */
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
+  /** Optional passkey overrides. When unset, the request URL's hostname is the RP ID and its origin the expected origin. */
+  WEBAUTHN_RP_ID?: string;
+  WEBAUTHN_ORIGIN?: string;
 }

@@ -46,6 +46,7 @@ function chips(d: Data): Record<string, Chip | null> {
     }),
     suppressions: wait(d.supps, () => ({ tone: "", text: (d.supps as Suppression[]).length ? suppressionWord(d.supps as Suppression[]) : "Nothing suppressed" })),
     scores: { tone: "", text: "Guide" },
+    security: { tone: "", text: "Passkeys" },
     google: wait(d.google, () => {
       const g = d.google as Google;
       return !g.configured ? { tone: "", text: "Not set up" } : g.connected ? { tone: "positive", text: `Connected · ${g.email ?? "your account"}` } : { tone: "warning", text: "Not connected" };
@@ -74,6 +75,7 @@ const SECTIONS: { name: string; tint: "signal" | "info" | "positive" | "plain"; 
   { name: "Account", tint: "plain", cards: [
     { slug: "google", title: "Google", icon: "link", text: "Gmail drafts and Drive. Nothing is ever sent." },
     { slug: "usage", title: "Usage & limits", icon: "card", text: "Monthly spend limit and what each service cost." },
+    { slug: "security", title: "Security", icon: "key", text: "Sign in with Touch ID. Your password stays as a fallback." },
     { slug: "footer", title: "Mailing footer", icon: "shield", text: "Mailing address and opt-out line for freelance emails." },
   ] },
 ];
