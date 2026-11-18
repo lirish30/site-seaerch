@@ -1,5 +1,4 @@
-import { monthUsage } from "./db/usage";
-import { getSettings } from "./db/settings";
+import { spendStatus } from "./spend";
 import { BRIGHTDATA_PAGE_SIZE } from "./listings/brightdata";
 
 // Rough list prices; update when invoices disagree. placesPerRequest is the Text Search Enterprise SKU (phone/website/rating)
@@ -21,8 +20,6 @@ export function estimateQuickSearchCost(maxResults: number): number {
 }
 
 export async function checkSpend(db: D1Database, extraUsd: number) {
-  const month = new Date().toISOString().slice(0, 7);
-  const spent = (await monthUsage(db, month)).reduce((s, r) => s + r.est_cost_usd, 0);
-  const limit = (await getSettings(db)).monthly_spend_limit_usd;
-  return { ok: spent + extraUsd <= limit, spent, limit };
+  const s = await spendStatus(db, new Date(), extraUsd);
+  return { ok: s.ok, spent: s.spentUsd, limit: s.limitUsd };
 }

@@ -11,6 +11,7 @@ describe("cost", () => {
   });
 
   it("blocks when this month's spend + estimate exceeds limit", async () => {
+    await env.DB.prepare(`UPDATE fixed_costs SET active = 0`).run(); // metered usage only
     await saveSettings(env.DB, { monthly_spend_limit_usd: 1 });
     await recordUsage(env.DB, "claude", 90, 0.9);
     expect((await checkSpend(env.DB, 0.05)).ok).toBe(true);

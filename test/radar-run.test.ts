@@ -29,6 +29,7 @@ const deps = (startWorkflow: (id: string) => Promise<void>) => ({ db: env.DB, st
 const searchCount = async () => (await env.DB.prepare(`SELECT COUNT(*) AS n FROM searches`).first<{ n: number }>())!.n;
 
 beforeEach(async () => {
+  await env.DB.prepare(`UPDATE fixed_costs SET active = 0`).run(); // these tests budget metered usage only
   await env.DB.batch([env.DB.prepare(`DELETE FROM radars`), env.DB.prepare(`DELETE FROM searches`), env.DB.prepare(`DELETE FROM usage`)]);
   await saveSettings(env.DB, { physical_address: "1 Main St, Boise, ID", opt_out_line: "Reply 'no thanks'.", monthly_spend_limit_usd: 25 });
 });

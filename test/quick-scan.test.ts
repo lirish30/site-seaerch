@@ -359,6 +359,7 @@ describe("per-lead paid scans respect the monthly spend limit", () => {
   const created: any[] = [];
   let orig: typeof env.LEAD_WORKFLOW.create;
   beforeEach(async () => {
+      await env.DB.prepare(`UPDATE fixed_costs SET active = 0`).run(); // these tests budget metered usage only
     created.length = 0;
     orig = env.LEAD_WORKFLOW.create;
     (env.LEAD_WORKFLOW as any).create = async (o: any) => { created.push(o); return { id: o.id }; };
