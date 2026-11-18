@@ -6,6 +6,7 @@ export interface Env {
   LEAD_WORKFLOW: Workflow;
   SEARCH_WORKFLOW: Workflow;
   CRO_AUDIT_WORKFLOW: Workflow;
+  VIDEO_WORKFLOW: Workflow;
   LOGIN_LIMITER?: RateLimit;
   APP_PASSWORD: string;
   SESSION_SECRET: string;

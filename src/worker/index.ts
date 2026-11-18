@@ -8,6 +8,7 @@ import { leadRoutes } from "./routes/leads";
 import { settingsRoutes } from "./routes/settings";
 import { googleRoutes } from "./routes/google";
 import { croRoutes } from "./routes/cro";
+import { videoRoutes } from "./routes/video";
 import { publicRoutes } from "./routes/public";
 import { radarRoutes } from "./routes/radar";
 import { serviceRoutes } from "./routes/services";
@@ -62,6 +63,8 @@ app.route("/api/niche", nicheRoutes);
 app.route("/api/queue", queueRoutes);
 // Mounted last at /api: /api/leads/:id/cro-audit(s), /api/cro-items/:id, /api/cro-audits/:id/... (all behind requireAuth).
 app.route("/api", croRoutes);
+// Also mounted at /api: /api/leads/:id/video and /api/video-audits/:id/... (behind requireAuth).
+app.route("/api", videoRoutes);
 
 export default {
   fetch: app.fetch,
@@ -70,4 +73,4 @@ export default {
     ctx.waitUntil(runScheduled(env, controller.cron, new Date()));
   },
 } satisfies ExportedHandler<Env>;
-export { LeadWorkflow, SearchWorkflow, CroAuditWorkflow } from "./workflows";
+export { LeadWorkflow, SearchWorkflow, CroAuditWorkflow, VideoAuditWorkflow } from "./workflows";

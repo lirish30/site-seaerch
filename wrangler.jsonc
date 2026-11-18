@@ -16,7 +16,8 @@
   "workflows": [
     { "name": "lead-workflow", "binding": "LEAD_WORKFLOW", "class_name": "LeadWorkflow" },
     { "name": "search-workflow", "binding": "SEARCH_WORKFLOW", "class_name": "SearchWorkflow" },
-    { "name": "cro-audit-workflow", "binding": "CRO_AUDIT_WORKFLOW", "class_name": "CroAuditWorkflow" }
+    { "name": "cro-audit-workflow", "binding": "CRO_AUDIT_WORKFLOW", "class_name": "CroAuditWorkflow" },
+    { "name": "video-audit-workflow", "binding": "VIDEO_WORKFLOW", "class_name": "VideoAuditWorkflow" }
   ],
   "ratelimits": [{ "name": "LOGIN_LIMITER", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } }],
   "triggers": { "crons": ["17 13 * * *", "*/15 * * * *"] },

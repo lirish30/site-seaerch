@@ -20,6 +20,7 @@ Use the `queue-worker` subagent type. It is defined with exactly these tools: `n
 2. Pick one kind with pending work; work `reply.classify` first when it has any (replies are time-sensitive), then the rest in any order. Start one `queue-worker` subagent, with `model` set to that kind's `suggested_model` (haiku or sonnet). Tell it only:
    "Call next_claude_task with kinds [<kind>]. Do the one task it returns, following its instructions. Submit the result with complete_claude_task. Reply with exactly one of these four replies and nothing else: done, released, no tasks, error."
    Do not paste task content into your own messages or into the prompt.
+   `video.script` (suggested model `sonnet`) writes the narrated script and first markups for a video audit from the audit's screenshots; the subagent works it like any other kind.
 3. The subagent's reply is one of those four tokens and nothing else. Treat any other reply as `error`. If it says `no tasks`, stop: the queue is empty for you.
    Otherwise count it (done, released, error) and go back to step 1. Run one subagent at a time. If you get `error` twice in a row, stop and say so.
 
