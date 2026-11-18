@@ -3,6 +3,8 @@ import { api } from "../../api";
 import SettingsPage, { Card } from "../../components/SettingsPage";
 import { parseSpendLimit } from "../../spend";
 import { useSettingsDoc } from "../../settingsData";
+import type { ServiceSpend } from "../../spendView";
+import ServiceCaps from "./ServiceCaps";
 import { chartBars, monthName, spendBreakdown, spendPercent, usageRows, usageTotal, usd } from "../../settingsView";
 
 interface FixedCost { id: string; name: string; monthly_usd: number; active: 0 | 1 }
@@ -15,10 +17,11 @@ export default function Usage() {
   const [historyErr, setHistoryErr] = useState(false);
   const [running, setRunning] = useState(0);
   const [fixedCosts, setFixedCosts] = useState<FixedCost[]>([]);
+  const [services, setServices] = useState<ServiceSpend[]>([]);
   useEffect(() => {
     let live = true;
     // Fixed monthly costs count against the same cap, so they are listed and summed with the metered usage.
-    api.get<{ fixedCosts: FixedCost[] }>("/spend").then((s) => { if (live) setFixedCosts(s.fixedCosts); }).catch(() => {});
+    api.get<{ fixedCosts: FixedCost[]; services: ServiceSpend[] }>("/spend").then((s) => { if (live) { setFixedCosts(s.fixedCosts); setServices(s.services ?? []); } }).catch(() => {});
     api.get<History>("/settings/usage-history").then((h) => { if (live) setHistory(h); }).catch(() => { if (live) setHistoryErr(true); });
     // Searches still running are counted at their estimated cost when the limit is checked, so the bar shows them too.
     api.get<{ inFlightUsd: number }>("/searches/estimate?maxResults=1").then((e) => { if (live) setRunning(e.inFlightUsd ?? 0); }).catch(() => {});
@@ -82,6 +85,8 @@ export default function Usage() {
             </div>
           </div>
         </Card>
+
+        <ServiceCaps services={services} onChange={setServices} />
 
         <Card title="Last 6 months">
           {historyErr ? <p className="bx-err" role="alert">Couldn’t load the monthly totals.</p>
