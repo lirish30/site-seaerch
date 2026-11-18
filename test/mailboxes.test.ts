@@ -32,7 +32,7 @@ beforeEach(async () => {
     from_email = '', from_name = '', warmup_started_at = NULL, imap_uid_validity = NULL, imap_last_uid = NULL, last_sync_at = NULL, last_sync_error = NULL`).run();
   setMailDeps({
     smtp: async (mb, password, msg) => { if (smtpError) throw smtpError; sent.push({ mb, password, msg }); },
-    imap: async () => { imapCalls++; return { uidValidity: 1, uidNext: 1, messages: [] }; },
+    imap: async () => { imapCalls++; return { uidValidity: 1, uidNext: 1, messages: [], highestUid: 0, skipped: [] }; },
     imapProbe: async () => { probeCalls++; return { uidValidity: 1 }; },
     fetch: dohReply(true),
     now: () => new Date("2026-11-20T10:00:00Z"),

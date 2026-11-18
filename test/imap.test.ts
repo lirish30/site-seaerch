@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildFetch, buildLogin, fetchImapOver, imapQuote, newMessages, parseImapFetch, parseSelect,
-  probeImapOver, redact, scanResponse, type ImapSocket,
+  buildFetchBody, buildFetchSizes, buildLogin, fetchImapOver, imapQuote, MAX_MESSAGE_BYTES, newMessages, parseImapFetch,
+  parseImapSizes, parseSelect, planBodies, planWindow, probeImapOver, redact, scanResponse, WINDOW, type ImapSocket,
 } from "../src/worker/mail/imap";
 import type { Mailbox } from "../src/worker/mail/types";
 
@@ -61,6 +61,13 @@ describe("parseImapFetch", () => {
   });
 });
 
+describe("parseImapSizes", () => {
+  it("reads uid and size pairs", () => {
+    expect(parseImapSizes(b("* 1 FETCH (UID 41 RFC822.SIZE 1234)\r\n* 2 FETCH (RFC822.SIZE 55 UID 42 FLAGS (\\Seen))\r\nA2 OK done\r\n")))
+      .toEqual([{ uid: 41, size: 1234 }, { uid: 42, size: 55 }]);
+  });
+});
+
 describe("scanResponse", () => {
   it("finds the tagged line and skips tagged-looking text inside literals", () => {
     const r = scanResponse(b(transcript), "A3");
@@ -94,9 +101,32 @@ describe("command builders", () => {
     expect(() => imapQuote("a\0b")).toThrow(/invalid character/);
   });
 
-  it("asks for everything after the last seen uid without marking read", () => {
-    expect(buildFetch("A3", 41)).toBe("A3 UID FETCH 42:* (UID BODY.PEEK[])\r\n");
-    expect(buildFetch("A3", 0)).toBe("A3 UID FETCH 1:* (UID BODY.PEEK[])\r\n");
+  it("asks for an explicit UID range and one body at a time, never n:*", () => {
+    expect(buildFetchSizes("A3", 42, 66)).toBe("A3 UID FETCH 42:66 (UID RFC822.SIZE)\r\n");
+    expect(buildFetchBody("A4", 42)).toBe("A4 UID FETCH 42 (UID BODY.PEEK[])\r\n");
+  });
+});
+
+describe("planning", () => {
+  it("no window when nothing is new", () => {
+    expect(planWindow(43, 44)).toBeNull();
+    expect(planWindow(50, 44)).toBeNull();
+    expect(planWindow(0, 1)).toBeNull();
+  });
+
+  it("window starts after sinceUid and is bounded by WINDOW and uidNext - 1", () => {
+    expect(planWindow(43, 46)).toEqual({ from: 44, to: 45 });
+    expect(planWindow(100, 10_000)).toEqual({ from: 101, to: 100 + WINDOW });
+  });
+
+  it("skips oversized messages and reports them, keeping the window end as highestUid", () => {
+    const plan = planBodies([{ uid: 5, size: 100 }, { uid: 6, size: MAX_MESSAGE_BYTES + 1 }, { uid: 7, size: 200 }], 9);
+    expect(plan).toEqual({ fetch: [5, 7], skipped: [{ uid: 6, size: MAX_MESSAGE_BYTES + 1 }], highestUid: 9 });
+  });
+
+  it("stops at the batch budget and stops highestUid just before the first message left for next time", () => {
+    const sizes = [{ uid: 5, size: 60 }, { uid: 6, size: 60 }, { uid: 7, size: 10 }];
+    expect(planBodies(sizes, 9, 1000, 100)).toEqual({ fetch: [5], skipped: [], highestUid: 5 });
   });
 });
 
@@ -119,14 +149,29 @@ describe("parseSelect / newMessages / redact", () => {
 });
 
 // A scripted in-memory IMAP server over TransformStreams.
-function fakeServer(opts: { greeting?: string; login?: "OK" | "NO"; fetchBody?: string; onCommand?: (line: string) => void; starttls?: boolean }) {
+interface FakeMsg { uid: number; raw: string; size?: number }
+function fakeServer(opts: {
+  greeting?: string; login?: "OK" | "NO"; messages?: FakeMsg[]; uidNext?: number; starttls?: "ok" | "refuse"; silent?: boolean;
+}) {
   const toServer = new TransformStream<Uint8Array, Uint8Array>();
   const toClient = new TransformStream<Uint8Array, Uint8Array>();
   const out = toClient.writable.getWriter();
-  const send = (s: string | Uint8Array) => out.write(typeof s === "string" ? b(s) : s);
+  // Deliver in small pieces so responses arrive across many reads.
+  const send = async (s: string | Uint8Array) => {
+    const all = typeof s === "string" ? b(s) : s;
+    for (let i = 0; i < all.length; i += 700) await out.write(all.slice(i, i + 700));
+  };
   const seen: string[] = [];
-  let tls = false;
+  const msgs = opts.messages ?? [];
+  const uidNext = opts.uidNext ?? 44;
+  const inRange = (spec: string, uid: number) => {
+    const [lo, hi] = spec.split(":");
+    if (hi === undefined) return uid === Number(lo);
+    if (hi === "*") return uid >= Number(lo) || uid === Math.max(...msgs.map((m) => m.uid)); // a real server returns the newest for n:*
+    return uid >= Number(lo) && uid <= Number(hi);
+  };
   void (async () => {
+    if (opts.silent) return; // accepts the connection, never says a word
     await send(opts.greeting ?? "* OK IMAP ready\r\n");
     const reader = toServer.readable.getReader();
     let buf = "";
@@ -137,13 +182,22 @@ function fakeServer(opts: { greeting?: string; login?: "OK" | "NO"; fetchBody?: 
       let i;
       while ((i = buf.indexOf("\r\n")) >= 0) {
         const line = buf.slice(0, i); buf = buf.slice(i + 2);
-        seen.push(line); opts.onCommand?.(line);
-        const [tag, cmd] = line.split(" ");
-        if (cmd === "STARTTLS") { tls = true; await send(`${tag} OK Begin TLS\r\n`); }
+        seen.push(line);
+        const [tag, cmd, , spec, attrs] = line.split(" ");
+        if (cmd === "STARTTLS") await send(opts.starttls === "refuse" ? `${tag} NO [UNAVAILABLE] TLS not available\r\n` : `${tag} OK Begin TLS\r\n`);
         else if (cmd === "LOGIN") await send(opts.login === "NO" ? `${tag} NO [AUTHENTICATIONFAILED] Invalid credentials for ${line}\r\n` : `${tag} OK Logged in\r\n`);
-        else if (cmd === "SELECT") await send(`* 3 EXISTS\r\n* OK [UIDVALIDITY 777] ok\r\n* OK [UIDNEXT 44] next\r\n${tag} OK [READ-WRITE] Select done\r\n`);
-        else if (cmd === "UID") await send((opts.fetchBody ?? "") + `${tag} OK Fetch done\r\n`);
-        else if (cmd === "LOGOUT") { await send(`* BYE bye\r\n${tag} OK Logout\r\n`); await out.close(); return; }
+        else if (cmd === "SELECT") await send(`* 3 EXISTS\r\n* OK [UIDVALIDITY 777] ok\r\n* OK [UIDNEXT ${uidNext}] next\r\n${tag} OK [READ-WRITE] Select done\r\n`);
+        else if (cmd === "UID") {
+          const hit = msgs.filter((m) => inRange(spec, m.uid));
+          let body = "";
+          for (const m of hit) {
+            body += line.includes("RFC822.SIZE")
+              ? `* ${m.uid} FETCH (UID ${m.uid} RFC822.SIZE ${m.size ?? b(m.raw).length})\r\n`
+              : `* ${m.uid} FETCH (UID ${m.uid} BODY[] {${b(m.raw).length}}\r\n${m.raw})\r\n`;
+          }
+          void attrs;
+          await send(`${body}${tag} OK Fetch done\r\n`);
+        } else if (cmd === "LOGOUT") { await send(`* BYE bye\r\n${tag} OK Logout\r\n`); await out.close(); return; }
       }
     }
   })();
@@ -152,7 +206,7 @@ function fakeServer(opts: { greeting?: string; login?: "OK" | "NO"; fetchBody?: 
     startTls: opts.starttls ? () => socket : undefined,
     close: async () => {},
   };
-  return { socket, seen, get tls() { return tls; } };
+  return { socket, seen };
 }
 
 const mb = (over: Partial<Mailbox> = {}): Mailbox => ({
@@ -160,26 +214,67 @@ const mb = (over: Partial<Mailbox> = {}): Mailbox => ({
   username: "outreach@hellositeline.test", from_email: "outreach@hellositeline.test", from_name: "Logan",
   warmup_started_at: null, imap_uid_validity: null, imap_last_uid: null, last_sync_at: null, last_sync_error: null, ...over,
 });
+const cmds = (seen: string[]) => seen.map((l) => l.split(" ")[1]);
 
 describe("fetchImapOver (fake server)", () => {
-  const fetchBody =
-    `* 1 FETCH (UID 43 BODY[] {${b(msgA).length}}\r\n${msgA})\r\n` +
-    `* 2 FETCH (UID 44 BODY[] {${b(msgB).length}}\r\n${msgB})\r\n`;
+  const messages: FakeMsg[] = [{ uid: 43, raw: msgA }, { uid: 44, raw: msgB }];
 
   it("with sinceUid null returns only the baseline and fetches nothing", async () => {
-    const s = fakeServer({});
+    const s = fakeServer({ messages });
     const out = await fetchImapOver(() => s.socket, mb(), "pw", null);
-    expect(out).toEqual({ uidValidity: 777, uidNext: 44, messages: [] });
-    expect(s.seen.some((l) => l.includes("UID FETCH"))).toBe(false);
-    expect(s.seen.map((l) => l.split(" ")[1])).toEqual(["LOGIN", "SELECT", "LOGOUT"]);
+    expect(out).toEqual({ uidValidity: 777, uidNext: 44, messages: [], skipped: [], highestUid: 43 });
+    expect(cmds(s.seen)).toEqual(["LOGIN", "SELECT", "LOGOUT"]);
   });
 
-  it("returns only messages above sinceUid even though n:* always returns the last one", async () => {
-    const s = fakeServer({ fetchBody });
+  it("no fetch when nothing is new", async () => {
+    const s = fakeServer({ messages: [{ uid: 43, raw: msgA }] }); // uidNext 44: the newest message is 43
     const out = await fetchImapOver(() => s.socket, mb(), "pw", 43);
+    expect(out).toEqual({ uidValidity: 777, uidNext: 44, messages: [], skipped: [], highestUid: 43 });
+    expect(s.seen.some((l) => l.includes("FETCH"))).toBe(false);
+  });
+
+  it("fetches an explicit window not n:*", async () => {
+    const s = fakeServer({ messages, uidNext: 45 });
+    const out = await fetchImapOver(() => s.socket, mb(), "pw", 42);
+    expect(out.messages.map((m) => m.uid)).toEqual([43, 44]);
+    expect(dec.decode(out.messages[1].raw)).toBe(msgB);
+    expect(out.highestUid).toBe(44);
+    expect(s.seen).toContain("A3 UID FETCH 43:44 (UID RFC822.SIZE)");
+    expect(s.seen).toContain("A4 UID FETCH 43 (UID BODY.PEEK[])");
+    expect(s.seen).toContain("A5 UID FETCH 44 (UID BODY.PEEK[])");
+    expect(s.seen.some((l) => l.includes(":*"))).toBe(false);
+  });
+
+  it("bounds the window to WINDOW messages", async () => {
+    const s = fakeServer({ messages: [], uidNext: 1000 });
+    const out = await fetchImapOver(() => s.socket, mb(), "pw", 100);
+    expect(s.seen).toContain(`A3 UID FETCH 101:${100 + WINDOW} (UID RFC822.SIZE)`);
+    expect(out.highestUid).toBe(100 + WINDOW); // an all-expunged window still advances
+  });
+
+  it("oversized message is skipped, reported, and highestUid advances past it", async () => {
+    const s = fakeServer({ messages: [{ uid: 43, raw: "x", size: MAX_MESSAGE_BYTES + 1 }], uidNext: 44 });
+    const out = await fetchImapOver(() => s.socket, mb(), "pw", 42);
+    expect(out.messages).toEqual([]);
+    expect(out.skipped).toEqual([{ uid: 43, size: MAX_MESSAGE_BYTES + 1 }]);
+    expect(out.highestUid).toBe(43);
+    expect(s.seen.some((l) => l.includes("BODY.PEEK"))).toBe(false); // body never downloaded
+  });
+
+  it("later small message after an oversized one is still returned", async () => {
+    const s = fakeServer({ messages: [{ uid: 43, raw: "x", size: MAX_MESSAGE_BYTES + 1 }, { uid: 44, raw: msgB }], uidNext: 45 });
+    const out = await fetchImapOver(() => s.socket, mb(), "pw", 42);
     expect(out.messages.map((m) => m.uid)).toEqual([44]);
-    expect(dec.decode(out.messages[0].raw)).toBe(msgB);
-    expect(s.seen).toContain("A3 UID FETCH 44:* (UID BODY.PEEK[])");
+    expect(out.skipped.map((m) => m.uid)).toEqual([43]);
+    expect(out.highestUid).toBe(44);
+  });
+
+  it("reassembles a large message delivered across many reads", async () => {
+    const big = crlf("Subject: big\n\n" + "line of text that repeats\n".repeat(8000)); // ~200 KB
+    const s = fakeServer({ messages: [{ uid: 43, raw: big }], uidNext: 44 });
+    const out = await fetchImapOver(() => s.socket, mb(), "pw", 42);
+    expect(out.messages).toHaveLength(1);
+    expect(dec.decode(out.messages[0].raw)).toBe(big);
   });
 
   it("sends a password with quotes and backslashes as an escaped quoted string", async () => {
@@ -203,13 +298,29 @@ describe("fetchImapOver (fake server)", () => {
   });
 
   it("upgrades with STARTTLS before logging in on a non-993 port", async () => {
-    const s = fakeServer({ starttls: true });
+    const s = fakeServer({ starttls: "ok" });
     await fetchImapOver(() => s.socket, mb({ imap_port: 143 }), "pw", null);
-    expect(s.seen.map((l) => l.split(" ")[1])).toEqual(["STARTTLS", "LOGIN", "SELECT", "LOGOUT"]);
+    expect(cmds(s.seen)).toEqual(["STARTTLS", "LOGIN", "SELECT", "LOGOUT"]);
+  });
+
+  it("a STARTTLS refusal sends no LOGIN", async () => {
+    const s = fakeServer({ starttls: "refuse" });
+    await expect(fetchImapOver(() => s.socket, mb({ imap_port: 143 }), "pw", null)).rejects.toThrow(/STARTTLS failed/);
+    expect(s.seen.some((l) => l.includes("LOGIN"))).toBe(false);
   });
 
   it("fails clearly when the server greeting is not OK", async () => {
     const s = fakeServer({ greeting: "* BYE go away\r\n" });
     await expect(fetchImapOver(() => s.socket, mb(), "pw", null)).rejects.toThrow(/greeting/);
+  });
+
+  it("a hung server times out instead of hanging", async () => {
+    const s = fakeServer({ silent: true });
+    await expect(fetchImapOver(() => s.socket, mb(), "pw", null, { readTimeoutMs: 40, closeTimeoutMs: 40 })).rejects.toThrow(/stopped responding/);
+  });
+
+  it("rejects a response bigger than the cap", async () => {
+    const s = fakeServer({ messages: [{ uid: 43, raw: "y".repeat(5000) }], uidNext: 44 });
+    await expect(fetchImapOver(() => s.socket, mb(), "pw", 42, { maxResponseBytes: 1000 })).rejects.toThrow(/too large/);
   });
 });

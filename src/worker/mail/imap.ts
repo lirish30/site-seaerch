@@ -1,5 +1,5 @@
 import { connect } from "cloudflare:sockets";
-import type { ImapFetch, ImapProbe, Mailbox } from "./types";
+import type { ImapFetch, ImapFetchResult, ImapProbe, Mailbox } from "./types";
 
 /**
  * A minimal IMAP client: LOGIN, SELECT INBOX, UID FETCH, LOGOUT (plus STARTTLS off port 993).
@@ -20,8 +20,41 @@ export function imapQuote(s: string): string {
 
 export const buildLogin = (tag: string, user: string, pass: string): string => `${tag} LOGIN ${imapQuote(user)} ${imapQuote(pass)}\r\n`;
 export const buildSelect = (tag: string): string => `${tag} SELECT INBOX\r\n`;
-/** `n:*` always yields the last message even when n is past it, so callers must still filter on uid. */
-export const buildFetch = (tag: string, sinceUid: number): string => `${tag} UID FETCH ${sinceUid + 1}:* (UID BODY.PEEK[])\r\n`;
+/** Sizes for an explicit UID range. Never `n:*`, which always returns the newest message even when nothing is new. */
+export const buildFetchSizes = (tag: string, from: number, to: number): string => `${tag} UID FETCH ${from}:${to} (UID RFC822.SIZE)\r\n`;
+export const buildFetchBody = (tag: string, uid: number): string => `${tag} UID FETCH ${uid} (UID BODY.PEEK[])\r\n`;
+
+/** Messages examined per call. */
+export const WINDOW = 25;
+/** Messages larger than this are never downloaded. */
+export const MAX_MESSAGE_BYTES = 2 * 1024 * 1024;
+/** Most body bytes returned by one call; the rest waits for the next call. */
+export const BATCH_BYTES = 16 * 1024 * 1024;
+
+/** The UID range to examine next, or null when nothing is new (no FETCH needed at all). */
+export function planWindow(sinceUid: number, uidNext: number, window = WINDOW): { from: number; to: number } | null {
+  if (uidNext - 1 <= sinceUid) return null;
+  return { from: sinceUid + 1, to: Math.min(sinceUid + window, uidNext - 1) };
+}
+
+/**
+ * Decides which messages of a window to download. Oversized ones are skipped (and reported), and the
+ * batch stops early once `budget` bytes are planned, so `highestUid` is the last UID fully accounted for.
+ */
+export function planBodies(
+  sizes: { uid: number; size: number }[], windowEnd: number, maxMessage = MAX_MESSAGE_BYTES, budget = BATCH_BYTES,
+): { fetch: number[]; skipped: { uid: number; size: number }[]; highestUid: number } {
+  const fetch: number[] = [];
+  const skipped: { uid: number; size: number }[] = [];
+  let planned = 0;
+  for (const m of [...sizes].sort((a, b) => a.uid - b.uid)) {
+    if (m.size > maxMessage) { skipped.push(m); continue; }
+    if (fetch.length > 0 && planned + m.size > budget) return { fetch, skipped, highestUid: m.uid - 1 };
+    fetch.push(m.uid);
+    planned += m.size;
+  }
+  return { fetch, skipped, highestUid: windowEnd };
+}
 
 /** Replaces the password (and its quoted form) in text that may be shown to a user. */
 export function redact(text: string, password: string): string {
@@ -129,13 +162,11 @@ class Cursor {
   toLineEnd(): void { const e = indexOfCrlf(this.b, this.p); this.p = e < 0 ? this.b.length : e + 2; }
 }
 
-/**
- * Parses the untagged `* n FETCH (UID u BODY[] {N}...)` responses out of a UID FETCH reply.
- * Messages come back in server order; entries lacking a UID or a body are dropped. Truncated input
- * yields the messages that were complete.
- */
-export function parseImapFetch(bytes: Uint8Array): { uid: number; raw: Uint8Array }[] {
-  const out: { uid: number; raw: Uint8Array }[] = [];
+interface FetchEntry { uid: number | null; size: number | null; raw: Uint8Array | null }
+
+/** Parses every untagged `* n FETCH (...)` in a reply. Truncated input yields the entries that were complete. */
+function parseFetchEntries(bytes: Uint8Array): FetchEntry[] {
+  const out: FetchEntry[] = [];
   const c = new Cursor(bytes);
   try {
     while (!c.done) {
@@ -150,6 +181,7 @@ export function parseImapFetch(bytes: Uint8Array): { uid: number; raw: Uint8Arra
       }
       c.p += head[0].length;
       let uid: number | null = null;
+      let size: number | null = null;
       let raw: Uint8Array | null = null;
       for (c.skipSpaces(); c.peek() !== 41; c.skipSpaces()) {
         const before = c.p;
@@ -158,16 +190,27 @@ export function parseImapFetch(bytes: Uint8Array): { uid: number; raw: Uint8Arra
         const v = c.value();
         if (c.p === before) throw new RangeError("malformed FETCH response");
         if (name === "UID" && v) uid = Number(dec.decode(v));
+        else if (name === "RFC822.SIZE" && v) size = Number(dec.decode(v));
         else if ((name.startsWith("BODY[") || name === "RFC822") && v) raw = v;
       }
       c.p++; // closing paren
       c.toLineEnd();
-      if (uid !== null && Number.isInteger(uid) && raw) out.push({ uid, raw });
+      out.push({ uid: Number.isInteger(uid) ? uid : null, size: Number.isInteger(size) ? size : null, raw });
     }
   } catch (e) {
     if (!(e instanceof RangeError)) throw e;
   }
   return out;
+}
+
+/** Messages (UID plus body) from a `UID FETCH ... BODY.PEEK[]` reply, in server order. Entries lacking either are dropped. */
+export function parseImapFetch(bytes: Uint8Array): { uid: number; raw: Uint8Array }[] {
+  return parseFetchEntries(bytes).flatMap((e) => (e.uid !== null && e.raw ? [{ uid: e.uid, raw: e.raw }] : []));
+}
+
+/** UID and size pairs from a `UID FETCH ... (UID RFC822.SIZE)` reply. */
+export function parseImapSizes(bytes: Uint8Array): { uid: number; size: number }[] {
+  return parseFetchEntries(bytes).flatMap((e) => (e.uid !== null && e.size !== null ? [{ uid: e.uid, size: e.size }] : []));
 }
 
 // ---------- session over a socket-like ----------
@@ -180,44 +223,95 @@ export interface ImapSocket {
 }
 export type ImapConnector = (host: string, port: number, secure: "on" | "starttls") => ImapSocket;
 
-const READ_TIMEOUT_MS = 20_000;
-const TOTAL_TIMEOUT_MS = 90_000;
-const MAX_RESPONSE_BYTES = 40 * 1024 * 1024;
+export interface ImapLimits {
+  /** Longest wait for the next bytes from the server. */
+  readTimeoutMs: number;
+  /** Longest a whole session may last. */
+  totalTimeoutMs: number;
+  /** Largest single command response held in memory. */
+  maxResponseBytes: number;
+  /** Longest LOGOUT and socket close may take during cleanup. */
+  closeTimeoutMs: number;
+}
+const DEFAULT_LIMITS: ImapLimits = { readTimeoutMs: 20_000, totalTimeoutMs: 90_000, maxResponseBytes: 8 * 1024 * 1024, closeTimeoutMs: 2000 };
+
+const concat = (parts: Uint8Array[], total: number): Uint8Array => {
+  if (parts.length === 1) return parts[0];
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.length; }
+  return out;
+};
+
+/** Resolves when `p` settles or after `ms`, whichever is first, and never rejects. */
+async function within(work: () => Promise<unknown> | unknown, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const run = (async () => { try { await work(); } catch { /* best effort */ } })();
+  await Promise.race([run, new Promise((r) => { timer = setTimeout(r, ms); })]);
+  clearTimeout(timer);
+}
 
 class ImapSession {
-  private buf = new Uint8Array(0);
+  // Received bytes, kept as a list and joined only when a complete response may have arrived.
+  private chunks: Uint8Array[] = [];
+  private size = 0;
   private reader: ReadableStreamDefaultReader<Uint8Array>;
   private writer: WritableStreamDefaultWriter<Uint8Array>;
   private tagN = 0;
-  private readonly deadline = Date.now() + TOTAL_TIMEOUT_MS;
+  private readonly deadline: number;
 
-  constructor(private socket: ImapSocket) {
+  constructor(private socket: ImapSocket, private readonly limits: ImapLimits = DEFAULT_LIMITS) {
     this.reader = socket.readable.getReader();
     this.writer = socket.writable.getWriter();
+    this.deadline = Date.now() + limits.totalTimeoutMs;
   }
 
   private async readChunk(): Promise<void> {
-    const ms = Math.min(READ_TIMEOUT_MS, this.deadline - Date.now());
+    const ms = Math.min(this.limits.readTimeoutMs, this.deadline - Date.now());
     if (ms <= 0) throw new Error("IMAP session timed out");
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("IMAP server stopped responding")), ms); });
     try {
       const { value, done } = await Promise.race([this.reader.read(), timeout]);
       if (done) throw new Error("IMAP connection closed unexpectedly");
-      const next = new Uint8Array(this.buf.length + value.length);
-      next.set(this.buf); next.set(value, this.buf.length);
-      if (next.length > MAX_RESPONSE_BYTES) throw new Error("IMAP response too large");
-      this.buf = next;
+      if (this.size + value.length > this.limits.maxResponseBytes) throw new Error("IMAP response too large");
+      this.chunks.push(value);
+      this.size += value.length;
     } finally {
       clearTimeout(timer);
     }
   }
 
+  /** Everything received so far as one buffer (the list collapses to it). */
+  private joined(): Uint8Array {
+    const all = concat(this.chunks, this.size);
+    this.chunks = this.size ? [all] : [];
+    return all;
+  }
+
+  private consume(n: number): void {
+    const rest = this.joined().slice(n);
+    this.chunks = rest.length ? [rest] : [];
+    this.size = rest.length;
+  }
+
+  /** Cheap check on the last bytes only: does the data end with a line that starts with `tag `? */
+  private endsWithTag(tag: string): boolean {
+    let need = 4096;
+    const tail: Uint8Array[] = [];
+    for (let i = this.chunks.length - 1; i >= 0 && need > 0; i--) { tail.unshift(this.chunks[i]); need -= this.chunks[i].length; }
+    const t = concat(tail, tail.reduce((n, c) => n + c.length, 0));
+    if (t.length < 2 || t[t.length - 2] !== 13 || t[t.length - 1] !== 10) return false;
+    let start = t.length - 2;
+    while (start > 0 && !(t[start - 1] === 10 && start >= 2 && t[start - 2] === 13)) start--;
+    return ascii(t, start, t.length).startsWith(`${tag} `);
+  }
+
   async greeting(): Promise<void> {
     let eol: number;
-    while ((eol = indexOfCrlf(this.buf, 0)) < 0) await this.readChunk();
-    const line = ascii(this.buf, 0, eol);
-    this.buf = this.buf.slice(eol + 2);
+    while ((eol = indexOfCrlf(this.joined(), 0)) < 0) await this.readChunk();
+    const line = ascii(this.joined(), 0, eol);
+    this.consume(eol + 2);
     if (!/^\* (OK|PREAUTH)\b/i.test(line)) throw new Error(`unexpected IMAP greeting: ${line.slice(0, 120)}`);
   }
 
@@ -227,10 +321,10 @@ class ImapSession {
     const command = build(tag);
     await this.writer.write(enc.encode(command));
     for (;;) {
-      const res = scanResponse(this.buf, tag);
+      const res = this.endsWithTag(tag) ? scanResponse(this.joined(), tag) : null;
       if (res) {
-        this.buf = this.buf.slice(res.end);
-        if (res.status !== "OK") throw new Error(`IMAP ${command.split(" ")[1]} failed: ${res.text}`);
+        this.consume(res.end);
+        if (res.status !== "OK") throw new Error(`IMAP ${command.split(/[ \r]/)[1]} failed: ${res.text}`);
         return res.body;
       }
       await this.readChunk();
@@ -245,26 +339,27 @@ class ImapSession {
     this.socket = this.socket.startTls();
     this.reader = this.socket.readable.getReader();
     this.writer = this.socket.writable.getWriter();
-    this.buf = new Uint8Array(0);
+    this.chunks = [];
+    this.size = 0;
   }
 
   async login(user: string, pass: string): Promise<void> { await this.run((t) => buildLogin(t, user, pass)); }
   async select(): Promise<{ uidValidity: number; uidNext: number }> { return parseSelect(dec.decode(await this.run(buildSelect))); }
-  fetch(sinceUid: number): Promise<Uint8Array> { return this.run((t) => buildFetch(t, sinceUid)); }
+  sizes(from: number, to: number): Promise<Uint8Array> { return this.run((t) => buildFetchSizes(t, from, to)); }
+  body(uid: number): Promise<Uint8Array> { return this.run((t) => buildFetchBody(t, uid)); }
 
+  /** Best effort. A hung server must not hold the Worker, so LOGOUT and the close each get a short cap. */
   async close(): Promise<void> {
-    // Best effort; a hung server must not hold the Worker, so give LOGOUT two seconds.
-    const logout = this.run((t) => `${t} LOGOUT\r\n`).catch(() => undefined);
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    await Promise.race([logout, new Promise((r) => { timer = setTimeout(r, 2000); })]);
-    clearTimeout(timer);
-    try { await this.socket.close(); } catch { /* already closed */ }
+    await within(() => this.run((t) => `${t} LOGOUT\r\n`), this.limits.closeTimeoutMs);
+    await within(() => this.socket.close(), this.limits.closeTimeoutMs);
   }
 }
 
-async function withSession<T>(open: ImapConnector, mb: Mailbox, password: string, fn: (s: ImapSession) => Promise<T>): Promise<T> {
+async function withSession<T>(
+  open: ImapConnector, mb: Mailbox, password: string, limits: Partial<ImapLimits> | undefined, fn: (s: ImapSession) => Promise<T>,
+): Promise<T> {
   const implicit = mb.imap_port === 993;
-  const session = new ImapSession(open(mb.imap_host, mb.imap_port, implicit ? "on" : "starttls"));
+  const session = new ImapSession(open(mb.imap_host, mb.imap_port, implicit ? "on" : "starttls"), { ...DEFAULT_LIMITS, ...limits });
   try {
     await session.greeting();
     if (!implicit) await session.startTls();
@@ -277,21 +372,34 @@ async function withSession<T>(open: ImapConnector, mb: Mailbox, password: string
   }
 }
 
-export const fetchImapOver = (open: ImapConnector, mb: Mailbox, password: string, sinceUid: number | null) =>
-  withSession(open, mb, password, async (s) => {
+/**
+ * Reads at most WINDOW new messages after `sinceUid` using explicit UID ranges (never `n:*`).
+ * Sizes come first; messages over MAX_MESSAGE_BYTES are skipped and reported, and the rest are
+ * fetched one UID at a time so no single response outgrows the response cap.
+ */
+export const fetchImapOver = (open: ImapConnector, mb: Mailbox, password: string, sinceUid: number | null, limits?: Partial<ImapLimits>): Promise<ImapFetchResult> =>
+  withSession(open, mb, password, limits, async (s) => {
     const baseline = await s.select();
-    if (sinceUid === null) return { ...baseline, messages: [] };
-    const messages = newMessages(parseImapFetch(await s.fetch(sinceUid)), sinceUid);
-    return { ...baseline, messages };
+    if (sinceUid === null) return { ...baseline, messages: [], skipped: [], highestUid: baseline.uidNext - 1 };
+    const win = planWindow(sinceUid, baseline.uidNext);
+    if (!win) return { ...baseline, messages: [], skipped: [], highestUid: sinceUid };
+    const sizes = parseImapSizes(await s.sizes(win.from, win.to)).filter((m) => m.uid >= win.from && m.uid <= win.to);
+    const plan = planBodies(sizes, win.to);
+    const messages: { uid: number; raw: Uint8Array }[] = [];
+    for (const uid of plan.fetch) {
+      const got = parseImapFetch(await s.body(uid)).find((m) => m.uid === uid);
+      if (got) messages.push(got);
+    }
+    return { ...baseline, messages: newMessages(messages, sinceUid), skipped: plan.skipped, highestUid: plan.highestUid };
   });
 
-export const probeImapOver = (open: ImapConnector, mb: Mailbox, password: string) =>
-  withSession(open, mb, password, async (s) => ({ uidValidity: (await s.select()).uidValidity }));
+export const probeImapOver = (open: ImapConnector, mb: Mailbox, password: string, limits?: Partial<ImapLimits>) =>
+  withSession(open, mb, password, limits, async (s) => ({ uidValidity: (await s.select()).uidValidity }));
 
 const realConnect: ImapConnector = (host, port, secure) =>
   connect({ hostname: host, port }, { secureTransport: secure, allowHalfOpen: false }) as unknown as ImapSocket;
 
-/** The real reader. With sinceUid null it returns only the baseline and fetches no messages. */
+/** The real reader. With sinceUid null it returns only the baseline (highestUid = uidNext - 1) and fetches no messages. */
 export const fetchImap: ImapFetch = (mb, password, sinceUid) => fetchImapOver(realConnect, mb, password, sinceUid);
 /** Logs in and selects INBOX, fetching nothing. */
 export const fetchImapProbe: ImapProbe = (mb, password) => probeImapOver(realConnect, mb, password);

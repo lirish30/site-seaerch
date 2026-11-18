@@ -32,9 +32,21 @@ export interface OutboundMessage {
 
 export type SmtpSend = (mb: Mailbox, password: string, msg: OutboundMessage) => Promise<void>;
 
-export type ImapFetch = (
-  mb: Mailbox, password: string, sinceUid: number | null,
-) => Promise<{ uidValidity: number; uidNext: number; messages: { uid: number; raw: Uint8Array }[] }>;
+export interface ImapFetchResult {
+  uidValidity: number;
+  uidNext: number;
+  messages: { uid: number; raw: Uint8Array }[];
+  /**
+   * The highest UID this call examined, INCLUDING messages skipped for size. The sync advances its
+   * cursor to this value so one oversized or unreadable mail can never block the ones behind it.
+   * With `sinceUid === null` it is the baseline (`uidNext - 1`); when nothing is new it is `sinceUid`.
+   */
+  highestUid: number;
+  /** Messages at or below `highestUid` that were not downloaded because they exceed the size limit. */
+  skipped: { uid: number; size: number }[];
+}
+
+export type ImapFetch = (mb: Mailbox, password: string, sinceUid: number | null) => Promise<ImapFetchResult>;
 
 /** Logs in and selects INBOX, fetching no messages. Used by the connection test. */
 export type ImapProbe = (mb: Mailbox, password: string) => Promise<{ uidValidity: number }>;
