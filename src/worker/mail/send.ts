@@ -9,6 +9,7 @@ import { logActivity } from "../db/activity";
 import { getByApproval, insertOutbound, markFailed, markSent, reclaimFailed } from "../db/messages";
 import { getMailDeps } from "./deps";
 import { errorText } from "./redact";
+import { checkConflict } from "../conflict";
 import { dailyLimit, sentInLast24h, warmupUnlockDate } from "./limits";
 import type { Mailbox, MailboxKey } from "./types";
 
@@ -43,22 +44,25 @@ export const PUBLIC_PAGE_PREFIXES = ["/r/", "/p/"];
 
 const URL_RE = /https?:\/\/[^\s<>"']+/gi;
 const TRAILING = /[.,;:!?)\]]+$/;
-const hostOf = (url: string): string | null => { try { return new URL(url).hostname.toLowerCase(); } catch { return null; } };
+/** A URL's host, lower-cased and without a trailing dot (`sitelineweb.com.` is the same host as `sitelineweb.com`). Null when it does not parse. */
+const hostOf = (url: string): string | null => { try { return new URL(url).hostname.toLowerCase().replace(/\.+$/, ""); } catch { return null; } };
 
 /**
  * Why this message may not be sent because of the links in it, or null when it is clean.
  * Every mailbox: no workers.dev. Outreach only: no link to the main brand domain, and no public-page link on a host other than
- * the one in OUTREACH_LINK_BASE (checked only when it is set). Third-party hosts (a signature website, a logo CDN) pass.
+ * the one in OUTREACH_LINK_BASE (checked only when it is set; a set but invalid value blocks cold sends). Third-party hosts (a signature website, a logo CDN) pass.
  */
 export function linkProblem(c: Pick<ComposedEmail, "text" | "html">, mailbox: MailboxKey, linkBase: string | undefined): string | null {
   const all = `${c.text}\n${c.html}`;
   if (/workers\.dev/i.test(all)) return "message mentions workers.dev; links must use your own domain";
   if (mailbox !== "outreach") return null;
   const baseHost = linkBase?.trim() ? hostOf(linkBase.trim()) : null;
+  // A configured but unparseable base must not silently switch the public-page rule off.
+  if (linkBase?.trim() && !baseHost) return `OUTREACH_LINK_BASE (${linkBase.trim()}) is not a valid URL, so cold email is blocked until it is fixed (expected something like https://go.example.com)`;
   for (const url of new Set([...all.matchAll(URL_RE)].map((m) => m[0].replace(TRAILING, "")))) {
     let u: URL;
     try { u = new URL(url); } catch { continue; }
-    const host = u.hostname.toLowerCase();
+    const host = u.hostname.toLowerCase().replace(/\.+$/, "");
     if (host === BRAND_HOST || host.endsWith(`.${BRAND_HOST}`)) {
       return `link ${url} is on the main brand domain (${BRAND_HOST}); cold email must link the outreach domain${baseHost ? ` (${linkBase})` : ""}`;
     }
@@ -109,6 +113,10 @@ export async function sendEmail(env: Env, p: SendInput, opts: { approvalId: stri
     if (done?.status === "sent") return afterSend(env, p);
   }
   const { mb, password } = await loadSendable(env, p.mailbox, real);
+  if (real) { // the conflict gate: a listed recipient, a suppressed lead or an existing client is never written to
+    const c = await checkConflict(db, { email: p.to, businessId: p.businessId });
+    if (c.blocked) throw new Error(`blocked: ${c.reason} (${c.source})`);
+  }
   const settings = await getSettings(db);
 
   if (real && p.mailbox === "outreach") {

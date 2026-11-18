@@ -68,6 +68,10 @@ export interface FitResult { fit: number | null; profile: { id: string; name: st
 
 export type SuppressionReason = "client" | "opt_out" | "competitor" | "active_deal" | "other";
 export interface Suppression { id: string; kind: "domain" | "place_id"; value: string; reason: SuppressionReason; note: string | null; created_at: string; }
+export type DncKind = "email" | "domain" | "name";
+export type DncReason = "client" | "opt_out" | "competitor" | "active_deal" | "bounced" | "webfor" | "other";
+/** GET /api/do-not-contact: addresses, domains and company names outreach never writes to. */
+export interface DoNotContact { id: string; kind: DncKind; value: string; reason: DncReason; note: string | null; created_at: string; }
 /** `suppressed` on GET /api/leads/:id: the reason and note of the list entry this lead matches, or null. */
 export interface LeadSuppression { reason: SuppressionReason; note: string | null; }
 

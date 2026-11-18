@@ -2,8 +2,7 @@ import { z } from "zod";
 import { registerHandler } from "./registry";
 import type { Drafter } from "../db/approvals";
 import type { Settings } from "../types";
-import { checkConflict } from "../mail/conflictStub";
-import { composeOutbound, loadSendable, sendEmail } from "../mail/send";
+import { composeOutbound, sendEmail } from "../mail/send";
 
 const OneLine = (max: number) => z.string().trim().min(1).max(max).regex(/^[^\r\n]*$/, "must be one line");
 
@@ -44,10 +43,9 @@ registerHandler({
   label: "Send email",
   parse: (p) => EmailSendSchema.parse(p),
   async execute(env, p: EmailSendPayload, a) {
-    await loadSendable(env, p.mailbox, true); // 1. mailbox enabled, password secret present
-    const c = await checkConflict(env.DB, { email: p.to, businessId: p.businessId }); // 2. conflict gate (Task 5)
-    if (c.blocked) throw new Error(`blocked: ${c.reason} (${c.source})`);
-    // Task 7 adds the enrollment-status check here.
-    await sendEmail(env, p, { approvalId: a.id }); // 3-6. footer and address, link guard, warm-up and daily cap, once-only send
+    // `sendEmail` runs the checks in order, AFTER its already-sent short-circuit so a retry of a sent message cannot fail on them:
+    // mailbox enabled, conflict gate, footer and address, link guard, warm-up and daily cap, once-only send.
+    // Task 7 adds the enrollment-status check there too.
+    await sendEmail(env, p, { approvalId: a.id });
   },
 });

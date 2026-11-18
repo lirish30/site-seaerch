@@ -229,6 +229,32 @@ describe("email.send", () => {
     expect(await approve(env, (await mk({ mailbox: "main", body: "See https://sitelineweb.com/x" })).id)).toEqual({ ok: true });
   });
 
+  it("a trailing dot on a URL host does not slip past the brand block or the outreach-host rule", async () => {
+    for (const url of ["https://sitelineweb.com./x", "https://clients.sitelineweb.com./report/abc"]) {
+      const r = await approve(env, (await mk({ body: `Take a look: ${url}` })).id);
+      expect(r).toMatchObject({ ok: false, status: 502 });
+      expect((r as { error: string }).error).toContain("main brand domain");
+    }
+    // the outreach host itself with a trailing dot is still the outreach host
+    expect(await approve(env, (await mk({ body: "Take a look: https://go.hellositeline.test./r/abc" })).id)).toEqual({ ok: true });
+    expect(smtpCalls).toHaveLength(1);
+  });
+
+  it("an OUTREACH_LINK_BASE that does not parse blocks cold sends instead of disabling the rule", async () => {
+    const e = env as { OUTREACH_LINK_BASE?: string };
+    const saved = e.OUTREACH_LINK_BASE;
+    e.OUTREACH_LINK_BASE = "go.hellositeline.test/not a url";
+    try {
+      const r = await approve(env, (await mk({ body: "Plain note with no links." })).id);
+      expect(r).toMatchObject({ ok: false, status: 502 });
+      expect((r as { error: string }).error).toContain("OUTREACH_LINK_BASE");
+      expect((r as { error: string }).error).toContain("not a valid URL");
+      expect(smtpCalls).toHaveLength(0);
+      // the main mailbox is not a cold mailbox and is unaffected
+      expect(await approve(env, (await mk({ mailbox: "main", body: "Plain note." })).id)).toEqual({ ok: true });
+    } finally { e.OUTREACH_LINK_BASE = saved; }
+  });
+
   it("a public page link must be on the outreach host", async () => {
     const good = await mk({ body: "Take a look: https://go.hellositeline.test/r/abc." });
     expect(await approve(env, good.id)).toEqual({ ok: true });
