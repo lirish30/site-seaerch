@@ -20,6 +20,7 @@ import { workSampleRoutes } from "./routes/workSamples";
 import { spendRoutes } from "./routes/spend";
 import { approvalRoutes } from "./routes/approvals";
 import { agentActionRoutes } from "./routes/agentActions";
+import { mailboxRoutes } from "./routes/mailboxes";
 import "./approvals/leadNote";
 import { mcpRoute } from "./mcp/route";
 import { runDueRadars } from "./radar-run";
@@ -48,6 +49,7 @@ app.route("/api/work-samples", workSampleRoutes);
 app.route("/api/spend", spendRoutes);
 app.route("/api/approvals", approvalRoutes);
 app.route("/api/agent-actions", agentActionRoutes);
+app.route("/api/mailboxes", mailboxRoutes);
 // Mounted last at /api: /api/leads/:id/cro-audit(s), /api/cro-items/:id, /api/cro-audits/:id/... (all behind requireAuth).
 app.route("/api", croRoutes);
 
