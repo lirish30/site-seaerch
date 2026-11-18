@@ -17,7 +17,7 @@ import { scoreFit } from "../scoring/fit";
 import { rankPromising } from "../scoring/promising";
 import { bestOffer } from "../services/best-offer";
 import { listContacts, contactsFor } from "../db/contacts";
-import { draftedIds, latestDraft, updateDraftBody, listDrafts, selectDraft, variantsOf } from "../db/drafts";
+import { draftedIds, isPlaceholderDraft, latestDraft, updateDraftBody, listDrafts, selectDraft, variantsOf } from "../db/drafts";
 import { activeReportFor, createReport, otherActiveCount, revokeReports, type ReportRow } from "../db/reports";
 import { pickRecipient } from "../recipient";
 import { TWEAKS, createManualDraft, draftTaskState, requestDraft, type Tweak } from "../queue/leadDraft"; // also registers the lead.draft task kind
@@ -158,7 +158,7 @@ leadRoutes.get("/:id", async (c) => {
   const shown = audit && { ...audit, findings: audit.findings.map((f) => ({ ...f, stale: isStale(f, audit.created_at, now) })) };
   // Matched on the stale-flagged findings so `because` carries each finding's `stale` for the evidence badge.
   const best_offer = shown ? bestOffer(shown.findings, await listServices(c.env.DB, { activeOnly: true }), shown.offer) : null;
-  return c.json({ business, audit: shown, contacts, draft, variants, toContact, people, activity, changes, urgency: audit ? urgencyOf(audit.findings) : 0, best_offer,
+  return c.json({ business, audit: shown, contacts, draft, draftPlaceholder: !!draft && isPlaceholderDraft(draft), variants, toContact, people, activity, changes, urgency: audit ? urgencyOf(audit.findings) : 0, best_offer,
     fit: scoreFit(business, audit, profiles), suppressed: hit ? { reason: hit.reason, note: hit.note } : null });
 });
 
@@ -208,7 +208,7 @@ leadRoutes.post("/:id/drive", (c) => exportGuard(c, async () => {
   if (folder !== row.folder_id) await setGoogleFolder(c.env.DB, folder);
   const name = r.data.business.name;
   const draft = await latestDraft(c.env.DB, id);
-  const email = draft ? composeEmail(await getSettings(c.env.DB), draft) : null;
+  const email = draft && !isPlaceholderDraft(draft) ? composeEmail(await getSettings(c.env.DB), draft) : null;
   const doc = await uploadFile(fetch, token, { name: `${name} – website audit & proposal`, parents: [folder], mimeType: "application/vnd.google-apps.document" },
     { type: "text/html", bytes: renderDoc(r.data, email ? { subject: email.subject, body: email.text } : null) });
   let pdfUrl: string | null = null;
@@ -374,13 +374,13 @@ leadRoutes.get("/:id/draft-status", async (c) => {
   return c.json(await draftTaskState(c.env.DB, id));
 });
 
-// "Write it myself": an editable draft with nothing from Claude in it, for a lead that has none yet.
+// "Write it myself": an editable placeholder draft with nothing from Claude in it, for a lead that has none yet (a lead that has one gets it back).
 leadRoutes.post("/:id/draft/manual", async (c) => {
   const blocked = await suppressedResponse(c, c.req.param("id"));
   if (blocked) return blocked;
   try {
-    const d = await createManualDraft(c.env.DB, c.req.param("id"));
-    return c.json({ ...d, variants: await variantsOf(c.env.DB, d) }, 201);
+    const { draft: d, created } = await createManualDraft(c.env.DB, c.req.param("id"));
+    return c.json({ ...d, variants: await variantsOf(c.env.DB, d) }, created ? 201 : 200);
   } catch (e) {
     return c.json({ error: (e as Error).message }, 400);
   }

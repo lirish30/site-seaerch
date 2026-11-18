@@ -24,7 +24,9 @@ export interface ComposerHandle {
 
 interface Composed { html: string; text: string }
 interface Props {
-  leadId: string; draft: Draft | null; variants: Draft[]; toContact: Contact | null; suppressed: boolean; lowPriority: boolean;
+  leadId: string; draft: Draft | null;
+  /** The draft is the untouched starter from "Write it myself": nothing can be copied, started or sent from it until it is written. */
+  placeholder: boolean; variants: Draft[]; toContact: Contact | null; suppressed: boolean; lowPriority: boolean;
   findings: Audit["findings"];
   /** Reloads the lead after the draft changed on the server. */
   onChanged: () => Promise<void>;
@@ -46,7 +48,7 @@ const toggle = <T,>(set: React.Dispatch<React.SetStateAction<Set<T>>>, key: T) =
  * live preview of the real email (signature and all), and nudge it with quick rewrites.
  */
 const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p, ref) {
-  const { leadId, draft, variants, toContact, suppressed } = p;
+  const { leadId, draft, variants, toContact, suppressed, placeholder } = p;
   const [subject, setSubject] = useState(draft?.subject ?? ""); const [body, setBody] = useState(draft?.body ?? "");
   const [footer, setFooter] = useState(draft?.include_footer ?? false);
   const [side, setSide] = useState<"preview" | "write">("preview");
@@ -61,6 +63,7 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
   const [showAllChips, setShowAllChips] = useState(false); const [versionsOpen, setVersionsOpen] = useState(false);
   const previewDialog = useRef<HTMLDialogElement>(null);
   const [status, setStatus] = useState<DraftStatus>(IDLE);
+  const openLead = useRef(leadId); openLead.current = leadId;
   const waiting = status.state !== "idle";
   /** The draft that was current when a queued one finished: when a different one shows up, the new options are in. */
   const finishedFrom = useRef<string | null | undefined>(undefined);
@@ -99,8 +102,9 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
   }, [leadId]);
   useEffect(() => {
     if (!waiting) return;
-    const t = setInterval(() => { api.get<DraftStatus>(`/leads/${leadId}/draft-status`).then(setStatus).catch(() => {}); }, POLL_MS);
-    return () => clearInterval(t);
+    let live = true; // an answer for the lead that was open before must not set this lead's status
+    const t = setInterval(() => { api.get<DraftStatus>(`/leads/${leadId}/draft-status`).then((s) => { if (live) setStatus(s); }).catch(() => {}); }, POLL_MS);
+    return () => { live = false; clearInterval(t); };
   }, [leadId, waiting]);
   useEffect(() => {
     if (waiting) { wasWaiting.current = true; return; }
@@ -149,7 +153,8 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
     setBusy(extra.tweak ? String(extra.tweak) : "write"); setError(""); p.onMessage("");
     try {
       await api.post(`/leads/${leadId}/regenerate`, extra);
-      setStatus(await api.get<DraftStatus>(`/leads/${leadId}/draft-status`));
+      const s = await api.get<DraftStatus>(`/leads/${leadId}/draft-status`);
+      if (openLead.current === leadId) setStatus(s);
     } catch (e) { setError((e as Error).message); } finally { setBusy(""); }
   }
   /** The manual editor, for a lead with no draft: an empty draft is created and the lead reloads with it. */
@@ -189,7 +194,10 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
   }
   async function copyAndMark() { if (await copy() && await p.onMarkContacted()) p.onMessage("Copied and marked contacted"); }
 
-  const mailto = toContact && preview ? mailtoHref(toContact.value, subject, preview.text) : null;
+  // Still the untouched starter: copying or starting a sequence from it would send "Hi," to a business. The first edit makes it a draft.
+  const starter = placeholder && !!draft && subject === draft.subject && body === draft.body;
+  const starterWhy = "Write the email first: this is only the starter";
+  const mailto = toContact && preview && !starter ? mailtoHref(toContact.value, subject, preview.text) : null;
 
   const ranked = p.findings.map((f, i) => ({ f, key: `${f.code}:${i}` }))
     .sort((a, b) => ({ critical: 0, important: 1, nice: 2 }[a.f.severity] - { critical: 0, important: 1, nice: 2 }[b.f.severity]) || b.f.points - a.f.points);
@@ -250,7 +258,7 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
             ))}
           </div>
           <div className="c-row c-actions">
-            <button className="btn" onClick={() => void copy()}><Icon name="copy" size={16} />Copy email</button>
+            <button className="btn" onClick={() => void copy()} disabled={starter} title={starter ? starterWhy : ""}><Icon name="copy" size={16} />Copy email</button>
             {mailto && !suppressed && <a className="btn" href={mailto} onClick={() => void save()}><Icon name="external" size={16} />Open in mail app</a>}
             <button className="btn icon-only" onClick={() => previewDialog.current?.showModal()} disabled={!preview} aria-label="Preview the email" title="Preview the email as it will appear"><Icon name="eye" size={16} /></button>
             {versions.length > 1 && (
@@ -269,8 +277,8 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
               </span>
             )}
             <span className="grow" />
-            <StartSequence leadId={leadId} disabled={suppressed} why="Suppressed: outreach is turned off" beforeStart={save} onStarted={p.onSequenceStarted} />
-            <button className="btn primary" onClick={() => void copyAndMark()} disabled={suppressed}><Icon name="check" size={16} />Copy & mark contacted</button>
+            <StartSequence leadId={leadId} disabled={suppressed || starter} why={suppressed ? "Suppressed: outreach is turned off" : starterWhy} beforeStart={save} onStarted={p.onSequenceStarted} />
+            <button className="btn primary" onClick={() => void copyAndMark()} disabled={suppressed || starter} title={starter ? starterWhy : ""}><Icon name="check" size={16} />Copy & mark contacted</button>
           </div>
           <dialog ref={previewDialog} className="preview-dialog" onClick={(e) => { if (e.target === previewDialog.current) previewDialog.current?.close(); }}>
             <div className="pd-head"><b>Email preview</b><span className="muted small">Subject: {subject || "—"}</span><span className="grow" /><button className="btn sm" onClick={() => previewDialog.current?.close()}>Close</button></div>

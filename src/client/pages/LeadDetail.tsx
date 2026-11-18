@@ -25,7 +25,7 @@ import type { CroResponse } from "../cro";
 import { NICHE_LABEL, OFFER_LABEL, STATUSES, type Activity, type Audit, type AuditChanges, type BestOffer, type Business, type Contact, type FitProfile, type FitResult, type LeadStatus, type LeadSuppression, type Person, type SuppressionReason } from "../types";
 
 interface ShareReport { token: string; url: string; expiresAt: string; }
-interface Data { business: Business; audit: Audit | null; contacts: Contact[]; draft: Draft | null; variants: Draft[]; toContact: Contact | null; people: Person[]; activity: Activity[]; changes: AuditChanges | null; urgency: number; best_offer: BestOffer | null; fit: FitResult; suppressed: LeadSuppression | null; }
+interface Data { business: Business; audit: Audit | null; contacts: Contact[]; draft: Draft | null; draftPlaceholder?: boolean; variants: Draft[]; toContact: Contact | null; people: Person[]; activity: Activity[]; changes: AuditChanges | null; urgency: number; best_offer: BestOffer | null; fit: FitResult; suppressed: LeadSuppression | null; }
 
 const LINK_LABEL: Record<string, string> = {
   contact: "Contact page", careers: "Careers / jobs", menu: "Menu", services: "Services", about: "About", team: "Team",
@@ -357,7 +357,7 @@ export default function LeadDetail() {
           {tab === "plan" && <CroPanel leadId={b.id} onError={setMsg} />}
 
           {tab === "email" && (
-            <EmailComposer ref={composer} leadId={b.id} draft={d.draft} variants={d.variants ?? []} toContact={d.toContact} suppressed={!!d.suppressed}
+            <EmailComposer ref={composer} leadId={b.id} draft={d.draft} placeholder={!!d.draftPlaceholder} variants={d.variants ?? []} toContact={d.toContact} suppressed={!!d.suppressed}
               lowPriority={!!a && a.score < 25} findings={a?.findings ?? []} onChanged={load} onMessage={setMsg}
               focus={focus} onFocusChange={setFocus} onSequenceStarted={sequenceChanged}
               onMarkContacted={async () => { const ok = await setStatus("contacted"); return ok; }} />
@@ -429,7 +429,7 @@ export default function LeadDetail() {
 
           <PropSection icon="send" title="Sequence">
             <SequencePanel leadId={b.id} leadName={b.name} refreshKey={seqTick} onChanged={() => void load().catch(fail)}
-              startDisabled={!d.draft || !!d.suppressed} startWhy={d.suppressed ? "Suppressed: outreach is turned off" : "Write a draft first"}
+              startDisabled={!d.draft || !!d.draftPlaceholder || !!d.suppressed} startWhy={d.suppressed ? "Suppressed: outreach is turned off" : "Write a draft first"}
               beforeStart={async () => (await composer.current?.save()) ?? true} />
           </PropSection>
 

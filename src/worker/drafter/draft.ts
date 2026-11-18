@@ -10,7 +10,7 @@ const oneLine = /^[^\r\n]*$/;
 const Variant = z.object({
   angle: z.string().max(100).default(""),
   subject: z.string().trim().min(1).max(200).regex(oneLine, "must be one line"),
-  body: z.string().trim().min(1).max(6000),
+  body: z.string().trim().min(1).max(5000), // what the editor saves at most (PATCH /draft)
 });
 // A reply that ignores the variants schema and returns one flat email is still one usable variant.
 const asVariants = (raw: unknown) => {

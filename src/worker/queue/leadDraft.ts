@@ -5,7 +5,7 @@ import { getAudit, latestAudit } from "../db/audits";
 import { getBusiness } from "../db/businesses";
 import { ensureContact, listContacts } from "../db/contacts";
 import { croItemsForBusiness } from "../db/cro";
-import { hasVariantGroup, insertDraft, insertDrafts, latestDraft } from "../db/drafts";
+import { PLACEHOLDER_BODY, PLACEHOLDER_SUBJECT, hasVariantGroup, insertDraft, insertDrafts, latestDraft } from "../db/drafts";
 import { pocFor } from "../db/people";
 import { getSettings } from "../db/settings";
 import { leadSuppression } from "../db/suppression";
@@ -140,17 +140,20 @@ async function gather(db: D1Database, p: LeadDraftPayload, t: { audit: Audit; bu
 
 /**
  * An empty-ish draft the sender fills in by hand (Claude is not asked): addressed the way a written draft would be, with a placeholder subject and
- * a greeting. Nothing from the lead's site goes in it. For when nobody wants to wait for the queue.
+ * a greeting. Nothing from the lead's site goes in it. It does not count as a draft (see `isPlaceholderDraft`) until the sender changes it.
+ * A lead that already has a draft gets that one back and nothing is inserted: the composer may not have loaded a draft that just landed.
  */
-export async function createManualDraft(db: D1Database, businessId: string): Promise<Draft> {
-  const [business, audit] = await Promise.all([getBusiness(db, businessId), latestAudit(db, businessId)]);
+export async function createManualDraft(db: D1Database, businessId: string): Promise<{ draft: Draft; created: boolean }> {
+  const [business, audit, existing] = await Promise.all([getBusiness(db, businessId), latestAudit(db, businessId), latestDraft(db, businessId)]);
   if (!business || !audit) throw new Error("Cannot draft: business or audit missing");
+  if (existing) return { draft: existing, created: false };
   const g = await gather(db, { businessId, auditId: audit.id, options: {} }, { audit, business }, true);
-  const d = resolveDraft({ variants: [{ angle: "", subject: "A quick note about your website", body: "Hi," }], to_contact_id: null, recipient_reason: "" }, g.input, g.pocContactId);
-  return insertDraft(db, {
+  const d = resolveDraft({ variants: [{ angle: "", subject: PLACEHOLDER_SUBJECT, body: PLACEHOLDER_BODY }], to_contact_id: null, recipient_reason: "" }, g.input, g.pocContactId);
+  const draft = await insertDraft(db, {
     business_id: businessId, audit_id: audit.id, offer: g.input.offer, steering_note: null, to_contact_id: d.to_contact_id, recipient_reason: d.recipient_reason,
     subject: d.variants[0].subject, body: d.variants[0].body, purpose: "freelance", angle: "", include_footer: (g.input.settings.footer_freelance ?? 1) === 1,
   });
+  return { draft, created: true };
 }
 
 const describeRun = (o: DraftOptions) => o.tweak ? `Rewrote the draft (${o.tweak.replace("_", " ")})`

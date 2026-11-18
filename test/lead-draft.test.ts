@@ -6,12 +6,16 @@ import { getTaskKind } from "../src/worker/queue/registry";
 import { LEAD_DRAFT_KIND, draftTaskState, enqueueDraftFor, requestDraft } from "../src/worker/queue/leadDraft";
 import { enqueueDraftIfWanted } from "../src/worker/queue/siteReview";
 import { insertAudit, latestAudit } from "../src/worker/db/audits";
-import { listDrafts, variantsOf } from "../src/worker/db/drafts";
+import { PLACEHOLDER_BODY, PLACEHOLDER_SUBJECT, draftedIds, isPlaceholderDraft, latestDraft, latestDraftsByBusiness, listDrafts, variantsOf } from "../src/worker/db/drafts";
+import { DraftResult } from "../src/worker/drafter/draft";
+import { buildSummary } from "../src/worker/todaySummary";
+import { createCampaign } from "../src/worker/db/campaigns";
+import { startSequence } from "../src/worker/sequence/engine";
 import { saveSettings } from "../src/worker/db/settings";
 import { addSuppression } from "../src/worker/db/suppression";
 import { replaceContacts, listContacts } from "../src/worker/db/contacts";
 import { createPerson } from "../src/worker/db/people";
-import { getBusiness } from "../src/worker/db/businesses";
+import { getBusiness, listTodayCandidates } from "../src/worker/db/businesses";
 import { seedBusiness, seedLeadAudit } from "./fixtures/cro";
 import { claimById, three, writeDraft } from "./fixtures/draftTask";
 
@@ -368,5 +372,95 @@ describe("routes", () => {
     expect(await draftTaskState(env.DB, b.id)).toMatchObject({ state: "queued", since: (await getTask(env.DB, taskId))!.created_at });
     const t = await claimById(taskId);
     expect(await draftTaskState(env.DB, b.id)).toEqual({ state: "claimed", since: t.claimed_at });
+  });
+});
+
+
+describe("the \"Write it myself\" placeholder is not a draft until it is written", () => {
+  const manual = async (id: string) => api(`/api/leads/${id}/draft/manual`, { method: "POST", body: "{}" });
+  /** The outreach "drafts" queue and the Home counter; other tests' leads share the database, so they are compared against a baseline. */
+  const queues = async () => ({
+    outreach: (await (await api(`/api/outreach?counts=1`)).json<any>()).counts.drafts as number,
+    home: (await buildSummary(env.DB, new Date())).drafts.ready,
+  });
+
+  it("manual route returns the existing draft and inserts nothing when the lead has one", async () => {
+    const { b } = await lead();
+    const written = await writeDraft(b.id); // Claude's draft landed before the composer reloaded
+    const r = await manual(b.id);
+    expect(r.status).toBe(200);
+    expect((await r.json<any>()).id).toBe(written.id);
+    expect(await listDrafts(env.DB, b.id)).toHaveLength(3);
+    expect((await latestDraft(env.DB, b.id))!.id).toBe(written.id);
+    // and a second click on a lead whose only draft is the placeholder gives that one back
+    const other = await lead();
+    const first = await (await manual(other.b.id)).json<any>();
+    const again = await manual(other.b.id);
+    expect([again.status, (await again.json<any>()).id]).toEqual([200, first.id]);
+    expect(await listDrafts(env.DB, other.b.id)).toHaveLength(1);
+  });
+
+  it("an untouched placeholder is flagged, and counts in no queue, list or counter", async () => {
+    const { b } = await lead();
+    const base = await queues();
+    const d = await (await manual(b.id)).json<any>();
+    expect([d.subject, d.body]).toEqual([PLACEHOLDER_SUBJECT, PLACEHOLDER_BODY]);
+    expect(isPlaceholderDraft(d)).toBe(true);
+    expect((await (await api(`/api/leads/${b.id}`)).json<any>()).draftPlaceholder).toBe(true);
+    expect((await draftedIds(env.DB, [b.id])).size).toBe(0);
+    expect((await latestDraftsByBusiness(env.DB)).has(b.id)).toBe(false);
+    expect(await queues()).toEqual(base);
+    expect((await listTodayCandidates(env.DB, new Date().toISOString(), 101)).some((c) => c.id === b.id)).toBe(false);
+    const row = (await (await api(`/api/leads`)).json<any[]>()).find((r) => r.business.id === b.id);
+    expect(row.hasDraft).toBe(false);
+  });
+
+  it("startSequence rejects a lead whose only draft is the placeholder", async () => {
+    const { b } = await lead();
+    await replaceContacts(env.DB, b.id, [email(b.id, "info@ace.com")]);
+    await manual(b.id);
+    const campaign = await createCampaign(env.DB, { name: "C", niche: "plumber", region: "Boise", towns: ["Boise, ID"] });
+    const r = await startSequence(env, { businessId: b.id, campaignId: campaign.id });
+    expect(r).toMatchObject({ ok: false, status: 400, error: expect.stringMatching(/only the empty starter/) });
+    expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM enrollments WHERE business_id = ?`).bind(b.id).first<{ n: number }>())!.n).toBe(0);
+  });
+
+  it("once edited it counts normally", async () => {
+    const { b } = await lead();
+    const base = await queues();
+    await manual(b.id);
+    // the footer switch alone leaves it a placeholder
+    expect((await api(`/api/leads/${b.id}/draft`, { method: "PATCH", body: JSON.stringify({ subject: PLACEHOLDER_SUBJECT, body: PLACEHOLDER_BODY, include_footer: false }) })).status).toBe(200);
+    expect(isPlaceholderDraft((await latestDraft(env.DB, b.id))!)).toBe(true);
+    expect((await draftedIds(env.DB, [b.id])).size).toBe(0);
+    // writing it makes it a draft
+    expect((await api(`/api/leads/${b.id}/draft`, { method: "PATCH", body: JSON.stringify({ subject: "My own subject", body: "Hi Ann, my own words." }) })).status).toBe(200);
+    const d = (await latestDraft(env.DB, b.id))!;
+    expect([isPlaceholderDraft(d), d.edited]).toEqual([false, true]);
+    expect((await draftedIds(env.DB, [b.id])).has(b.id)).toBe(true);
+    expect((await latestDraftsByBusiness(env.DB)).get(b.id)!.id).toBe(d.id);
+    expect(await queues()).toEqual({ outreach: base.outreach + 1, home: base.home + 1 });
+    expect((await (await api(`/api/leads/${b.id}`)).json<any>()).draftPlaceholder).toBe(false);
+  });
+
+  it("an edit back to the placeholder text still counts as written (edited stays set)", async () => {
+    const { b } = await lead();
+    await manual(b.id);
+    await api(`/api/leads/${b.id}/draft`, { method: "PATCH", body: JSON.stringify({ subject: "Other", body: "Other body" }) });
+    await api(`/api/leads/${b.id}/draft`, { method: "PATCH", body: JSON.stringify({ subject: PLACEHOLDER_SUBJECT, body: PLACEHOLDER_BODY }) });
+    expect(isPlaceholderDraft((await latestDraft(env.DB, b.id))!)).toBe(false);
+  });
+});
+
+describe("the draft result's size limits match the editor's", () => {
+  const one = (body: string) => ({ variants: [{ angle: "", subject: "s", body }], to_contact_id: null, recipient_reason: "r" });
+  it("accepts a body of 5000 characters and refuses 5001, with the issue listed", async () => {
+    expect(DraftResult.safeParse(one("a".repeat(5000))).success).toBe(true);
+    expect(DraftResult.safeParse(one("a".repeat(5001))).success).toBe(false);
+    const { b } = await lead();
+    const { taskId } = await requestDraft(env.DB, b.id);
+    await claimById(taskId);
+    expect(await completeTask(env, taskId, one("a".repeat(5001)))).toMatchObject({ ok: false, error: expect.stringMatching(/invalid result[\s\S]*variants\.0\.body/) });
+    expect(await completeTask(env, taskId, one("a".repeat(5000)))).toEqual({ ok: true });
   });
 });

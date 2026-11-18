@@ -1,3 +1,4 @@
+import { realDraftSql } from "./drafts";
 import type { Business, LeadStatus, Listing, ScanStage } from "../types";
 import { isSocialOnlyUrl } from "../crawler/extract";
 import { namesSimilar } from "../import/names";
@@ -120,10 +121,10 @@ export type TodayCandidate = Business & { latest_draft_at: string | null; latest
 export async function listTodayCandidates(db: D1Database, nowIso: string, minQuickScore: number): Promise<TodayCandidate[]> {
   const open = `lead_status NOT IN ('won','lost','skip')`;
   const latestScore = `(SELECT a.score FROM audits a WHERE a.business_id = businesses.id ORDER BY a.created_at DESC LIMIT 1)`;
-  const sql = `SELECT *, (SELECT MAX(d.created_at) FROM drafts d WHERE d.business_id = businesses.id) AS latest_draft_at, ${latestScore} AS latest_score
+  const sql = `SELECT *, (SELECT MAX(d.created_at) FROM drafts d WHERE d.business_id = businesses.id AND ${realDraftSql("d.")}) AS latest_draft_at, ${latestScore} AS latest_score
     FROM businesses WHERE archived_at IS NULL AND (
       (follow_up_at IS NOT NULL AND follow_up_at <= ? AND ${open})
-      OR (lead_status IN ('new','reviewed') AND EXISTS (SELECT 1 FROM drafts d WHERE d.business_id = businesses.id))
+      OR (lead_status IN ('new','reviewed') AND EXISTS (SELECT 1 FROM drafts d WHERE d.business_id = businesses.id AND ${realDraftSql("d.")}))
       OR (lead_status IN ('contacted','replied') AND deal_value IS NOT NULL)
       OR (starred_at IS NOT NULL AND ${open})
       OR (scan_stage = 'quick' AND ${open} AND ${latestScore} >= ?)

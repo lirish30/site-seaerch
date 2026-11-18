@@ -8,6 +8,17 @@ const fromRow = (r: Row): Draft => ({ ...r, purpose: normalizePurpose(r.purpose)
 /** Newest first; within one variant group (same created_at) the first-written variant leads. */
 const NEWEST = `ORDER BY created_at DESC, variant_index ASC`;
 
+/**
+ * "Write it myself" starts from an empty-ish draft so the editor has something to open. Until the sender changes it (`edited`, or the text no longer
+ * matches) it is not a draft anybody wrote: it must not count as one in any queue or counter, and no sequence may start from it.
+ */
+export const PLACEHOLDER_SUBJECT = "A quick note about your website";
+export const PLACEHOLDER_BODY = "Hi,";
+export const isPlaceholderDraft = (d: { subject: string; body: string; edited: boolean }): boolean =>
+  !d.edited && d.subject === PLACEHOLDER_SUBJECT && d.body === PLACEHOLDER_BODY;
+/** The same rule as SQL, for a drafts row (`alias` is its table alias with a dot, or ""): true for a draft somebody wrote. */
+export const realDraftSql = (alias = "") => `NOT (${alias}edited = 0 AND ${alias}subject = '${PLACEHOLDER_SUBJECT}' AND ${alias}body = '${PLACEHOLDER_BODY}')`;
+
 const INSERT_DRAFT = `INSERT INTO drafts (id, business_id, audit_id, to_contact_id, recipient_reason, subject, body, offer,
      steering_note, purpose, angle, include_footer, variant_group, variant_index, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
 const bindDraft = (db: D1Database, id: string, d: DraftInsert) => db.prepare(INSERT_DRAFT).bind(
@@ -36,20 +47,20 @@ export async function latestDraft(db: D1Database, businessId: string): Promise<D
   return r ? fromRow(r) : null;
 }
 
-/** The current draft of every lead that has one (the newest group's first variant, same rule as `latestDraft`). */
+/** The current draft of every lead that has one (the newest group's first variant, same rule as `latestDraft`); an untouched "Write it myself" placeholder is not one. */
 export async function latestDraftsByBusiness(db: D1Database): Promise<Map<string, Draft>> {
   const { results } = await db.prepare(
-    `SELECT * FROM (SELECT d.*, ROW_NUMBER() OVER (PARTITION BY business_id ORDER BY created_at DESC, variant_index ASC) AS rn FROM drafts d) WHERE rn = 1`,
+    `SELECT * FROM (SELECT d.*, ROW_NUMBER() OVER (PARTITION BY business_id ORDER BY created_at DESC, variant_index ASC) AS rn FROM drafts d WHERE ${realDraftSql("d.")}) WHERE rn = 1`,
   ).all<Row & { rn: number }>();
   return new Map(results.map((r) => [r.business_id, fromRow(r)]));
 }
 
-/** Which of these leads have at least one draft (for the "Drafts ready" view). */
+/** Which of these leads have at least one draft somebody wrote (for the "Drafts ready" view). */
 export async function draftedIds(db: D1Database, ids: string[]): Promise<Set<string>> {
   const out = new Set<string>();
   for (let i = 0; i < ids.length; i += 80) { // stay under D1's bound-parameter limit
     const chunk = ids.slice(i, i + 80);
-    const { results } = await db.prepare(`SELECT DISTINCT business_id FROM drafts WHERE business_id IN (${chunk.map(() => "?").join(",")})`).bind(...chunk).all<{ business_id: string }>();
+    const { results } = await db.prepare(`SELECT DISTINCT business_id FROM drafts WHERE ${realDraftSql()} AND business_id IN (${chunk.map(() => "?").join(",")})`).bind(...chunk).all<{ business_id: string }>();
     for (const r of results) out.add(r.business_id);
   }
   return out;
@@ -60,12 +71,14 @@ export async function getDraft(db: D1Database, businessId: string, id: string): 
   return r ? fromRow(r) : null;
 }
 
+/** Saves the editor. A save that leaves a still-empty placeholder as it was (the footer switch, say) does not make it a written draft. */
 export async function updateDraftBody(db: D1Database, id: string, u: { subject: string; body: string; include_footer?: boolean }) {
+  const edited = `edited = CASE WHEN NOT (${realDraftSql()}) AND ? = '${PLACEHOLDER_SUBJECT}' AND ? = '${PLACEHOLDER_BODY}' THEN 0 ELSE 1 END`;
   if (u.include_footer === undefined) {
-    await db.prepare(`UPDATE drafts SET subject = ?, body = ?, edited = 1 WHERE id = ?`).bind(u.subject, u.body, id).run();
+    await db.prepare(`UPDATE drafts SET subject = ?, body = ?, ${edited} WHERE id = ?`).bind(u.subject, u.body, u.subject, u.body, id).run();
   } else {
-    await db.prepare(`UPDATE drafts SET subject = ?, body = ?, include_footer = ?, edited = 1 WHERE id = ?`)
-      .bind(u.subject, u.body, u.include_footer ? 1 : 0, id).run();
+    await db.prepare(`UPDATE drafts SET subject = ?, body = ?, include_footer = ?, ${edited} WHERE id = ?`)
+      .bind(u.subject, u.body, u.include_footer ? 1 : 0, u.subject, u.body, id).run();
   }
 }
 
