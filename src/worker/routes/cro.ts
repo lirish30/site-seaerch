@@ -8,7 +8,7 @@ import { checkSpend, PRICES } from "../cost";
 import { CRO_LIMITS } from "../cro/config";
 import { logActivity } from "../db/activity";
 import { createCroAudit, failCroAudit, getCroAudit, latestCroAudit, listCroAudits, listCroItems, runningCroAudit, updateCroAudit, updateCroItem, type CroItemPatch } from "../db/cro";
-import { shotKey, textKey } from "../cro/keys";
+import { shotKey } from "../cro/keys";
 import { CRO_TARGET, healCroHandover } from "../queue/cro";
 import { cancelTasksFor } from "../queue/db";
 import { scenarioFor } from "../cro/scenario";
@@ -54,11 +54,6 @@ async function busy(c: Ctx, a: CroAudit) {
   if (!running) return null;
   return c.json({ error: running.id === a.id ? "This audit is still running" : "A CRO audit is already running for this lead" }, 409);
 }
-
-const b64 = async (raw: R2Bucket, key: string) => {
-  const o = await raw.get(key);
-  return o ? Buffer.from(await o.arrayBuffer()).toString("base64") : null;
-};
 
 croRoutes.post("/leads/:id/cro-audit", async (c) => {
   const id = c.req.param("id");
@@ -202,15 +197,4 @@ croRoutes.get("/cro-audits/:id/shot/:page/:device", async (c) => {
   const o = await c.env.RAW.get(shotKey(a.id, index, device, c.req.query("top") === "1"));
   if (!o) return c.json({ error: "not found" }, 404);
   return new Response(o.body, { headers: { "content-type": "image/jpeg", "cache-control": "private, max-age=86400" } });
-});
-
-croRoutes.get("/cro-audits/:id/eval-fixture", async (c) => {
-  const a = await getCroAudit(c.env.DB, c.req.param("id"));
-  if (!a || a.status !== "done") return c.json({ error: "not found" }, 404);
-  const business = await getBusiness(c.env.DB, a.business_id);
-  const pages = await Promise.all(a.pages.filter((p) => p.ok).map(async (ref) => ({
-    ref, text: await c.env.RAW.get(textKey(a.id, ref.index)).then((o) => o?.text() ?? ""),
-    shots: { desktop: await b64(c.env.RAW, shotKey(a.id, ref.index, "desktop", true)), mobile: await b64(c.env.RAW, shotKey(a.id, ref.index, "mobile", true)) },
-  })));
-  return c.json({ business, evidence: a.evidence, pages }, 200, { "content-disposition": `attachment; filename="cro-fixture-${a.id}.json"` });
 });

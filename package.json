@@ -13,7 +13,6 @@
     "db:migrate:remote": "wrangler d1 migrations apply site-search --remote"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.131.0",
     "@cloudflare/puppeteer": "^1.4.0",
     "@modelcontextprotocol/sdk": "1.26.0",
     "@simplewebauthn/browser": "^14.0.0",

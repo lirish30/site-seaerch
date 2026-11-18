@@ -11,7 +11,7 @@ Personal tool: find local businesses, audit their websites, draft outreach email
 
 ## Deploy
 1. `npm run db:migrate:remote`. Always run this BEFORE `npm run deploy`. Migrations are applied by name in filename order: 0002-0006 (audit v2, CRM, email voice, Google, CRO) and 0007-0013 (platform, Lighthouse scores, report links + `settings.logo_url`, radar, `radars.claimed_at`, `audits.mail_warning`, `searches.new_only`). 0020-0021 (job-search profile, work samples, signature JSON, draft purpose and variants) are additive too. All are additive, so the old worker keeps running on the new schema, but the new worker writes columns the old schema lacks. Deploy it first and every audit insert, settings read for reports and every Radar claim fails.
-2. Set secrets: `npx wrangler secret put APP_PASSWORD` (repeat for SESSION_SECRET, BRIGHTDATA_API_KEY, BRIGHTDATA_SERP_ZONE, PAGESPEED_API_KEY, ANTHROPIC_API_KEY). `BRIGHTDATA_SERP_ZONE` is required: the SERP API will not run without it.
+2. Set secrets: `npx wrangler secret put APP_PASSWORD` (repeat for SESSION_SECRET, BRIGHTDATA_API_KEY, BRIGHTDATA_SERP_ZONE, PAGESPEED_API_KEY). `BRIGHTDATA_SERP_ZONE` is required: the SERP API will not run without it.
    - `APP_PASSWORD` is the only thing guarding the app: use a long random value, at least 20 characters (e.g. `openssl rand -base64 24`). `SESSION_SECRET` should be similarly long and random.
    - Login attempts are throttled by the `LOGIN_LIMITER` Workers Rate Limiting binding in `wrangler.jsonc` (10 attempts per minute per client IP; over the limit `/api/login` returns 429). Its `namespace_id` (`1001`) just needs to be unique among rate limiters on your account.
 3. `npm run deploy` (only after step 1 has succeeded; the cron trigger in `wrangler.jsonc` is registered by this deploy)
@@ -21,7 +21,7 @@ Personal tool: find local businesses, audit their websites, draft outreach email
 ## Keys
 - Bright Data: SERP API zone + API key.
 - PageSpeed: Google Cloud API key with PageSpeed Insights API enabled.
-- Anthropic: API key.
+- Claude: no key. Claude work (reviews, drafts, reply triage) is queued as tasks and worked through your Claude Code subscription over MCP: run `/work-the-queue` (see "Agency OS setup").
 - Browser Rendering: the `browser` binding in `wrangler.jsonc` (Workers Paid). Used for screenshots, the AI design review, JS-built pages, and PDF export. Without it audits fall back to raw HTML and rules only, and PDF export returns 501. Local dev downloads a Chromium on first use.
 
 ## Google (optional: Drive export)
@@ -40,7 +40,7 @@ Drive files land in a "Site Search reports" folder the app creates.
 Nothing is sent without your approval. Start a sequence from a lead; Email 1 waits on Home; each later email step is proposed there too, and call steps appear on the follow-up list instead. Approved mail goes out over SMTP from the mailboxes set up in Settings → Mailboxes. Their passwords are Worker secrets, never stored in the database: `MAILBOX_OUTREACH_PASSWORD` and `MAILBOX_MAIN_PASSWORD` (`.dev.vars` locally, `npx wrangler secret put` for prod). Links in cold email use `OUTREACH_LINK_BASE` (a host you own; never `workers.dev`).
 
 ## Audit + scoring
-- Every lead is rendered in a real browser (desktop + 390px phone), crawled (homepage + up to 7 key pages chosen from nav/footer links), timed with PageSpeed, then reviewed by Claude Sonnet 5.5 against a niche rubric (`src/worker/audit/rubrics.ts`).
+- Every lead is rendered in a real browser (desktop + 390px phone), crawled (homepage + up to 7 key pages chosen from nav/footer links), timed with PageSpeed, then reviewed by Claude (queued, worked via `/work-the-queue`) against a niche rubric (`src/worker/audit/rubrics.ts`).
 - **Site Health** (0–100, higher = better): Design 25, Content 20, Conversion 20, Mobile 15, Speed 10, Technical 10. Missing categories are dropped and the rest renormalized.
 - **Opportunity** (0–100, higher = better lead) is stored in `audits.score`: low health, critical gaps, plus review count/rating as a sign the business can pay.
 

@@ -3,7 +3,6 @@ SESSION_SECRET=generate-32-random-bytes-hex
 BRIGHTDATA_API_KEY=
 BRIGHTDATA_SERP_ZONE=
 PAGESPEED_API_KEY=
-ANTHROPIC_API_KEY=
 # Optional: Drive export of reports (see README "Google"). Google is never used for email.
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
