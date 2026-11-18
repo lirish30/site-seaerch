@@ -3,13 +3,7 @@ export const PURPOSE_LABEL: Record<Purpose, string> = { freelance: "Freelance wo
 
 export interface Draft {
   id: string; business_id: string; subject: string; body: string; recipient_reason: string; edited: boolean; created_at: string;
-  steering_note: string | null; purpose: Purpose; angle: string; include_footer: boolean; variant_group: string | null; variant_index: number; posting_id: string | null;
-}
-
-/** GET /api/leads/:id/draft-role. `cited` is the role the current draft names (`warning` set when that is no longer true); `next` is what a new draft would cite. */
-export interface DraftRole {
-  cited: { id: string; title: string | null; url: string | null; state: "open" | "unseen" | "closed"; warning: string | null } | null;
-  next: { id: string; title: string; url: string; role_kind: string } | null;
+  steering_note: string | null; purpose: Purpose; angle: string; include_footer: boolean; variant_group: string | null; variant_index: number;
 }
 
 export interface WorkSample { id: string; title: string; url: string; result_line: string; tags: string }

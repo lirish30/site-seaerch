@@ -9,7 +9,6 @@ import Radar from "./pages/Radar";
 import Promising from "./pages/Promising";
 import Import from "./pages/Import";
 import Today from "./pages/Today";
-import Jobs from "./pages/Jobs";
 import Outreach from "./pages/Outreach";
 import SearchHistory from "./pages/SearchHistory";
 import SettingsHome from "./pages/settings/SettingsHome";
@@ -40,7 +39,6 @@ export default function App() {
             <Route path="/searches" element={<SearchHistory />} />
             <Route path="/searches/:id" element={<SearchDetail />} />
             <Route path="/today" element={<Today />} />
-            <Route path="/jobs" element={<Jobs />} />
             <Route path="/leads" element={<AllLeads />} />
             <Route path="/leads/:id" element={<LeadDetail />} />
             <Route path="/promising" element={<Promising />} />

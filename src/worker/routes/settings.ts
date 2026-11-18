@@ -3,8 +3,6 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { getSettings, saveSettings } from "../db/settings";
 import { monthlySpend, monthUsage } from "../db/usage";
-import { ROLE_KINDS } from "../types";
-import { parseKindOrder } from "../jobs/select";
 import { parseSignature, renderSignatureHtml, renderSignatureText, safeImageUrl, safeUrl } from "../email/signature";
 
 // The logo is embedded in a public page, so only a plain https URL (or none) is accepted.
