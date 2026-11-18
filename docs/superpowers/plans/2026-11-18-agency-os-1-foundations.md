@@ -25,7 +25,7 @@
 **Phase 1 roadmap.** This is plan 1. Each plan below ships working software on its own, and each starts from the merged result of the one before.
 1. **Foundations** (this plan)
 2. **Mail + sequences:** mail layer over SMTP/IMAP, outreach mailbox, sequence engine, reply sync, `email.send` approval kind, conflict gate, campaigns and niche test, per-service spend sub-caps (spec §9.13). Sub-caps wait for plan 2, when the scheduled Claude jobs they limit first exist.
-3. **Video audits:** job queue for the Mac helper, the Mac helper (Qwen3-TTS, HyperFrames), annotation editor, script writer, landing page on hellositeline.com
+3. **Video audits:** job queue for the Mac helper, the Mac helper (free open-source voice: Qwen3-TTS / Chatterbox / OpenVoice V2; HyperFrames), annotation editor, script writer, landing page on hellositeline.com
 4. **Sales:** booking page over the Google Calendar API, call prep, recommendation deck
 5. **Close:** proposal/SOW templates, click-to-sign with audit trail, Stripe deposit invoice, deal → Won
 
@@ -204,8 +204,7 @@ CREATE TABLE fixed_costs (id TEXT PRIMARY KEY, name TEXT NOT NULL, monthly_usd R
 INSERT INTO fixed_costs VALUES
  ('cf-workers-paid','Cloudflare Workers Paid',5,1,datetime('now')),
  ('domains','Domains (sitelineweb.com, hellositeline.com)',2,1,datetime('now')),
- ('google-workspace','Google Workspace (2 seats, from first deposit)',14,0,datetime('now')),
- ('elevenlabs','ElevenLabs Creator (only if local voice fails)',22,0,datetime('now'));
+ ('google-workspace','Google Workspace (2 seats, from first deposit)',14,0,datetime('now'));
 UPDATE settings SET monthly_spend_limit_usd = 150 WHERE monthly_spend_limit_usd = 25;
 ```
 
@@ -216,7 +215,7 @@ Rules: `spentUsd = variableUsd + fixedUsd(active only)`. `level = "capped"` when
   - `warn at 80 percent`: record usage of $113 (113 + 7 = 120 = 80%). Expect `level "warn"`, `ok true`.
   - `capped month skips optional radar run`: record $144 of usage. Then `allowOptionalJob(db, now)` returns `false`, and `runDueRadars` with a due radar returns a summary whose `skipped` is `"spend_cap"` and does not start a workflow (spy on `startWorkflow`).
   - `extra pushes over cap`: record $140, then `spendStatus(db, now, 5)` gives `level "capped"`, `ok false`.
-  - `GET /api/spend` (authed) returns the status plus `fixedCosts` (4 rows). `PATCH /api/spend/fixed-costs/google-workspace {active:true}` gives 200, and the next status has `fixedUsd === 21`.
+  - `GET /api/spend` (authed) returns the status plus `fixedCosts` (3 rows). `PATCH /api/spend/fixed-costs/google-workspace {active:true}` gives 200, and the next status has `fixedUsd === 21`.
 
 - [ ] **Step 2: Run them**
 

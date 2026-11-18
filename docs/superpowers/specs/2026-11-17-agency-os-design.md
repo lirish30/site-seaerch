@@ -216,8 +216,11 @@ Stored as editable settings (the package catalog). Prices end in 7 for one-time 
 2. **Annotation editor**: Claude pre-places markup (circles, arrows, blur, callout text) on the findings it plans to talk about. Logan adjusts and adds comments.
 3. Claude writes the script in Logan's voice (`logan-voice` skill): hook, 3 problems with their business result, the offer, a CTA to book a call. About 90–120 seconds.
 4. Narration: **[Logan]** an AI clone of his voice by default, with the option to record himself in the browser and re-record single lines.
-   - Engine **[call]**: Qwen3-TTS via mlx-audio on the Mac ($0).
-   - Before Phase 1 ends, A/B test it against ElevenLabs Creator ($22/mo) on Logan's real voice. Logan picks.
+   - Engine **[call]**: free, open-source models only, run on the Mac ($0). **[Logan: no paid voice service]** Before Phase 1 ends, A/B test three of them on Logan's real voice and let him pick:
+     - Qwen3-TTS (Apache-2.0) via mlx-audio
+     - Chatterbox (Resemble AI, MIT)
+     - OpenVoice V2 (MyShell, MIT)
+   - If none sounds right, Logan records the narration himself.
 5. HyperFrames renders the MP4 on the Mac: zooms and callouts timed to the narration, plus an animated GIF thumbnail.
 6. A landing page (extends `/r/<token>`) shows the video, the audit report and a booking link, and tracks views and watch depth. The email embeds the GIF linking to the page.
 7. Footer note "Narrated with an AI version of my voice" is on by default **[Logan agreed earlier]**.
@@ -367,7 +370,7 @@ Stored as editable settings (the package catalog). Prices end in 7 for one-time 
 - **Scheduled jobs:** cron + Workflows call the Claude API for batch work: morning prospect prep, follow-up drafts, Friday updates, monthly reports, meeting summaries.
 - **Approval inbox:** every outbound item (email, invoice send, document send, social draft, client-link publish) waits here. Bulk approve, edit-then-approve, reject with a note. Later, Logan can turn on auto-approve rules per type (e.g. "invoice reminders on schedule").
 - **Action log:** every agent action is logged with cost and the records it touched, and shows on those records' timelines.
-- **Spend control:** one tracker across Claude API, lead data, ElevenLabs (if used), Cloudflare, Workspace seat and domains.
+- **Spend control:** one tracker across Claude API, lead data, Cloudflare, Workspace seats (once active) and domains.
   - total cap $150/month, with per-service sub-caps
   - warn at 80%
   - at the cap, optional jobs pause (radar searches, re-renders); approved and in-flight work continues
@@ -455,7 +458,7 @@ All clauses need review by an Oregon lawyer before first use. They include:
 | Brand domain + outreach domain | ~$2 (about $20–24/yr) |
 | Claude API (capped) | ~$15–60 |
 | Lead data (Places / Bright Data pay-as-you-go) | ~$5–20 |
-| Voice: local Qwen3-TTS / ElevenLabs Creator fallback | $0 / $22 |
+| Voice: local open-source models (Qwen3-TTS, Chatterbox, OpenVoice V2) | $0 |
 | MainWP core, HyperFrames, mlx-audio, Playwright, Uptime checks | $0 |
 | **Lean before first client / comfortable after** | **~$25–35 / ~$148** |
 
@@ -482,7 +485,7 @@ Stripe fees are per transaction and paid out of client revenue; the Stripe Invoi
 1. Separate outreach domain, no bulk tool or paid warm-up.
 2. Passkey sign-in; Google OAuth only for the Calendar (free Google account). Email over IMAP/SMTP until Workspace arrives at the first deposit.
 3. Mac helper with a job queue for voice, video, Meetily, diffs and WP-CLI; jobs wait when the laptop is off.
-4. Qwen3-TTS locally, A/B tested against ElevenLabs before committing.
+4. Voice from free open-source models only, run locally: Qwen3-TTS, Chatterbox and OpenVoice V2, A/B tested on Logan's voice. No ElevenLabs. **[Logan]**
 5. Built-in click-to-sign instead of an e-sign product.
 6. Booking page built into the app over the Calendar API, not Google's appointment schedules (keeps it on the cheapest Workspace plan and ties bookings to leads).
 7. HTML decks with PDF export.
@@ -495,7 +498,7 @@ Stripe fees are per transaction and paid out of client revenue; the Stripe Invoi
 ## 16. Risks and open items
 
 - **Deliverability:** a new domain with too little warm-up gets cold mail spam-foldered. Start warm-up in week 1, and don't send before day 30.
-- **Voice clone quality** may not pass; the fallback is ElevenLabs ($22) or recording himself.
+- **Voice clone quality** may not pass with any of the three free models. The fallback is Logan recording the narration himself in the browser, which is still $0.
 - **Webfor:** non-compete/non-solicit terms are Logan's to check before outreach starts.
 - **Legal:** templates need review by an Oregon lawyer; also check Oregon auto-renewal rules for subscriptions and sales-tax treatment.
 - **Laptop dependency:** media jobs need the Mac on. That's acceptable for a laptop-first solo user.
