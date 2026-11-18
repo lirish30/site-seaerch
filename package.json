@@ -8,6 +8,7 @@
     "build": "vite build",
     "deploy": "npm run build && wrangler deploy",
     "test": "vitest run",
+    "test:helper": "vitest run --config helper/vitest.config.ts",
     "typecheck": "tsc --noEmit",
     "db:migrate:local": "wrangler d1 migrations apply site-search --local",
     "db:migrate:remote": "wrangler d1 migrations apply site-search --remote"
