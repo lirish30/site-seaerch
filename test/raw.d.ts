@@ -6,3 +6,7 @@ declare module "*.ts?raw" {
   const s: string;
   export default s;
 }
+declare module "*.eml?raw" {
+  const s: string;
+  export default s;
+}
