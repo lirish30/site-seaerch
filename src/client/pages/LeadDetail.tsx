@@ -191,7 +191,7 @@ export default function LeadDetail() {
   const sequenceChanged = () => { setSeqTick((n) => n + 1); void load().catch(fail); };
   async function reaudit(reason?: string) {
     await flush();
-    try { await api.post(`/leads/${id}/reaudit`, reason ? { reason } : {}); setMsg("Re-audit started. Refresh in a minute or two."); await load(); }
+    try { await api.post(`/leads/${id}/reaudit`, reason ? { reason } : {}); setMsg("Re-audit started. The scan takes a minute or two; the AI review and a new draft are written in your next Claude queue session."); await load(); }
     catch (e) { if (isSpendLimit(e)) setMsg(SPEND_LIMIT_REACHED); else fail(e); }
   }
   async function flagScore() {

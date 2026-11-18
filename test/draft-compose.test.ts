@@ -1,10 +1,10 @@
 import { env, SELF } from "cloudflare:test";
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
-import { regenerateDraft, type LeadDeps } from "../src/worker/pipeline/lead";
 import { latestDraft, listDrafts, selectDraft, variantsOf } from "../src/worker/db/drafts";
 import { saveSettings } from "../src/worker/db/settings";
 import { createWorkSample } from "../src/worker/db/workSamples";
 import { seedBusiness, seedLeadAudit } from "./fixtures/cro";
+import { three, writeDraft } from "./fixtures/draftTask";
 
 let cookie = "";
 const api = (path: string, init: RequestInit = {}) =>
@@ -18,24 +18,16 @@ beforeAll(async () => {
 
 beforeEach(async () => { await env.DB.prepare(`DELETE FROM work_samples`).run(); });
 
-const three = (tag = "") => ({
-  variants: [1, 2, 3].map((n) => ({ angle: `Angle ${n}`, subject: `Subject ${n}${tag}`, body: `Body ${n}${tag}` })),
-  to_contact_id: null, recipient_reason: "r",
-});
-function leadDeps(reply: (p: { system: string; user: string }) => unknown, seen: { system: string; user: string }[] = []): LeadDeps {
-  return { db: env.DB, raw: env.RAW, pagespeedKey: "K", fetch: async () => new Response(""), now: () => new Date(),
-    claude: async (p: { system: string; user: string }) => { seen.push(p); return reply(p); } } as unknown as LeadDeps;
-}
 async function lead() {
   const b = await seedBusiness();
   await seedLeadAudit(b.id);
   return b;
 }
 
-describe("writing a draft for a purpose", () => {
-  it("freelance: stores every variant in one group, first one current, footer on", async () => {
+describe("writing a draft", () => {
+  it("stores every variant in one group, first one current, footer on", async () => {
     const b = await lead();
-    const d = await regenerateDraft(leadDeps(() => three()), b.id);
+    const d = await writeDraft(b.id);
     expect([d.purpose, d.include_footer, d.angle, d.subject, d.variant_index]).toEqual(["freelance", true, "Angle 1", "Subject 1", 0]);
     const current = (await latestDraft(env.DB, b.id))!;
     expect(current.id).toBe(d.id);
@@ -45,44 +37,19 @@ describe("writing a draft for a purpose", () => {
     expect(new Set(group.map((v) => v.variant_group)).size).toBe(1);
     expect(new Set(group.map((v) => v.created_at)).size).toBe(1);
   });
-
-  it("keeps work samples out of the prompt", async () => {
-    const b = await lead();
-    await createWorkSample(env.DB, { title: "Secret Sample", url: "https://logan.dev/secret", result_line: "", tags: "" });
-    const seen: { system: string; user: string }[] = [];
-    await regenerateDraft(leadDeps(() => three(), seen), b.id);
-    expect(seen[0].system).toContain("mini proposal");
-    expect(seen[0].user).not.toContain("Secret Sample");
-  });
 });
 
 describe("tweaking the current draft", () => {
-  it("rewrites it with one instruction, keeps the footer choice, and writes one new draft", async () => {
-    const b = await lead();
-    await regenerateDraft(leadDeps(() => three()), b.id);
-    const before = (await listDrafts(env.DB, b.id)).length;
-    const seen: { system: string; user: string }[] = [];
-    const d = await regenerateDraft(leadDeps(() => ({ variants: [{ angle: "Shorter", subject: "Tight", body: "Short body" }], to_contact_id: null, recipient_reason: "r" }), seen), b.id, { tweak: "shorter" });
-    expect(seen[0].user).toContain("Current draft to revise:");
-    expect(seen[0].user).toContain("Subject: Subject 1");
-    expect(seen[0].user).toContain("cut it by about a third");
-    expect(seen[0].system).toMatch(/exactly 1 variant/);
-    expect([d.purpose, d.include_footer, d.subject]).toEqual(["freelance", true, "Tight"]);
-    expect((await listDrafts(env.DB, b.id)).length).toBe(before + 1);
-    expect((await latestDraft(env.DB, b.id))!.id).toBe(d.id);
-  });
-
   it("refuses to tweak when there is no draft yet", async () => {
     const b = await lead();
-    await expect(regenerateDraft(leadDeps(() => three()), b.id, { tweak: "warmer" })).rejects.toThrow(/Write a draft first/);
+    await expect(writeDraft(b.id, { tweak: "warmer" })).rejects.toThrow(/Write a draft first/);
   });
-
 });
 
 describe("picking a variant", () => {
   it("makes it the current draft while the group keeps its order", async () => {
     const b = await lead();
-    const first = await regenerateDraft(leadDeps(() => three()), b.id);
+    const first = await writeDraft(b.id);
     const group = await variantsOf(env.DB, first);
     const picked = await selectDraft(env.DB, b.id, group[2].id, new Date(Date.now() + 5000));
     expect(picked!.id).toBe(group[2].id);
@@ -93,7 +60,7 @@ describe("picking a variant", () => {
   it("will not select a draft that belongs to another lead", async () => {
     const mine = await lead();
     const other = await lead();
-    const d = await regenerateDraft(leadDeps(() => three()), other.id);
+    const d = await writeDraft(other.id);
     expect(await selectDraft(env.DB, mine.id, d.id)).toBeNull();
   });
 });
@@ -101,7 +68,7 @@ describe("picking a variant", () => {
 describe("draft routes", () => {
   it("lead detail returns the variants, select switches the current one, patch toggles the footer", async () => {
     const b = await lead();
-    const first = await regenerateDraft(leadDeps(() => three()), b.id);
+    const first = await writeDraft(b.id);
     const group = await variantsOf(env.DB, first);
 
     const detail = await (await api(`/api/leads/${b.id}`)).json<any>();
@@ -126,7 +93,7 @@ describe("draft routes", () => {
   it("previews the composed email without saving anything", async () => {
     await saveSettings(env.DB, { signature: "Logan\nIrish Web", physical_address: "1 Main St", opt_out_line: "Reply stop." });
     const b = await lead();
-    await regenerateDraft(leadDeps(() => three()), b.id);
+    await writeDraft(b.id);
     const before = (await latestDraft(env.DB, b.id))!;
     const r = await send(`/api/leads/${b.id}/draft/preview`, "POST", { subject: "Hi", body: "Hello there", include_footer: true });
     const e = await r.json<any>();

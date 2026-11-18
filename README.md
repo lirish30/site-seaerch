@@ -18,8 +18,6 @@ Personal tool: find local businesses, audit their websites, draft outreach email
 4. Sign in and fill in Settings: your profile, a few work samples, and your email signature (the builder takes a graphic and links). Paste tone notes from `scripts/tone-notes.txt`. The mailing address and opt-out line are optional: they only go on an email when you turn the footer on for it (on by default).
 5. The Bright Data test fixture (`test/fixtures/brightdata-maps.json`) is a trimmed live capture from 2026-10-03. If Bright Data changes its response shape and results come back empty or misread, re-capture it and update `mapBrightDataItem`.
 
-Optional voice check before relying on drafts: `ANTHROPIC_API_KEY=... TONE="$(cat scripts/tone-notes.txt)" npm run prompt-check` for full-time emails, and again with `PURPOSE=freelance` (writes `scripts/out/prompt-check-<purpose>.md`). It checks length, that no footer or signature is in the body, and that a full-time email links only to your work samples.
-
 ## Keys
 - Bright Data: SERP API zone + API key.
 - PageSpeed: Google Cloud API key with PageSpeed Insights API enabled.

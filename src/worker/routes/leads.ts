@@ -20,8 +20,7 @@ import { listContacts, contactsFor } from "../db/contacts";
 import { draftedIds, latestDraft, updateDraftBody, listDrafts, selectDraft, variantsOf } from "../db/drafts";
 import { activeReportFor, createReport, otherActiveCount, revokeReports, type ReportRow } from "../db/reports";
 import { pickRecipient } from "../recipient";
-import { regenerateDraft, TWEAKS, type Tweak } from "../pipeline/lead";
-import { depsFromEnv } from "../workflows";
+import { TWEAKS, createManualDraft, draftTaskState, requestDraft, type Tweak } from "../queue/leadDraft"; // also registers the lead.draft task kind
 import { cancelTasksFor } from "../queue/db";
 import { checkSpend, PER_LEAD_COST } from "../cost";
 import { getSettings } from "../db/settings";
@@ -351,21 +350,37 @@ const Regenerate = z.object({
   purpose: z.literal("freelance").optional(),
   tweak: z.enum(Object.keys(TWEAKS) as [Tweak, ...Tweak[]]).optional(),
 });
+// Asking for a draft queues it for Claude (the next queue session writes it) and answers at once. A second ask while one is queued gets that task back.
 leadRoutes.post("/:id/regenerate", async (c) => {
   const blocked = await suppressedResponse(c, c.req.param("id"));
   if (blocked) return blocked;
   const p = Regenerate.safeParse(await c.req.json().catch(() => ({})));
   if (!p.success) return c.json({ error: "invalid" }, 400);
-  const id = c.req.param("id");
   try {
-    const d = await regenerateDraft(depsFromEnv(c.env), id, {
+    const r = await requestDraft(c.env.DB, c.req.param("id"), {
       steeringNote: p.data.steeringNote?.trim() || null, focus: p.data.focus, croFocus: p.data.croFocus, tone: p.data.tone,
       purpose: p.data.purpose, tweak: p.data.tweak,
     });
-    const picked = (p.data.focus?.length ?? 0) + (p.data.croFocus?.length ?? 0);
-    await logActivity(c.env.DB, id, "draft", p.data.tweak ? `Rewrote the draft (${p.data.tweak.replace("_", " ")})`
-      : picked ? `Regenerated around ${picked} chosen issue(s)` : "Regenerated");
-    return c.json({ ...d, variants: await variantsOf(c.env.DB, d) });
+    return c.json({ queued: true, taskId: r.taskId }, 202);
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 400);
+  }
+});
+
+// Whether this lead's draft is waiting for Claude, so the composer can say so and poll.
+leadRoutes.get("/:id/draft-status", async (c) => {
+  const id = c.req.param("id");
+  if (!(await getBusiness(c.env.DB, id))) return c.json({ error: "not found" }, 404);
+  return c.json(await draftTaskState(c.env.DB, id));
+});
+
+// "Write it myself": an editable draft with nothing from Claude in it, for a lead that has none yet.
+leadRoutes.post("/:id/draft/manual", async (c) => {
+  const blocked = await suppressedResponse(c, c.req.param("id"));
+  if (blocked) return blocked;
+  try {
+    const d = await createManualDraft(c.env.DB, c.req.param("id"));
+    return c.json({ ...d, variants: await variantsOf(c.env.DB, d) }, 201);
   } catch (e) {
     return c.json({ error: (e as Error).message }, 400);
   }

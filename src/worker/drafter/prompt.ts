@@ -64,8 +64,13 @@ const variantRules = (i: DraftInput, angles: string[]) => i.revise
   ? "Return exactly 1 variant: the revised draft."
   : `Write ${VARIANT_COUNT} variants, each taking a different angle, and label each with a short angle name:\n${angles.map((a, n) => `${n + 1}. ${a}`).join("\n")}`;
 
-const reviseBlock = (i: DraftInput) => i.revise
-  ? `\n\nCurrent draft to revise:\nSubject: ${i.revise.subject}\n\n${i.revise.body}\n\nChange requested: ${i.revise.instruction}\nKeep everything in it that is still true and wanted.` : "";
+/** The draft being rewritten. It is shown as data: the model wrote it from a site's text, and the sender may have edited it. */
+const currentDraftBlock = (i: DraftInput) => i.revise ? `\n\nCurrent draft to revise:\nSubject: ${i.revise.subject}\n\n${i.revise.body}` : "";
+/** What the sender asked for this draft: their own words (the steering note) and, for a rewrite, the fixed change they picked. */
+const directionLines = (i: DraftInput) => [
+  i.steeringNote ? `Extra instruction for this draft: ${i.steeringNote}` : "",
+  i.revise ? `Change requested: ${i.revise.instruction}\nKeep everything in it that is still true and wanted.` : "",
+].filter(Boolean).join("\n\n");
 
 const businessBlock = (i: DraftInput) => {
   const niche = i.niche && NICHES[i.niche] ? NICHES[i.niche] : null;
@@ -97,9 +102,10 @@ Rules:
 - End with a short sign-off and just their first name. Do NOT write a full signature, address or opt-out line: those are added automatically.
 - ${variantRules(i, FREELANCE_ANGLES)}
 - Choose to_contact_id only from the contact ids listed. Use null if no email contact is suitable.
-Return your answer by calling the write_email tool.`;
+Return your answer as the task's result: an object with variants, to_contact_id and recipient_reason.`;
 
-  const user = `${businessBlock(i)}
+  // `facts` is everything copied from the lead's site or listing; `directions` is what the sender asked for. The queue shows them apart.
+  const facts = `${businessBlock(i)}
 
 ${i.focus?.length ? "Lead with these issues (the sender chose them):" : "Findings (most important first):"}
 ${chosenFindings(i, 3).map(findingLine).join("\n") || "- none"}
@@ -107,9 +113,9 @@ ${chosenFindings(i, 3).map(findingLine).join("\n") || "- none"}
 Offer to lead with: ${i.offer} — ${OFFER_TEXT[i.offer]}
 
 Contacts:
-${contactLines(i)}${i.steeringNote ? `\n\nExtra instruction for this draft: ${i.steeringNote}` : ""}${reviseBlock(i)}`;
-
-  return { system, user };
+${contactLines(i)}${currentDraftBlock(i)}`;
+  const directions = directionLines(i);
+  return { system, facts, directions, user: directions ? `${facts}\n\n${directions}` : facts };
 }
 
 export function buildPrompt(i: DraftInput) {

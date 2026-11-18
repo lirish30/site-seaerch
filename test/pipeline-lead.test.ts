@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { describe, it, expect } from "vitest";
 import { runLeadWithErrorHandling } from "../src/worker/workflows";
 import { getBusiness } from "../src/worker/db/businesses";
-import { runLead, regenerateDraft, type LeadDeps, type StepLike } from "../src/worker/pipeline/lead";
+import { runLead, type LeadDeps, type StepLike } from "../src/worker/pipeline/lead";
 import { createSearch, getSearch } from "../src/worker/db/searches";
 import { upsertBusiness } from "../src/worker/db/businesses";
 import { latestAudit } from "../src/worker/db/audits";
@@ -11,6 +11,7 @@ import { createPerson } from "../src/worker/db/people";
 import { buildBundle } from "../src/worker/queue/bundle";
 import { completeTask, getTask } from "../src/worker/queue/db";
 import { SITE_REVIEW_KIND } from "../src/worker/queue/siteReview";
+import { three, writeDraft } from "./fixtures/draftTask";
 import type { Listing } from "../src/worker/types";
 
 const step: StepLike = { do: (_n, fn) => fn(), sleep: async () => {} };
@@ -24,9 +25,9 @@ const page = (b: string, h = "") => new Response(`<html><head>${h}</head><body>$
 const psiSlow = { lighthouseResult: { categories: { performance: { score: 0.3 } }, audits: {
   "largest-contentful-paint": { numericValue: 7000 }, "cumulative-layout-shift": { numericValue: 0 }, viewport: { score: 1 } } } };
 
-function deps(over: Partial<LeadDeps> = {}): LeadDeps & { claudeCalls: number } {
+function deps(over: Partial<LeadDeps> = {}): LeadDeps {
   const d: any = {
-    db: env.DB, raw: env.RAW, pagespeedKey: "K", now: () => new Date("2026-10-02T00:00:00Z"), claudeCalls: 0,
+    db: env.DB, raw: env.RAW, pagespeedKey: "K", now: () => new Date("2026-10-02T00:00:00Z"),
     fetch: async (u: string) => {
       if (u.startsWith("https://www.googleapis.com/pagespeedonline")) return Response.json(psiSlow);
       if (u === "https://ace.com/") return page(`<a href="mailto:info@ace.com">m</a><p>© 2019</p>`, `<title>Ace</title><meta name="viewport" content="x"><meta name="generator" content="WordPress 6.4">`);
@@ -34,7 +35,6 @@ function deps(over: Partial<LeadDeps> = {}): LeadDeps & { claudeCalls: number } 
     },
     ...over,
   };
-  d.claude = over.claude ?? (async () => { d.claudeCalls++; return { subject: "Hi", body: "Body", to_contact_id: null, recipient_reason: "r" }; });
   return d;
 }
 const listing = (o: Partial<Listing>): Listing => ({ placeId: null, name: "Ace", category: "Plumber", address: "Boise", phone: null,
@@ -64,7 +64,6 @@ describe("runLead", () => {
     const tasks = await reviewTasks(b.id);
     expect(tasks).toHaveLength(1);
     expect(tasks[0]).toMatchObject({ status: "pending", dedupe_key: r.auditId });
-    expect(d.claudeCalls).toBe(0); // nothing here writes or reviews: the work is queued for Claude
     expect((await getSearch(env.DB, s.id))!.processed_count).toBe(1);
   });
 
@@ -162,7 +161,6 @@ describe("runLead", () => {
     const d = deps({ fetch: good });
     const r = await runLead(d, step, { businessId: b.id, searchId: s.id });
     const forced = await runLead(d, step, { businessId: b.id, searchId: null, forceDraft: true, steeringNote: "short" });
-    expect(d.claudeCalls).toBe(0);
     const payloads = (await reviewTasks(b.id)).map((t) => JSON.parse(t.payload));
     expect(payloads).toContainEqual({ auditId: r.auditId, steeringNote: null });
     expect(payloads).toContainEqual({ auditId: forced.auditId, forceDraft: true, steeringNote: "short" });
@@ -181,26 +179,24 @@ describe("runLead", () => {
     expect(psiCalled).toBe(false);
   });
 
-  it("regenerateDraft passes steering note and keeps history", async () => {
+  it("a requested draft passes the steering note to Claude and keeps history", async () => {
     const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 5 });
     const b = await upsertBusiness(env.DB, listing({ placeId: "L5" }), s.id);
     let lastUser = "";
-    const d = deps({ claude: async (p) => { lastUser = p.user; return { subject: "S2", body: "B2", to_contact_id: null, recipient_reason: "r" }; } });
-    await runLead(d, step, { businessId: b.id, searchId: s.id });
-    const dr = await regenerateDraft(d, b.id, { steeringNote: "shorter" });
+    await runLead(deps(), step, { businessId: b.id, searchId: s.id });
+    const dr = await writeDraft(b.id, { steeringNote: "shorter" }, (shown) => { lastUser = shown; return three(); });
     expect(lastUser).toContain("shorter");
     expect(dr.steering_note).toBe("shorter");
   });
 
-  it("regenerateDraft focuses on chosen findings and addresses the point of contact", async () => {
+  it("a requested draft focuses on chosen findings and addresses the point of contact", async () => {
     const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 5 });
     const b = await upsertBusiness(env.DB, listing({ placeId: "L5b" }), s.id);
     let lastUser = "";
-    const d = deps({ claude: async (p) => { lastUser = p.user; return { subject: "S", body: "B", to_contact_id: null, recipient_reason: "r" }; } });
-    await runLead(d, step, { businessId: b.id, searchId: s.id, forceDraft: true });
+    await runLead(deps(), step, { businessId: b.id, searchId: s.id, forceDraft: true });
     const a = (await latestAudit(env.DB, b.id))!;
     await createPerson(env.DB, b.id, { name: "Ann Lee", role: "Owner", email: "ann@ace.com", is_poc: true });
-    const dr = await regenerateDraft(d, b.id, { focus: [a.findings.length - 1], purpose: "freelance" });
+    const dr = await writeDraft(b.id, { focus: [a.findings.length - 1], purpose: "freelance" }, (shown) => { lastUser = shown; return three(); });
     expect(lastUser).toContain("Lead with these issues");
     expect(lastUser).toContain(a.findings.at(-1)!.evidence);
     expect(lastUser).toContain("Address the email to: Ann Lee (Owner)");
@@ -413,10 +409,10 @@ describe("runLead mail DNS", () => {
   it("the warning never reaches the draft prompt or the review brief", async () => {
     const b = await seed("M5");
     let user = "";
-    const { d } = withDoh({ mx: false, txt: [] }, { fetch: siteFetch("ace.com", ["info@ace.com"]), claude: async (p) => { user = p.user; return { subject: "S", body: "B", to_contact_id: null, recipient_reason: "r" }; } });
+    const { d } = withDoh({ mx: false, txt: [] }, { fetch: siteFetch("ace.com", ["info@ace.com"]) });
     const r = await runLead(d, step, { businessId: b.id, searchId: null, forceDraft: true });
     expect((await latestAudit(env.DB, b.id))!.mail_warning).toBe(WARNING);
-    await regenerateDraft(d, b.id);
+    await writeDraft(b.id, {}, (shown) => { user = shown; return three(); });
     expect(user.length).toBeGreaterThan(0);
     expect(user).not.toMatch(/mail records|bounce|spf|dmarc/i);
     const bundle = await buildBundle(env, await claimReview(r.auditId));

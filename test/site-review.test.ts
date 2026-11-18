@@ -31,7 +31,6 @@ const GOOD_SITE_BODY = `<header><nav><a href="/services">Services</a><a href="/p
   <form><input name="email"><textarea></textarea></form><footer>© 2026 Ace Plumbing</footer>`;
 const GOOD_HEAD = `<title>G</title><meta name="description" content="d"><meta name="viewport" content="x"><meta property="og:title" content="G"><script type="application/ld+json">{"@type":"Plumber"}</script>`;
 
-let claudeCalls = 0;
 function deps(o: { good?: boolean; render?: boolean } = {}): LeadDeps {
   return {
     db: env.DB, raw: env.RAW, pagespeedKey: "K", now: () => new Date("2026-10-02T00:00:00Z"),
@@ -41,7 +40,6 @@ function deps(o: { good?: boolean; render?: boolean } = {}): LeadDeps {
         : page(`<a href="mailto:info@ace.com">m</a><p>© 2019</p>`, `<title>Ace</title><meta name="viewport" content="x"><meta name="generator" content="WordPress 6.4">`);
       return new Response("nf", { status: 404, headers: { "content-type": "text/html" } });
     },
-    claude: async () => { claudeCalls++; return { subject: "Hi", body: "Body", to_contact_id: null, recipient_reason: "r" }; },
     ...(o.render === false ? {} : { render: async (url: string) => ({ finalUrl: url.endsWith("/") ? url : `${url}/`, desktopJpeg: jpeg, mobileJpeg: jpeg,
       mobile: { overflowX: false, smallTextPct: 0 }, html: `<html><head><title>Ace</title></head><body>${"<p>Plumbing services for Boise homes and businesses.</p>".repeat(10)}</body></html>` }) }),
   };
@@ -74,7 +72,6 @@ async function fullRun(placeId: string, o: Parameters<typeof deps>[0] & { force?
 }
 
 beforeEach(async () => {
-  claudeCalls = 0;
   draftCalls.mockClear();
   await env.DB.prepare(`DELETE FROM claude_tasks`).run();
 });
@@ -89,7 +86,6 @@ describe("site.review queued by the lead pipeline", () => {
     expect(tasks).toHaveLength(1);
     expect(tasks[0]).toMatchObject({ status: "pending", dedupe_key: auditId, target_type: "lead", target_id: b.id });
     expect(JSON.parse(tasks[0].payload)).toEqual({ auditId, steeringNote: null });
-    expect(claudeCalls).toBe(0);
     expect(draftCalls).not.toHaveBeenCalled(); // the draft waits for the review
   });
 
@@ -162,6 +158,18 @@ describe("applying a finished review", () => {
     // the draft is queued once the review is in
     expect(draftCalls).toHaveBeenCalledOnce();
     expect(draftCalls).toHaveBeenCalledWith(expect.anything(), { businessId: b.id, auditId: audit.id, forceDraft: undefined, steeringNote: null });
+  });
+
+  it("the log says a draft is queued only when one really was", async () => {
+    const { audit } = await fullRun("SR4e");
+    draftCalls.mockResolvedValueOnce({ created: true });
+    await completeTask(env, (await claim(audit.id)).id, review());
+    const summary = async () => (await env.DB.prepare(`SELECT summary FROM agent_actions WHERE tool = 'complete_claude_task' ORDER BY rowid DESC LIMIT 1`).first<{ summary: string }>())!.summary;
+    expect(await summary()).toMatch(/; a draft is queued$/);
+    const other = await fullRun("SR4f");
+    await completeTask(env, (await claim(other.audit.id)).id, review()); // the spy says nothing was queued (one is already open)
+    expect(draftCalls).toHaveBeenCalledTimes(2);
+    expect(await summary()).not.toMatch(/draft/);
   });
 
   it("an unknown niche from Claude is stored as general", async () => {

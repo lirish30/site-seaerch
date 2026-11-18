@@ -8,15 +8,27 @@ const fromRow = (r: Row): Draft => ({ ...r, purpose: normalizePurpose(r.purpose)
 /** Newest first; within one variant group (same created_at) the first-written variant leads. */
 const NEWEST = `ORDER BY created_at DESC, variant_index ASC`;
 
+const INSERT_DRAFT = `INSERT INTO drafts (id, business_id, audit_id, to_contact_id, recipient_reason, subject, body, offer,
+     steering_note, purpose, angle, include_footer, variant_group, variant_index, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
+const bindDraft = (db: D1Database, id: string, d: DraftInsert) => db.prepare(INSERT_DRAFT).bind(
+  id, d.business_id, d.audit_id, d.to_contact_id, d.recipient_reason, d.subject, d.body, d.offer,
+  d.steering_note, d.purpose ?? "freelance", d.angle ?? "", (d.include_footer ?? true) ? 1 : 0, d.variant_group ?? null,
+  d.variant_index ?? 0, d.created_at ?? new Date().toISOString());
+
 export async function insertDraft(db: D1Database, d: DraftInsert): Promise<Draft> {
   const id = crypto.randomUUID();
-  await db.prepare(
-    `INSERT INTO drafts (id, business_id, audit_id, to_contact_id, recipient_reason, subject, body, offer,
-     steering_note, purpose, angle, include_footer, variant_group, variant_index, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-  ).bind(id, d.business_id, d.audit_id, d.to_contact_id, d.recipient_reason, d.subject, d.body, d.offer,
-    d.steering_note, d.purpose ?? "freelance", d.angle ?? "", (d.include_footer ?? true) ? 1 : 0, d.variant_group ?? null,
-    d.variant_index ?? 0, d.created_at ?? new Date().toISOString()).run();
+  await bindDraft(db, id, d).run();
   return fromRow((await db.prepare(`SELECT * FROM drafts WHERE id = ?`).bind(id).first<Row>())!);
+}
+
+/** Several drafts in one atomic batch (with `also`, any statements that belong with them): a crash cannot leave a variant group half written. */
+export async function insertDrafts(db: D1Database, ds: DraftInsert[], also: D1PreparedStatement[] = []): Promise<void> {
+  if (ds.length) await db.batch([...ds.map((d) => bindDraft(db, crypto.randomUUID(), d)), ...also]);
+}
+
+/** True when some draft was written under this variant group. */
+export async function hasVariantGroup(db: D1Database, group: string): Promise<boolean> {
+  return (await db.prepare(`SELECT 1 AS x FROM drafts WHERE variant_group = ? LIMIT 1`).bind(group).first()) !== null;
 }
 
 export async function latestDraft(db: D1Database, businessId: string): Promise<Draft | null> {

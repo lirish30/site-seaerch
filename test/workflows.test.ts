@@ -21,9 +21,9 @@ describe("startLeadIdempotent", () => {
 });
 
 describe("depsFromEnv", () => {
-  it("has no AI reviewer: the site review is queued work for Claude Code, not an API call", () => {
+  it("has no AI caller: the site review and the draft are queued work for Claude Code, not an API call", () => {
     const d = depsFromEnv(env);
-    expect(Object.keys(d).sort()).toEqual(["claude", "db", "fetch", "now", "pagespeedKey", "raw", "render"]);
+    expect(Object.keys(d).sort()).toEqual(["db", "fetch", "now", "pagespeedKey", "raw", "render"]);
   });
 });
 

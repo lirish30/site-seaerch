@@ -2,7 +2,6 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import { NonRetryableError } from "cloudflare:workflows";
 import type { Env } from "./env";
 import { runLead, type LeadDeps, type StepLike } from "./pipeline/lead";
-import { anthropicCaller } from "./drafter/draft";
 import { browserRenderer } from "./render/render";
 import { setBusinessError } from "./db/businesses";
 import { incrementProcessed } from "./db/searches";
@@ -30,7 +29,7 @@ const AI_STEP = /^(model|synthesize|page-\d+)$/;
 export function depsFromEnv(env: Env): LeadDeps {
   return {
     db: env.DB, raw: env.RAW, fetch: (u, i) => fetch(u, i), pagespeedKey: env.PAGESPEED_API_KEY,
-    claude: anthropicCaller(env.ANTHROPIC_API_KEY), now: () => new Date(),
+    now: () => new Date(),
     render: env.BROWSER ? browserRenderer(env.BROWSER) : undefined,
   };
 }

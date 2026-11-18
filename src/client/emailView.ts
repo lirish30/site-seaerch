@@ -55,3 +55,11 @@ export const TWEAK_BUTTONS: { key: "shorter" | "warmer" | "more_direct"; label: 
 
 export const mailtoHref = (to: string, subject: string, text: string) =>
   `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`;
+
+/** Where a draft that was asked for stands: "queued" waits for Claude's next queue session, "claimed" is being written. Nothing is shown when nothing is open. */
+export interface DraftStatus { state: "idle" | "queued" | "claimed"; since: string | null }
+export function draftStateLine(s: { state: string; since: string | null }, _now: Date): string {
+  if (s.state === "queued") return "Waiting for Claude. It will be written in your next queue session.";
+  if (s.state === "claimed") return "Claude is writing this now.";
+  return "";
+}

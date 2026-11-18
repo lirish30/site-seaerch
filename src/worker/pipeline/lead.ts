@@ -3,12 +3,9 @@ import { crawlSite } from "../crawler/crawl";
 import { runPageSpeed, RateLimitedError } from "../pagespeed";
 import { score } from "../scoring/scorer";
 import { lookupMailDns, siteMailDomain, UNKNOWN_MAIL_DNS, type MailDns } from "../dns";
-import { generateDraft, type ClaudeCaller } from "../drafter/draft";
 import { getBusiness, setScanStage } from "../db/businesses";
-import { replaceContacts, listContacts, ensureContact } from "../db/contacts";
-import { pocFor } from "../db/people";
-import { insertAudit, latestAudit } from "../db/audits";
-import { insertDraft, latestDraft } from "../db/drafts";
+import { replaceContacts, listContacts } from "../db/contacts";
+import { insertAudit } from "../db/audits";
 import { getSettings } from "../db/settings";
 import { incrementProcessed } from "../db/searches";
 import { recordUsage } from "../db/usage";
@@ -17,89 +14,23 @@ import type { Renderer } from "../render/render";
 import { withProvenance } from "../audit/provenance";
 import { scoreInputsKey, type ScoreInputs } from "../audit/rescore";
 import { enqueueTask } from "../queue/db";
-import { SITE_REVIEW_KIND, enqueueDraftIfWanted } from "../queue/siteReview"; // also registers the site.review task kind
+import { SITE_REVIEW_KIND, enqueueDraftIfWanted } from "../queue/siteReview"; // also registers the site.review and lead.draft task kinds
 import { isSocialOnlyUrl } from "../crawler/extract";
-import { croItemsForBusiness } from "../db/cro";
-import type { CroItem } from "../cro/types";
-import type { Draft, Finding, Offer, Purpose, ScanStage, SiteStatus, TonePreset } from "../types";
-
-/** One-click rewrites of the current draft. */
-export const TWEAKS = {
-  shorter: "Make it noticeably shorter: cut it by about a third without losing the one observation or the ask.",
-  warmer: "Make it warmer and more personal, like a note to someone you would like to meet. Keep the facts the same.",
-  more_direct: "Make it more direct: shorter sentences, no warm-up, get to the point faster.",
-} as const;
-export type Tweak = keyof typeof TWEAKS;
-
-export interface DraftOptions {
-  steeringNote?: string | null; focus?: number[]; tone?: TonePreset | null; croFocus?: string[];
-  /** Accepted for compatibility with older clients; every draft is freelance now. */
-  purpose?: Purpose;
-  /** Rewrite the current draft with one change instead of writing fresh variants. */
-  tweak?: Tweak;
-}
+import type { ScanStage, SiteStatus } from "../types";
 
 export interface StepLike {
   do<T>(name: string, fn: () => Promise<T>): Promise<T>;
   sleep(name: string, ms: number): Promise<void>;
 }
 export interface LeadDeps {
-  db: D1Database; raw: R2Bucket; fetch: Fetcher; pagespeedKey: string; claude: ClaudeCaller; now: () => Date;
+  db: D1Database; raw: R2Bucket; fetch: Fetcher; pagespeedKey: string; now: () => Date;
   /** Real-browser render for screenshots and JS-built pages; absent when the Browser binding isn't configured. */
   render?: Renderer;
 }
 
 const withScheme = (u: string) => (/^https?:\/\//i.test(u) ? u : `https://${u}`);
 
-/** A CRO opportunity as a prompt finding: the observation is the evidence, the change is the fix. */
-const croFinding = (i: CroItem): Finding => ({ code: `cro:${i.id}` as Finding["code"], category: "cro", severity: "important", points: 0,
-  evidence: i.observation, recommendation: i.change, source: "ai" });
-
-async function draftFor(deps: LeadDeps, businessId: string, o: DraftOptions = {}): Promise<Draft> {
-  const [business, audit, settings, poc, current] = await Promise.all([
-    getBusiness(deps.db, businessId), latestAudit(deps.db, businessId), getSettings(deps.db), pocFor(deps.db, businessId),
-    o.tweak ? latestDraft(deps.db, businessId) : Promise.resolve(null)
-  ]);
-  if (!business || !audit) throw new Error("Cannot draft: business or audit missing");
-  if (o.tweak && !current) throw new Error("Write a draft first");
-  // A point of contact with an email becomes a draftable contact so the draft can be addressed to them.
-  const pocContact = poc?.email
-    ? await ensureContact(deps.db, businessId, { type: "email", value: poc.email, source_url: null, person_name: poc.name, role: poc.role, confidence: 1 })
-    : null;
-  const contacts = await listContacts(deps.db, businessId);
-  // croItemsForBusiness scopes ids to this lead's own audits, so another lead's item id is silently dropped.
-  const croItems = o.croFocus?.length ? (await croItemsForBusiness(deps.db, businessId, o.croFocus)).filter((i) => i.included) : [];
-  const focus = [...(o.focus ?? []).map((i) => audit.findings[i]).filter(Boolean), ...croItems.map(croFinding)];
-  // Mostly-CRO picks make this a conversion pitch.
-  const offer: Offer = croItems.length * 2 > focus.length ? "conversion" : audit.offer;
-  const steeringNote = o.steeringNote ?? null;
-  const purpose: Purpose = "freelance";
-  const d = await generateDraft({
-    settings, business, findings: audit.findings, offer, contacts, steeringNote, focus, tone: o.tone ?? null,
-    niche: audit.niche, valueProposition: audit.ai_review?.value_proposition ?? null, poc: poc ? { name: poc.name, role: poc.role } : null,
-    purpose,
-    revise: o.tweak && current ? { subject: current.subject, body: current.body, instruction: TWEAKS[o.tweak] } : undefined,
-  }, deps.claude, pocContact?.id ?? null);
-  // Variants share a timestamp, so the first-written leads; a tweak keeps the current draft's footer choice.
-  const group = crypto.randomUUID();
-  const at = new Date().toISOString();
-  let first: Draft | null = null;
-  for (const [n, v] of d.variants.entries()) {
-    const row = await insertDraft(deps.db, {
-      business_id: businessId, audit_id: audit.id, offer, steering_note: steeringNote, to_contact_id: d.to_contact_id,
-      recipient_reason: d.recipient_reason, subject: v.subject, body: v.body, purpose, angle: v.angle,
-      include_footer: current && o.tweak ? current.include_footer : (settings.footer_freelance ?? 1) === 1, variant_group: group, variant_index: n, created_at: at,
-    });
-    first ??= row;
-  }
-  return first!;
-}
-
 const measurable = (s: SiteStatus) => s === "ok" || s === "blocked";
-
-export function regenerateDraft(deps: LeadDeps, businessId: string, o: DraftOptions = {}) {
-  return draftFor(deps, businessId, o);
-}
 
 export async function runLead(
   deps: LeadDeps, step: StepLike,

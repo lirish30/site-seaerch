@@ -22,6 +22,7 @@ const withScheme = (u: string) => (/^https?:\/\//i.test(u) ? u : `https://${u}`)
 /**
  * Queues the lead's draft, under the rule the inline step used: a low-priority lead is not drafted unless `forceDraft` says so, and a suppressed
  * lead (or one deleted meanwhile) never is. Checked now, when the draft is queued, so a lead suppressed after its audit began gets none.
+ * True only when a new draft task was queued (false too when one was already open).
  */
 export async function enqueueDraftIfWanted(
   db: D1Database, p: { businessId: string; auditId: string; lowPriority: boolean; forceDraft?: boolean; steeringNote?: string | null },
@@ -29,8 +30,7 @@ export async function enqueueDraftIfWanted(
   if (p.lowPriority && !p.forceDraft) return false;
   const business = await getBusiness(db, p.businessId);
   if (!business || (await leadSuppression(db, business))) return false;
-  await enqueueDraftFor(db, { businessId: p.businessId, auditId: p.auditId, forceDraft: p.forceDraft, steeringNote: p.steeringNote ?? null });
-  return true;
+  return (await enqueueDraftFor(db, { businessId: p.businessId, auditId: p.auditId, forceDraft: p.forceDraft, steeringNote: p.steeringNote ?? null })).created;
 }
 
 /**
@@ -73,7 +73,7 @@ const siteReview: TaskKindDef<SiteReviewPayload, ReviewOutput> = {
   /**
    * Scores the audit again with the review in it, then queues the lead's draft under the same rule the inline step used. A newer audit, a deleted or
    * suppressed lead make the result stale: nothing is written and no draft is queued. A crash-retry just repeats it: the rescore writes the same values
-   * and the draft task is deduplicated by its own kind.
+   * and the draft task is deduplicated per lead.
    */
   async apply(env, p, r) {
     const t = await loadTarget(env.DB, p.auditId);
