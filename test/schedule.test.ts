@@ -10,7 +10,8 @@ import { setMailDeps } from "../src/worker/mail/deps";
 import { saveMailbox } from "../src/worker/db/mailboxes";
 import type { ImapFetch } from "../src/worker/mail/types";
 import { getTask } from "../src/worker/queue/db";
-import { createCroAudit, updateCroAudit } from "../src/worker/db/cro";
+import { createCroAudit, getCroAudit, updateCroAudit } from "../src/worker/db/cro";
+import { CRO_SYNTH_KIND, CRO_TARGET } from "../src/worker/queue/croKinds";
 import { seedBusiness } from "./fixtures/cro";
 import "../src/worker/queue/replyClassify"; // registers reply.classify
 
@@ -132,9 +133,22 @@ describe("runScheduled", () => {
     it("the daily cron sweeps for a CRO audit stuck waiting for its roadmap task", async () => {
       const b = await seedBusiness();
       const a = await createCroAudit(env.DB, b.id);
-      await updateCroAudit(env.DB, a.id, { status: "waiting", step: "synthesize" });
+      // Stuck: every page review is in and the audit moved on to the roadmap, but the roadmap task was never queued.
+      await updateCroAudit(env.DB, a.id, {
+        status: "waiting", step: "synthesize", pending_pages: [], pages: [{ index: 0, url: "https://ace.com/", kind: "home", ok: true, key: null }],
+        page_reviews: [{ page: "https://ace.com/", five_second_read: { thinks_business_does: "plumbing", would_do_next: "call" }, strengths: [], issues: [] }],
+      });
+      const synth = async () => (await env.DB.prepare(`SELECT status FROM claude_tasks WHERE kind = ? AND target_type = ? AND target_id = ?`).bind(CRO_SYNTH_KIND, CRO_TARGET, a.id).all<{ status: string }>()).results;
+      expect(await synth()).toEqual([]); // nothing is queued for it: this is the stuck state
       await runScheduled(env, DAILY, NOW);
       expect(logs.some((l) => l[0] === "cro heal" && String(l[1]) === "1")).toBe(true);
+      expect((await synth()).map((t) => t.status)).toEqual(["pending"]); // the sweep put the roadmap task back in the queue
+      expect(await getCroAudit(env.DB, a.id)).toMatchObject({ status: "waiting", step: "synthesize" });
+      // and a second sweep finds nothing left to heal
+      logs.length = 0;
+      await runScheduled(env, DAILY, NOW);
+      expect(logs.some((l) => l[0] === "cro heal" && String(l[1]) === "0")).toBe(true);
+      expect(await synth()).toHaveLength(1);
     });
 
     it("a failing CRO heal does not stop the scan, and is logged", async () => {

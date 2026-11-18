@@ -6,8 +6,8 @@ import { BRIGHTDATA_PAGE_SIZE } from "./listings/brightdata";
 export const HOT_SCORE = 60;
 
 /**
- * What a search has cost so far, estimated from list prices: the Maps listing pages, plus the paid per-lead steps
- * (render, AI review, draft) for each lead a full scan has finished. A quick scan has no paid per-lead steps.
+ * What a search has cost so far, estimated from list prices: the Maps listing pages, plus the paid per-lead step
+ * (the browser render) for each lead a full scan has finished. A quick scan has none.
  * Usage rows are not tied to a search, so this is an estimate, not an invoice.
  */
 export function searchCostUsd(s: Pick<Search, "business_type" | "max_results" | "found_count" | "processed_count" | "quick_scan">): number {

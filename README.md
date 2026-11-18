@@ -77,6 +77,7 @@ Radar re-runs saved searches on a schedule. Tick "Repeat this search (Radar)" on
 ## Agency OS setup
 - Generate the MCP bearer token: `openssl rand -hex 32`. Put it in `.dev.vars` as `MCP_TOKEN=` for local runs, and for production run `npx wrangler secret put MCP_TOKEN`.
 - Add the MCP server to Claude Code: `claude mcp add --transport http agency-os <url>/mcp --header "Authorization: Bearer <token>"`. `/mcp` is POST only; wrong tokens are rate limited per IP.
+- Work the queue: with the `agency-os` MCP server connected, run `/work-the-queue` in Claude Code. It claims the queued Claude tasks (site reviews, drafts, reply triage, CRO) one at a time and completes them on your subscription.
 - Passkeys are bound to the domain (`WEBAUTHN_RP_ID` / `WEBAUTHN_ORIGIN`, default the request host). After a domain change, re-register your passkeys.
 
 ## Known limitations

@@ -3,7 +3,7 @@ import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { buildBundle } from "../src/worker/queue/bundle";
 import { completeTask, getTask } from "../src/worker/queue/db";
 import { getTaskKind } from "../src/worker/queue/registry";
-import { LEAD_DRAFT_KIND, draftTaskState, enqueueDraftFor, requestDraft } from "../src/worker/queue/leadDraft";
+import { LEAD_DRAFT_KIND, createManualDraft, draftTaskState, enqueueDraftFor, requestDraft } from "../src/worker/queue/leadDraft";
 import { enqueueDraftIfWanted } from "../src/worker/queue/siteReview";
 import { insertAudit, latestAudit } from "../src/worker/db/audits";
 import { PLACEHOLDER_BODY, PLACEHOLDER_SUBJECT, draftedIds, isPlaceholderDraft, latestDraft, latestDraftsByBusiness, listDrafts, variantsOf } from "../src/worker/db/drafts";
@@ -75,6 +75,16 @@ describe("requestDraft", () => {
     const { b } = await lead();
     await expect(requestDraft(env.DB, b.id, { tweak: "warmer" })).rejects.toThrow(/Write a draft first/);
     expect(await tasks()).toHaveLength(0);
+  });
+
+  it("a tweak on an unedited placeholder stub throws, and queues nothing", async () => {
+    const { b } = await lead();
+    await createManualDraft(env.DB, b.id);
+    expect(isPlaceholderDraft((await latestDraft(env.DB, b.id))!)).toBe(true);
+    await expect(requestDraft(env.DB, b.id, { tweak: "shorter" })).rejects.toThrow(/Write a draft first/);
+    expect(await tasks()).toHaveLength(0);
+    // a plain (non-tweak) request is still fine: it writes the first real draft
+    expect((await requestDraft(env.DB, b.id)).created).toBe(true);
   });
 
   it("refuses a lead with no audit or no business", async () => {

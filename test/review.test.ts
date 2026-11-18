@@ -17,6 +17,25 @@ describe("ReviewOutput", () => {
   });
 });
 
+describe("ReviewOutput text limits", () => {
+  const finding = { category: "cro", severity: "nice", title: "t", evidence: "e", recommendation: "r" };
+  const paths = (r: unknown) => { const x = ReviewOutput.safeParse(r); return x.success ? [] : x.error.issues.map((i) => i.path.join(".")); };
+
+  it("accepts text up to each limit", () => {
+    const ok = { ...valid, value_proposition: "v".repeat(1000), summaries: { design: "s".repeat(1000), content: "", cro: "", mobile: "" },
+      findings: [{ ...finding, title: "t".repeat(300), evidence: "e".repeat(1000), recommendation: "r".repeat(1000) }] };
+    expect(ReviewOutput.safeParse(ok).success).toBe(true);
+  });
+
+  it("refuses an over-long value, naming where it is", () => {
+    expect(paths({ ...valid, value_proposition: "v".repeat(1001) })).toEqual(["value_proposition"]);
+    expect(paths({ ...valid, summaries: { ...valid.summaries, cro: "s".repeat(1001) } })).toEqual(["summaries.cro"]);
+    expect(paths({ ...valid, findings: [{ ...finding, title: "t".repeat(301) }] })).toEqual(["findings.0.title"]);
+    expect(paths({ ...valid, findings: [{ ...finding, evidence: "e".repeat(1001) }] })).toEqual(["findings.0.evidence"]);
+    expect(paths({ ...valid, findings: [{ ...finding, recommendation: "r".repeat(1001) }] })).toEqual(["findings.0.recommendation"]);
+  });
+});
+
 describe("normalizeReview", () => {
   it("maps an unknown niche to general and keeps a known one", () => {
     expect(normalizeReview({ ...valid, niche: "spaceships" }).niche).toBe("general");

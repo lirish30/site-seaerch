@@ -24,7 +24,11 @@ queueRoutes.get("/", async (c) => {
   return c.json({ counts, labels, oldestPendingAt: oldest?.at ?? null });
 });
 
-/** Gives up on the open tasks about one target (a lead or an audit, say): they end `stale`, and the count comes back. */
+/**
+ * Manual clean-up: gives up on the open tasks about one target (a lead or an audit, say): they end `stale`, and the count comes back. It runs no
+ * kind hooks (a cancelled task is not failed or expired, so nothing is queued in its place and no audit is failed), so use it only to clear work that
+ * should not be done. Cancelling the roadmap task of a CRO audit that is waiting for it is undone by the daily heal, which queues it again.
+ */
 queueRoutes.post("/cancel", async (c) => {
   const p = Cancel.safeParse(await c.req.json().catch(() => null));
   if (!p.success) return c.json({ error: "targetType and targetId are required" }, 400);

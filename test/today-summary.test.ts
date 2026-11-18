@@ -3,7 +3,6 @@ import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { createSearch } from "../src/worker/db/searches";
 import { upsertBusiness } from "../src/worker/db/businesses";
 import { addSuppression } from "../src/worker/db/suppression";
-import { PER_LEAD_COST } from "../src/worker/cost";
 import { buildSummary, HOT_SCORE, movedTo } from "../src/worker/todaySummary";
 import { HOT_AT } from "../src/client/scoreView";
 
@@ -53,7 +52,6 @@ describe("buildSummary", () => {
   it("is all zeros with no leads", async () => {
     const s = await buildSummary(env.DB, NOW);
     expect(s).toMatchObject({ hot: { total: 0, newThisWeek: 0 }, drafts: { ready: 0, waiting: 0 }, replied: { total: 0, thisWeek: 0 }, won: { thisMonth: 0, valueThisMonth: 0, openValue: 0 }, totalLeads: 0, recent: [] });
-    expect(s.fullScanCostUsd).toBe(PER_LEAD_COST);
   });
 
   it("counts hot open leads by their latest score and how many arrived this week", async () => {

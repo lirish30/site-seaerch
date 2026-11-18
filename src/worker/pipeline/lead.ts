@@ -149,7 +149,7 @@ export async function runLead(
     // With nothing to review (no site, or nothing readable) the draft is queued now, under the same rule.
     if (!quick) {
       if (reviewable) {
-        await enqueueTask(deps.db, SITE_REVIEW_KIND, { auditId: a.id, forceDraft: p.forceDraft, steeringNote: p.steeringNote ?? null },
+        await enqueueTask(deps.db, SITE_REVIEW_KIND, { auditId: a.id, lowPriority: s.lowPriority, forceDraft: p.forceDraft, steeringNote: p.steeringNote ?? null },
           { dedupeKey: a.id, targetType: "lead", targetId: p.businessId });
       } else {
         await enqueueDraftIfWanted(deps.db, { businessId: p.businessId, auditId: a.id, lowPriority: s.lowPriority, forceDraft: p.forceDraft, steeringNote: p.steeringNote });

@@ -5,13 +5,14 @@ import { createSearch } from "../src/worker/db/searches";
 import { upsertBusiness, deleteBusiness } from "../src/worker/db/businesses";
 import { getAudit, latestAudit } from "../src/worker/db/audits";
 import { addSuppression } from "../src/worker/db/suppression";
-import { completeTask, expireOldTasks, getTask } from "../src/worker/queue/db";
+import { claimNextTask, completeTask, expireOldTasks, getTask, MAX_ATTEMPTS } from "../src/worker/queue/db";
 import { buildBundle } from "../src/worker/queue/bundle";
 import { getTaskKind } from "../src/worker/queue/registry";
 import { SITE_REVIEW_KIND } from "../src/worker/queue/siteReview";
 import * as leadDraft from "../src/worker/queue/leadDraft";
 import { normalizeReview, ReviewOutput } from "../src/worker/audit/review";
-import { rescoreAudit } from "../src/worker/audit/rescore";
+import { loadScoreInputs, rescoreAudit } from "../src/worker/audit/rescore";
+import type { Env } from "../src/worker/env";
 import type { Listing } from "../src/worker/types";
 
 // The draft task itself is queued by leadDraft; here only the calls to it matter.
@@ -85,7 +86,7 @@ describe("site.review queued by the lead pipeline", () => {
     const tasks = await reviewTasks();
     expect(tasks).toHaveLength(1);
     expect(tasks[0]).toMatchObject({ status: "pending", dedupe_key: auditId, target_type: "lead", target_id: b.id });
-    expect(JSON.parse(tasks[0].payload)).toEqual({ auditId, steeringNote: null });
+    expect(JSON.parse(tasks[0].payload)).toEqual({ auditId, lowPriority: false, steeringNote: null });
     expect(draftCalls).not.toHaveBeenCalled(); // the draft waits for the review
   });
 
@@ -94,7 +95,7 @@ describe("site.review queued by the lead pipeline", () => {
     const inputs = await env.RAW.get(audit.score_inputs_key!).then((o) => o!.json<Record<string, unknown>>());
     expect(Object.keys(inputs).sort()).toEqual(["business", "crawl", "mailDns", "mobile", "now", "pagespeed", "siteStatus"]);
     expect(inputs.now).toBe("2026-10-02T00:00:00.000Z");
-    expect(JSON.parse((await reviewTasks())[0].payload)).toEqual({ auditId, forceDraft: true, steeringNote: "mention the van" });
+    expect(JSON.parse((await reviewTasks())[0].payload)).toEqual({ auditId, lowPriority: false, forceDraft: true, steeringNote: "mention the van" });
   });
 
   it("a run with a site but no browser still queues a review (crawl facts alone are enough)", async () => {
@@ -292,29 +293,141 @@ describe("the review bundle", () => {
     expect(b.text.slice(open, close)).toContain("[image 2 is attached after this text]");
   });
 
-  it("a site that could not be crawled and has no screenshots has nothing to review", async () => {
-    const { audit } = await fullRun("SR9b", { render: false });
+  it("a site that could not be crawled and has no screenshots has nothing to review, and the draft is queued instead", async () => {
+    const { b, audit } = await fullRun("SR9b", { render: false });
     await env.DB.prepare(`UPDATE audits SET score_inputs_key = NULL WHERE id = ?`).bind(audit.id).run();
     expect(await buildBundle(env, await claim(audit.id))).toMatchObject({ stale: expect.stringMatching(/nothing to review/) });
+    expect(draftCalls).toHaveBeenCalledOnce();
+    expect(draftCalls).toHaveBeenCalledWith(expect.anything(), { businessId: b.id, auditId: audit.id, forceDraft: undefined, steeringNote: null });
+  });
+
+  it("a superseded audit with nothing to review queues no draft", async () => {
+    const { b, audit } = await fullRun("SR9c", { render: false });
+    await env.DB.prepare(`UPDATE audits SET score_inputs_key = NULL WHERE id = ?`).bind(audit.id).run();
+    await new Promise((r) => setTimeout(r, 5));
+    await runLead(deps(), step, { businessId: b.id, searchId: null, stage: "quick" });
+    expect(await buildBundle(env, await claim(audit.id))).toMatchObject({ stale: expect.stringMatching(/newer audit/) });
+    expect(draftCalls).not.toHaveBeenCalled();
   });
 });
 
 describe("when nobody picks the review up", () => {
   const FUTURE = new Date(Date.now() + 30 * 86_400_000);
 
-  it("the audit stays rules-only and no draft is queued", async () => {
-    const { audit } = await fullRun("SR10");
+  it("the audit stays rules-only and the draft is queued from it under the normal rule", async () => {
+    const { b, audit } = await fullRun("SR10");
     expect(await expireOldTasks(env, FUTURE, 14)).toBe(1);
     expect((await reviewTasks())[0].status).toBe("expired");
+    expect((await getAudit(env.DB, audit.id))!.ai_review).toBeNull();
+    expect(draftCalls).toHaveBeenCalledOnce();
+    expect(draftCalls).toHaveBeenCalledWith(expect.anything(), { businessId: b.id, auditId: audit.id, forceDraft: undefined, steeringNote: null });
+  });
+
+  it("a low-priority lead gets no draft", async () => {
+    const { audit } = await fullRun("SR10c", { good: true, render: false });
+    expect(JSON.parse((await reviewTasks())[0].payload).lowPriority).toBe(true);
+    await expireOldTasks(env, FUTURE, 14);
     expect(draftCalls).not.toHaveBeenCalled();
     expect((await getAudit(env.DB, audit.id))!.ai_review).toBeNull();
   });
 
-  it("a draft the user forced is still queued, from the rules-only audit", async () => {
-    const { b, audit } = await fullRun("SR10b", { force: true });
+  it("a draft the user forced is still queued, from the rules-only audit, even for a low-priority lead", async () => {
+    const { b, audit } = await fullRun("SR10b", { force: true, good: true, render: false });
     await expireOldTasks(env, FUTURE, 14);
     expect(draftCalls).toHaveBeenCalledOnce();
     expect(draftCalls).toHaveBeenCalledWith(expect.anything(), { businessId: b.id, auditId: audit.id, forceDraft: true, steeringNote: null });
+  });
+
+  it("a superseded audit or a suppressed lead gets no draft", async () => {
+    const { b } = await fullRun("SR10d");
+    await new Promise((r) => setTimeout(r, 5));
+    await runLead(deps(), step, { businessId: b.id, searchId: null, stage: "quick" }); // a newer audit
+    await expireOldTasks(env, FUTURE, 14);
+    expect(draftCalls).not.toHaveBeenCalled();
+
+    await fullRun("SR10e");
+    await addSuppression(env.DB, { kind: "place_id", value: "SR10e", reason: "opt_out" });
+    await expireOldTasks(env, FUTURE, 14);
+    expect(draftCalls).not.toHaveBeenCalled();
+  });
+
+  it("a task queued before the payload carried lowPriority is drafted like any other", async () => {
+    const { b, audit } = await fullRun("SR10f");
+    await env.DB.prepare(`UPDATE claude_tasks SET payload = ? WHERE dedupe_key = ?`).bind(JSON.stringify({ auditId: audit.id, steeringNote: null }), audit.id).run();
+    await expireOldTasks(env, FUTURE, 14);
+    expect(draftCalls).toHaveBeenCalledWith(expect.anything(), { businessId: b.id, auditId: audit.id, forceDraft: undefined, steeringNote: null });
+  });
+});
+
+describe("when the review fails", () => {
+  /** Claims the review as many times as the queue allows and lets the last claim go stale, so the next claim gives the task up as failed. */
+  async function giveUp(auditId: string) {
+    await claim(auditId);
+    await env.DB.prepare(`UPDATE claude_tasks SET status = 'claimed', attempts = ?, claimed_at = ? WHERE dedupe_key = ?`)
+      .bind(MAX_ATTEMPTS, new Date(Date.now() - 3 * 3_600_000).toISOString(), auditId).run();
+    expect(await claimNextTask(env, new Date(), [SITE_REVIEW_KIND])).toBeNull();
+    expect((await getTask(env.DB, (await reviewTasks())[0].id))!.status).toBe("failed");
+  }
+
+  it("the draft is queued from the rules-only audit under the normal rule", async () => {
+    const { b, audit } = await fullRun("SR11");
+    await giveUp(audit.id);
+    expect(draftCalls).toHaveBeenCalledOnce();
+    expect(draftCalls).toHaveBeenCalledWith(expect.anything(), { businessId: b.id, auditId: audit.id, forceDraft: undefined, steeringNote: null });
+    expect((await getAudit(env.DB, audit.id))!.ai_review).toBeNull();
+  });
+
+  it("a low-priority lead gets no draft, and a forced one does", async () => {
+    const low = await fullRun("SR11b", { good: true, render: false });
+    await giveUp(low.audit.id);
+    expect(draftCalls).not.toHaveBeenCalled();
+    const forced = await fullRun("SR11c", { good: true, render: false, force: true, steeringNote: "short" });
+    await giveUp(forced.audit.id);
+    expect(draftCalls).toHaveBeenCalledOnce();
+    expect(draftCalls).toHaveBeenCalledWith(expect.anything(), { businessId: forced.b.id, auditId: forced.audit.id, forceDraft: true, steeringNote: "short" });
+  });
+
+  it("a superseded audit or a suppressed lead gets no draft", async () => {
+    const { b, audit } = await fullRun("SR11d");
+    await new Promise((r) => setTimeout(r, 5));
+    await runLead(deps(), step, { businessId: b.id, searchId: null, stage: "quick" });
+    await giveUp(audit.id);
+    expect(draftCalls).not.toHaveBeenCalled();
+
+    await env.DB.prepare(`DELETE FROM claude_tasks`).run();
+    const other = await fullRun("SR11e");
+    await addSuppression(env.DB, { kind: "place_id", value: "SR11e", reason: "opt_out" });
+    await giveUp(other.audit.id);
+    expect(draftCalls).not.toHaveBeenCalled();
+  });
+});
+
+describe("loadScoreInputs", () => {
+  it("returns null for no key, a missing object, and corrupt JSON (all permanent)", async () => {
+    expect(await loadScoreInputs(env, null)).toBeNull();
+    expect(await loadScoreInputs(env, "audits/nope/missing-score-inputs.json")).toBeNull();
+    await env.RAW.put("audits/x/corrupt-score-inputs.json", "{ not json");
+    expect(await loadScoreInputs(env, "audits/x/corrupt-score-inputs.json")).toBeNull();
+  });
+
+  it("returns the stored inputs", async () => {
+    await env.RAW.put("audits/x/ok-score-inputs.json", JSON.stringify({ siteStatus: "ok", now: "2026-10-02T00:00:00.000Z" }));
+    expect(await loadScoreInputs(env, "audits/x/ok-score-inputs.json")).toMatchObject({ siteStatus: "ok" });
+  });
+
+  it("lets an R2 error propagate, so a finished review is retried rather than staled for good", async () => {
+    const down = { RAW: { get: async () => { throw new Error("R2 is down"); } } } as unknown as Env;
+    await expect(loadScoreInputs(down, "audits/x/k.json")).rejects.toThrow("R2 is down");
+    const brokenBody = { RAW: { get: async () => ({ json: async () => { throw new Error("stream reset"); } }) } } as unknown as Env;
+    await expect(loadScoreInputs(brokenBody, "audits/x/k.json")).rejects.toThrow("stream reset");
+  });
+
+  it("an R2 error during apply fails the completion (retryable), not stale", async () => {
+    const { audit } = await fullRun("SR12");
+    const task = await claim(audit.id);
+    const down = { ...env, RAW: { get: async () => { throw new Error("R2 is down"); } } } as unknown as Env;
+    await expect(completeTask(down, task.id, review())).rejects.toThrow("R2 is down");
+    expect((await getTask(env.DB, task.id))!.status).toBe("claimed");
   });
 });
 

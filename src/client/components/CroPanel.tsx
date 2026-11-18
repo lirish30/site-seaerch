@@ -97,7 +97,7 @@ export default function CroPanel({ leadId, onError }: { leadId: string; onError:
     <div className="cro"><div className="section-card cro-card cro-empty">
       <h3>CRO audit</h3>
       <p>A deeper scan of up to 7 key pages on desktop and phone. It works out how this business makes money, then builds a specific roadmap: what to fix this month, the next 90 days, what to measure, and what it could be worth.</p>
-      <p className="cro-hint">Pages are captured now; Claude writes the review in your next queue session. No extra cost.</p>
+      <p className="cro-hint">Pages are captured now; Claude writes the review in your next queue session. No AI cost.</p>
       <div className="cro-actions"><button className="btn primary" onClick={run} disabled={!!busy}>{busy ? "Starting…" : "Run CRO audit"}</button></div>
     </div></div>
   );
@@ -115,6 +115,12 @@ export default function CroPanel({ leadId, onError }: { leadId: string; onError:
             {label}{i < cur && <span className="sr-only"> (done)</span>}
           </li>))}</ol>
         <p className="cro-hint">You can leave this page; it keeps going.</p>
+        {a.status === "waiting" && (
+          <div className="cro-actions">
+            <button className="btn sm" onClick={() => act("rebuild", () => api.post(`/cro-audits/${a.id}/rebuild`), a.id)} disabled={!!busy}>{busy === "rebuild" ? "Trying again…" : "Rebuild"}</button>
+            <span className="cro-hint">Queues this step for Claude again. No AI cost.</span>
+          </div>
+        )}
         {lagging && <p className="cro-hint" role="status">Having trouble checking progress. Trying again shortly.</p>}
       </div></div>
     );

@@ -7,7 +7,7 @@ const item = (kind: TodayKind, businessId = "b", extra: Partial<TodayItem> = {})
   ({ id: `${kind}:${businessId}`, kind, businessId, businessName: businessId, reason: "r", due: null, priority: 1, ...extra });
 const summary = (over: Partial<TodaySummary> = {}): TodaySummary => ({
   hot: { total: 24, newThisWeek: 6 }, drafts: { ready: 11, waiting: 4 }, replied: { total: 7, thisWeek: 3 }, won: { thisMonth: 2, valueThisMonth: 9400, openValue: 18200 },
-  pipeline: { new: 86, reviewed: 32, contacted: 18, replied: 7, won: 4, lost: 3, skip: 2 }, totalLeads: 152, fullScanCostUsd: 0.0455, recent: [], ...over,
+  pipeline: { new: 86, reviewed: 32, contacted: 18, replied: 7, won: 4, lost: 3, skip: 2 }, totalLeads: 152, recent: [], ...over,
 });
 const at = (h: number) => new Date(2026, 9, 15, h, 30);
 

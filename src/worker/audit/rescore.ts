@@ -13,10 +13,16 @@ export interface ScoreInputs {
 /** The R2 file for one audit's score inputs. A random part keeps two runs of one lead apart, even when they share a clock. */
 export const scoreInputsKey = (businessId: string, stamp: string) => `audits/${businessId}/${stamp}-${crypto.randomUUID().slice(0, 8)}-score-inputs.json`;
 
-/** The stored score inputs of an audit, or null when it has none (an older audit) or the file is gone or unreadable. */
+/**
+ * The stored score inputs of an audit, or null when there are none for good: no key (an older audit), no object, or a file that is not valid JSON.
+ * An R2 error is not that: it propagates, so the build or apply that asked fails and is tried again rather than closing a finished review as stale.
+ */
 export async function loadScoreInputs(env: Env, key: string | null): Promise<ScoreInputs | null> {
   if (!key) return null;
-  try { return (await env.RAW.get(key).then((o) => o?.json<ScoreInputs>())) ?? null; } catch { return null; }
+  const obj = await env.RAW.get(key);
+  if (!obj) return null;
+  try { return (await obj.json<ScoreInputs>()) ?? null; }
+  catch (e) { if (e instanceof SyntaxError) return null; throw e; }
 }
 
 /**

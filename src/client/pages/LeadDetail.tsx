@@ -329,7 +329,7 @@ export default function LeadDetail() {
         <button role="tab" aria-selected={tab === "overview"} onClick={() => setTab("overview")}>Overview</button>
         <button role="tab" aria-selected={tab === "issues"} onClick={() => setTab("issues")}>Website issues{a && <span className="count">{issueCount}</span>}</button>
         <button role="tab" aria-selected={tab === "plan"} onClick={() => setTab("plan")}>Conversion plan{croCount ? <span className="count">{croCount}</span> : null}</button>
-        <button role="tab" aria-selected={tab === "email"} onClick={() => setTab("email")}>Email draft{d.draft && <span className="count ready">Ready</span>}</button>
+        <button role="tab" aria-selected={tab === "email"} onClick={() => setTab("email")}>Email draft{d.draft && !d.draftPlaceholder && <span className="count ready">Ready</span>}</button>
         <button role="tab" aria-selected={tab === "activity"} onClick={() => setTab("activity")}>Activity{d.activity.length > 0 && <span className="count">{d.activity.length}</span>}</button>
       </nav>
 

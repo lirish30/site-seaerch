@@ -2,7 +2,7 @@ import { env, SELF } from "cloudflare:test";
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { registerTaskKind, getTaskKind, registeredTaskKinds, unregisterTaskKind } from "../src/worker/queue/registry";
 import {
-  CLAIM_TTL_MS, MAX_ATTEMPTS, cancelTasksFor, claimNextTask, completeTask, enqueueTask, expireOldTasks, getTask, queueCounts, releaseTask,
+  CLAIM_TTL_MS, EXPIRE_BATCH, MAX_ATTEMPTS, cancelTasksFor, claimNextTask, completeTask, enqueueTask, expireOldTasks, getTask, queueCounts, releaseTask,
 } from "../src/worker/queue/db";
 import { buildBundle } from "../src/worker/queue/bundle";
 import { listAgentActions } from "../src/worker/db/agentActions";
@@ -309,6 +309,22 @@ describe("queue maintenance", () => {
     expect(testKindLog.expired).toEqual(expect.arrayContaining([{ n: 1 }, { n: 2 }]));
     expect(testKindLog.expired).toHaveLength(2);
     expect(await expireOldTasks(env, NOW, 14)).toBe(0);
+  });
+
+  it("expireOldTasks expires at most EXPIRE_BATCH tasks per run, oldest first, and the next run takes the rest", async () => {
+    expect(EXPIRE_BATCH).toBe(50);
+    const total = EXPIRE_BATCH + 5;
+    const stmts = Array.from({ length: total }, (_, i) => env.DB.prepare(
+      `INSERT INTO claude_tasks (id, kind, payload, status, attempts, created_at) VALUES (?, 'test.echo', ?, 'pending', 0, ?)`,
+    ).bind(`old-${String(i).padStart(3, "0")}`, JSON.stringify({ n: i }), new Date(NOW.getTime() - 20 * DAY + i * MIN).toISOString()));
+    await env.DB.batch(stmts);
+    expect(await expireOldTasks(env, NOW, 14)).toBe(EXPIRE_BATCH);
+    expect(testKindLog.expired).toHaveLength(EXPIRE_BATCH);
+    const open = (await rows()).filter((r) => r.status === "pending").map((r) => r.id);
+    expect(open).toEqual(["old-050", "old-051", "old-052", "old-053", "old-054"]); // the newest are left for the next run
+    expect(await expireOldTasks(env, NOW, 14)).toBe(5);
+    expect(await expireOldTasks(env, NOW, 14)).toBe(0);
+    expect((await rows()).every((r) => r.status === "expired")).toBe(true);
   });
 
   it("cancelTasksFor closes open tasks for one target only", async () => {

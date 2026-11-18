@@ -151,7 +151,7 @@ describe("runLead", () => {
     expect(a.findings).toEqual([]);
   });
 
-  it("the review task carries forceDraft and the steering note; whether to draft is decided when the review comes back", async () => {
+  it("the review task carries lowPriority, forceDraft and the steering note; whether to draft is decided when the review comes back", async () => {
     const s = await createSearch(env.DB, { location: "B", businessType: "p", radiusKm: 1, maxResults: 5 });
     const b = await upsertBusiness(env.DB, listing({ placeId: "L3", websiteUrl: "https://good.com" }), s.id);
     const good = async (u: string) => u.includes("pagespeedonline")
@@ -162,8 +162,8 @@ describe("runLead", () => {
     const r = await runLead(d, step, { businessId: b.id, searchId: s.id });
     const forced = await runLead(d, step, { businessId: b.id, searchId: null, forceDraft: true, steeringNote: "short" });
     const payloads = (await reviewTasks(b.id)).map((t) => JSON.parse(t.payload));
-    expect(payloads).toContainEqual({ auditId: r.auditId, steeringNote: null });
-    expect(payloads).toContainEqual({ auditId: forced.auditId, forceDraft: true, steeringNote: "short" });
+    expect(payloads).toContainEqual({ auditId: r.auditId, lowPriority: true, steeringNote: null });
+    expect(payloads).toContainEqual({ auditId: forced.auditId, lowPriority: true, forceDraft: true, steeringNote: "short" });
   });
 
   it("no website → score 100, new_site, no pagespeed call", async () => {

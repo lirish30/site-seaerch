@@ -17,16 +17,19 @@ const CATS = ["design", "content", "cro", "mobile", "technical"] as const;
 const SEV = ["critical", "important", "nice"] as const;
 const score = z.number().min(0).max(100);
 
+/** The longest text Claude may send back in one field. Generous for real output; it only stops a runaway value from being stored and shown. */
+const SHORT = 300, LONG = 1000;
+
 /** The result schema of a `site.review` task: what Claude sends back with complete_claude_task. */
 export const ReviewOutput = z.object({
   niche: z.string(),
-  value_proposition: z.string(),
+  value_proposition: z.string().max(LONG),
   scores: z.object({ design: score, content: score, cro: score, mobile: score }),
-  summaries: z.object({ design: z.string(), content: z.string(), cro: z.string(), mobile: z.string() }),
+  summaries: z.object({ design: z.string().max(LONG), content: z.string().max(LONG), cro: z.string().max(LONG), mobile: z.string().max(LONG) }),
   strengths: z.array(z.string()).max(6),
   niche_checklist: z.array(z.object({ item: z.string(), present: z.boolean() })).max(12),
   findings: z.array(z.object({
-    category: z.enum(CATS), severity: z.enum(SEV), title: z.string(), evidence: z.string(), recommendation: z.string(),
+    category: z.enum(CATS), severity: z.enum(SEV), title: z.string().max(SHORT), evidence: z.string().max(LONG), recommendation: z.string().max(LONG),
   })).max(15),
 });
 export type ReviewOutput = z.infer<typeof ReviewOutput>;

@@ -14,6 +14,8 @@ export const SITE_REVIEW_KIND = "site.review";
 
 export const SiteReviewPayload = z.object({
   auditId: z.string().min(1), forceDraft: z.boolean().optional(), steeringNote: z.string().nullable().optional(),
+  /** Whether the rules-only audit was low priority when the review was queued: the rule the draft falls back on if the review never comes back. Absent on tasks queued before it existed. */
+  lowPriority: z.boolean().optional(),
 });
 export type SiteReviewPayload = z.infer<typeof SiteReviewPayload>;
 
@@ -35,7 +37,7 @@ export async function enqueueDraftIfWanted(
 
 /**
  * The audit and lead a review task is about, or why the review no longer makes sense: the lead was deleted, was re-audited (a newer audit exists),
- * or was suppressed since the task was queued. Used by `build` (nothing is shown to Claude) and, in effect, by `apply` (through `rescoreAudit`).
+ * or was suppressed since the task was queued. Used by `build` (nothing is shown to Claude), by the rules-only fallback draft and, in effect, by `apply` (through `rescoreAudit`).
  */
 async function loadTarget(db: D1Database, auditId: string): Promise<{ stale: string } | { audit: Audit; business: Business }> {
   const audit = await getAudit(db, auditId);
@@ -45,6 +47,16 @@ async function loadTarget(db: D1Database, auditId: string): Promise<{ stale: str
   if (!business) return { stale: "the lead no longer exists" };
   if (await leadSuppression(db, business)) return { stale: "the lead is suppressed" };
   return { audit, business };
+}
+
+/**
+ * The draft for an audit whose review is not coming (it failed, expired or has nothing to look at): the normal rule, applied to the rules-only audit.
+ * Nothing is queued when the audit was superseded or the lead was deleted or suppressed since.
+ */
+async function draftFromRulesOnlyAudit(db: D1Database, p: SiteReviewPayload): Promise<void> {
+  const t = await loadTarget(db, p.auditId);
+  if ("stale" in t) return;
+  await enqueueDraftIfWanted(db, { businessId: t.business.id, auditId: p.auditId, lowPriority: p.lowPriority ?? false, forceDraft: p.forceDraft, steeringNote: p.steeringNote });
 }
 
 const siteReview: TaskKindDef<SiteReviewPayload, ReviewOutput> = {
@@ -60,7 +72,12 @@ const siteReview: TaskKindDef<SiteReviewPayload, ReviewOutput> = {
     if ("stale" in t) return { stale: t.stale };
     const facts = (await loadScoreInputs(env, t.audit.score_inputs_key))?.crawl ?? null;
     const { desktop, mobile } = t.audit.screenshots;
-    if (!desktop && !mobile && !facts) return { stale: "there is nothing to review: no screenshots and no crawl facts" };
+    if (!desktop && !mobile && !facts) {
+      // The review can never happen for this audit, and closing a task stale runs no hook: queue the draft from the rules-only audit now (deduplicated, so a repeat is harmless).
+      try { await draftFromRulesOnlyAudit(env.DB, p); }
+      catch (e) { console.warn("site.review: the fallback draft was not queued", e); }
+      return { stale: "there is nothing to review: no screenshots and no crawl facts" };
+    }
     return {
       instructions: REVIEW_INSTRUCTIONS,
       untrusted: buildReviewContent({
@@ -84,12 +101,10 @@ const siteReview: TaskKindDef<SiteReviewPayload, ReviewOutput> = {
     return { log: { summary: `reviewed the site of ${t.business.name.slice(0, 100)}${queued ? "; a draft is queued" : ""}`, recordType: "lead", recordId: t.business.id } };
   },
 
-  /** Nobody picked the review up: the audit stays on rules alone. Only a draft the user forced is still queued, from that rules-only audit. */
-  async onExpire(env, p) {
-    if (!p.forceDraft) return;
-    const t = await loadTarget(env.DB, p.auditId);
-    if ("stale" in t) return;
-    await enqueueDraftIfWanted(env.DB, { businessId: t.business.id, auditId: p.auditId, lowPriority: false, forceDraft: true, steeringNote: p.steeringNote });
-  },
+  /** Nobody picked the review up: the audit stays on rules alone, and the draft is still queued from it under the normal rule (a low-priority lead is skipped unless forced). */
+  async onExpire(env, p) { await draftFromRulesOnlyAudit(env.DB, p); },
+
+  /** The review was given up on (claimed too many times, or released at the cap): same fallback as an expiry, so the lead is not left with no draft and nothing saying why. */
+  async onFail(env, p) { await draftFromRulesOnlyAudit(env.DB, p); },
 };
 registerTaskKind(siteReview);

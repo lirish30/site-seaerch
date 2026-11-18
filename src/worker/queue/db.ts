@@ -20,6 +20,8 @@ export const CLAIM_TTL_MS = 30 * 60_000;
 export const MAX_ATTEMPTS = 4;
 /** Open tasks older than this many days are given up on by `expireOldTasks`. */
 export const EXPIRE_AFTER_DAYS = 14;
+/** The most tasks one `expireOldTasks` run gives up on (hooks run one after another, so a backlog is worked off over several daily runs). */
+export const EXPIRE_BATCH = 50;
 
 /** A queue function that can end a task as `failed` takes the whole `env` so the kind's `onFail` hook can run; a bare database still works but runs no hook. */
 const dbOf = (t: D1Database | Env): D1Database => ("DB" in t ? t.DB : t);
@@ -205,14 +207,16 @@ export async function releaseTask(target: D1Database | Env, id: string, reason: 
 
 /**
  * Gives up on work nobody picked up: open tasks (pending, or claimed and never finished) created more than `maxAgeDays` ago become `expired`, and
- * each kind's `onExpire` hook runs for its tasks (a failing hook is logged and does not stop the rest). Takes the whole `env` because a hook may
+ * each kind's `onExpire` hook runs for its tasks (a failing hook is logged and does not stop the rest). At most `EXPIRE_BATCH` tasks, the oldest
+ * first, are taken per run so the hooks stay within one cron invocation; the rest wait for the next run. Takes the whole `env` because a hook may
  * need more than the database. Returns how many tasks expired.
  */
 export async function expireOldTasks(env: Env, now: Date, maxAgeDays: number = EXPIRE_AFTER_DAYS): Promise<number> {
   const cutoff = new Date(now.getTime() - maxAgeDays * 86_400_000).toISOString();
   const expired = (await env.DB.prepare(
-    `UPDATE claude_tasks SET status = 'expired', error = ?, done_at = ? WHERE status IN ('pending','claimed') AND created_at < ? RETURNING kind, payload`,
-  ).bind(`expired: nobody finished it within ${maxAgeDays} days`, now.toISOString(), cutoff).all<{ kind: string; payload: string }>()).results;
+    `UPDATE claude_tasks SET status = 'expired', error = ?, done_at = ?
+     WHERE id IN (SELECT id FROM claude_tasks WHERE status IN ('pending','claimed') AND created_at < ? ORDER BY created_at, id LIMIT ?) RETURNING kind, payload`,
+  ).bind(`expired: nobody finished it within ${maxAgeDays} days`, now.toISOString(), cutoff, EXPIRE_BATCH).all<{ kind: string; payload: string }>()).results;
   for (const t of expired) {
     const def = getTaskKind(t.kind);
     if (!def?.onExpire) continue;

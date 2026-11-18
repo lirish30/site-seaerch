@@ -5,7 +5,7 @@ import { getAudit, latestAudit } from "../db/audits";
 import { getBusiness } from "../db/businesses";
 import { ensureContact, listContacts } from "../db/contacts";
 import { croItemsForBusiness } from "../db/cro";
-import { PLACEHOLDER_BODY, PLACEHOLDER_SUBJECT, hasVariantGroup, insertDraft, insertDrafts, latestDraft } from "../db/drafts";
+import { PLACEHOLDER_BODY, PLACEHOLDER_SUBJECT, hasVariantGroup, insertDraft, insertDrafts, isPlaceholderDraft, latestDraft } from "../db/drafts";
 import { pocFor } from "../db/people";
 import { getSettings } from "../db/settings";
 import { leadSuppression } from "../db/suppression";
@@ -81,7 +81,11 @@ export async function enqueueDraftFor(
 export async function requestDraft(db: D1Database, businessId: string, o: DraftOptions = {}): Promise<{ taskId: string; created: boolean }> {
   const [business, audit] = await Promise.all([getBusiness(db, businessId), latestAudit(db, businessId)]);
   if (!business || !audit) throw new Error("Cannot draft: business or audit missing");
-  if (o.tweak && !(await latestDraft(db, businessId))) throw new Error("Write a draft first");
+  if (o.tweak) {
+    // An unedited placeholder stub is not a draft (there is nothing to rewrite), so a tweak on it is refused like a tweak with no draft.
+    const latest = await latestDraft(db, businessId);
+    if (!latest || isPlaceholderDraft(latest)) throw new Error("Write a draft first");
+  }
   return enqueue(db, businessId, audit.id, o);
 }
 
