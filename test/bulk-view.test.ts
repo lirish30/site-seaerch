@@ -76,6 +76,14 @@ describe("saved filter serialisation", () => {
       f: { offer: "new_site", platform: "wix", hideSkipped: false, emailOnly: true, minScore: 40, minReviews: 10, maxRating: 4.2 } });
     expect(parseView(serializeView(v))).toEqual(v);
   });
+  it("round-trips the lead-finding filters", () => {
+    const v = view({ f: { website: "no", hasPhone: true, hasContact: true, outreach: "stale", maxHealth: 45, category: "speed", criticalOnly: true, minFit: 60, addedDays: 7, scan: "quick" } });
+    expect(parseView(serializeView(v))).toEqual(v);
+  });
+  it("falls back to defaults for stale lead-finding values", () => {
+    const v = parseView("website=maybe&outreach=soon&category=vibes&scan=deep&maxHealth=900&minFit=abc&added=-3");
+    expect(v.table.f).toMatchObject({ website: "any", outreach: "any", category: "any", scan: "any", maxHealth: 100, minFit: null, addedDays: null });
+  });
   it("keeps the query short and under the server's 2,000 character limit for realistic input", () => {
     expect(serializeView(view({ q: "x".repeat(200), tag: "t".repeat(32) })).length).toBeLessThan(2000);
   });

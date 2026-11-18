@@ -47,17 +47,21 @@ export default function Promising() {
   }, []);
 
   return (
-    <div>
-      <div className="row between page-head">
-        <h2>Promising</h2>
-        <div className="row">
+    <div className="leads-page">
+      <header className="page-header">
+        <div>
+          <h1>Promising</h1>
+          <p>Leads that had a quick scan (crawl and score only), best fit first.</p>
+        </div>
+        <div className="header-actions promising-filters">
           <label className="check">Min fit <input type="number" min={0} max={100} className="num" aria-label="Minimum fit" placeholder="any"
             value={minFitText} onChange={(e) => setMinFitText(e.target.value)} /></label>
-          <button onClick={() => setReloads((n) => n + 1)}>Refresh</button>
+          <button type="button" className="btn" onClick={() => setReloads((n) => n + 1)}>Refresh</button>
         </div>
-      </div>
-      <p className="muted">
-        Leads that had a quick scan (crawl and score only), best fit first. A full scan adds: {FULL_SCAN_ADDS} Each one costs a little, so run it on the ones worth pursuing.
+      </header>
+      <div className="page-body">
+      <p className="muted promising-note">
+        A full scan adds: {FULL_SCAN_ADDS} Each one costs a little, so run it on the ones worth pursuing.
         Leads with no fit score are always listed, after the scored ones.
       </p>
       {!min.ok && <p className="error" role="alert">{min.error}</p>}
@@ -65,7 +69,8 @@ export default function Promising() {
       {!rows ? (loadErr ? null : <p>Loading…</p>) : rows.length === 0 ? (
         <div className="card"><p>No quick-scanned leads{minValue !== null ? " at that fit" : ""}. Start a search with “Quick scan first” ticked on the <Link to="/">New search</Link> page.</p></div>
       ) : (
-        <div className="table-wrap"><table className="promising">
+        <div className="table-card"><div className="table-scroll"><table className="leads promising">
+          <colgroup><col className="c-name" /><col className="c-fit" /><col className="c-score" /><col className="c-issue" /><col className="c-action" /></colgroup>
           <thead><tr><th>Business</th><th title="How well the business matches your best fit profile. — means no profile applies">Fit</th>
             <th title="Lead score: how strong a prospect is. Higher is better.">Lead score</th><th>Top issue</th><th></th></tr></thead>
           <tbody>
@@ -74,7 +79,7 @@ export default function Promising() {
               return (
                 <tr key={id}>
                   <td className="cell-name">
-                    <Link to={`/leads/${id}`} title={r.business.name}>{r.business.name}</Link>
+                    <div className="name-line"><Link to={`/leads/${id}`} title={r.business.name}>{r.business.name}</Link></div>
                     <div className="sub" title={r.business.website_url ?? ""}>{host(r.business.website_url) || "no website"}</div>
                   </td>
                   <td><FitChip fit={r.fit} /></td>
@@ -84,15 +89,16 @@ export default function Promising() {
                   <td>
                     {isStarted
                       ? <span className="ok small" role="status">Full scan started. It leaves this list when it finishes (Refresh).</span>
-                      : <button aria-label={fullScanLabel(r.business.name)} disabled={isBusy} onClick={() => fullScan(r)}>{isBusy ? "Starting…" : "Run full scan"}</button>}
+                      : <button type="button" className="btn sm" aria-label={fullScanLabel(r.business.name)} disabled={isBusy} onClick={() => fullScan(r)}>{isBusy ? "Starting…" : "Run full scan"}</button>}
                     {errs[id] && <div className="error small" role="alert">{errs[id]}</div>}
                   </td>
                 </tr>
               );
             })}
           </tbody>
-        </table></div>
+        </table></div></div>
       )}
+      </div>
     </div>
   );
 }

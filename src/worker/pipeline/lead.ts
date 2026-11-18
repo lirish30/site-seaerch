@@ -29,6 +29,10 @@ export const TWEAKS = {
   more_direct: "Make it more direct: shorter sentences, no warm-up, get to the point faster.",
 } as const;
 export type Tweak = keyof typeof TWEAKS;
+// Added to a rewrite whose draft names a role that can no longer be claimed. No title is passed in: it is board text, and "remove" needs none.
+const DROP_ROLE = " The draft says they are hiring for a specific role, which is no longer open: remove that claim and every mention of the role (and of them hiring), then keep the rest.";
+/** Does the written text name the role? The prompt requires the exact title, so this is the same test the draft is held to later. */
+export const mentions = (v: { subject: string; body: string }, title: string) => `${v.subject}\n${v.body}`.toLowerCase().includes(title.toLowerCase());
 
 export interface DraftOptions {
   steeringNote?: string | null; focus?: number[]; tone?: TonePreset | null; croFocus?: string[];

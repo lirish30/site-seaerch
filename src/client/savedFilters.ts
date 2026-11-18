@@ -1,9 +1,12 @@
-import { defaultFilters, defaultTableFilters, filterLeadRows, isDraftReady, OFFERS, type TableFilters } from "./leadFilters";
+import { CATEGORY_OPTIONS, defaultFilters, defaultTableFilters, filterLeadRows, isDraftReady, OFFERS, OUTREACH_OPTIONS, SCAN_OPTIONS, type TableFilters, WEBSITE_OPTIONS } from "./leadFilters";
 import { STATUSES, type LeadRow, type LeadStatus } from "./types";
 
 /** The leads page's filter state. `status`, `archived`, `tag` and `starred` are fetched server-side; `drafts` and `table` filter what was loaded. */
 export interface LeadView { status: LeadStatus | ""; archived: boolean; tag: string; starred: boolean; drafts: boolean; table: TableFilters }
 export const defaultView: LeadView = { status: "", archived: false, tag: "", starred: false, drafts: false, table: defaultTableFilters };
+
+/** A saved value that isn't one of the allowed options falls back to the default. */
+const pick = <T extends string>(v: string | null, options: readonly T[], fallback: T): T => (v !== null && (options as readonly string[]).includes(v) ? (v as T) : fallback);
 
 const clampNum = (v: string | null, min: number, max: number): number | null => {
   if (v === null || v.trim() === "") return null;
@@ -28,6 +31,16 @@ export function serializeView(v: LeadView): string {
   if (f.minScore > 0) p.set("minScore", String(f.minScore));
   if (f.minReviews !== null && f.minReviews > 0) p.set("minReviews", String(f.minReviews));
   if (f.maxRating !== null) p.set("maxRating", String(f.maxRating));
+  if (f.website !== d.website) p.set("website", f.website);
+  if (f.hasPhone) p.set("hasPhone", "1");
+  if (f.hasContact) p.set("hasContact", "1");
+  if (f.outreach !== d.outreach) p.set("outreach", f.outreach);
+  if (f.maxHealth !== null) p.set("maxHealth", String(f.maxHealth));
+  if (f.category !== d.category) p.set("category", f.category);
+  if (f.criticalOnly) p.set("critical", "1");
+  if (f.minFit !== null) p.set("minFit", String(f.minFit));
+  if (f.addedDays !== null && f.addedDays > 0) p.set("added", String(f.addedDays));
+  if (f.scan !== d.scan) p.set("scan", f.scan);
   return p.toString();
 }
 
@@ -52,6 +65,16 @@ export function parseView(query: string): LeadView {
         maxRating: clampNum(p.get("maxRating"), 0, 5),
         offer: offer && (OFFERS as readonly string[]).includes(offer) ? (offer as TableFilters["f"]["offer"]) : defaultFilters.offer,
         platform: (p.get("platform") ?? "").slice(0, 40) || defaultFilters.platform,
+        website: pick(p.get("website"), WEBSITE_OPTIONS, defaultFilters.website),
+        hasPhone: p.get("hasPhone") === "1",
+        hasContact: p.get("hasContact") === "1",
+        outreach: pick(p.get("outreach"), OUTREACH_OPTIONS, defaultFilters.outreach),
+        maxHealth: clampNum(p.get("maxHealth"), 0, 100),
+        category: pick(p.get("category"), CATEGORY_OPTIONS, "any" as const),
+        criticalOnly: p.get("critical") === "1",
+        minFit: clampNum(p.get("minFit"), 0, 100),
+        addedDays: ((n) => (n !== null && n > 0 ? n : null))(clampNum(p.get("added"), 0, 3650)),
+        scan: pick(p.get("scan"), SCAN_OPTIONS, defaultFilters.scan),
       },
     },
   };

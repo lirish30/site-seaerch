@@ -5,20 +5,23 @@ import { shortName, useSearches } from "../../searchesData";
 import { pipelineRows, radarNext, runningCard, type TodaySummary } from "../../todayHome";
 import { LEADS_CHANGED } from "../Shell";
 import Icon from "../Icon";
-import type { TodayItem } from "../../types";
+import type { OpenRole, TodayItem } from "../../types";
 import { SideGroup, SideItem, SideTitle } from "./parts";
 
 /** Home: your day, the pipeline and activity (both scroll the page to their card), what is running and which radars fire next. */
 export default function HomeSidebar() {
-  const { hash } = useLocation();
+  const { hash, pathname } = useLocation();
+  const onToday = pathname === "/today";
   const nav = useNavigate();
   const { searches, radars } = useSearches();
   const [day, setDay] = useState<number | undefined>();
   const [pipeline, setPipeline] = useState<number | undefined>();
+  const [roles, setRoles] = useState<number | undefined>();
   useEffect(() => {
     const load = () => {
       api.get<{ items: TodayItem[] }>("/today").then((r) => setDay(r.items.length)).catch(() => setDay(undefined));
       api.get<TodaySummary>("/today/summary").then((r) => setPipeline(pipelineRows(r.pipeline).total)).catch(() => setPipeline(undefined));
+      api.get<{ jobs: OpenRole[] }>("/jobs").then((r) => setRoles(r.jobs.length)).catch(() => setRoles(undefined));
     };
     load();
     window.addEventListener(LEADS_CHANGED, load);
@@ -37,9 +40,10 @@ export default function HomeSidebar() {
   return (
     <>
       <SideTitle title="Home" action={<button type="button" className="icon-btn" aria-label="Search leads" title="Search leads" onClick={searchLeads}><Icon name="search" size={16} /></button>} />
-      <SideItem to="/today" icon="home" label="Your day" count={day} active={hash === ""} />
-      <SideItem to="/today#pipeline" icon="kanban" label="Pipeline" count={pipeline} active={hash === "#pipeline"} />
-      <SideItem to="/today#activity" icon="clock" label="Activity" active={hash === "#activity"} />
+      <SideItem to="/today" icon="home" label="Your day" count={day} active={onToday && hash === ""} />
+      <SideItem to="/today#pipeline" icon="kanban" label="Pipeline" count={pipeline} active={onToday && hash === "#pipeline"} />
+      <SideItem to="/today#activity" icon="clock" label="Activity" active={onToday && hash === "#activity"} />
+      <SideItem to="/jobs" icon="briefcase" label="Jobs" count={roles} active={pathname === "/jobs"} />
       {running.length > 0 && (
         <SideGroup id="home-running" title="Running now">
           {running.map((s) => {
