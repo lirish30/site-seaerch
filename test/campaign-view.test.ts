@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fieldErrors, parseJobValue, parseTowns, runSearchesLines, stepLabel } from "../src/client/campaignView";
+import { fieldErrors, parseJobValue, parseTowns, runResultTone, runSearchesConfirm, runSearchesLines, stepLabel } from "../src/client/campaignView";
 
 describe("stepLabel", () => {
   it("names the kind and counts business or calendar days", () => {
@@ -53,5 +53,20 @@ describe("runSearchesLines", () => {
       .toEqual(["Started 1 search.", "Napa: blocked. Monthly spend limit reached"]);
     expect(runSearchesLines({ started: 0, blocked: [{ town: "A", reason: "x" }, { town: "B", reason: "y" }] }))
       .toEqual(["Started 0 searches.", "A: blocked. x", "B: blocked. y"]);
+  });
+});
+
+describe("runSearchesConfirm", () => {
+  it("states how many searches will start, singular and plural", () => {
+    expect(runSearchesConfirm(1)).toBe("This will start 1 search (one per town) and uses your lead-data budget. Continue?");
+    expect(runSearchesConfirm(3)).toBe("This will start 3 searches (one per town) and uses your lead-data budget. Continue?");
+  });
+});
+
+describe("runResultTone", () => {
+  it("is ok when nothing was blocked, warn on a partial block, bad when nothing started", () => {
+    expect(runResultTone({ started: 3, blocked: [] })).toBe("ok");
+    expect(runResultTone({ started: 2, blocked: [{ town: "A" }] })).toBe("warn");
+    expect(runResultTone({ started: 0, blocked: [{ town: "A" }, { town: "B" }] })).toBe("bad");
   });
 });

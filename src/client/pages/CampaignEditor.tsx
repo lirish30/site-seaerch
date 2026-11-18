@@ -1,20 +1,26 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api";
 import { Callout, Field, Row } from "../components/SettingsPage";
-import { fieldErrors, parseJobValue, runSearchesLines } from "../campaignView";
+import { fieldErrors, parseJobValue } from "../campaignView";
 import type { Campaign, CampaignStatus, SequenceStep } from "../types";
 import StepEditor from "./StepEditor";
 
-type Action = "save" | "run";
+/** What the page knows about this campaign's Run searches: the lines to show, how they read, and whether this one is still starting. */
+export interface RunView { starting: boolean; tone: "ok" | "warn" | "bad"; lines: string[] }
 
-/** An open campaign: status, job value, the Run searches button with its per-town result, and the five steps. */
-export default function CampaignEditor({ campaign, onChange }: { campaign: Campaign; onChange: (c: Campaign) => void }) {
+/**
+ * An open campaign: status, job value, the Run searches button with its per-town result, and the five steps. The run itself
+ * (in-flight flag and last result) lives in the page so closing and reopening this editor neither loses it nor re-enables a running button.
+ */
+export default function CampaignEditor({ campaign, onChange, run, anyRunning, onRun }: {
+  campaign: Campaign; onChange: (c: Campaign) => void; run: RunView | null; anyRunning: boolean; onRun: () => void;
+}) {
   const [steps, setSteps] = useState<SequenceStep[] | null>(null);
   const [loadErr, setLoadErr] = useState("");
   const [status, setStatus] = useState<CampaignStatus>(campaign.status);
   const [value, setValue] = useState(campaign.est_job_value_usd === null ? "" : String(campaign.est_job_value_usd));
   const [errs, setErrs] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState<Action | null>(null);
+  const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<{ bad: boolean; lines: string[] } | null>(null);
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
@@ -29,26 +35,17 @@ export default function CampaignEditor({ campaign, onChange }: { campaign: Campa
   async function save() {
     const job = parseJobValue(value);
     if (!job.ok) { setErrs({ est_job_value_usd: "Enter an amount of 0 or more, or leave it blank." }); say(true, "Not saved: fix the highlighted fields."); return; }
-    setBusy("save"); setErrs({}); setResult(null);
+    setSaving(true); setErrs({}); setResult(null);
     try {
       const saved = await api.patch<Campaign>(`/campaigns/${campaign.id}`, { status, est_job_value_usd: job.value });
-      onChange(saved); say(false, "Saved.");
+      onChange(saved); setStatus(saved.status); setValue(saved.est_job_value_usd === null ? "" : String(saved.est_job_value_usd)); say(false, "Saved.");
     } catch (e) {
       if (e instanceof ApiError && e.status === 400) { setErrs(fieldErrors(e.fields)); say(true, "Not saved: fix the highlighted fields."); }
       else say(true, `Not saved: ${e instanceof ApiError ? e.message : "request failed"}`);
-    } finally { setBusy(null); }
+    } finally { setSaving(false); }
   }
 
-  async function run() {
-    setBusy("run"); setResult(null);
-    try {
-      const r = await api.post<{ started: number; blocked: { town: string; reason: string }[] }>(`/campaigns/${campaign.id}/run-searches`);
-      say(r.blocked.length > 0 && r.started === 0, ...runSearchesLines(r));
-    } catch (e) { say(true, `Couldn't run searches: ${e instanceof ApiError ? e.message : "request failed"}`); }
-    finally { setBusy(null); }
-  }
-
-  const off = busy !== null;
+  const off = saving;
   return (
     <div className="cp-editor">
       <Row>
@@ -62,14 +59,19 @@ export default function CampaignEditor({ campaign, onChange }: { campaign: Campa
         </Field>
       </Row>
       <div className="cp-actions">
-        <button type="button" className="btn primary" onClick={() => void save()} disabled={off || !dirty}>{busy === "save" ? "Saving…" : "Save"}</button>
-        <button type="button" className="btn" onClick={() => void run()} disabled={off || campaign.status === "archived"} aria-describedby={campaign.status === "archived" ? id("archived") : undefined}>
-          {busy === "run" ? "Starting searches…" : "Run searches"}
+        <button type="button" className="btn primary" onClick={() => void save()} disabled={off || !dirty}>{saving ? "Saving…" : "Save"}</button>
+        <button type="button" className="btn" onClick={onRun} disabled={off || anyRunning || campaign.status === "archived"} aria-describedby={campaign.status === "archived" ? id("archived") : undefined}>
+          {run?.starting ? "Starting searches…" : "Run searches"}
         </button>
       </div>
       {campaign.status === "archived" && <p className="bx-muted" id={id("archived")}>Archived campaigns can't run searches.</p>}
       <div className={`mb-result${result?.bad ? " bad" : ""}`} aria-live="polite" aria-atomic="true">
         {result?.lines.map((l, i) => <p key={i}>{l}</p>)}
+      </div>
+      <div className={`mb-result${run && !run.starting && run.tone !== "ok" ? ` ${run.tone}` : ""}`} aria-live="polite" aria-atomic="true">
+        {run?.starting ? <p className="mb-note">Starting searches…</p>
+          : anyRunning ? <p className="mb-note">Another campaign is starting searches. Run searches is off until it finishes.</p>
+          : run?.lines.map((l, i) => <p key={i}>{l}</p>)}
       </div>
 
       <h3 className="cp-h">Steps</h3>

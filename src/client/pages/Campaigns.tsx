@@ -2,9 +2,9 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { api, ApiError } from "../api";
 import SettingsPage, { Callout, Card, Field, Row } from "../components/SettingsPage";
 import { Pill } from "../components/settingsBits";
-import { fieldErrors, parseTowns } from "../campaignView";
+import { fieldErrors, parseTowns, runResultTone, runSearchesConfirm, runSearchesLines } from "../campaignView";
 import type { Campaign, CampaignStatus } from "../types";
-import CampaignEditor from "./CampaignEditor";
+import CampaignEditor, { type RunView } from "./CampaignEditor";
 
 const TONE: Record<CampaignStatus, "info" | "positive" | "neutral"> = { testing: "info", active: "positive", archived: "neutral" };
 const STATUS_LABEL: Record<CampaignStatus, string> = { testing: "Testing", active: "Active", archived: "Archived" };
@@ -64,6 +64,19 @@ export default function Campaigns() {
     .then((r) => { if (alive.current) { setList(r); setErr(""); } })
     .catch((e) => { if (alive.current) setErr(e instanceof ApiError ? e.message : "Couldn't load the campaigns."); }), []);
   useEffect(() => { void load(); }, [load]);
+  // Run searches lives here, not in the editor: closing an editor must not drop an in-flight run (and re-enable its button) or its result.
+  const [running, setRunning] = useState<string | null>(null);
+  const [runs, setRuns] = useState<Record<string, RunView>>({});
+  async function run(c: Campaign) {
+    if (running !== null || !window.confirm(runSearchesConfirm(c.towns.length))) return;
+    const put = (v: RunView) => { if (alive.current) setRuns((all) => ({ ...all, [c.id]: v })); };
+    setRunning(c.id); put({ starting: true, tone: "ok", lines: [] });
+    try {
+      const r = await api.post<{ started: number; blocked: { town: string; reason: string }[] }>(`/campaigns/${c.id}/run-searches`);
+      put({ starting: false, tone: runResultTone(r), lines: runSearchesLines(r) });
+    } catch (e) { put({ starting: false, tone: "bad", lines: [`Couldn't run searches: ${e instanceof ApiError ? e.message : "request failed"}`] }); }
+    finally { if (alive.current) setRunning(null); }
+  }
   const replace = (c: Campaign) => setList((all) => all && all.map((x) => (x.id === c.id ? { ...c, steps: undefined } : x)));
 
   return (
@@ -78,7 +91,7 @@ export default function Campaigns() {
               <button type="button" className="btn sm" aria-expanded={open === c.id} aria-controls={`cp-panel-${c.id}`} onClick={() => setOpen(open === c.id ? null : c.id)}>
                 {open === c.id ? "Close" : "Edit"}<span className="sr-only"> {c.name}</span>
               </button></div>}>
-            <div id={`cp-panel-${c.id}`} hidden={open !== c.id}>{open === c.id && <CampaignEditor campaign={c} onChange={replace} />}</div>
+            <div id={`cp-panel-${c.id}`} hidden={open !== c.id}>{open === c.id && <CampaignEditor campaign={c} onChange={replace} run={runs[c.id] ?? null} anyRunning={running !== null} onRun={() => void run(c)} />}</div>
           </Card>
         ))}
     </SettingsPage>

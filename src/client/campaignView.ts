@@ -36,3 +36,12 @@ export function fieldErrors(fields: unknown): Record<string, string> {
 export function runSearchesLines(r: { started: number; blocked: { town: string; reason: string }[] }): string[] {
   return [`Started ${r.started} ${r.started === 1 ? "search" : "searches"}.`, ...r.blocked.map((b) => `${b.town}: blocked. ${b.reason}`)];
 }
+
+/** The question asked before Run searches: every town starts a paid search, and a second run starts them all again. */
+export const runSearchesConfirm = (townCount: number): string =>
+  `This will start ${townCount} search${townCount === 1 ? "" : "es"} (one per town) and uses your lead-data budget. Continue?`;
+
+/** How a run's result reads: "ok" when every town started, "warn" when some were blocked, "bad" when none started. */
+export function runResultTone(r: { started: number; blocked: unknown[] }): "ok" | "warn" | "bad" {
+  return r.blocked.length === 0 ? "ok" : r.started > 0 ? "warn" : "bad";
+}
