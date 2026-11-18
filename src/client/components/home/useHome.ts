@@ -7,6 +7,7 @@ import type { TodaySummary, UsageRow } from "../../todayHome";
 import type { LeadRow, TodayItem } from "../../types";
 import { APPROVE_BATCH, type ApprovalItem, type SpendLevel } from "../../approvalsView";
 import type { QueueStatus } from "../../queueView";
+import type { HelperStatus } from "../../helperView";
 
 /** One piece of the page: its data once loaded, or why it could not be. The pieces load and fail independently. */
 export interface Part<T> { data: T | null; error: string }
@@ -32,6 +33,7 @@ export function useHome() {
   const [approvals, setApprovals] = useState<Part<ApprovalItem[]>>(empty);
   const [spend, setSpend] = useState<Part<Spend>>(empty);
   const [queue, setQueue] = useState<Part<QueueStatus>>(empty);
+  const [helper, setHelper] = useState<Part<HelperStatus>>(empty);
   const [approvalErrs, setApprovalErrs] = useState<Readonly<Record<string, string>>>({});
   const [pending, setPending] = useState(0);
   const [reloads, setReloads] = useState(0);
@@ -52,7 +54,7 @@ export function useHome() {
     };
     // A reload keeps what is on screen until the new data arrives; only the error is cleared.
     const keep = <T,>(set: (f: (p: Part<T>) => Part<T>) => void) => set((p) => ({ ...p, error: "" }));
-    keep(setItems); keep(setSummary); keep(setLeads); keep(setMoney); keep(setApprovals); keep(setSpend); keep(setQueue);
+    keep(setItems); keep(setSummary); keep(setLeads); keep(setMoney); keep(setApprovals); keep(setSpend); keep(setQueue); keep(setHelper);
     run(() => api.get<{ items: TodayItem[] }>("/today"), (r) => setItems({ data: r.items, error: "" }), (m) => setItems((p) => ({ ...p, error: m })), "Couldn't load your list.");
     run(() => api.get<TodaySummary>("/today/summary"), (r) => setSummary({ data: r, error: "" }), (m) => setSummary((p) => ({ ...p, error: m })), "Couldn't load your numbers.");
     run(() => api.get<LeadRow[]>("/leads?limit=500"), (rows) => setLeads({
@@ -65,6 +67,7 @@ export function useHome() {
       (m) => setApprovals((p) => ({ ...p, error: m })), "Couldn't load what's waiting for you.");
     run(() => api.get<Spend>("/spend"), (r) => setSpend({ data: r, error: "" }), (m) => setSpend((p) => ({ ...p, error: m })), "Couldn't load the spend level.");
     run(() => api.get<QueueStatus>("/queue"), (r) => setQueue({ data: r, error: "" }), (m) => setQueue((p) => ({ ...p, error: m })), "Couldn't load the Claude queue.");
+    run(() => api.get<HelperStatus>("/helper/status"), (r) => setHelper({ data: r, error: "" }), (m) => setHelper((p) => ({ ...p, error: m })), "Couldn't load the Mac helper's state.");
     return () => { cancelled = true; };
   }, [reloads]);
 
@@ -147,5 +150,5 @@ export function useHome() {
     ids.forEach((id) => mark(id, false));
   }, []);
 
-  return { approvals, spend, queue, approvalErrs, approveOne, rejectOne, approveAll, items, summary, leads, money, loading: pending > 0, reload, act, fullScan, errs, busy, scans };
+  return { approvals, spend, queue, helper, approvalErrs, approveOne, rejectOne, approveAll, items, summary, leads, money, loading: pending > 0, reload, act, fullScan, errs, busy, scans };
 }

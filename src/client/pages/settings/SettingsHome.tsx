@@ -8,6 +8,7 @@ import type { SettingsDoc, UsageRow } from "../../settingsData";
 import {
   hasBuiltSignature, profileMissing, samplesNeeded, setupItems, setupSentence, suppressionWord, voiceSummary,
 } from "../../settingsPagesView";
+import type { HelperStatus } from "../../helperView";
 import type { FitProfile, Service, Suppression } from "../../types";
 
 interface Google { configured: boolean; connected: boolean; email: string | null }
@@ -17,6 +18,7 @@ interface Data {
   fits: FitProfile[] | null | false; supps: Suppression[] | null | false; google: Google | null | false;
   /** GET /api/spend: usage plus active fixed costs against the cap, the same total the cap enforces. */
   spend: { spentUsd: number; limitUsd: number } | null | false;
+  helper: HelperStatus | null | false;
 }
 type Tone = "positive" | "warning" | "";
 interface Chip { tone: Tone; text: string }
@@ -49,6 +51,7 @@ function chips(d: Data): Record<string, Chip | null> {
     suppressions: wait(d.supps, () => ({ tone: "", text: (d.supps as Suppression[]).length ? suppressionWord(d.supps as Suppression[]) : "Nothing suppressed" })),
     scores: { tone: "", text: "Guide" },
     security: { tone: "", text: "Passkeys" },
+    helper: wait(d.helper, () => ((d.helper as HelperStatus).online ? { tone: "positive", text: "Online" } : { tone: "", text: "Offline" })),
     google: wait(d.google, () => {
       const g = d.google as Google;
       return !g.configured ? { tone: "", text: "Not set up" } : g.connected ? { tone: "positive", text: `Connected · ${g.email ?? "your account"}` } : { tone: "warning", text: "Not connected" };
@@ -80,12 +83,13 @@ const SECTIONS: { name: string; tint: "signal" | "info" | "positive" | "plain"; 
     { slug: "usage", title: "Usage & limits", icon: "card", text: "Monthly spend limit and what each service cost." },
     { slug: "security", title: "Security", icon: "key", text: "Sign in with Touch ID. Your password stays as a fallback." },
     { slug: "footer", title: "Mailing footer", icon: "shield", text: "Mailing address and opt-out line for freelance emails." },
+    { slug: "helper", title: "Mac helper", icon: "zap", text: "The app on your Mac that makes the voice and the video. Pair it here." },
   ] },
 ];
 
 /** Settings: the overview. A card per page with its real status, and a banner for what is still missing. */
 export default function SettingsHome() {
-  const [d, setD] = useState<Data>({ doc: null, usage: [], samples: null, services: null, fits: null, supps: null, google: null, spend: null });
+  const [d, setD] = useState<Data>({ doc: null, usage: [], samples: null, services: null, fits: null, supps: null, google: null, spend: null, helper: null });
   useEffect(() => {
     let live = true;
     const part = <T,>(p: Promise<T>, apply: (v: T | false) => void) => p.then((v) => live && apply(v)).catch(() => live && apply(false));
@@ -96,6 +100,7 @@ export default function SettingsHome() {
     void part(api.get<Suppression[]>("/suppressions"), (v) => setD((o) => ({ ...o, supps: v })));
     void part(api.get<{ spentUsd: number; limitUsd: number }>("/spend"), (v) => setD((o) => ({ ...o, spend: v })));
     void part(api.get<Google>("/google/status"), (v) => setD((o) => ({ ...o, google: v })));
+    void part(api.get<HelperStatus>("/helper/status"), (v) => setD((o) => ({ ...o, helper: v })));
     return () => { live = false; };
   }, []);
   const status = chips(d);

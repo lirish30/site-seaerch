@@ -6,6 +6,8 @@ import { syncAllMailboxes } from "./mail/sync";
 import "./queue/kinds"; // expiring a task runs its kind's hook, so every kind must be registered
 import { EXPIRE_AFTER_DAYS, expireOldTasks } from "./queue/db";
 import { healCroHandovers } from "./queue/cro";
+import "./helper/kinds"; // expiring a helper job runs its kind's hook, so every kind must be registered
+import { expireOldHelperJobs } from "./helper/jobs";
 
 /** The cron strings in wrangler.jsonc. The daily one MUST stay first there: test/radar-info.test.ts reads the first entry. */
 export const DAILY_CRON = "17 13 * * *";
@@ -26,7 +28,7 @@ async function part(name: string, run: () => Promise<unknown>, quiet = false): P
 
 /**
  * Routes one Cron Trigger. The 15-minute cron only syncs mail. Any other cron (the daily one) starts due radars, scans for due sequence steps, gives
- * up on Claude tasks nobody picked up in 14 days and re-queues CRO roadmaps that were never handed over. This is unattended work: it can only start
+ * up on Claude tasks and Mac helper jobs nobody picked up in 14 days and re-queues CRO roadmaps that were never handed over. This is unattended work: it can only start
  * searches, create approvals and close queue tasks, never send, and it never throws.
  */
 export async function runScheduled(env: Env, cron: string, now: Date): Promise<void> {
@@ -37,5 +39,6 @@ export async function runScheduled(env: Env, cron: string, now: Date): Promise<v
   await part("radar run", () => runDueRadars({ db: env.DB, now: () => now, startWorkflow: searchWorkflowStarter(env) }));
   await part("sequence scan", () => scanDueSteps(env, now));
   await part("expire tasks", () => expireOldTasks(env, now, EXPIRE_AFTER_DAYS));
+  await part("expire helper jobs", () => expireOldHelperJobs(env, now));
   await part("cro heal", () => healCroHandovers(env));
 }

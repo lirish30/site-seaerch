@@ -18,11 +18,12 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
   { slug: "google", label: "Google", icon: "link", group: "Account" }, { slug: "usage", label: "Usage & limits", icon: "card", group: "Account" },
   { slug: "security", label: "Security", icon: "key", group: "Account" },
   { slug: "footer", label: "Mailing footer", icon: "shield", group: "Account" },
+  { slug: "helper", label: "Mac helper", icon: "zap", group: "Account" },
 ];
 const GROUPS = ["You", "Outreach", "Lead scoring", "Account"] as const;
 const COUNTED: [string, string][] = [["work-samples", "/work-samples"], ["services", "/services"], ["fit-profiles", "/fit-profiles"], ["suppressions", "/suppressions"]];
 
-/** Settings: an overview and the thirteen pages, with counts where a page holds a list. The search icon filters the list. */
+/** Settings: an overview and the fourteen pages, with counts where a page holds a list. The search icon filters the list. */
 export default function SettingsSidebar() {
   const { pathname } = useLocation();
   const navigate = useNavigate();

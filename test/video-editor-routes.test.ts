@@ -3,6 +3,8 @@ import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { insertAudit } from "../src/worker/db/audits";
 import { createVideoAudit, getVideoAudit, savePlan, setVideoStatus, type VideoStatus } from "../src/worker/db/videoAudits";
 import { startProduction } from "../src/worker/video/production";
+import { createDevice } from "../src/worker/helper/auth";
+import "../src/worker/helper/kinds";
 import { hashText, type Segment, type Shot, type VideoPlan } from "../src/worker/video/plan";
 import { seedBusiness } from "./fixtures/cro";
 
@@ -17,7 +19,7 @@ beforeAll(async () => {
   cookie = r.headers.get("set-cookie")!.split(";")[0];
 });
 beforeEach(async () => {
-  await env.DB.batch(["claude_tasks", "agent_actions"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+  await env.DB.batch(["claude_tasks", "agent_actions", "helper_jobs", "helper_devices"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
 });
 
 const FINDINGS = [
@@ -351,6 +353,27 @@ describe("what the pages read", () => {
     expect(body.findingCodes).toEqual(["no_https", "no_cta", "slow_mobile"]);
     expect(body.business).toMatchObject({ id: b.id });
     expect(body.helperOnline).toBe(false);
+  });
+
+  it("GET lists the video's helper jobs and whether the helper is online", async () => {
+    const { v } = await reviewing({ narration: "clone" });
+    await startProduction(env, v.id);
+    let body = await (await api(`/api/video-audits/${v.id}`)).json<any>();
+    expect(body.helperOnline).toBe(false);
+    expect(body.jobs.length).toBeGreaterThan(0);
+    expect(body.jobs[0]).toMatchObject({ kind: "voice.segment", status: "pending" });
+    const { device } = await createDevice(env.DB, "Mac");
+    await env.DB.prepare(`UPDATE helper_devices SET last_seen_at = ? WHERE id = ?`).bind(new Date().toISOString(), device.id).run();
+    body = await (await api(`/api/video-audits/${v.id}`)).json<any>();
+    expect(body.helperOnline).toBe(true);
+    expect((await (await api(`/api/leads/${v.business_id}/video`)).json<any>()).helperOnline).toBe(true);
+  });
+
+  it("cancel closes the video's helper jobs", async () => {
+    const { v } = await reviewing({ narration: "clone" });
+    await startProduction(env, v.id);
+    expect((await post(`/api/video-audits/${v.id}/cancel`)).status).toBe(200);
+    expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM helper_jobs WHERE status IN ('pending','claimed')`).first<{ n: number }>())!.n).toBe(0);
   });
 
   it("shows a shot preview image", async () => {

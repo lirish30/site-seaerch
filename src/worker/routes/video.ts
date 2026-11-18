@@ -5,6 +5,8 @@ import { getAudit, latestAudit } from "../db/audits";
 import { getBusiness } from "../db/businesses";
 import { createVideoAudit, getVideoAudit, latestVideoFor, moveVideoStatus, savePlan, setVideoStatus, type VideoAudit } from "../db/videoAudits";
 import { cancelTasksFor } from "../queue/db";
+import { cancelHelperJobsFor, helperJobsForVideo, helperStatus } from "../helper/jobs";
+import "../helper/kinds"; // a helper job is only valid for a registered kind
 import { requestVideoScript } from "../queue/videoScript";
 import { MAX_MARKUPS, SegmentSchema, approvalBlockers, checkPlanRefs, hashText, type Segment, type VideoPlan } from "../video/plan";
 import { startProduction } from "../video/production";
@@ -52,11 +54,12 @@ videoRoutes.post("/leads/:id/video", async (c) => {
 videoRoutes.get("/video-audits/:id", async (c) => {
   const video = await getVideoAudit(c.env.DB, c.req.param("id"));
   if (!video) return c.json({ error: "not found" }, 404);
-  // `jobs` are the Mac helper's jobs for this video; there are none until the helper exists.
-  // The editor checks the plan against these. `helperOnline` is whether the Mac helper has checked in lately (there is no helper yet); the client words the state line itself from it.
-  const [audit, business] = await Promise.all([getAudit(c.env.DB, video.audit_id), getBusiness(c.env.DB, video.business_id)]);
+  // `jobs` are the Mac helper's jobs for this video. `helperOnline` is whether the Mac helper has checked in lately; the client words the state line itself from both.
+  const [audit, business, jobs, helper] = await Promise.all([
+    getAudit(c.env.DB, video.audit_id), getBusiness(c.env.DB, video.business_id), helperJobsForVideo(c.env.DB, video.id), helperStatus(c.env.DB, new Date()),
+  ]);
   return c.json({
-    video, plan: video.plan, jobs: [], helperOnline: false, state: stateLine(video),
+    video, plan: video.plan, jobs, helperOnline: helper.online, state: stateLine(video),
     findingCodes: audit?.findings.map((f) => f.code) ?? [], business: business ? { id: business.id, name: business.name } : null,
   });
 });
@@ -68,7 +71,7 @@ videoRoutes.get("/leads/:id/video", async (c) => {
   const v = await latestVideoFor(c.env.DB, id);
   if (!v) return c.json({ video: null });
   const { plan: _plan, ...video } = v;
-  return c.json({ video, helperOnline: false });
+  return c.json({ video, helperOnline: (await helperStatus(c.env.DB, new Date())).online });
 });
 
 videoRoutes.get("/video-audits/:id/shots/:shotId/preview", async (c) => {
@@ -220,7 +223,7 @@ videoRoutes.post("/video-audits/:id/keep-script", async (c) => {
 videoRoutes.post("/video-audits/:id/cancel", async (c) => {
   const id = c.req.param("id");
   const moved = await moveVideoStatus(c.env.DB, id, ["capturing", "scripting", "review", "producing", "rendered"], "cancelled");
-  if (moved) { await cancelTasksFor(c.env.DB, "video", id); return c.json({ ok: true }); }
+  if (moved) { await cancelTasksFor(c.env.DB, "video", id); await cancelHelperJobsFor(c.env.DB, id); return c.json({ ok: true }); }
   return (await getVideoAudit(c.env.DB, id)) ? c.json({ error: "This video is already finished" }, 409) : c.json({ error: "not found" }, 404);
 });
 

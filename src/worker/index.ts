@@ -27,6 +27,8 @@ import { campaignRoutes } from "./routes/campaigns";
 import { sequenceRoutes } from "./routes/sequence";
 import { nicheRoutes } from "./routes/niche";
 import { queueRoutes } from "./routes/queue";
+import { helperRoutes } from "./routes/helper";
+import { helperAdminRoutes } from "./routes/helperAdmin";
 import "./approvals/leadNote";
 import "./approvals/emailSend";
 import { mcpRoute } from "./mcp/route";
@@ -35,6 +37,8 @@ import { runScheduled } from "./schedule";
 const app = new Hono<{ Bindings: Env }>();
 // Outside /api/*, so the cookie middleware does not apply: /mcp does its own bearer-token check.
 app.all("/mcp", mcpRoute);
+// Also outside /api/*: the Mac helper sends a device token (never the cookie), which requireHelper checks on every /helper route.
+app.route("/helper", helperRoutes);
 app.use("/api/*", requireAuth);
 app.get("/api/health", (c) => c.json({ ok: true }));
 app.route("/api", authRoutes);
@@ -61,6 +65,7 @@ app.route("/api/mailboxes", mailboxRoutes);
 app.route("/api/campaigns", campaignRoutes);
 app.route("/api/niche", nicheRoutes);
 app.route("/api/queue", queueRoutes);
+app.route("/api/helper", helperAdminRoutes);
 // Mounted last at /api: /api/leads/:id/cro-audit(s), /api/cro-items/:id, /api/cro-audits/:id/... (all behind requireAuth).
 app.route("/api", croRoutes);
 // Also mounted at /api: /api/leads/:id/video and /api/video-audits/:id/... (behind requireAuth).

@@ -116,6 +116,19 @@ describe("runScheduled", () => {
       expect(logs.some((l) => l[0] === "expire tasks" && String(l[1]) === "1")).toBe(true);
     });
 
+    it("the daily cron expires Mac helper jobs nobody picked up in 14 days, and leaves newer ones", async () => {
+      const seed = (id: string, createdAt: string, status = "pending") =>
+        env.DB.prepare(`INSERT INTO helper_jobs (id, kind, payload, status, attempts, created_at) VALUES (?, 'voice.segment', '{"videoId":"v","segmentId":"s","engine":"qwen3-tts","text":"hi"}', ?, 0, ?)`).bind(id, status, createdAt).run();
+      await env.DB.prepare(`DELETE FROM helper_jobs`).run();
+      await seed("h-old", old(15)); await seed("h-new", old(13)); await seed("h-done", old(30), "done");
+      await runScheduled(env, DAILY, NOW);
+      const status = async (id: string) => (await env.DB.prepare(`SELECT status FROM helper_jobs WHERE id = ?`).bind(id).first<{ status: string }>())!.status;
+      expect(await status("h-old")).toBe("expired");
+      expect(await status("h-new")).toBe("pending");
+      expect(await status("h-done")).toBe("done");
+      expect(logs.some((l) => l[0] === "expire helper jobs" && String(l[1]) === "1")).toBe(true);
+    });
+
     it("the 15-minute cron leaves the queue alone", async () => {
       await seedTask("t-old", old(15));
       await runScheduled(env, EVERY_15, NOW);

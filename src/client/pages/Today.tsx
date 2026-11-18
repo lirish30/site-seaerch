@@ -3,6 +3,7 @@ import { Link, useLocation } from "react-router-dom";
 import Icon from "../components/Icon";
 import ApprovalsCard from "../components/home/ApprovalsCard";
 import ActivityCard from "../components/home/ActivityCard";
+import HelperCard from "../components/home/HelperCard";
 import KpiCards from "../components/home/KpiCards";
 import PipelineCard from "../components/home/PipelineCard";
 import QueueCard from "../components/home/QueueCard";
@@ -44,6 +45,7 @@ export default function Today() {
           <ApprovalsCard approvals={h.approvals} errs={h.approvalErrs} busy={h.busy} onApprove={(a, p) => void h.approveOne(a, p)}
             onReject={(a, n) => void h.rejectOne(a, n)} onApproveAll={(g) => void h.approveAll(g)} onRetry={h.reload} />
           <QueueCard queue={h.queue} onRetry={h.reload} />
+          <HelperCard helper={h.helper} onRetry={h.reload} />
           <UpNext items={h.items} leads={h.leads} summary={h.summary} busy={h.busy} scans={h.scans} errs={h.errs}
             onDone={(i) => void h.act(i, "done")} onSnooze={(i, d) => void h.act(i, "snooze", d)} onFullScan={(i) => void h.fullScan(i)} onRetry={h.reload} />
           </div>
