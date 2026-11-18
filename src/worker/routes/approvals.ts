@@ -26,8 +26,12 @@ approvalRoutes.post("/approve-batch", async (c) => {
   if (!p.success) return c.json({ error: "invalid body", fields: p.error.flatten().fieldErrors }, 400);
   const results: { id: string; ok: boolean; error?: string }[] = [];
   for (const id of p.data.ids) { // one at a time: handlers may share rate limits and inboxes
-    const r = await approve(c.env, id);
-    results.push(r.ok ? { id, ok: true } : { id, ok: false, error: r.error });
+    try {
+      const r = await approve(c.env, id);
+      results.push(r.ok ? { id, ok: true } : { id, ok: false, error: r.error });
+    } catch (e) {
+      results.push({ id, ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
   }
   return c.json({ results });
 });

@@ -1,5 +1,5 @@
 import { env, SELF } from "cloudflare:test";
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, vi } from "vitest";
 import { createApproval, listApprovals, UnknownKindError } from "../src/worker/db/approvals";
 import { registerHandler } from "../src/worker/approvals/registry";
 import { approve, reject } from "../src/worker/approvals/decide";
@@ -111,6 +111,34 @@ describe("approvals", () => {
     expect((await call("POST", `/api/approvals/${b.id}/reject`, { note: "no" })).status).toBe(200);
     expect((await call("POST", `/api/approvals/${b.id}/reject`, {})).status).toBe(409);
     expect((await call("POST", `/api/approvals/zzz/reject`, {})).status).toBe(404);
+  });
+
+  it("a post-claim failure outside execute restores the row to pending", async () => {
+    const a = await mk();
+    await env.DB.prepare(`UPDATE approvals SET payload = 'not json' WHERE id = ?`).bind(a.id).run();
+    const r = await approve(env, a.id);
+    expect(r).toMatchObject({ ok: false, status: 422 });
+    expect(await row(a.id)).toMatchObject({ status: "pending", decided_at: null });
+    expect((await row(a.id))!.error).toBeTruthy();
+
+    registerHandler({ kind: "test.nonerror", label: "x", parse: () => { throw "weird"; }, execute: async () => {} });
+    const b = await mk("test.nonerror", {});
+    expect(await approve(env, b.id)).toMatchObject({ ok: false, status: 422, error: "weird" });
+    expect(await row(b.id)).toMatchObject({ status: "pending", error: "weird" });
+  });
+
+  it("approve-batch reports every id even when one approve throws", async () => {
+    const a = await mk(), b = await mk();
+    const real = env.DB.prepare.bind(env.DB);
+    const spy = vi.spyOn(env.DB, "prepare").mockImplementation((q: string) => {
+      if (q.startsWith("UPDATE approvals SET status = 'approved'")) { spy.mockImplementation(real); throw new Error("d1 down"); }
+      return real(q);
+    });
+    const r = await call("POST", "/api/approvals/approve-batch", { ids: [a.id, b.id] });
+    spy.mockRestore();
+    expect(r.status).toBe(200);
+    const j = await r.json<{ results: { id: string; ok: boolean; error?: string }[] }>();
+    expect(j.results).toEqual([{ id: a.id, ok: false, error: "d1 down" }, { id: b.id, ok: true }]);
   });
 
   it("routes require auth", async () => {

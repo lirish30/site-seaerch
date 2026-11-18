@@ -18,24 +18,30 @@ export async function approve(env: Env, id: string, edited?: unknown): Promise<A
     const exists = await db.prepare(`SELECT 1 AS x FROM approvals WHERE id = ?`).bind(id).first();
     return exists ? { ok: false, error: "already decided", status: 409 } : { ok: false, error: "approval not found", status: 404 };
   }
-  const restore = (error: string) =>
-    db.prepare(`UPDATE approvals SET status = 'pending', decided_at = NULL, error = ? WHERE id = ?`).bind(error, id).run();
-
-  const a = toApproval(claimed);
-  const handler = getHandler(a.kind);
-  if (!handler) { const error = `no handler for kind ${a.kind}`; await restore(error); return { ok: false, error, status: 422 }; }
-
-  let payload: unknown;
-  try { payload = handler.parse(edited !== undefined ? edited : a.payload); }
-  catch (e) { const error = msg(e); await restore(error); return { ok: false, error, status: 422 }; }
-
-  if (edited !== undefined) {
-    await db.prepare(`UPDATE approvals SET payload = ? WHERE id = ?`).bind(JSON.stringify(edited), id).run();
-    a.payload = edited;
+  // Everything after the claim is guarded: any throw puts the row back to pending with `error`.
+  const restore = async (error: string) => {
+    try {
+      await db.prepare(`UPDATE approvals SET status = 'pending', decided_at = NULL, error = ? WHERE id = ?`).bind(error, id).run();
+    } catch { /* nothing more we can do; the caller still gets a failure result */ }
+  };
+  let stage: 422 | 502 = 422;
+  try {
+    const a = toApproval(claimed);
+    const handler = getHandler(a.kind);
+    if (!handler) throw new Error(`no handler for kind ${a.kind}`);
+    const payload = handler.parse(edited !== undefined ? edited : a.payload);
+    stage = 502;
+    if (edited !== undefined) {
+      await db.prepare(`UPDATE approvals SET payload = ? WHERE id = ?`).bind(JSON.stringify(edited), id).run();
+      a.payload = edited;
+    }
+    await handler.execute(env, payload, a);
+    return { ok: true };
+  } catch (e) {
+    const error = msg(e);
+    await restore(error);
+    return { ok: false, error, status: stage };
   }
-  try { await handler.execute(env, payload, a); }
-  catch (e) { const error = msg(e); await restore(error); return { ok: false, error, status: 502 }; }
-  return { ok: true };
 }
 
 /** False when the approval is unknown or already decided. */
