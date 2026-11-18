@@ -3,8 +3,8 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
 import { saveSettings } from "../src/worker/db/settings";
 import { estimateSearchCost } from "../src/worker/cost";
 import { startSearchRun } from "../src/worker/search-start";
-import { createCampaign, getCampaign, listCampaigns, listSteps, saveStep, updateCampaign } from "../src/worker/db/campaigns";
-import { MissingFieldError, pickVariant, renderTemplate } from "../src/worker/sequence/template";
+import { StepInvariantError, createCampaign, getCampaign, listCampaigns, listSteps, saveStep, updateCampaign } from "../src/worker/db/campaigns";
+import { MissingFieldError, PROBLEM_ONE_FALLBACK, pickVariant, renderTemplate } from "../src/worker/sequence/template";
 
 let cookie = "";
 const api = (path: string, init: RequestInit = {}) =>
@@ -55,7 +55,7 @@ describe("default steps", () => {
 
   it("every default body renders once its merge fields are filled, and carries no price", async () => {
     const c = await createCampaign(env.DB, NEW);
-    const vars = { Business: "Acme Plumbing", Name: "Hi Sam", link: "https://go.example.test/x", problem_one: "contact form" };
+    const vars = { Business: "Acme Plumbing", Name: "Sam", link: "https://go.example.test/x", problem_one: "contact form" };
     for (const s of await listSteps(env.DB, c.id)) {
       expect(renderTemplate(s.subject, vars)).not.toMatch(/[{}]/);
       for (const v of s.variants) {
@@ -64,6 +64,21 @@ describe("default steps", () => {
         expect(out, `step ${s.idx}`).not.toMatch(/\$|\d/);
       }
     }
+  });
+
+  it("both Email 3 variants render with the problem_one fallback", async () => {
+    expect(PROBLEM_ONE_FALLBACK).toBe("website");
+    const c = await createCampaign(env.DB, NEW);
+    const email3 = (await listSteps(env.DB, c.id))[3];
+    const vars = { Business: "Acme", Name: "Sam", link: "https://go.example.test/x", problem_one: PROBLEM_ONE_FALLBACK };
+    const [a, b] = email3.variants.map((v) => renderTemplate(v, vars));
+    expect(a).toContain("If the website ever becomes a priority");
+    expect(b).toContain("If the website ever moves up your list");
+  });
+
+  it("check-in copy claims no re-visit of the site and nothing about what changed", async () => {
+    const c = await createCampaign(env.DB, NEW);
+    for (const v of (await listSteps(env.DB, c.id))[4].variants) expect(v).not.toMatch(/\b(took|another|again|changed|new|still)\b/i);
   });
 
   it("two campaigns each get their own steps", async () => {
@@ -88,6 +103,42 @@ describe("default steps", () => {
   });
 });
 
+describe("saveStep body rules", () => {
+  const email = { kind: "email" as const, offset_days: 3, offset_kind: "business" as const, subject: "S" };
+  const rejects = async (idx: number, step: Parameters<typeof saveStep>[2], field: string) => {
+    const c = await createCampaign(env.DB, NEW);
+    const before = await listSteps(env.DB, c.id);
+    await expect(saveStep(env.DB, c.id, { ...step, idx })).rejects.toMatchObject({ name: "StepInvariantError", field });
+    expect(await listSteps(env.DB, c.id)).toEqual(before);
+  };
+
+  it("rejects draft on a step other than 0", async () => {
+    await rejects(3, { ...email, idx: 3, variants: [], body_source: "draft" }, "body_source");
+    await rejects(4, { ...email, kind: "checkin", idx: 4, variants: ["x"], body_source: "draft" }, "body_source");
+  });
+  it("rejects variants or a 'variants' body_source on step 0", async () => {
+    await rejects(0, { ...email, idx: 0, variants: ["x"] }, "variants");
+    await rejects(0, { ...email, idx: 0, variants: [], body_source: "variants" }, "body_source");
+  });
+  it("rejects empty variants on an email or check-in, and more than 5 anywhere", async () => {
+    await rejects(1, { ...email, idx: 1, variants: [] }, "variants");
+    await rejects(4, { ...email, kind: "checkin", idx: 4, variants: [] }, "variants");
+    await rejects(1, { ...email, idx: 1, variants: ["1", "2", "3", "4", "5", "6"] }, "variants");
+  });
+  it("editing step 0's offset keeps the draft marker, with or without body_source in the input", async () => {
+    const c = await createCampaign(env.DB, NEW);
+    const a = await saveStep(env.DB, c.id, { ...email, idx: 0, offset_days: 2, variants: [] });
+    expect(a).toMatchObject({ offset_days: 2, body_source: "draft", variants: [] });
+    const b = await saveStep(env.DB, c.id, { ...email, idx: 0, offset_days: 1, subject: "New", variants: [], body_source: "draft" });
+    expect(b).toMatchObject({ offset_days: 1, subject: "New", body_source: "draft" });
+  });
+  it("omitting body_source on another step keeps 'variants'", async () => {
+    const c = await createCampaign(env.DB, NEW);
+    expect(await saveStep(env.DB, c.id, { ...email, idx: 1, variants: ["Only {Name}"] })).toMatchObject({ body_source: "variants", variants: ["Only {Name}"] });
+  });
+  it("exports the error class", () => { expect(new StepInvariantError("variants", "m").field).toBe("variants"); });
+});
+
 describe("renderTemplate", () => {
   it("renderTemplate fills fields", () => {
     expect(renderTemplate("Hi {Name}, about {Business}: {link} {Name}", { Name: "Sam", Business: "Acme", link: "https://x.test" }))
@@ -108,6 +159,14 @@ describe("renderTemplate", () => {
     try { renderTemplate("{A} {B}", { A: undefined }); expect.unreachable(); }
     catch (e) { expect((e as MissingFieldError).fields).toEqual(["A", "B"]); }
     expect(renderTemplate("{A}", { A: "a", D: "extra" })).toBe("a");
+  });
+
+  it("inherited names like {constructor} or {toString} are missing fields, not a TypeError", () => {
+    for (const f of ["constructor", "toString", "hasOwnProperty", "valueOf"]) {
+      try { renderTemplate(`Hi {${f}}`, { Name: "Sam" }); expect.unreachable(); }
+      catch (e) { expect(e, f).toBeInstanceOf(MissingFieldError); expect((e as MissingFieldError).fields).toEqual([f]); }
+    }
+    expect(() => renderTemplate("{A}", { A: 5 as unknown as string })).toThrow(MissingFieldError);
   });
 
   it("leaves literal braces that are not fields alone, and does not re-expand values or treat $ specially", () => {
@@ -172,6 +231,16 @@ describe("campaign routes", () => {
     expect((await listCampaigns(env.DB))).toHaveLength(0);
   });
 
+  it("towns are deduplicated case-insensitively on create and PATCH, keeping the first spelling", async () => {
+    const r = await send("POST", "/api/campaigns", { ...NEW, towns: ["Boise, ID", " boise, id", "Meridian, ID", "MERIDIAN, id"] });
+    expect(r.status).toBe(201);
+    const c = await r.json<any>();
+    expect(c.towns).toEqual(["Boise, ID", "Meridian, ID"]);
+    const p = await (await send("PATCH", `/api/campaigns/${c.id}`, { towns: ["Nampa", "nampa", "Eagle"] })).json<any>();
+    expect(p.towns).toEqual(["Nampa", "Eagle"]);
+    expect((await getCampaign(env.DB, c.id))!.towns).toEqual(["Nampa", "Eagle"]);
+  });
+
   it("PATCH updates fields, accepts a nullable est_job_value_usd, and validates status and value", async () => {
     const c = await createCampaign(env.DB, NEW);
     const r = await send("PATCH", `/api/campaigns/${c.id}`, { status: "active", est_job_value_usd: 850.5, towns: ["Nampa, ID"] });
@@ -181,6 +250,30 @@ describe("campaign routes", () => {
     for (const b of [{ status: "paused" }, { est_job_value_usd: -1 }, { est_job_value_usd: "5" }, { towns: [] }, {}, { bogus: 1 }]) {
       expect((await send("PATCH", `/api/campaigns/${c.id}`, b)).status, JSON.stringify(b)).toBe(400);
     }
+  });
+
+  it("PUT step body rules: draft only on step 0 and never with variants, no silent reset of the draft marker", async () => {
+    const c = await createCampaign(env.DB, NEW);
+    const put = (idx: number, b: unknown) => send("PUT", `/api/campaigns/${c.id}/steps/${idx}`, b);
+    const e = { kind: "email", offset_days: 3, offset_kind: "business", subject: "S" };
+    const field = async (r: Response) => Object.keys((await r.json<any>()).fields);
+    const r1 = await put(3, { ...e, variants: [], body_source: "draft" });
+    expect(r1.status).toBe(400); expect(await field(r1)).toEqual(["body_source"]);
+    const r2 = await put(0, { ...e, variants: ["x"] });
+    expect(r2.status).toBe(400); expect(await field(r2)).toEqual(["variants"]);
+    const r3 = await put(0, { ...e, variants: [], body_source: "variants" });
+    expect(r3.status).toBe(400); expect(await field(r3)).toEqual(["body_source"]);
+    const r4 = await put(0, { ...e, variants: ["x"], body_source: "draft" });
+    expect(r4.status).toBe(400);
+    expect((await put(1, { ...e, variants: [] })).status).toBe(400);
+    expect((await put(4, { ...e, kind: "checkin", variants: [] })).status).toBe(400);
+    expect((await listSteps(env.DB, c.id))[0]).toMatchObject({ body_source: "draft", variants: [], offset_days: 0 });
+    // Editing step 0's offset or subject, with or without body_source, keeps it a draft step.
+    const ok = await put(0, { ...e, offset_days: 2, variants: [] });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toMatchObject({ offset_days: 2, body_source: "draft", variants: [] });
+    expect((await put(0, { ...e, offset_days: 1, subject: "Edited", variants: [], body_source: "draft" })).status).toBe(200);
+    expect((await listSteps(env.DB, c.id))[0]).toMatchObject({ offset_days: 1, subject: "Edited", body_source: "draft" });
   });
 
   it("PUT step saves kind, offset, subject and variants, and validates", async () => {

@@ -1,11 +1,15 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../env";
-import { createCampaign, getCampaign, listCampaigns, listSteps, saveStep, updateCampaign } from "../db/campaigns";
+import { StepInvariantError, createCampaign, getCampaign, listCampaigns, listSteps, saveStep, updateCampaign } from "../db/campaigns";
 import { failureMessage, searchWorkflowStarter, startSearchRun } from "../search-start";
 
 const Name = z.string().trim().min(1).max(100);
-const Towns = z.array(z.string().trim().min(1).max(100)).min(1).max(10);
+// Case-insensitive duplicates collapse to the first spelling, so one town never starts two searches.
+const Towns = z.array(z.string().trim().min(1).max(100)).min(1).max(10).transform((towns) => {
+  const seen = new Set<string>();
+  return towns.filter((t) => { const k = t.toLowerCase(); return seen.has(k) ? false : (seen.add(k), true); });
+});
 
 const NewCampaign = z.object({ name: Name, niche: z.string().trim().min(1).max(100), region: z.string().trim().min(1).max(100), towns: Towns }).strict();
 const PatchCampaign = z.object({
@@ -21,12 +25,7 @@ const PutStep = z.object({
   subject: z.string().trim().max(200),
   variants: z.array(z.string().trim().min(1).max(3000)).max(5),
   body_source: z.enum(["variants", "draft"]).optional(),
-}).strict().superRefine((v, ctx) => {
-  // A call has no body and a 'draft' step's body comes from the lead's draft; every other step needs something to send.
-  if (v.kind !== "call" && v.body_source !== "draft" && v.variants.length === 0) {
-    ctx.addIssue({ code: "custom", path: ["variants"], message: "at least one variant is required" });
-  }
-});
+}).strict(); // body rules (draft only on step 0, variants elsewhere) are enforced by saveStep
 
 const invalid = (error: z.ZodError) => ({ error: "invalid body", fields: z.flattenError(error).fieldErrors });
 
@@ -64,7 +63,12 @@ campaignRoutes.put("/:id/steps/:idx", async (c) => {
   if (!(await getCampaign(c.env.DB, id))) return c.json({ error: "not found" }, 404);
   // Edits only: the five steps exist from creation, so an index with no step is a mistake, not a new step.
   if (!(await listSteps(c.env.DB, id)).some((s) => s.idx === idx)) return c.json({ error: "step not found" }, 404);
-  return c.json(await saveStep(c.env.DB, id, { ...parsed.data, idx }));
+  try {
+    return c.json(await saveStep(c.env.DB, id, { ...parsed.data, idx }));
+  } catch (e) {
+    if (e instanceof StepInvariantError) return c.json({ error: "invalid body", fields: { [e.field]: [e.message] } }, 400);
+    throw e;
+  }
 });
 
 // One search per town, one after another: each start counts toward the in-flight spend the next town is checked against.
