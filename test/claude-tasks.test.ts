@@ -453,6 +453,19 @@ describe("completeTask", () => {
     expect((await listDoNotContact(env.DB)).map((d) => d.value)).toContain("assistant@brightsmiles.example");
   });
 
+  it("stop lists only an address we wrote to for the lead: a forged or invalid From is not listed", async () => {
+    for (const from of ["forged@evil.test", "Not An Address", "<>"]) {
+      await env.DB.batch(["do_not_contact", "claude_tasks", "messages", "enrollments", "businesses"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+      const s = await seedReply();
+      await env.DB.prepare(`UPDATE messages SET counterpart = ? WHERE id = ?`).bind(from, s.messageId).run();
+      expect(await completeTask(env, s.taskId, { label: "stop" }), from).toEqual({ ok: true });
+      const listed = (await listDoNotContact(env.DB)).map((d) => d.value);
+      expect(listed, from).not.toContain(from.toLowerCase());
+      expect(listed, from).toEqual(["pat@brightsmiles.example"]); // the address the sequence wrote to
+      expect((await getBusiness(env.DB, s.businessId))!.lead_status).toBe("lost");
+    }
+  });
+
   it("other leaves an activity note only", async () => {
     const s = await seedReply();
     const before = (await listActivity(env.DB, s.businessId)).length;

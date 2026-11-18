@@ -10,6 +10,7 @@ import { getHandler, registeredKinds } from "../approvals/registry";
 import { checkConflict } from "../conflict";
 import { logAgentAction } from "../db/agentActions";
 import { getBusiness } from "../db/businesses";
+import { isKnownRecipient } from "../db/contacts";
 import { latestAudit, latestAuditsFor } from "../db/audits";
 import { listActivity } from "../db/activity";
 import "../queue/replyClassify"; // registers the built-in task kinds for this entry path too
@@ -96,11 +97,22 @@ export function buildMcpServer(env: Env): McpServer {
       await log("propose_approval", `refused email.send from the ${p.mailbox} mailbox`, { type: "business", id: p.businessId });
       return fail('email.send proposals must use mailbox "outreach"');
     }
+    // The lead must exist: a made-up id would skip every lead-level check below (suppression, client status, the domain lists).
+    const lead = await getBusiness(db, p.businessId);
+    if (!lead) {
+      await log("propose_approval", `refused email.send: no such lead ${p.businessId.slice(0, 100)}`);
+      return fail(`lead not found: ${p.businessId}`);
+    }
     // The gate runs when the approval is made, not only when it is approved: a listed recipient, a suppressed lead or a client never gets a card.
     const c = await checkConflict(db, { email: p.to, businessId: p.businessId });
     if (c.blocked) {
       await log("propose_approval", `refused email.send to ${p.to.slice(0, 100)}: ${c.reason}`.slice(0, 300), { type: "business", id: p.businessId });
       return fail(`blocked: ${c.reason} (${c.source})`);
+    }
+    // Claude reads scraped pages and inbound mail and could be steered to write to someone else, so the recipient must be an address we know for THIS lead.
+    if (!(await isKnownRecipient(db, p.businessId, p.to))) {
+      await log("propose_approval", `refused email.send to ${p.to.slice(0, 100)}: not a known address for the lead`, { type: "business", id: p.businessId });
+      return fail(`${p.to} is not a known address for ${lead.name} (only a contact found for the lead, or an address we already wrote to, can be proposed).`);
     }
     const title = a.title.replace(/\s+/g, " ").trim().slice(0, 120).trim() || `Email to ${p.to}`;
     const spec = buildEmailSendApproval({ ...p, title, drafted_by: "mcp" }, await getSettings(db), await mailboxFromEmail(db, p.mailbox));

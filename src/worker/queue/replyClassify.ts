@@ -7,7 +7,8 @@ import { createApprovalForTask } from "../db/approvals";
 import { logActivity } from "../db/activity";
 import { getBusiness } from "../db/businesses";
 import { listSteps, type SequenceStep } from "../db/campaigns";
-import { enrollmentsFor } from "../db/enrollments";
+import { enrollmentsFor, getEnrollment } from "../db/enrollments";
+import { listableAddress } from "../mail/listable";
 import { getSettings } from "../db/settings";
 import { stopOutreach } from "../sequence/stop";
 import type { Enrollment } from "../sequence/types";
@@ -137,7 +138,6 @@ const checkinSection = (c: ReplyContext["checkinTemplate"]) =>
 const lastOutboundText = (o: ReplyContext["lastOutbound"]) =>
   `## Last email we sent\n${o ? defang(`Subject: ${o.subject}\nSent: ${o.sentAt ?? "unknown"}\n\n${o.body}`) : "none on record"}`;
 
-const EMAIL = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}...` : s);
 const oneLine = (e: unknown) => String((e as Error)?.message ?? e).replace(/\s+/g, " ").slice(0, 400);
 const isUniqueViolation = (e: unknown) => /UNIQUE/i.test(String((e as Error)?.message ?? e));
@@ -146,9 +146,13 @@ async function applyEffects(env: Env, t: Target, r: ReplyResult, taskId: string)
   const db = env.DB, businessId = t.business.id;
   const sender = t.message.counterpart.trim().toLowerCase();
   switch (r.label) {
-    case "stop":
-      await stopOutreach(db, { businessId, reason: "opt_out", ...(EMAIL.test(sender) ? { email: sender } : {}) });
+    case "stop": {
+      // The From is unvalidated and a forged reply can claim anyone: only an address we wrote to for this lead is listed (else the one the sequence wrote to).
+      const enrollment = t.payload.enrollmentId ? await getEnrollment(db, t.payload.enrollmentId) : await latestEnrollment(db, businessId);
+      const address = await listableAddress(db, businessId, enrollment?.to_email, t.message.counterpart);
+      await stopOutreach(db, { businessId, reason: "opt_out", ...(address ? { email: address } : {}) });
       return { ok: true, note: "the lead is suppressed" };
+    }
 
     case "interested":
     case "question": {

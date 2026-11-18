@@ -5,7 +5,9 @@ import { upsertBusiness } from "../src/worker/db/businesses";
 import { createApproval } from "../src/worker/db/approvals";
 import { listAgentActions } from "../src/worker/db/agentActions";
 import { addDoNotContact } from "../src/worker/db/doNotContact";
+import { createCampaign } from "../src/worker/db/campaigns";
 import { suppressLead } from "../src/worker/db/suppression";
+import { ensureContact } from "../src/worker/db/contacts";
 
 let rpcId = 0;
 const rpc = (method: string, params?: unknown, token: string | null = "test-mcp-token") =>
@@ -95,6 +97,9 @@ describe("mcp", () => {
       const s = await createSearch(env.DB, { location: "Boise", businessType: "plumber", radiusKm: 10, maxResults: 5 });
       return upsertBusiness(env.DB, { placeId: crypto.randomUUID(), name, category: null, address: null, phone: null, websiteUrl, mapsUrl: null, rating: null, reviewCount: null }, s.id);
     };
+    /** The address is one the lead is known by: a contact found on its site. */
+    const knownAs = (businessId: string, email: string) =>
+      ensureContact(env.DB, businessId, { type: "email", value: email, source_url: null, person_name: null, role: null, confidence: 0.9 });
     const propose = (businessId: string, to: string, extra: Record<string, unknown> = {}) =>
       call("propose_approval", { kind: "email.send", title: "Email", preview: "p", payload: { mailbox: "outreach", businessId, to, subject: "Hello", body: "Hi there", includeFooter: true, ...extra } });
     const countFor = async (businessId: string) =>
@@ -132,6 +137,7 @@ describe("mcp", () => {
 
     it("still creates a pending approval for a clear recipient, with a server-built preview", async () => {
       const b = await lead("Clear Plumbing", "https://clear-plumbing.test");
+      await knownAs(b.id, "owner@clear-plumbing.test");
       const j = await propose(b.id, "owner@clear-plumbing.test");
       expect(j.result.isError).toBeFalsy();
       const a = JSON.parse(j.result.content[0].text);
@@ -143,6 +149,7 @@ describe("mcp", () => {
     it("ignores the caller's preview, record_type and record_id, and keeps the real recipient in the preview", async () => {
       const b = await lead("Misleading Plumbing", "https://misleading-plumbing.test");
       const other = await lead("Other Plumbing", "https://other-plumbing.test");
+      await knownAs(b.id, "owner@misleading-plumbing.test");
       const j = await call("propose_approval", {
         kind: "email.send", title: "Reply to Acme\nwith a second line  and spaces ".padEnd(190, "x"), preview: "Reply to Acme", record_type: "enrollment", record_id: other.id,
         payload: { mailbox: "outreach", businessId: b.id, to: "owner@misleading-plumbing.test", subject: "Real subject", body: "Real body text", includeFooter: true },
@@ -158,6 +165,42 @@ describe("mcp", () => {
       const row = await env.DB.prepare(`SELECT record_type, record_id, preview FROM approvals WHERE id = ?`).bind(a.id).first<{ record_type: string; record_id: string; preview: string }>();
       expect(row).toMatchObject({ record_type: "lead", record_id: b.id });
       expect(row!.preview).toBe(a.preview);
+    });
+
+    it("refuses a businessId that does not exist, and creates nothing", async () => {
+      const j = await propose("no-such-lead", "owner@ghost-plumbing.test");
+      expect(j.result.isError).toBe(true);
+      expect(j.result.content[0].text).toMatch(/lead not found: no-such-lead/);
+      expect(await countFor("no-such-lead")).toBe(0);
+      expect((await listAgentActions(env.DB, {})).some((a) => a.tool === "propose_approval" && /no such lead|not found/i.test(a.summary))).toBe(true);
+    });
+
+    it("refuses a recipient that is not a known address of that lead", async () => {
+      const b = await lead("Stranger Plumbing", "https://stranger-plumbing.test");
+      await knownAs(b.id, "owner@stranger-plumbing.test");
+      const other = await lead("Other Known Plumbing", "https://other-known-plumbing.test");
+      await knownAs(other.id, "boss@other-known-plumbing.test");
+      for (const to of ["someone@else.test", "boss@other-known-plumbing.test"]) { // a stranger, and another lead's contact
+        const j = await propose(b.id, to);
+        expect(j.result.isError).toBe(true);
+        expect(j.result.content[0].text).toMatch(/not a known address for Stranger Plumbing/);
+      }
+      expect(await countFor(b.id)).toBe(0);
+    });
+
+    it("accepts a known address however it is cased, one a sequence wrote to, and one we sent to", async () => {
+      const b = await lead("Known Plumbing", "https://known-plumbing.test");
+      await knownAs(b.id, "Owner@Known-Plumbing.test");
+      expect((await propose(b.id, "owner@known-plumbing.test")).result.isError).toBeFalsy();
+      const e = await lead("Enrolled Plumbing", "https://enrolled-plumbing.test");
+      const camp = await createCampaign(env.DB, { name: "C", niche: "plumber", region: "Boise", towns: ["Boise, ID"] });
+      await env.DB.prepare(`INSERT INTO enrollments (id, business_id, campaign_id, mailbox_key, to_email, status, next_step_index, started_at) VALUES (?,?,?,?,?, 'stopped', 1, ?)`)
+        .bind(crypto.randomUUID(), e.id, camp.id, "outreach", "pat@enrolled-plumbing.test", new Date().toISOString()).run();
+      expect((await propose(e.id, "pat@enrolled-plumbing.test")).result.isError).toBeFalsy();
+      const m = await lead("Messaged Plumbing", "https://messaged-plumbing.test");
+      await env.DB.prepare(`INSERT INTO messages (id, direction, mailbox_key, business_id, counterpart, subject, text, status, created_at) VALUES (?, 'out', 'outreach', ?, ?, 's', 't', 'sent', ?)`)
+        .bind(crypto.randomUUID(), m.id, "sam@messaged-plumbing.test", new Date().toISOString()).run();
+      expect((await propose(m.id, "sam@messaged-plumbing.test")).result.isError).toBeFalsy();
     });
 
     it("refuses a payload that names an enrollment or a step, and creates nothing", async () => {

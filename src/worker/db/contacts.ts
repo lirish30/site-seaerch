@@ -38,3 +38,19 @@ export async function ensureContact(db: D1Database, businessId: string, c: Conta
     .bind(id, businessId, c.type, c.value, c.source_url, c.person_name, c.role, c.confidence).run();
   return (await db.prepare(`SELECT * FROM contacts WHERE id = ?`).bind(id).first<Contact>())!;
 }
+
+/**
+ * True when `email` is an address we know for this business: an email contact found for it, an address a sequence of its was started to, or an
+ * address we already sent it a message at. Compared trimmed and case-insensitively. An address that only appears in the text of a request is never
+ * known, so a proposal cannot be aimed at someone the lead has nothing to do with.
+ */
+export async function isKnownRecipient(db: D1Database, businessId: string, email: string): Promise<boolean> {
+  const e = email.trim().toLowerCase();
+  const row = await db.prepare(
+    `SELECT 1 AS x FROM contacts WHERE business_id = ?1 AND type = 'email' AND LOWER(TRIM(value)) = ?2
+     UNION ALL SELECT 1 FROM enrollments WHERE business_id = ?1 AND LOWER(TRIM(to_email)) = ?2
+     UNION ALL SELECT 1 FROM messages WHERE business_id = ?1 AND direction = 'out' AND LOWER(TRIM(counterpart)) = ?2
+     LIMIT 1`,
+  ).bind(businessId, e).first();
+  return row !== null;
+}
