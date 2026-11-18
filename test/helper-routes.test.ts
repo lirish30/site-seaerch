@@ -65,6 +65,27 @@ describe("helper authentication", () => {
     expect(limited).toBe(true);
   });
 
+  it("a garbage token is still rate limited under the helper key", async () => {
+    let limited = false;
+    for (let i = 0; i < 30 && !limited; i++) limited = (await post("/hello", {}, { token: "hlp_" + "C".repeat(43) })).status === 429;
+    expect(limited).toBe(true);
+  });
+
+  it("failed helper tokens do not exhaust the login budget for the same ip", async () => {
+    for (let i = 0; i < 30; i++) await post("/hello", {}, { token: "hlp_" + "D".repeat(43) });
+    expect((await post("/hello", {}, { token: "hlp_" + "D".repeat(43) })).status).toBe(429); // the helper budget is spent...
+    const login = (password: string) => SELF.fetch("https://x/api/login", { method: "POST", body: JSON.stringify({ password }), headers: { "content-type": "application/json", "cf-connecting-ip": ip } });
+    expect((await login("test-pass")).status).toBe(200); // ...and login from that address is untouched
+    expect((await login("wrong")).status).toBe(401);
+  });
+
+  it("a revoked device gets 401 without spending the limiter", async () => {
+    await revokeDevice(env.DB, deviceId);
+    for (let i = 0; i < 40; i++) expect((await post("/hello")).status).toBe(401);
+    // Nothing was spent: a first guess from this address still gets a plain 401, and login is fine.
+    expect((await post("/hello", {}, { token: "hlp_" + "E".repeat(43) })).status).toBe(401);
+  });
+
   it("revoked token gets 401", async () => {
     expect((await post("/hello")).status).toBe(200);
     await revokeDevice(env.DB, deviceId);

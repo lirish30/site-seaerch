@@ -1,6 +1,5 @@
 import type { Context, MiddlewareHandler } from "hono";
 import type { Env } from "../env";
-import { loginThrottled } from "../auth";
 
 export interface HelperDevice { id: string; name: string; created_at: string; last_seen_at: string | null; revoked_at: string | null }
 type DeviceRow = HelperDevice & { token_hash: string };
@@ -50,14 +49,24 @@ export async function revokeDevice(db: D1Database, id: string): Promise<boolean>
   return (r.meta.changes ?? 0) > 0;
 }
 
-/** The live device a bearer header belongs to, or null. The token is matched by its hash, and the hashes are then compared in constant time. */
-export async function deviceForHeader(db: D1Database, header: string | undefined): Promise<HelperDevice | null> {
+/**
+ * Who a bearer header belongs to: a live `device`, a `revoked` one (a real token that was switched off), or `unknown` (nothing matches: a guess,
+ * garbage, no header). The token is matched by its hash, and the hashes are then compared in constant time.
+ */
+export type HelperLookup = { kind: "device"; device: HelperDevice } | { kind: "revoked" } | { kind: "unknown" };
+export async function lookupDevice(db: D1Database, header: string | undefined): Promise<HelperLookup> {
   const m = /^Bearer (hlp_[A-Za-z0-9_-]{43})$/.exec(header ?? "");
-  if (!m) return null;
+  if (!m) return { kind: "unknown" };
   const hash = await hashToken(m[1]);
   const row = await db.prepare(`SELECT * FROM helper_devices WHERE token_hash = ?`).bind(hash).first<DeviceRow>();
-  if (!row || !sameHash(row.token_hash, hash) || row.revoked_at) return null;
-  return publicDevice(row);
+  if (!row || !sameHash(row.token_hash, hash)) return { kind: "unknown" };
+  return row.revoked_at ? { kind: "revoked" } : { kind: "device", device: publicDevice(row) };
+}
+
+/** The live device a bearer header belongs to, or null. */
+export async function deviceForHeader(db: D1Database, header: string | undefined): Promise<HelperDevice | null> {
+  const r = await lookupDevice(db, header);
+  return r.kind === "device" ? r.device : null;
 }
 
 /** Notes that a device was just seen, unless it was seen a moment ago (`force` always writes). */
@@ -71,15 +80,28 @@ export type HelperEnv = { Bindings: Env; Variables: { device: HelperDevice } };
 export const deviceOf = (c: Context<HelperEnv>): HelperDevice => c.get("device");
 
 /**
+ * Throttles guessed helper tokens per client IP, in a budget of their own: the same limiter as login, but under a `helper:` key, so a helper
+ * that keeps failing (it shares the user's home IP) can never use up the budget login, passkeys and /mcp draw on. True when over the limit.
+ */
+async function helperThrottled(c: Context<HelperEnv>): Promise<boolean> {
+  const limiter = c.env.LOGIN_LIMITER;
+  if (!limiter) return false;
+  const { success } = await limiter.limit({ key: `helper:${c.req.header("cf-connecting-ip") ?? "unknown"}` });
+  return !success;
+}
+
+/**
  * Guards every /helper route: a valid, unrevoked device token and nothing else. The login cookie is not looked at, so it can never open these
- * routes. Failed attempts spend the per-IP budget (as /mcp does), so a valid token is never throttled.
+ * routes. A token that matches no device (a guess) spends the helper budget; a revoked device's real token gets a plain 401 and spends nothing,
+ * so revoking a Mac whose helper keeps retrying never locks anyone out.
  */
 export const requireHelper: MiddlewareHandler<HelperEnv> = async (c, next) => {
-  const device = await deviceForHeader(c.env.DB, c.req.header("authorization"));
-  if (!device) {
-    if (await loginThrottled(c as unknown as Context<{ Bindings: Env }>)) return c.json({ error: "too many attempts" }, 429);
+  const found = await lookupDevice(c.env.DB, c.req.header("authorization"));
+  if (found.kind !== "device") {
+    if (found.kind === "unknown" && (await helperThrottled(c))) return c.json({ error: "too many attempts" }, 429);
     return c.json({ error: "unauthorized" }, 401, { "www-authenticate": "Bearer" });
   }
+  const device = found.device;
   c.set("device", device);
   await touchDevice(c.env.DB, device.id, new Date(), c.req.path === "/helper/hello");
   return next();
