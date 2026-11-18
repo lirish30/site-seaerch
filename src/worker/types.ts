@@ -65,6 +65,7 @@ export interface Search {
   found_count: number; processed_count: number; created_at: string;
   new_only: 0 | 1; // Radar-started: only businesses never audited get the per-lead pipeline
   quick_scan: 0 | 1; // its leads run the quick stage (no render, PageSpeed, AI review or draft); Radar searches never set it
+  campaign_id: string | null; // set when a campaign's run-searches started it
 }
 
 /** How far a lead's audit has been paid for: 'quick' is crawl + score only, 'full' adds screenshots, PageSpeed, AI review and a draft. */

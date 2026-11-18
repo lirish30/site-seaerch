@@ -22,6 +22,7 @@ import { spendRoutes } from "./routes/spend";
 import { approvalRoutes } from "./routes/approvals";
 import { agentActionRoutes } from "./routes/agentActions";
 import { mailboxRoutes } from "./routes/mailboxes";
+import { campaignRoutes } from "./routes/campaigns";
 import "./approvals/leadNote";
 import "./approvals/emailSend";
 import { mcpRoute } from "./mcp/route";
@@ -53,6 +54,7 @@ app.route("/api/spend", spendRoutes);
 app.route("/api/approvals", approvalRoutes);
 app.route("/api/agent-actions", agentActionRoutes);
 app.route("/api/mailboxes", mailboxRoutes);
+app.route("/api/campaigns", campaignRoutes);
 // Mounted last at /api: /api/leads/:id/cro-audit(s), /api/cro-items/:id, /api/cro-audits/:id/... (all behind requireAuth).
 app.route("/api", croRoutes);
 
