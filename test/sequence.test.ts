@@ -18,7 +18,9 @@ import { listSuppressions } from "../src/worker/db/suppression";
 import { createCampaign, saveStep, listSteps } from "../src/worker/db/campaigns";
 import { setAfterSendForTests } from "../src/worker/mail/send";
 import { addBusinessDays } from "../src/worker/sequence/dates";
-import { advanceAfterSend, problemOne, scanDueSteps, startSequence } from "../src/worker/sequence/engine";
+import { RULE_PHRASES, VETTED_RULE_PHRASES, advanceAfterSend, problemOne, scanDueSteps, startSequence } from "../src/worker/sequence/engine";
+import { DEFAULT_STEPS } from "../src/worker/db/campaigns";
+import { renderTemplate } from "../src/worker/sequence/template";
 import { stopOutreach } from "../src/worker/sequence/stop";
 import type { Enrollment } from "../src/worker/sequence/types";
 import type { Finding } from "../src/worker/types";
@@ -548,6 +550,60 @@ describe("stopOutreach", () => {
     expect((await approvalRows()).find((a) => a.id === leftover.id)).toMatchObject({ status: "pending" });
   });
 
+  describe("a stop rejects every pending email.send for the lead", () => {
+    const leadApproval = async (forBusiness = businessId) => {
+      const settings = (await env.DB.prepare(`SELECT * FROM settings WHERE id = 1`).first())! as never;
+      // what an MCP proposal looks like: record_type 'lead', no enrollmentId
+      return createApproval(env.DB, { ...buildEmailSendApproval({ mailbox: "outreach", businessId: forBusiness, to: "dana@acme.test", subject: "Quick note", body: "Hi Dana, a note.", includeFooter: true, title: "Cold email", drafted_by: "mcp" }, settings) });
+    };
+
+    for (const reason of ["replied", "manual"] as const) {
+      it(`a ${reason} stop rejects an approval made outside any enrollment, and approving it afterwards is 409`, async () => {
+        const a = await leadApproval();
+        expect(a.record_type).toBe("lead");
+        expect(await stopOutreach(env.DB, { businessId, reason })).toEqual({ rejectedApprovals: 1 });
+        expect((await approvalRows())[0]).toMatchObject({ id: a.id, status: "rejected", decision_note: `sequence stopped: ${reason}` });
+        expect(await approve(env, a.id)).toMatchObject({ ok: false, status: 409 });
+        expect(smtpCalls).toHaveLength(0);
+      });
+    }
+
+    it("opt_out and bounced reject it too", async () => {
+      for (const reason of ["opt_out", "bounced"] as const) {
+        await leadApproval();
+        expect(await stopOutreach(env.DB, { businessId, reason, email: "dana@acme.test" })).toEqual({ rejectedApprovals: 1 });
+      }
+    });
+
+    it("another lead's pending email.send is untouched", async () => {
+      const other = await seedLead("Other Co", { website: "https://other.test", email: "sam@other.test" });
+      const mine = await leadApproval(), theirs = await leadApproval(other.id);
+      expect(await stopOutreach(env.DB, { businessId, reason: "replied" })).toEqual({ rejectedApprovals: 1 });
+      const rows = await approvalRows();
+      expect(rows.find((r) => r.id === mine.id)!.status).toBe("rejected");
+      expect(rows.find((r) => r.id === theirs.id)!.status).toBe("pending");
+    });
+
+    it("an approval matching both the enrollment and the lead is rejected and counted once", async () => {
+      const r = await startSequence(env, { businessId, campaignId });
+      if (!r.ok) throw new Error(r.error);
+      await leadApproval();
+      expect(await stopOutreach(env.DB, { businessId, reason: "manual" })).toEqual({ rejectedApprovals: 2 });
+      expect((await approvalRows()).map((a) => a.status)).toEqual(["rejected", "rejected"]);
+    });
+
+    it("the approval the scan created ends rejected after the stop and approves to 409", async () => {
+      await startAndSendStep0();
+      expect((await scanDueSteps(env, at("2026-11-25T10:00:00Z"))).approvalsCreated).toBe(1);
+      const created = (await approvalRows())[1];
+      expect(created).toMatchObject({ status: "pending", drafted_by: "job", record_type: "enrollment" });
+      expect(await stopOutreach(env.DB, { businessId, reason: "replied" })).toEqual({ rejectedApprovals: 1 });
+      expect((await approvalRows()).find((a) => a.id === created.id)).toMatchObject({ status: "rejected", decision_note: "sequence stopped: replied" });
+      expect(await approve(env, created.id)).toMatchObject({ ok: false, status: 409 });
+      expect(smtpCalls).toHaveLength(1); // only Email 1
+    });
+  });
+
   it("an email approval for an enrollment that does not exist is refused", async () => {
     const a = await stepApproval("ghost", 1);
     const res = await approve(env, a.id);
@@ -592,6 +648,49 @@ describe("problemOne", () => {
     expect(problemOne([f({ evidence: "Mobile: text is tiny. Hard to read." })])).toBe("website");
     expect(problemOne([f({ evidence: `${"Very long title ".repeat(6)}. Evidence.` })])).toBe("website");
     expect(problemOne([f({ code: "no_website", source: "rule", evidence: "They have no website" })])).toBe("website");
+  });
+});
+
+describe("problem_one wording", () => {
+  const ai = (evidence: string): Finding => ({ ...FINDING, evidence });
+
+  it("every rule phrase is a vetted singular phrase, and the table uses exactly the vetted list", () => {
+    const used = [...new Set(Object.values(RULE_PHRASES))].sort();
+    expect(used).toEqual([...VETTED_RULE_PHRASES].sort());
+    for (const p of used) expect(p).not.toMatch(/s$/);
+  });
+
+  it("every phrase reads correctly in both seeded Email 3 variants", () => {
+    const variants = DEFAULT_STEPS[3].variants;
+    expect(variants).toHaveLength(2);
+    for (const phrase of VETTED_RULE_PHRASES) {
+      for (const v of variants) {
+        const body = renderTemplate(v, { Business: "Acme", Name: "Dana", link: "https://go.example.test/r/x", problem_one: phrase });
+        expect(body).toMatch(new RegExp(`If the ${phrase} ever (becomes a priority|moves up your list)`));
+      }
+    }
+  });
+
+  it("every rule code gives its singular phrase", () => {
+    for (const [code, phrase] of Object.entries(RULE_PHRASES)) {
+      expect(problemOne([{ ...FINDING, code: code as Finding["code"], source: "rule" }])).toBe(phrase);
+    }
+  });
+
+  it("keeps the casing of a proper noun or acronym, lower-cases an ordinary title", () => {
+    expect(problemOne([ai("WordPress theme looks dated. Old.")])).toBe("WordPress theme looks dated");
+    expect(problemOne([ai("Google Business Profile is incomplete. Missing hours.")])).toBe("Google Business Profile is incomplete");
+    expect(problemOne([ai("Facebook page not linked. Nothing.")])).toBe("Facebook page not linked");
+    expect(problemOne([ai("Weak call to action. Nothing to click.")])).toBe("weak call to action");
+  });
+
+  it("only plain-word titles pass; everything else falls back to 'website'", () => {
+    for (const bad of ["visit evil.com for deals", "Click <b>here</b>", "Email me@evil.test now", "See https://evil.test/x", "Top 10 homepage fixes", "Mobile: text is tiny", "Cheap deals!", "Weak call to action, again", `${"Long title ".repeat(6)}`]) {
+      expect(problemOne([ai(`${bad}. Evidence.`)])).toBe("website");
+      expect(problemOne([ai(bad)])).toBe("website");
+    }
+    expect(problemOne([ai("Cluttered homepage layout. Too much.")])).toBe("cluttered homepage layout");
+    expect(problemOne([ai("Hours & directions buried. Hard to find.")])).toBe("hours & directions buried");
   });
 });
 

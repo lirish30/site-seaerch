@@ -15,7 +15,7 @@ const LEAD_STATUS: Partial<Record<StopReason, LeadStatus>> = { replied: "replied
 /**
  * Ends every channel of outreach to a lead ("any stop ends every channel"). Order matters, so that a stop beats an approval that is
  * already waiting: the enrollments are ended FIRST (the send path refuses anything for an ended sequence), then the pending approvals
- * are rejected, then the lead and the lists are updated.
+ * (and every pending email.send for the lead, enrolled or not) are rejected, then the lead and the lists are updated.
  *  - replied: enrollment `replied`, lead `replied`.
  *  - opt_out: enrollment `stopped`, the lead's domain and place id are suppressed, the address goes on do-not-contact (opt_out), lead `lost`.
  *  - bounced: enrollment `bounced`, the address goes on do-not-contact (bounced).
@@ -30,12 +30,17 @@ export async function stopOutreach(
   await db.prepare(`UPDATE enrollments SET status = ?, stopped_reason = ?, next_due_at = NULL WHERE business_id = ? AND status IN ('active','nurture')`)
     .bind(ENDS_AS[o.reason], o.reason, o.businessId).run();
 
+  // Every pending approval that could still write to this lead: the ones tied to its enrollments AND any email.send for it made outside a
+  // sequence (an MCP proposal has record_type 'lead' and no enrollmentId). A reply does not block the conflict gate, so without this a
+  // stale cold email could still be approved after the lead answered. One row per approval, however many conditions it matches.
+  const pending = (await db.prepare(
+    `SELECT id FROM approvals WHERE status = 'pending' AND (
+       (record_type = 'enrollment' AND record_id IN (SELECT id FROM enrollments WHERE business_id = ?1))
+       OR (kind = 'email.send' AND json_extract(payload, '$.businessId') = ?1))`,
+  ).bind(o.businessId).all<{ id: string }>()).results;
   let rejectedApprovals = 0;
   const note = `sequence stopped: ${o.reason}`;
-  for (const e of enrollments) {
-    const pending = (await db.prepare(`SELECT id FROM approvals WHERE record_type = 'enrollment' AND record_id = ? AND status = 'pending'`).bind(e.id).all<{ id: string }>()).results;
-    for (const a of pending) if (await reject(db, a.id, note)) rejectedApprovals++;
-  }
+  for (const a of pending) if (await reject(db, a.id, note)) rejectedApprovals++;
 
   const email = (o.email ?? enrollments[0]?.to_email)?.trim();
   const business = await getBusiness(db, o.businessId);

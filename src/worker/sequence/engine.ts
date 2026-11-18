@@ -88,30 +88,45 @@ export async function startSequence(env: Env, o: { businessId: string; campaignI
 
 const SEVERITY_RANK: Record<Finding["severity"], number> = { critical: 3, important: 2, nice: 1 };
 
-/** What each rule finding is about, as a noun phrase that reads after "the" ("If the mobile speed ever becomes a priority"). Codes not listed use the fallback. */
+/**
+ * What each rule finding is about, as a SINGULAR noun phrase that reads after "the" and agrees with "becomes" / "moves up your list"
+ * ("If the broken link problem ever becomes a priority"). Codes not listed use the fallback.
+ */
 const RULE_PHRASE: Record<string, string> = {
   slow_mobile: "mobile speed", meh_mobile: "mobile speed", slow_lcp: "page load speed", layout_shift: "page layout",
-  not_mobile_friendly: "mobile layout", no_viewport: "mobile layout", mobile_overflow: "mobile layout", small_text_mobile: "mobile text",
+  not_mobile_friendly: "mobile layout", no_viewport: "mobile layout", mobile_overflow: "mobile layout", small_text_mobile: "mobile text size",
   old_copyright: "site content", stale_content: "site content", past_events: "site content", thin_homepage: "homepage", dated_build: "site design",
-  missing_niche_page: "services pages", no_contact_path: "contact page", no_cta: "call to action", no_phone_visible: "phone number", no_click_to_call: "phone number",
-  no_social_proof: "customer reviews", no_nav: "navigation", no_footer: "footer", broken_links: "broken links",
+  missing_niche_page: "services page", no_contact_path: "contact page", no_cta: "call to action", no_phone_visible: "phone number", no_click_to_call: "phone number",
+  no_social_proof: "reviews section", no_nav: "navigation menu", no_footer: "footer", broken_links: "broken link problem",
   no_https: "site security", no_https_redirect: "site security", mixed_content: "site security",
-  no_title_or_meta: "page titles", no_h1: "page headings", no_schema: "search listing setup", no_local_schema: "search listing setup", no_open_graph: "link previews",
-  low_seo_score: "search setup", no_sitemap: "search setup", images_missing_alt: "image descriptions", low_accessibility: "accessibility", no_email_auth: "email setup",
+  no_title_or_meta: "page title", no_h1: "page heading", no_schema: "search listing setup", no_local_schema: "search listing setup", no_open_graph: "link preview",
+  low_seo_score: "search setup", no_sitemap: "search setup", images_missing_alt: "image alt text", low_accessibility: "accessibility", no_email_auth: "email setup",
 };
+/** The vetted singular phrases; a test requires the table above to use exactly these, so a plural cannot slip into outbound copy. */
+export const VETTED_RULE_PHRASES: readonly string[] = [
+  "accessibility", "call to action", "contact page", "email setup", "footer", "homepage", "image alt text", "link preview", "mobile layout", "mobile speed",
+  "mobile text size", "navigation menu", "page heading", "page layout", "page load speed", "page title", "phone number", "reviews section", "search listing setup",
+  "search setup", "services page", "site content", "site design", "site security", "broken link problem",
+];
+export const RULE_PHRASES: Readonly<Record<string, string>> = RULE_PHRASE;
 
 // An AI title that opens with one of these is a verb or a negation, and does not read after "the".
 const NOT_A_NOUN_PHRASE = /^(no|not|add|use|make|fix|improve|update|create|replace|remove|show|include|consider|ensure|they|there|it|its|the|a|an|is|are|was|has|have|does|do|lacks?|needs?|should|can|cannot|your|you|we)\b/i;
-const MAX_PHRASE = 60;
+// Only plain words ever reach the outbound email: letters, spaces and ' & / -, 3 to 60 characters. Anything else (digits, a colon, a URL or
+// domain, an @, markup, other punctuation) is refused rather than escaped.
+const SAFE_PHRASE = /^[A-Za-z][A-Za-z '&/-]{2,59}$/;
+// Brands whose first word keeps its capital ("Google Business Profile"); a first word with a capital inside it ("WordPress", "SEO") is kept too.
+const BRANDS = new Set(["google", "facebook", "yelp", "instagram", "wix", "squarespace", "shopify", "godaddy", "weebly", "webflow", "bing", "youtube", "linkedin", "tiktok", "apple", "amazon"]);
 
 /** The title of an AI finding. The scorer stores it as the evidence's first sentence ("<title>. <evidence>"). */
 function aiTitle(f: Finding): string | null {
   const text = f.evidence.trim();
   const cut = text.indexOf(". ");
   const title = (cut === -1 ? text.replace(/\.$/, "") : text.slice(0, cut)).trim();
-  if (title.length < 3 || title.length > MAX_PHRASE || /[:;!?()"\n\d]/.test(title) || NOT_A_NOUN_PHRASE.test(title)) return null;
-  // Lower-case the first letter so it reads after "the", unless it opens an acronym ("SEO basics").
-  return /^[A-Z][A-Z]/.test(title) ? title : title.charAt(0).toLowerCase() + title.slice(1);
+  if (!SAFE_PHRASE.test(title) || NOT_A_NOUN_PHRASE.test(title)) return null;
+  const first = title.split(/[ /&-]/)[0];
+  const keepCase = /[A-Z]/.test(first.slice(1)) || BRANDS.has(first.toLowerCase());
+  return keepCase ? title : title.charAt(0).toLowerCase() + title.slice(1);
 }
 
 /**
