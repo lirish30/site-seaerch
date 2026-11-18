@@ -19,6 +19,9 @@ import WorkSamples from "./pages/settings/WorkSamples";
 import Services from "./pages/settings/Services";
 import FitProfiles from "./pages/settings/FitProfiles";
 import Suppressions from "./pages/settings/Suppressions";
+import Mailboxes from "./pages/settings/Mailboxes";
+import Campaigns from "./pages/Campaigns";
+import NicheTest from "./pages/NicheTest";
 import Google from "./pages/settings/Google";
 import Usage from "./pages/settings/Usage";
 import Security from "./pages/settings/Security";
@@ -44,7 +47,9 @@ export default function App() {
             <Route path="/promising" element={<Promising />} />
             <Route path="/import" element={<Import />} />
             <Route path="/outreach" element={<Outreach />} />
+            <Route path="/campaigns" element={<Campaigns />} />
             <Route path="/radar" element={<Radar />} />
+            <Route path="/niche-test" element={<NicheTest />} />
             <Route path="/settings" element={<SettingsHome />} />
             <Route path="/settings/profile" element={<Profile />} />
             <Route path="/settings/signature" element={<Signature />} />
@@ -53,6 +58,7 @@ export default function App() {
             <Route path="/settings/services" element={<Services />} />
             <Route path="/settings/fit-profiles" element={<FitProfiles />} />
             <Route path="/settings/suppressions" element={<Suppressions />} />
+            <Route path="/settings/mailboxes" element={<Mailboxes />} />
             <Route path="/settings/google" element={<Google />} />
             <Route path="/settings/usage" element={<Usage />} />
             <Route path="/settings/security" element={<Security />} />

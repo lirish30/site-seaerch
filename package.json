@@ -22,9 +22,11 @@
     "@simplewebauthn/server": "^14.1.0",
     "hono": "^4.13.12",
     "node-html-parser": "^9.0.4",
+    "postal-mime": "^4.2.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-router-dom": "^7.18.4",
+    "worker-mailer": "^1.3.1",
     "zod": "^4.6.5"
   },
   "devDependencies": {

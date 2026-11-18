@@ -1,0 +1,50 @@
+Return-Path: <>
+From: Mail Delivery Subsystem <MAILER-DAEMON@mx.hellositeline.test>
+To: outreach@hellositeline.test
+Subject: Delivery Status Notification (Failure)
+Date: Wed, 18 Nov 2026 08:05:44 -0800
+Message-ID: <20261118160544.9C1D2@mx.hellositeline.test>
+Auto-Submitted: auto-replied
+MIME-Version: 1.0
+Content-Type: multipart/report; report-type=delivery-status;
+	boundary="=_bounce_boundary_01"
+
+--=_bounce_boundary_01
+Content-Type: text/plain; charset="UTF-8"
+
+This is the mail system at host mx.hellositeline.test.
+
+I'm sorry to have to inform you that your message could not
+be delivered to one or more recipients.
+
+<owner@oldplumber.example>: host mail.oldplumber.example[203.0.113.9] said:
+    550 5.1.1 <owner@oldplumber.example>: Recipient address rejected: User
+    unknown in virtual mailbox table (in reply to RCPT TO command)
+
+--=_bounce_boundary_01
+Content-Type: message/delivery-status
+
+Reporting-MTA: dns; mx.hellositeline.test
+Arrival-Date: Wed, 18 Nov 2026 08:05:41 -0800
+
+Final-Recipient: rfc822; owner@oldplumber.example
+Original-Recipient: rfc822;owner@oldplumber.example
+Action: failed
+Status: 5.1.1
+Remote-MTA: dns; mail.oldplumber.example
+Diagnostic-Code: smtp; 550 5.1.1 <owner@oldplumber.example>: Recipient address
+    rejected: User unknown in virtual mailbox table
+
+--=_bounce_boundary_01
+Content-Type: message/rfc822
+
+Received: by mx.hellositeline.test (Postfix, from userid 1001)
+	id 7B3A21F; Wed, 18 Nov 2026 08:05:41 -0800 (PST)
+From: Logan <outreach@hellositeline.test>
+To: owner@oldplumber.example
+Subject: Quick question about Old Plumber
+Message-ID: <11111111-2222-4333-8444-555555555555@hellositeline.test>
+
+Hi there, quick note about your site search.
+
+--=_bounce_boundary_01--

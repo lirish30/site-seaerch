@@ -4,7 +4,7 @@ import Icon, { type IconName } from "../Icon";
 import { SideItem, SideTitle } from "./parts";
 import { Link } from "react-router-dom";
 
-/** Find: New search, Search history, Radar, Import leads, then what's running (or, on New search, what ran recently). */
+/** Find: New search, Search history, Radar, Niche test, Import leads, then what's running (or, on New search, what ran recently). */
 export default function FindSidebar() {
   const { pathname } = useLocation();
   const { searches, radars } = useSearches();
@@ -19,6 +19,7 @@ export default function FindSidebar() {
       <SideItem to="/" icon="plus" label="New search" active={onNew} />
       <SideItem to="/searches" icon="clock" label="Search history" count={searches?.length} active={pathname === "/searches" || (pathname.startsWith("/searches/") && !list.some((s) => pathname === `/searches/${s.id}`))} />
       <SideItem to="/radar" icon="radar" label="Radar" count={radars?.length} active={pathname === "/radar"} />
+      <SideItem to="/niche-test" icon="trending" label="Niche test" active={pathname === "/niche-test"} />
       <SideItem to="/import" icon="upload" label="Import leads" active={pathname === "/import"} />
       {list.length > 0 && <p className="side-head static find-label">{onNew ? "Recent" : "Running now"}</p>}
       {list.map((s) => (

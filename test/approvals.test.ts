@@ -1,3 +1,4 @@
+import { APPROVE_BATCH } from "../src/client/approvalsView";
 import { env, SELF } from "cloudflare:test";
 import { describe, it, expect, beforeAll, vi } from "vitest";
 import { createApproval, listApprovals, UnknownKindError } from "../src/worker/db/approvals";
@@ -100,6 +101,15 @@ describe("approvals", () => {
     const j = await r.json<{ results: { id: string; ok: boolean; error?: string }[] }>();
     expect(j.results).toEqual([{ id: a.id, ok: true }, { id: f.id, ok: false, error: "smtp down" }, { id: "missing", ok: false, error: "approval not found" }]);
     expect((await call("POST", "/api/approvals/approve-batch", { ids: [] })).status).toBe(400);
+  });
+
+  it("batch approve takes at most 20 ids, the same number the Home card sends at a time", async () => {
+    const ids = (n: number) => Array.from({ length: n }, (_, i) => `missing-${i}`);
+    expect((await call("POST", "/api/approvals/approve-batch", { ids: ids(20) })).status).toBe(200);
+    const r = await call("POST", "/api/approvals/approve-batch", { ids: ids(21) });
+    expect(r.status).toBe(400);
+    expect(JSON.stringify(await r.json())).toContain("at most 20");
+    expect(APPROVE_BATCH).toBe(20);
   });
 
   it("approve and reject routes map statuses", async () => {

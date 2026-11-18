@@ -81,8 +81,9 @@ function LeadsSidebar() {
 }
 
 function OutreachSidebar() {
-  const { search } = useLocation();
+  const { pathname, search } = useLocation();
   const p = new URLSearchParams(search);
+  const onQueue = pathname === "/outreach";
   const view = p.get("view") ?? "drafts";
   const [counts, setCounts] = useState<OutreachCounts | null>(null);
   useEffect(() => {
@@ -91,14 +92,15 @@ function OutreachSidebar() {
     window.addEventListener(LEADS_CHANGED, load);
     return () => window.removeEventListener(LEADS_CHANGED, load);
   }, []);
-  const drafts = view === "drafts";
+  const drafts = onQueue && view === "drafts";
   return (
     <>
       <SideTitle title="Outreach" />
       <SideItem to="/outreach" icon="mail" label="Drafts ready" count={counts?.drafts} active={drafts} />
-      <SideItem to="/outreach?view=followups" icon="clock" label="Follow-ups due" count={counts?.followups} active={view === "followups"} />
-      <SideItem to="/outreach?view=contacted" icon="send" label="Contacted" count={counts?.contacted} active={view === "contacted"} />
-      <SideItem to="/outreach?view=replied" icon="inbox" label="Replied" count={counts?.replied} active={view === "replied"} />
+      <SideItem to="/outreach?view=followups" icon="clock" label="Follow-ups due" count={counts?.followups} active={onQueue && view === "followups"} />
+      <SideItem to="/outreach?view=contacted" icon="send" label="Contacted" count={counts?.contacted} active={onQueue && view === "contacted"} />
+      <SideItem to="/outreach?view=replied" icon="inbox" label="Replied" count={counts?.replied} active={onQueue && view === "replied"} />
+      <SideItem to="/campaigns" icon="kanban" label="Campaigns" active={pathname === "/campaigns"} />
       <div className="side-spacer" />
       <SideItem to="/settings" icon="sliders" label="Email voice" active={false} />
       <SideItem to="/settings" icon="pen" label="Signature" active={false} />
@@ -219,7 +221,7 @@ export default function Shell({ children }: { children: ReactNode }) {
           </div>
         </SidebarCollapse.Provider>
       )}
-      <main className={`panel${section === "outreach" ? " fixed" : ""}`}>{children}</main>
+      <main className={`panel${pathname === "/outreach" ? " fixed" : ""}`}>{children}</main>
     </div>
   );
 }

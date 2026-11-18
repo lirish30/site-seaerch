@@ -1,45 +1,12 @@
 import type { Fetch } from "./oauth";
 
 const te = new TextEncoder();
-const b64 = (s: string | Uint8Array) => Buffer.from(typeof s === "string" ? te.encode(s) : s).toString("base64");
-// RFC 2047 so non-ASCII subjects and filenames survive.
-const encWord = (s: string) => (/^[\x20-\x7e]*$/.test(s) ? s : `=?UTF-8?B?${b64(s)}?=`);
-const wrap76 = (s: string) => s.replace(/.{1,76}/g, "$&\r\n").trimEnd();
-
-/** Builds an RFC 2822 message: a plain-text body (plus an HTML alternative when given) and an optional PDF attachment. */
-export function buildMime(m: { to: string | null; subject: string; body: string; html?: string; attachment?: { name: string; bytes: Uint8Array } }): string {
-  const head = [...(m.to ? [`To: ${m.to}`] : []), `Subject: ${encWord(m.subject)}`, "MIME-Version: 1.0"];
-  const textPart = ['Content-Type: text/plain; charset="UTF-8"', "Content-Transfer-Encoding: base64", "", wrap76(b64(m.body))];
-  // Text first, HTML last: clients show the last alternative they understand.
-  const content = (): string[] => {
-    if (m.html === undefined) return textPart;
-    const alt = `ss_alt_${crypto.randomUUID().replace(/-/g, "")}`;
-    const htmlPart = ['Content-Type: text/html; charset="UTF-8"', "Content-Transfer-Encoding: base64", "", wrap76(b64(m.html))];
-    return [`Content-Type: multipart/alternative; boundary="${alt}"`, "", `--${alt}`, ...textPart, "", `--${alt}`, ...htmlPart, "", `--${alt}--`];
-  };
-  if (!m.attachment) return [...head, ...content()].join("\r\n");
-  const boundary = `ss_${crypto.randomUUID().replace(/-/g, "")}`;
-  return [...head, `Content-Type: multipart/mixed; boundary="${boundary}"`, "",
-    `--${boundary}`, ...content(), "",
-    `--${boundary}`, `Content-Type: application/pdf; name="${encWord(m.attachment.name)}"`,
-    `Content-Disposition: attachment; filename="${encWord(m.attachment.name)}"`, "Content-Transfer-Encoding: base64", "",
-    wrap76(b64(m.attachment.bytes)), `--${boundary}--`, ""].join("\r\n");
-}
 
 async function google<T>(f: Fetch, token: string, url: string, init: RequestInit = {}): Promise<T> {
   const res = await f(url, { ...init, headers: { authorization: `Bearer ${token}`, ...(init.headers ?? {}) } });
   const json = await res.json<any>().catch(() => ({}));
   if (!res.ok) throw new Error(`Google API ${res.status}: ${json.error?.message ?? "request failed"}`);
   return json as T;
-}
-
-/** Creates a Gmail draft (never sends). Returns a link that opens it in Gmail. */
-export async function createGmailDraft(f: Fetch, token: string, mime: string) {
-  const raw = Buffer.from(te.encode(mime)).toString("base64url");
-  const r = await google<{ id: string; message: { id: string } }>(f, token, "https://gmail.googleapis.com/gmail/v1/users/me/drafts", {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: { raw } }),
-  });
-  return { id: r.id, url: `https://mail.google.com/mail/u/0/#drafts?compose=${r.message.id}` };
 }
 
 /** Our app folder; recreated if the user deleted it (drive.file can only see files this app made). */

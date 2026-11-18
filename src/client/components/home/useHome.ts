@@ -5,7 +5,7 @@ import { fullScanErrorText } from "../../promising";
 import { actionErrorText, actionPath, withoutItem } from "../../todayView";
 import type { TodaySummary, UsageRow } from "../../todayHome";
 import type { LeadRow, TodayItem } from "../../types";
-import type { ApprovalItem, SpendLevel } from "../../approvalsView";
+import { APPROVE_BATCH, type ApprovalItem, type SpendLevel } from "../../approvalsView";
 
 /** One piece of the page: its data once loaded, or why it could not be. The pieces load and fail independently. */
 export interface Part<T> { data: T | null; error: string }
@@ -126,13 +126,13 @@ export function useHome() {
     mark(item.id, false);
   }, []);
 
-  /** Approve every item in a group (50 at a time, the API's limit). Failures stay in the list with their own message. */
+  /** Approve every item in a group (20 at a time, the API's limit). Failures stay in the list with their own message. */
   const approveAll = useCallback(async (group: ApprovalItem[]) => {
     const ids = group.map((a) => a.id);
     ids.forEach((id) => { mark(id, true); setApprovalErr(id, null); });
     try {
-      for (let i = 0; i < ids.length; i += 50) {
-        const r = await api.post<{ results: { id: string; ok: boolean; error?: string }[] }>("/approvals/approve-batch", { ids: ids.slice(i, i + 50) });
+      for (let i = 0; i < ids.length; i += APPROVE_BATCH) {
+        const r = await api.post<{ results: { id: string; ok: boolean; error?: string }[] }>("/approvals/approve-batch", { ids: ids.slice(i, i + APPROVE_BATCH) });
         dropApprovals(r.results.filter((x) => x.ok).map((x) => x.id));
         r.results.filter((x) => !x.ok).forEach((x) => setApprovalErr(x.id, x.error ?? "Couldn't approve that."));
       }

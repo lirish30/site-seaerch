@@ -8,7 +8,9 @@ import { getHandler } from "../approvals/registry";
 const Status = z.enum(["pending", "approved", "rejected"]);
 const ApproveBody = z.object({ payload: z.unknown().optional() });
 const RejectBody = z.object({ note: z.string().max(500).optional() });
-const BatchBody = z.object({ ids: z.array(z.string().min(1)).min(1).max(50) });
+/** Each approval can send mail and runs several D1 queries, so a batch stays inside one invocation's budget. The Home card sends this many per request (APPROVE_BATCH in approvalsView). */
+const MAX_BATCH = 20;
+const BatchBody = z.object({ ids: z.array(z.string().min(1)).min(1).max(MAX_BATCH, `approve at most ${MAX_BATCH} at a time`) });
 
 export const approvalRoutes = new Hono<{ Bindings: Env }>();
 

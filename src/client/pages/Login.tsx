@@ -64,7 +64,7 @@ export default function Login() {
         </div>
         <button type="submit" className="btn primary lg-submit" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
       </form>
-      <p className="lg-foot">Nothing is ever sent from Site Search. Drafts only.</p>
+      <p className="lg-foot">Nothing goes to a business until you approve it.</p>
     </main>
   );
 }

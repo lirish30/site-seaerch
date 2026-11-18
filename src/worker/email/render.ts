@@ -18,7 +18,7 @@ export function footerLines(s: Settings, body: string, include: boolean): string
   return [s.physical_address, s.opt_out_line].map((l) => l?.trim()).filter((l): l is string => !!l && !body.includes(l));
 }
 
-/** The email as it will be sent or saved as a Gmail draft: body, then signature, then the optional footer. */
+/** The email as it will be sent: body, then signature, then the optional footer. */
 export function composeEmail(s: Settings, d: Composable): ComposedEmail {
   const body = d.body.trimEnd();
   const sig = parseSignature(s.signature_json);

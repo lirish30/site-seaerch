@@ -6,6 +6,7 @@ import { initials } from "../scoreView";
 import { findingChip } from "../evidenceView";
 import { EmailFrame } from "./SignatureBuilder";
 import InlineError from "./InlineError";
+import StartSequence from "./StartSequence";
 import type { CroItem, CroResponse } from "../cro";
 import type { Audit, Contact } from "../types";
 import { mailtoHref, snippet, TWEAK_BUTTONS, variantTitle, wordCount, type Draft } from "../emailView";
@@ -28,8 +29,8 @@ interface Props {
   onMarkContacted: () => Promise<boolean>;
   /** The issues picked to build the email on. Controlled by the lead page so the Website issues tab's "Use in email" boxes share it. */
   focus?: Set<string>; onFocusChange?: React.Dispatch<React.SetStateAction<Set<string>>>;
-  /** Saves the draft to Gmail (the lead page owns that request). */
-  onGmailDraft?: () => void; gmailBusy?: boolean;
+  /** Called once "Start sequence…" has started one, so the lead page can refresh its sequence panel. */
+  onSequenceStarted?: () => void;
 }
 
 /** The opening "Hi Dana," line is skipped in a card's preview so the snippet starts with what the email says. */
@@ -79,7 +80,7 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
   }, [leadId]);
   useEffect(() => { api.get<Draft[]>(`/leads/${leadId}/drafts`).then(setVersions).catch(() => setVersions([])); }, [leadId, draft?.id]);
 
-  // The preview is the email as it will be saved to Gmail, so it reflects unsaved edits and the footer choice.
+  // The preview is the email as it will be sent, so it reflects unsaved edits and the footer choice.
   useEffect(() => {
     if (!draft || !subject.trim() || !body.trim()) { setPreview(null); return; }
     const mine = ++previewTick.current;
@@ -225,13 +226,13 @@ const EmailComposer = forwardRef<ComposerHandle, Props>(function EmailComposer(p
               </span>
             )}
             <span className="grow" />
-            {p.onGmailDraft && <button className="btn" onClick={p.onGmailDraft} disabled={p.gmailBusy || suppressed}><Icon name="mail" size={16} />{p.gmailBusy ? "Saving…" : "Create Gmail draft"}</button>}
+            <StartSequence leadId={leadId} disabled={suppressed} why="Suppressed: outreach is turned off" beforeStart={save} onStarted={p.onSequenceStarted} />
             <button className="btn primary" onClick={() => void copyAndMark()} disabled={suppressed}><Icon name="check" size={16} />Copy & mark contacted</button>
           </div>
           <dialog ref={previewDialog} className="preview-dialog" onClick={(e) => { if (e.target === previewDialog.current) previewDialog.current?.close(); }}>
             <div className="pd-head"><b>Email preview</b><span className="muted small">Subject: {subject || "—"}</span><span className="grow" /><button className="btn sm" onClick={() => previewDialog.current?.close()}>Close</button></div>
             {preview ? <EmailFrame html={preview.html} title="Email preview" height={460} /> : <p className="muted small">The preview appears as you type.</p>}
-            <p className="muted small">This is how it will look in the Gmail draft. Nothing is ever sent from here.</p>
+            <p className="muted small">This is how the email will look when it goes out. Nothing is sent until you approve it on Home.</p>
           </dialog>
         </section>
       ) : <p className="muted">No email yet{p.lowPriority ? " (low priority lead)" : ""}. Write the options to get started.</p>}

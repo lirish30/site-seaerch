@@ -15,6 +15,8 @@ export default defineConfig(async () => {
             BRIGHTDATA_API_KEY: "x", BRIGHTDATA_SERP_ZONE: "x",
             PAGESPEED_API_KEY: "x", ANTHROPIC_API_KEY: "x",
             WEBAUTHN_RP_ID: "x", WEBAUTHN_ORIGIN: "https://x",
+            MAILBOX_OUTREACH_PASSWORD: "pw-out", MAILBOX_MAIN_PASSWORD: "pw-main",
+            OUTREACH_LINK_BASE: "https://go.hellositeline.test",
           },
         },
       }),

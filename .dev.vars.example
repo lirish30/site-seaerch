@@ -4,11 +4,16 @@ BRIGHTDATA_API_KEY=
 BRIGHTDATA_SERP_ZONE=
 PAGESPEED_API_KEY=
 ANTHROPIC_API_KEY=
-# Optional: Gmail drafts + Drive export (see README "Google")
+# Optional: Drive export of reports (see README "Google"). Google is never used for email.
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 # Agency OS MCP bearer token (required for /mcp). generate with: openssl rand -hex 32
 MCP_TOKEN=
+# Mailbox passwords (Worker secrets in prod: npx wrangler secret put). Outreach is cold mail; main is your own address.
+MAILBOX_OUTREACH_PASSWORD=
+MAILBOX_MAIN_PASSWORD=
+# Base URL for links in cold email: an https host with no path, a subdomain of the outreach domain (never workers.dev), e.g. https://go.example.com
+OUTREACH_LINK_BASE=
 # Optional passkey settings. Default = the request host. For local dev set e.g. localhost / http://localhost:5173
 # WEBAUTHN_RP_ID=
 # WEBAUTHN_ORIGIN=

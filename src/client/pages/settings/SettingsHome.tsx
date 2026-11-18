@@ -68,6 +68,7 @@ const SECTIONS: { name: string; tint: "signal" | "info" | "positive" | "plain"; 
     { slug: "voice", title: "Email voice", icon: "mail", text: "Tone, length, what you ask for, and phrases you use or avoid." },
     { slug: "work-samples", title: "Work samples", icon: "image", text: "Your best projects. Agency emails can link to what is listed here." },
     { slug: "services", title: "Services you sell", icon: "list", text: "The catalog behind “Recommended pitch”." },
+    { slug: "mailboxes", title: "Mailboxes", icon: "inbox", text: "The sending and reply-checking mailboxes, and the warm-up clock." },
   ] },
   { name: "Lead scoring", tint: "positive", cards: [
     { slug: "fit-profiles", title: "Fit profiles", icon: "target", text: "Who you want to work with. Drives the Fit score." },
@@ -75,7 +76,7 @@ const SECTIONS: { name: string; tint: "signal" | "info" | "positive" | "plain"; 
     { slug: "scores", title: "How scores work", icon: "zap", text: "Plain-English guide to lead score, site health, fit and urgency." },
   ] },
   { name: "Account", tint: "plain", cards: [
-    { slug: "google", title: "Google", icon: "link", text: "Gmail drafts and Drive. Nothing is ever sent." },
+    { slug: "google", title: "Google", icon: "link", text: "Saving reports to Drive." },
     { slug: "usage", title: "Usage & limits", icon: "card", text: "Monthly spend limit and what each service cost." },
     { slug: "security", title: "Security", icon: "key", text: "Sign in with Touch ID. Your password stays as a fallback." },
     { slug: "footer", title: "Mailing footer", icon: "shield", text: "Mailing address and opt-out line for freelance emails." },

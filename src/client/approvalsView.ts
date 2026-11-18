@@ -43,3 +43,6 @@ export const whenLabel = (iso: string): string => {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 };
+
+/** How many approvals the Home card sends per approve-batch request. Mirrors MAX_BATCH in src/worker/routes/approvals.ts (a test keeps the two in step). */
+export const APPROVE_BATCH = 20;

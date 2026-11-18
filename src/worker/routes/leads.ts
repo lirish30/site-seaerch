@@ -29,9 +29,8 @@ import { reportFor, reportFileName } from "../report/data";
 import { htmlToPdf } from "../render/render";
 import { renderDoc } from "../report/html";
 import { googleAccess, GoogleNotConnected } from "./google";
-import { buildMime, createGmailDraft, ensureFolder, uploadFile } from "../google/api";
+import { ensureFolder, uploadFile } from "../google/api";
 import { setGoogleFolder } from "../db/google";
-import { pocFor } from "../db/people";
 
 const STATUSES = ["new", "reviewed", "contacted", "replied", "won", "lost", "skip"] as const;
 
@@ -189,7 +188,7 @@ leadRoutes.get("/:id/report.pdf", async (c) => {
     "content-disposition": `attachment; filename="${reportFileName(r.data.business.name, "pdf")}"` } });
 });
 
-// Exports to the connected Google account. Gmail gets a draft only; nothing is ever sent.
+// Exports to the connected Google account (Drive only; outreach email goes through sequences and approvals).
 async function exportGuard(c: any, fn: () => Promise<Response>) {
   try { return await fn(); }
   catch (e) {
@@ -197,30 +196,6 @@ async function exportGuard(c: any, fn: () => Promise<Response>) {
     return c.json({ error: (e as Error).message }, 502);
   }
 }
-
-leadRoutes.post("/:id/gmail-draft", (c) => exportGuard(c, async () => {
-  const id = c.req.param("id");
-  const blocked = await suppressedResponse(c, id);
-  if (blocked) return blocked;
-  const body = await c.req.json<{ attachReport?: boolean }>().catch(() => ({} as { attachReport?: boolean }));
-  const attachReport = body.attachReport ?? (await getSettings(c.env.DB)).attach_audit_pdf !== 0;
-  const draft = await latestDraft(c.env.DB, id);
-  if (!draft) return c.json({ error: "Write a draft first" }, 400);
-  const { token } = await googleAccess(c.env, new URL(c.req.url).origin);
-  const contacts = await listContacts(c.env.DB, id);
-  const poc = await pocFor(c.env.DB, id);
-  const to = contacts.find((x) => x.id === draft.to_contact_id)?.value ?? poc?.email ?? null;
-  let attachment: { name: string; bytes: Uint8Array } | undefined;
-  if (attachReport) {
-    if (!c.env.BROWSER) return c.json({ error: "Attaching the PDF needs the Browser Rendering binding" }, 501);
-    const r = await reportFor(c.env, id);
-    if (r) attachment = { name: reportFileName(r.data.business.name, "pdf"), bytes: await htmlToPdf(c.env.BROWSER, r.html) };
-  }
-  const email = composeEmail(await getSettings(c.env.DB), draft);
-  const g = await createGmailDraft(fetch, token, buildMime({ to, subject: email.subject, body: email.text, html: email.html, attachment }));
-  await logActivity(c.env.DB, id, "export", `Gmail draft${attachment ? " with audit PDF" : ""}${to ? ` to ${to}` : ""}`);
-  return c.json({ ok: true, url: g.url });
-}));
 
 leadRoutes.post("/:id/drive", (c) => exportGuard(c, async () => {
   const id = c.req.param("id");
@@ -349,7 +324,7 @@ leadRoutes.patch("/:id/draft", async (c) => {
   return c.json({ ok: true });
 });
 
-// The email exactly as it would be saved to Gmail: body, signature, optional footer. Stateless, so the editor can preview unsaved edits.
+// The email exactly as it will be sent: body, signature, optional footer. Stateless, so the editor can preview unsaved edits.
 leadRoutes.post("/:id/draft/preview", async (c) => {
   const p = PatchDraft.safeParse(await c.req.json().catch(() => ({})));
   if (!p.success) return c.json({ error: "invalid" }, 400);

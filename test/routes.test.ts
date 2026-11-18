@@ -343,14 +343,11 @@ describe("routes", () => {
     expect((await api(`/api/leads/nope/report.html`)).status).toBe(404);
   });
 
-  it("google: status reports unconfigured; exports need a connection; callback is public but rejects bad state", async () => {
+  it("google: status reports unconfigured; the Drive export needs a connection; callback is public but rejects bad state", async () => {
     const st = await (await api("/api/google/status")).json<any>();
     expect(st).toEqual({ configured: false, connected: false, email: null });
     expect((await api("/api/google/connect")).status).toBe(501);
     const { b } = await seedLead();
-    const g = await api(`/api/leads/${b.id}/gmail-draft`, { method: "POST", body: "{}" });
-    expect(g.status).toBe(400);
-    expect((await g.json<any>()).error).toMatch(/Connect your Google account/);
     expect((await api(`/api/leads/${b.id}/drive`, { method: "POST", body: "{}" })).status).toBe(400);
     const cb = await SELF.fetch("https://x/api/google/callback?code=c&state=bad", { redirect: "manual" });
     expect(cb.status).toBe(302);

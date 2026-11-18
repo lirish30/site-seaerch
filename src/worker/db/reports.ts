@@ -17,6 +17,18 @@ export async function createReport(db: D1Database, businessId: string, auditId: 
   return row;
 }
 
+/**
+ * The live report link for this audit, minted only when there is none. The check and the insert are one statement, so two
+ * callers at once end up sharing one token instead of creating two.
+ */
+export async function ensureReport(db: D1Database, businessId: string, auditId: string, now = new Date()): Promise<ReportRow> {
+  const created = now.toISOString(), expires = new Date(now.getTime() + REPORT_TTL_DAYS * DAY_MS).toISOString();
+  await db.prepare(`INSERT INTO audit_reports (token, business_id, audit_id, created_at, expires_at, revoked)
+    SELECT ?,?,?,?,?,0 WHERE NOT EXISTS (SELECT 1 FROM audit_reports WHERE business_id = ? AND audit_id = ? AND revoked = 0 AND expires_at > ?)`)
+    .bind(newToken(), businessId, auditId, created, expires, businessId, auditId, created).run();
+  return (await activeReportFor(db, businessId, auditId, now))!;
+}
+
 export async function activeReportFor(db: D1Database, businessId: string, auditId: string, now = new Date()): Promise<ReportRow | null> {
   return db.prepare(
     `SELECT * FROM audit_reports WHERE business_id = ? AND audit_id = ? AND revoked = 0 AND expires_at > ? ORDER BY created_at DESC LIMIT 1`,

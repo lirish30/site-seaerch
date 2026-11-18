@@ -68,6 +68,10 @@ export interface FitResult { fit: number | null; profile: { id: string; name: st
 
 export type SuppressionReason = "client" | "opt_out" | "competitor" | "active_deal" | "other";
 export interface Suppression { id: string; kind: "domain" | "place_id"; value: string; reason: SuppressionReason; note: string | null; created_at: string; }
+export type DncKind = "email" | "domain" | "name";
+export type DncReason = "client" | "opt_out" | "competitor" | "active_deal" | "bounced" | "webfor" | "other";
+/** GET /api/do-not-contact: addresses, domains and company names outreach never writes to. */
+export interface DoNotContact { id: string; kind: DncKind; value: string; reason: DncReason; note: string | null; created_at: string; }
 /** `suppressed` on GET /api/leads/:id: the reason and note of the list entry this lead matches, or null. */
 export interface LeadSuppression { reason: SuppressionReason; note: string | null; }
 
@@ -103,3 +107,29 @@ export interface TodayItem { id: string; kind: TodayKind; businessId: string; bu
 /** GET /api/outreach: the leads in one outreach queue with each one's current draft, and the size of every queue. */
 export interface OutreachCounts { drafts: number; followups: number; contacted: number; replied: number; freelance: number }
 export type OutreachView = "drafts" | "followups" | "contacted" | "replied";
+
+/** GET /api/mailboxes. The password is a Worker secret and never travels; `passwordSet` only says whether it exists. */
+export type MailboxKey = "outreach" | "main";
+export interface Mailbox {
+  key: MailboxKey; enabled: 0 | 1;
+  smtp_host: string; smtp_port: number; imap_host: string; imap_port: number;
+  username: string; from_email: string; from_name: string;
+  warmup_started_at: string | null; last_sync_at: string | null; last_sync_error: string | null;
+  passwordSet: boolean;
+}
+
+export type CampaignStatus = "testing" | "active" | "archived";
+export type StepKind = "email" | "call" | "checkin";
+export type OffsetKind = "business" | "calendar";
+/** GET /api/campaigns/:id (the list has no `steps`). */
+export interface Campaign {
+  id: string; name: string; niche: string; region: string; towns: string[];
+  status: CampaignStatus; est_job_value_usd: number | null; created_at: string;
+  steps?: SequenceStep[];
+}
+export interface SequenceStep {
+  id: string; campaign_id: string; idx: number; kind: StepKind;
+  offset_days: number; offset_kind: OffsetKind; subject: string; variants: string[];
+  /** 'draft': the body is written per lead from its draft (Email 1), so there are no variants to edit. */
+  body_source: "variants" | "draft";
+}

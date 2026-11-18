@@ -17,10 +17,15 @@ export interface Env {
   GOOGLE_PLACES_API_KEY?: string;
   PAGESPEED_API_KEY: string;
   ANTHROPIC_API_KEY: string;
-  /** Optional: Google OAuth client for Gmail drafts and Drive export. */
+  /** Optional: Google OAuth client for the Drive export. */
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   /** Optional passkey overrides. When unset, the request URL's hostname is the RP ID and its origin the expected origin. */
   WEBAUTHN_RP_ID?: string;
   WEBAUTHN_ORIGIN?: string;
+  /** Mailbox passwords (Worker secrets, never stored in D1). */
+  MAILBOX_OUTREACH_PASSWORD?: string;
+  MAILBOX_MAIN_PASSWORD?: string;
+  /** Base URL for tracked outreach links (e.g. https://go.hellositeline.com). */
+  OUTREACH_LINK_BASE?: string;
 }

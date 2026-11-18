@@ -535,3 +535,26 @@ a.chip-link:hover { background:var(--bg-hover); color:var(--text); } .chip-link 
 .promising-note { margin:0; max-width:900px; font-size:13px; line-height:19px; }
 table.leads.promising { min-width:700px; } table.promising col.c-name { width:250px; } table.promising td.cell-name { padding-right:12px; } table.promising th:nth-child(2), table.promising td:nth-child(2) { padding-left:8px; } table.promising td.cell-name { padding-left:14px; }
 table.promising .clamp2 { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+
+/* Sequences: the lead page panel and the "Start sequence…" control */
+.seq-start { display:inline-flex; align-items:center; flex-wrap:wrap; gap:8px; } .seq-start.done { color:var(--positive); font:500 13px/19px var(--font); } .seq-start.done .link-btn { padding:0 2px; }
+.seq-start .seq-pick { min-width:160px; max-width:260px; } .seq-start .seq-pick select { flex:1; min-width:0; border:0; background:none; appearance:none; font:inherit; color:var(--text); outline:none; }
+.seq-panel { display:flex; flex-direction:column; align-items:flex-start; gap:10px; width:100%; }
+.seq-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:13px; line-height:19px; }
+.seq-steps { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; width:100%; }
+.seq-step { display:flex; align-items:baseline; justify-content:space-between; gap:10px; font-size:13px; line-height:19px; color:var(--text-2); }
+.seq-step .seq-state { color:var(--text-3); font-weight:500; text-align:right; } .seq-step.sent .seq-state { color:var(--positive); } .seq-step.pending .seq-state, .seq-step.due .seq-state { color:var(--warning); } .seq-step.skipped { opacity:.7; }
+.seq-msgs { width:100%; } .seq-msgs h4 { margin:0 0 6px; font-size:12px; line-height:16px; font-weight:600; color:var(--text-3); }
+.seq-msgs ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; }
+.seq-msg { display:grid; grid-template-columns:auto 1fr auto; align-items:baseline; gap:8px; font-size:13px; line-height:19px; color:var(--text-2); }
+.seq-msg .seq-dir { display:inline-flex; align-items:center; gap:4px; color:var(--text-3); font-weight:500; } .seq-msg.in .seq-dir { color:var(--info); }
+.seq-msg .seq-subj { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } .seq-msg time { font-size:12px; color:var(--text-3); font-weight:500; }
+/* Niche test */
+.niche-verdict { min-height:22px; } .niche-verdict p { margin:0; font-size:15px; line-height:22px; }
+table.leads.niche { min-width:760px; } table.niche col.c-trade { width:230px; } table.niche col.c-n { width:96px; } table.niche col.c-job { width:150px; } table.niche col.c-opp { width:130px; }
+table.niche th.r, table.niche td.r { text-align:right; padding-right:14px; } table.niche td.cell-name { padding-left:14px; padding-right:12px; }
+table.niche td.num-cell { font:500 13px/18px var(--font-mono); letter-spacing:-.3px; font-variant-numeric:tabular-nums; }
+table.niche td.cell-name .badge2 { margin-top:6px; }
+table.niche tr.leader { background:var(--positive-soft); box-shadow:inset 3px 0 0 var(--positive); } table.niche tr.leader:hover { background:var(--positive-soft); }
+.niche-job { position:relative; display:flex; flex-direction:column; gap:4px; margin:0; } .niche-job input { width:110px; padding:4px 8px 4px 20px; font-size:13px; }
+.niche-dollar { position:absolute; left:8px; top:5px; font-size:13px; line-height:19px; color:var(--text-3); pointer-events:none; }

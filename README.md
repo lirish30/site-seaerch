@@ -26,16 +26,20 @@ Optional voice check before relying on drafts: `ANTHROPIC_API_KEY=... TONE="$(ca
 - Anthropic: API key.
 - Browser Rendering: the `browser` binding in `wrangler.jsonc` (Workers Paid). Used for screenshots, the AI design review, JS-built pages, and PDF export. Without it audits fall back to raw HTML and rules only, and PDF export returns 501. Local dev downloads a Chromium on first use.
 
-## Google (optional: Gmail drafts + Drive)
-1. Google Cloud console → APIs & Services: enable the **Gmail API** and **Google Drive API**.
-2. OAuth consent screen: External, add yourself as a test user. Scopes: `gmail.compose`, `drive.file`, `openid`, `email`.
+## Google (optional: Drive export)
+Google is connected only to save reports to Drive. It is never used for email.
+1. Google Cloud console → APIs & Services: enable the **Google Drive API**.
+2. OAuth consent screen: External, add yourself as a test user. Scopes: `drive.file`, `openid`, `email`.
 3. Credentials → Create OAuth client ID → Web application. Authorized redirect URIs:
    - `http://localhost:5173/api/google/callback` (dev)
    - `https://<your-worker-domain>/api/google/callback` (prod)
 4. Put `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` in `.dev.vars`, and `npx wrangler secret put` both for prod.
 5. Settings → Connect Google. The refresh token is stored AES-GCM encrypted (key derived from `SESSION_SECRET`; rotating that secret means reconnecting).
 
-The app only ever creates **drafts**; it never calls Gmail's send endpoint. Drive files land in a "Site Search reports" folder the app creates.
+Drive files land in a "Site Search reports" folder the app creates.
+
+## Email
+Nothing is sent without your approval. Start a sequence from a lead; Email 1 waits on Home; each later email step is proposed there too, and call steps appear on the follow-up list instead. Approved mail goes out over SMTP from the mailboxes set up in Settings → Mailboxes. Their passwords are Worker secrets, never stored in the database: `MAILBOX_OUTREACH_PASSWORD` and `MAILBOX_MAIN_PASSWORD` (`.dev.vars` locally, `npx wrangler secret put` for prod). Links in cold email use `OUTREACH_LINK_BASE` (a host you own; never `workers.dev`).
 
 ## Audit + scoring
 - Every lead is rendered in a real browser (desktop + 390px phone), crawled (homepage + up to 7 key pages chosen from nav/footer links), timed with PageSpeed, then reviewed by Claude Sonnet 5.5 against a niche rubric (`src/worker/audit/rubrics.ts`).

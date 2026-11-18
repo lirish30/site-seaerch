@@ -4,6 +4,8 @@ import { createSearch } from "../src/worker/db/searches";
 import { upsertBusiness } from "../src/worker/db/businesses";
 import { createApproval } from "../src/worker/db/approvals";
 import { listAgentActions } from "../src/worker/db/agentActions";
+import { addDoNotContact } from "../src/worker/db/doNotContact";
+import { suppressLead } from "../src/worker/db/suppression";
 
 let rpcId = 0;
 const rpc = (method: string, params?: unknown, token: string | null = "test-mcp-token") =>
@@ -49,9 +51,11 @@ describe("mcp", () => {
     expect((await SELF.fetch("https://x/mcp", { method: "GET" })).status).toBe(401);
   });
 
-  it("lists exactly the four tools", async () => {
+  it("mcp lists exactly six tools", async () => {
     const j = await result("tools/list", {});
-    expect(j.result.tools.map((t: { name: string }) => t.name).sort()).toEqual(["get_lead", "list_approvals", "propose_approval", "search_leads"]);
+    expect(j.result.tools.map((t: { name: string }) => t.name).sort()).toEqual(
+      ["complete_claude_task", "get_lead", "list_approvals", "next_claude_task", "propose_approval", "search_leads"],
+    );
   });
 
   it("search_leads finds seeded lead", async () => {
@@ -84,6 +88,97 @@ describe("mcp", () => {
     expect(acts.some((x) => x.actor === "mcp" && x.tool === "propose_approval")).toBe(true);
     const l = JSON.parse((await call("list_approvals", { status: "pending" })).result.content[0].text);
     expect(l.map((x: { id: string }) => x.id)).toContain(a.id);
+  });
+
+  describe("propose_approval for email.send runs the conflict gate", () => {
+    const lead = async (name: string, websiteUrl: string) => {
+      const s = await createSearch(env.DB, { location: "Boise", businessType: "plumber", radiusKm: 10, maxResults: 5 });
+      return upsertBusiness(env.DB, { placeId: crypto.randomUUID(), name, category: null, address: null, phone: null, websiteUrl, mapsUrl: null, rating: null, reviewCount: null }, s.id);
+    };
+    const propose = (businessId: string, to: string, extra: Record<string, unknown> = {}) =>
+      call("propose_approval", { kind: "email.send", title: "Email", preview: "p", payload: { mailbox: "outreach", businessId, to, subject: "Hello", body: "Hi there", includeFooter: true, ...extra } });
+    const countFor = async (businessId: string) =>
+      (await env.DB.prepare(`SELECT COUNT(*) AS n FROM approvals WHERE kind = 'email.send' AND payload LIKE ?`).bind(`%${businessId}%`).first<{ n: number }>())!.n;
+
+    it("refuses a recipient on the do-not-contact list and creates no approval", async () => {
+      const b = await lead("Blocked Plumbing", "https://blocked-plumbing.test");
+      await addDoNotContact(env.DB, { kind: "email", value: "owner@blocked-plumbing.test", reason: "opt_out" });
+      const j = await propose(b.id, "Owner@Blocked-Plumbing.test");
+      expect(j.result.isError).toBe(true);
+      expect(j.result.content[0].text).toContain("do-not-contact");
+      expect(await countFor(b.id)).toBe(0);
+    });
+
+    it("refuses a suppressed lead and an existing client", async () => {
+      const sup = await lead("Suppressed Plumbing", "https://suppressed-plumbing.test");
+      await suppressLead(env.DB, { domain: "suppressed-plumbing.test", place_id: null, website_url: null }, { reason: "opt_out" });
+      const a = await propose(sup.id, "hi@elsewhere.test");
+      expect(a.result.isError).toBe(true);
+      expect(a.result.content[0].text).toContain("suppression");
+      const won = await lead("Client Plumbing", "https://client-plumbing.test");
+      await env.DB.prepare(`UPDATE businesses SET lead_status = 'won' WHERE id = ?`).bind(won.id).run();
+      const b = await propose(won.id, "hi@client-plumbing-mail.test");
+      expect(b.result.isError).toBe(true);
+      expect(b.result.content[0].text).toContain("existing client");
+      expect(await countFor(sup.id) + await countFor(won.id)).toBe(0);
+    });
+
+    it("refuses a payload the send handler would not accept", async () => {
+      const b = await lead("Odd Plumbing", "https://odd-plumbing.test");
+      const j = await propose(b.id, "not-an-email");
+      expect(j.result.isError).toBe(true);
+      expect(await countFor(b.id)).toBe(0);
+    });
+
+    it("still creates a pending approval for a clear recipient, with a server-built preview", async () => {
+      const b = await lead("Clear Plumbing", "https://clear-plumbing.test");
+      const j = await propose(b.id, "owner@clear-plumbing.test");
+      expect(j.result.isError).toBeFalsy();
+      const a = JSON.parse(j.result.content[0].text);
+      expect(a).toMatchObject({ kind: "email.send", status: "pending", drafted_by: "mcp", record_type: "lead", record_id: b.id });
+      expect(a.preview).not.toBe("p");
+      expect(a.preview).toMatch(/^From: outreach mailbox.*\nTo: owner@clear-plumbing\.test\nSubject: Hello\n\nHi there/);
+    });
+
+    it("ignores the caller's preview, record_type and record_id, and keeps the real recipient in the preview", async () => {
+      const b = await lead("Misleading Plumbing", "https://misleading-plumbing.test");
+      const other = await lead("Other Plumbing", "https://other-plumbing.test");
+      const j = await call("propose_approval", {
+        kind: "email.send", title: "Reply to Acme\nwith a second line  and spaces ".padEnd(190, "x"), preview: "Reply to Acme", record_type: "enrollment", record_id: other.id,
+        payload: { mailbox: "outreach", businessId: b.id, to: "owner@misleading-plumbing.test", subject: "Real subject", body: "Real body text", includeFooter: true },
+      });
+      expect(j.result.isError).toBeFalsy();
+      const a = JSON.parse(j.result.content[0].text);
+      expect(a.preview).not.toContain("Reply to Acme");
+      expect(a.preview).toContain("To: owner@misleading-plumbing.test");
+      expect(a.preview).toContain("Subject: Real subject");
+      expect(a.preview).toContain("Real body text");
+      expect(a.title).not.toMatch(/[\r\n]/);
+      expect(a.title.length).toBeLessThanOrEqual(120);
+      const row = await env.DB.prepare(`SELECT record_type, record_id, preview FROM approvals WHERE id = ?`).bind(a.id).first<{ record_type: string; record_id: string; preview: string }>();
+      expect(row).toMatchObject({ record_type: "lead", record_id: b.id });
+      expect(row!.preview).toBe(a.preview);
+    });
+
+    it("refuses a payload that names an enrollment or a step, and creates nothing", async () => {
+      const b = await lead("Steered Plumbing", "https://steered-plumbing.test");
+      const e1 = await propose(b.id, "owner@steered-plumbing.test", { enrollmentId: "some-enrollment", stepIndex: 1 });
+      expect(e1.result.isError).toBe(true);
+      expect(e1.result.content[0].text).toContain("enrollmentId");
+      const e2 = await propose(b.id, "owner@steered-plumbing.test", { stepIndex: 0 });
+      expect(e2.result.isError).toBe(true);
+      const e3 = await propose(b.id, "owner@steered-plumbing.test", { enrollmentId: "x" });
+      expect(e3.result.isError).toBe(true);
+      expect(await countFor(b.id)).toBe(0);
+    });
+
+    it("refuses the main mailbox", async () => {
+      const b = await lead("Main Plumbing", "https://main-plumbing.test");
+      const j = await propose(b.id, "owner@main-plumbing.test", { mailbox: "main" });
+      expect(j.result.isError).toBe(true);
+      expect(j.result.content[0].text).toContain("outreach");
+      expect(await countFor(b.id)).toBe(0);
+    });
   });
 
   it("mcp cannot approve", async () => {

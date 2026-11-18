@@ -65,6 +65,7 @@ export interface Search {
   found_count: number; processed_count: number; created_at: string;
   new_only: 0 | 1; // Radar-started: only businesses never audited get the per-lead pipeline
   quick_scan: 0 | 1; // its leads run the quick stage (no render, PageSpeed, AI review or draft); Radar searches never set it
+  campaign_id: string | null; // set when a campaign's run-searches started it
 }
 
 /** How far a lead's audit has been paid for: 'quick' is crawl + score only, 'full' adds screenshots, PageSpeed, AI review and a draft. */
@@ -116,7 +117,11 @@ export interface Person {
   linkedin: string | null; source: "manual" | "site"; is_poc: boolean; created_at: string;
 }
 
-export type ActivityKind = "status" | "archived" | "restored" | "website" | "reaudit" | "score_flagged" | "export" | "draft" | "cro_audit" | "suppressed" | "import" | "bulk" | "today_done" | "snoozed" | "starred" | "unstarred" | "note";
+export const ACTIVITY_KINDS = [
+  "status", "archived", "restored", "website", "reaudit", "score_flagged", "export", "draft", "cro_audit", "suppressed", "import", "bulk",
+  "today_done", "snoozed", "starred", "unstarred", "note", "email_sent", "email_reply", "email_bounce",
+] as const;
+export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
 export interface Activity { id: string; business_id: string; kind: ActivityKind; detail: string | null; created_at: string; }
 
 export interface Audit {
@@ -179,7 +184,7 @@ export interface Settings {
   role_title: string; bio: string; availability: string; resume_url: string; goal_line: string;
   /** JSON of a Signature, or "" to use the plain-text `signature`. */
   signature_json: string;
-  /** 1/0: new drafts carry the mailing footer; Gmail drafts attach the audit PDF unless the request says otherwise. */
+  /** 1/0: new drafts carry the mailing footer. `attach_audit_pdf` is no longer used (cold email carries no attachment); the column and key stay so no migration is needed. */
   footer_freelance?: number; attach_audit_pdf?: number;
 }
 export type TonePreset = "friendly_local" | "consultative" | "direct" | "formal";

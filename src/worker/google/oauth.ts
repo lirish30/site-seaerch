@@ -1,7 +1,8 @@
 import { hmacHex } from "./crypto";
 
-// gmail.compose creates drafts (it can also send, which this app never calls); drive.file only sees files this app creates.
-export const SCOPES = ["openid", "email", "https://www.googleapis.com/auth/gmail.compose", "https://www.googleapis.com/auth/drive.file"];
+// drive.file only sees files this app creates. There is no Gmail scope: outreach goes out through the mailboxes, never through Google.
+// A token stored by an earlier consent may still carry the old Gmail scope; it is simply never used.
+export const SCOPES = ["openid", "email", "https://www.googleapis.com/auth/drive.file"];
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const STATE_TTL_MS = 10 * 60 * 1000;
@@ -25,10 +26,11 @@ export async function verifyState(secret: string, state: string, cookieNonce: st
   return diff === 0;
 }
 
+// No `include_granted_scopes`: with it Google would fold scopes granted in an earlier consent (the old Gmail one) into a reconnect.
 export function authUrl(c: OAuthClient, state: string): string {
   const q = new URLSearchParams({
     client_id: c.clientId, redirect_uri: c.redirectUri, response_type: "code", scope: SCOPES.join(" "),
-    access_type: "offline", prompt: "consent", include_granted_scopes: "true", state,
+    access_type: "offline", prompt: "consent", state,
   });
   return `${AUTH_URL}?${q}`;
 }
