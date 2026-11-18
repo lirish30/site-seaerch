@@ -105,13 +105,13 @@ describe("navigation mapping", () => {
     const map: [string, string][] = [
       ["/today", "home"], ["/leads", "leads"], ["/leads/abc", "leads"], ["/promising", "leads"], ["/outreach", "outreach"],
       ["/campaigns", "outreach"], ["/settings/mailboxes", "settings"],
-      ["/", "find"], ["/searches", "find"], ["/searches/s1", "find"], ["/radar", "find"], ["/import", "find"], ["/settings", "settings"], ["/settings/voice", "settings"],
+      ["/", "find"], ["/searches", "find"], ["/searches/s1", "find"], ["/radar", "find"], ["/import", "find"], ["/niche-test", "find"], ["/settings", "settings"], ["/settings/voice", "settings"],
     ];
     for (const [path, section] of map) expect(sectionOf(path), path).toBe(section);
   });
   it("gives a sidebar to list pages only", () => {
     expect(["/leads", "/promising"].map(sidebarOf)).toEqual(["leads", "leads"]);
-    expect(["/", "/radar", "/import", "/searches", "/searches/s1"].map(sidebarOf)).toEqual(["find", "find", "find", "find", "find"]);
+    expect(["/", "/radar", "/import", "/searches", "/searches/s1", "/niche-test"].map(sidebarOf)).toEqual(["find", "find", "find", "find", "find", "find"]);
     expect(["/today", "/outreach", "/settings", "/settings/voice"].map(sidebarOf)).toEqual(["home", "outreach", "settings", "settings"]);
     expect(["/campaigns", "/settings/mailboxes"].map(sidebarOf)).toEqual(["outreach", "settings"]);
     expect(sidebarOf("/leads/abc")).toBeNull();

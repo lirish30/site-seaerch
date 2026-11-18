@@ -2,7 +2,7 @@ import { STATUSES, type LeadRow, type LeadStatus } from "./types";
 
 export type Section = "home" | "leads" | "find" | "outreach" | "settings";
 
-/** Which rail section a path belongs to. Today is Home; lists, Promising and a lead are Leads; New search, searches, Radar and Import are Find; Outreach and Campaigns are Outreach. */
+/** Which rail section a path belongs to. Today is Home; lists, Promising and a lead are Leads; New search, searches, Radar, Niche test and Import are Find; Outreach and Campaigns are Outreach. */
 export function sectionOf(pathname: string): Section {
   if (pathname === "/today") return "home";
   if (pathname === "/leads" || pathname.startsWith("/leads/") || pathname === "/promising") return "leads";
