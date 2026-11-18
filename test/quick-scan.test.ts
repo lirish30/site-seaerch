@@ -7,7 +7,7 @@ import { startSearchRun } from "../src/worker/search-start";
 import { createSearch, getSearch } from "../src/worker/db/searches";
 import { upsertBusiness, getBusiness } from "../src/worker/db/businesses";
 import { insertAudit, latestAudit } from "../src/worker/db/audits";
-import { latestDraft } from "../src/worker/db/drafts";
+import { SITE_REVIEW_KIND } from "../src/worker/queue/siteReview";
 import { createFitProfile } from "../src/worker/db/fit";
 import { addSuppression, isSuppressed, suppressedLeadIds } from "../src/worker/db/suppression";
 import { saveSettings } from "../src/worker/db/settings";
@@ -54,11 +54,10 @@ describe("runLead stage", () => {
   const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
   const page = (b: string, h = "") => new Response(`<html><head>${h}</head><body>${b}</body></html>`, { headers: { "content-type": "text/html" } });
   const psi = { lighthouseResult: { categories: { performance: { score: 0.3 } }, audits: { "largest-contentful-paint": { numericValue: 7000 }, "cumulative-layout-shift": { numericValue: 0 }, viewport: { score: 1 } } } };
-  const aiReview = { niche: "trades", value_proposition: "Boise plumbing", scores: { design: 82, content: 70, cro: 65, mobile: 80 },
-    summaries: { design: "Clean", content: "OK", cro: "Weak CTA", mobile: "Fine" }, strengths: ["Clear phone number"], niche_checklist: [], findings: [] };
+  const reviewTasks = async (id: string) => (await env.DB.prepare(`SELECT status FROM claude_tasks WHERE kind = ? AND target_id = ?`).bind(SITE_REVIEW_KIND, id).all()).results;
 
   function setup() {
-    const calls = { render: 0, pagespeed: 0, review: 0, claude: 0, steps: [] as string[] };
+    const calls = { render: 0, pagespeed: 0, claude: 0, steps: [] as string[] };
     const step: StepLike = { do: (n, fn) => { calls.steps.push(n); return fn(); }, sleep: async () => {} };
     const deps: LeadDeps = {
       db: env.DB, raw: env.RAW, pagespeedKey: "K", now: () => new Date("2026-10-02T00:00:00Z"),
@@ -70,7 +69,6 @@ describe("runLead stage", () => {
       claude: async () => { calls.claude++; return { subject: "Hi", body: "Body", to_contact_id: null, recipient_reason: "r" }; },
       render: async (url) => { calls.render++; return { finalUrl: url.endsWith("/") ? url : `${url}/`, desktopJpeg: jpeg, mobileJpeg: jpeg, mobile: { overflowX: false, smallTextPct: 0 },
         html: `<html><head><title>Ace</title></head><body>${"<p>Plumbing services for Boise homes and businesses.</p>".repeat(10)}</body></html>` }; },
-      reviewer: async () => { calls.review++; return aiReview; },
     };
     return { deps, step, calls };
   }
@@ -82,13 +80,12 @@ describe("runLead stage", () => {
   }
   afterEach(async () => { await env.DB.prepare(`DELETE FROM usage`).run(); });
 
-  it("a quick run audits (crawl + dns + score), marks the stage, and spends nothing on render, PageSpeed, AI review or drafting", async () => {
+  it("a quick run audits (crawl + dns + score), marks the stage, and spends nothing on render or PageSpeed and queues no AI review or draft", async () => {
     const { s, b } = await lead("Q1");
     const { deps, step, calls } = setup();
     const r = await runLead(deps, step, { businessId: b.id, searchId: s.id, stage: "quick" });
     const a = (await latestAudit(env.DB, b.id))!;
     expect(r.auditId).toBe(a.id);
-    expect(r.draftId).toBeNull();
     expect(a.site_status).toBe("ok");
     expect(a.partial).toBe(true);
     expect(a.score).toBeGreaterThan(0);
@@ -96,8 +93,8 @@ describe("runLead stage", () => {
     expect(a.ai_review).toBeNull();
     expect(a.pagespeed_mobile).toBeNull();
     expect((await getBusiness(env.DB, b.id))!.scan_stage).toBe("quick");
-    expect(await latestDraft(env.DB, b.id)).toBeNull();
-    expect(calls).toMatchObject({ render: 0, pagespeed: 0, review: 0, claude: 0 });
+    expect(await reviewTasks(b.id)).toEqual([]);
+    expect(calls).toMatchObject({ render: 0, pagespeed: 0, claude: 0 });
     expect(calls.steps).toEqual(["crawl", "dns", "score", "progress"]); // the paid steps are not even opened
     const spent = await usage();
     expect(spent.filter((u) => ["browser", "pagespeed", "claude"].includes(u.service))).toEqual([]);
@@ -108,22 +105,23 @@ describe("runLead stage", () => {
     const { s, b } = await lead("F1");
     const { deps, step, calls } = setup();
     const r = await runLead(deps, step, { businessId: b.id, searchId: s.id });
-    expect(r.draftId).not.toBeNull();
-    expect(calls).toMatchObject({ render: 1, pagespeed: 1, review: 1, claude: 1 });
-    expect(calls.steps).toEqual(["render", "crawl", "pagespeed", "dns", "review", "score", "draft", "progress"]);
+    expect(await reviewTasks(b.id)).toEqual([{ status: "pending" }]);
+    expect(r.auditId).toBeTruthy();
+    expect(calls).toMatchObject({ render: 1, pagespeed: 1, claude: 0 }); // the review and the draft are queued, not run here
+    expect(calls.steps).toEqual(["render", "crawl", "pagespeed", "dns", "score", "progress"]);
     expect((await getBusiness(env.DB, b.id))!.scan_stage).toBe("full");
     expect(new Set((await usage()).map((u) => u.service))).toEqual(new Set(["browser", "pagespeed"]));
   });
 
-  it("a full lead run records no claude usage", async () => {
+  it("a full lead run records no claude usage and makes no Claude call of its own", async () => {
     const { s, b } = await lead("NC1");
     const { deps, step, calls } = setup();
     await runLead(deps, step, { businessId: b.id, searchId: s.id });
-    expect(calls).toMatchObject({ review: 1, claude: 1 }); // the Claude steps still ran; they just cost nothing
+    expect(calls.claude).toBe(0);
     expect((await usage()).filter((u) => u.service.startsWith("claude"))).toEqual([]);
   });
 
-  it("a full run after a quick run promotes the lead to 'full' with screenshots, review and a draft", async () => {
+  it("a full run after a quick run promotes the lead to 'full' with screenshots and a queued review", async () => {
     const { s, b } = await lead("P1");
     const q = setup();
     await runLead(q.deps, q.step, { businessId: b.id, searchId: s.id, stage: "quick" });
@@ -131,10 +129,11 @@ describe("runLead stage", () => {
     const f = setup();
     const r = await runLead(f.deps, f.step, { businessId: b.id, searchId: null, stage: "full" });
     expect((await getBusiness(env.DB, b.id))!.scan_stage).toBe("full");
-    expect(r.draftId).not.toBeNull();
     const a = (await latestAudit(env.DB, b.id))!;
+    expect(a.id).toBe(r.auditId);
     expect(a.screenshots.desktop).toMatch(/^shots\//);
-    expect(a.ai_review?.niche).toBe("trades");
+    expect(a.ai_review).toBeNull();
+    expect(await reviewTasks(b.id)).toEqual([{ status: "pending" }]); // the quick run queued none; the full run queued one
   });
 });
 

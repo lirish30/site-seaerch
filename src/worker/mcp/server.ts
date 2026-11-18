@@ -14,6 +14,7 @@ import { isKnownRecipient } from "../db/contacts";
 import { latestAudit, latestAuditsFor } from "../db/audits";
 import { listActivity } from "../db/activity";
 import "../queue/replyClassify"; // registers the built-in task kinds for this entry path too
+import "../queue/siteReview";
 import { claimNextTask, completeTask, markTaskStale, queueCounts, releaseTask } from "../queue/db";
 import { buildBundle } from "../queue/bundle";
 import { getTaskKind, registeredTaskKinds } from "../queue/registry";

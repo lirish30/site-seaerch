@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { NonRetryableError } from "cloudflare:workflows";
 import { CroFatalError } from "../src/worker/cro/ai";
-import { adaptStep, startLeadIdempotent } from "../src/worker/workflows";
+import { env } from "cloudflare:test";
+import { adaptStep, depsFromEnv, startLeadIdempotent } from "../src/worker/workflows";
 
 const P = { businessId: "b1", searchId: "s1" };
 
@@ -16,6 +17,13 @@ describe("startLeadIdempotent", () => {
   });
   it("create throws and get fails → rethrows", async () => {
     await expect(startLeadIdempotent({ create: async () => { throw new Error("already exists"); }, get: async () => { throw new Error("not found"); } } as any, P)).rejects.toThrow(/already exists/);
+  });
+});
+
+describe("depsFromEnv", () => {
+  it("has no AI reviewer: the site review is queued work for Claude Code, not an API call", () => {
+    const d = depsFromEnv(env);
+    expect(Object.keys(d).sort()).toEqual(["claude", "db", "fetch", "now", "pagespeedKey", "raw", "render"]);
   });
 });
 

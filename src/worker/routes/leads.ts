@@ -22,6 +22,7 @@ import { activeReportFor, createReport, otherActiveCount, revokeReports, type Re
 import { pickRecipient } from "../recipient";
 import { regenerateDraft, TWEAKS, type Tweak } from "../pipeline/lead";
 import { depsFromEnv } from "../workflows";
+import { cancelTasksFor } from "../queue/db";
 import { checkSpend, PER_LEAD_COST } from "../cost";
 import { getSettings } from "../db/settings";
 import { composeEmail } from "../email/render";
@@ -289,6 +290,7 @@ leadRoutes.delete("/:id", async (c) => {
   const id = c.req.param("id");
   if (!(await getBusiness(c.env.DB, id))) return c.json({ error: "not found" }, 404);
   await deleteBusiness(c.env.DB, id);
+  await cancelTasksFor(c.env.DB, "lead", id); // Claude work still queued for this lead (an AI review, say) is closed, so nobody does it
   return c.json({ ok: true });
 });
 

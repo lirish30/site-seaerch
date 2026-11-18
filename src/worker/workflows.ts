@@ -3,7 +3,6 @@ import { NonRetryableError } from "cloudflare:workflows";
 import type { Env } from "./env";
 import { runLead, type LeadDeps, type StepLike } from "./pipeline/lead";
 import { anthropicCaller } from "./drafter/draft";
-import { anthropicReviewer } from "./audit/review";
 import { browserRenderer } from "./render/render";
 import { setBusinessError } from "./db/businesses";
 import { incrementProcessed } from "./db/searches";
@@ -33,7 +32,6 @@ export function depsFromEnv(env: Env): LeadDeps {
     db: env.DB, raw: env.RAW, fetch: (u, i) => fetch(u, i), pagespeedKey: env.PAGESPEED_API_KEY,
     claude: anthropicCaller(env.ANTHROPIC_API_KEY), now: () => new Date(),
     render: env.BROWSER ? browserRenderer(env.BROWSER) : undefined,
-    reviewer: anthropicReviewer(env.ANTHROPIC_API_KEY),
   };
 }
 
@@ -59,7 +57,7 @@ export async function runLeadWithErrorHandling(deps: LeadDeps, step: WorkflowSte
       if (p.searchId) await incrementProcessed(deps.db, p.searchId);
       return true;
     });
-    return { auditId: null, draftId: null };
+    return { auditId: null };
   }
 }
 

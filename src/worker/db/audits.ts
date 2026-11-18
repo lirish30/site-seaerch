@@ -29,7 +29,7 @@ function fromRow(r: Row): Audit {
     category_scores: json(r.category_scores, {}), ai_review: json(r.ai_review, null),
     screenshots: { desktop: null, mobile: null, ...json(r.screenshots, {}) }, site_links: json(r.site_links, {}),
     platform: r.platform ?? null, seo_score: r.seo_score ?? null, accessibility_score: r.accessibility_score ?? null,
-    mail_warning: r.mail_warning ?? null,
+    mail_warning: r.mail_warning ?? null, score_inputs_key: r.score_inputs_key ?? null,
   };
 }
 
@@ -40,15 +40,39 @@ export async function insertAudit(db: D1Database, a: AuditInsert): Promise<Audit
      mobile_friendly, https, has_title, has_meta_description, has_contact_form, copyright_year,
      latest_content_date, broken_link_count, score, offer, findings, raw_r2_key,
      health_score, niche, category_scores, ai_review, screenshots, site_links,
-     platform, seo_score, accessibility_score, mail_warning)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+     platform, seo_score, accessibility_score, mail_warning, score_inputs_key)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
   ).bind(id, a.business_id, new Date().toISOString(), a.site_status, a.partial ? 1 : 0, a.pagespeed_mobile,
     a.lcp_ms, a.cls, n(a.mobile_friendly), n(a.https), n(a.has_title), n(a.has_meta_description),
     n(a.has_contact_form), a.copyright_year, a.latest_content_date, a.broken_link_count, a.score, a.offer,
     JSON.stringify(a.findings), a.raw_r2_key, a.health_score, a.niche, JSON.stringify(a.category_scores),
     a.ai_review ? JSON.stringify(a.ai_review) : null, JSON.stringify(a.screenshots), JSON.stringify(a.site_links),
-    a.platform, a.seo_score, a.accessibility_score, a.mail_warning).run();
+    a.platform, a.seo_score, a.accessibility_score, a.mail_warning, a.score_inputs_key ?? null).run();
   return (await db.prepare(`SELECT * FROM audits WHERE id = ?`).bind(id).first<Row>().then((r) => fromRow(r!)));
+}
+
+export async function getAudit(db: D1Database, id: string): Promise<Audit | null> {
+  const r = await db.prepare(`SELECT * FROM audits WHERE id = ?`).bind(id).first<Row>();
+  return r ? fromRow(r) : null;
+}
+
+/** What the AI review changes on an audit: the score and everything derived from it. */
+export interface AuditScoreUpdate {
+  score: number; offer: Audit["offer"]; findings: Finding[]; health_score: number | null; niche: string | null;
+  category_scores: Audit["category_scores"]; ai_review: Audit["ai_review"];
+}
+
+/**
+ * Rewrites an audit's score, findings and review, but only while it is still the lead's newest audit (decided in the same statement, so a re-audit
+ * that lands meanwhile is never overwritten). False when it is not. Writing the same values twice is harmless.
+ */
+export async function updateAuditScore(db: D1Database, id: string, u: AuditScoreUpdate): Promise<boolean> {
+  const r = await db.prepare(
+    `UPDATE audits SET score = ?, offer = ?, findings = ?, health_score = ?, niche = ?, category_scores = ?, ai_review = ?
+     WHERE id = ? AND NOT EXISTS (SELECT 1 FROM audits n WHERE n.business_id = audits.business_id AND n.created_at > audits.created_at)`,
+  ).bind(u.score, u.offer, JSON.stringify(u.findings), u.health_score, u.niche, JSON.stringify(u.category_scores),
+    u.ai_review ? JSON.stringify(u.ai_review) : null, id).run();
+  return (r.meta.changes ?? 0) > 0;
 }
 
 export async function latestAudit(db: D1Database, businessId: string): Promise<Audit | null> {

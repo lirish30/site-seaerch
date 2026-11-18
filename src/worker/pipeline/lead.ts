@@ -5,7 +5,6 @@ import { score } from "../scoring/scorer";
 import { lookupMailDns, siteMailDomain, UNKNOWN_MAIL_DNS, type MailDns } from "../dns";
 import { generateDraft, type ClaudeCaller } from "../drafter/draft";
 import { getBusiness, setScanStage } from "../db/businesses";
-import { leadSuppression } from "../db/suppression";
 import { replaceContacts, listContacts, ensureContact } from "../db/contacts";
 import { pocFor } from "../db/people";
 import { insertAudit, latestAudit } from "../db/audits";
@@ -16,11 +15,13 @@ import { recordUsage } from "../db/usage";
 import { PRICES } from "../cost";
 import type { Renderer } from "../render/render";
 import { withProvenance } from "../audit/provenance";
-import { reviewSite, type ReviewCaller } from "../audit/review";
+import { scoreInputsKey, type ScoreInputs } from "../audit/rescore";
+import { enqueueTask } from "../queue/db";
+import { SITE_REVIEW_KIND, enqueueDraftIfWanted } from "../queue/siteReview"; // also registers the site.review task kind
 import { isSocialOnlyUrl } from "../crawler/extract";
 import { croItemsForBusiness } from "../db/cro";
 import type { CroItem } from "../cro/types";
-import type { AiReview, Draft, Finding, Offer, Purpose, ScanStage, SiteStatus, TonePreset } from "../types";
+import type { Draft, Finding, Offer, Purpose, ScanStage, SiteStatus, TonePreset } from "../types";
 
 /** One-click rewrites of the current draft. */
 export const TWEAKS = {
@@ -46,11 +47,8 @@ export interface LeadDeps {
   db: D1Database; raw: R2Bucket; fetch: Fetcher; pagespeedKey: string; claude: ClaudeCaller; now: () => Date;
   /** Real-browser render for screenshots and JS-built pages; absent when the Browser binding isn't configured. */
   render?: Renderer;
-  /** AI design/content/conversion review of the screenshots; absent to score on rules only. */
-  reviewer?: ReviewCaller;
 }
 
-const b64 = (bytes: ArrayBuffer | Uint8Array) => Buffer.from(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)).toString("base64");
 const withScheme = (u: string) => (/^https?:\/\//i.test(u) ? u : `https://${u}`);
 
 /** A CRO opportunity as a prompt finding: the observation is the evidence, the change is the fix. */
@@ -107,8 +105,8 @@ export async function runLead(
   deps: LeadDeps, step: StepLike,
   p: { businessId: string; searchId: string | null; forceDraft?: boolean; steeringNote?: string | null; stage?: ScanStage },
 ) {
-  // A quick run is crawl + DNS + score only. Render, PageSpeed, the AI review and the draft are the paid steps; they are
-  // not even opened, so nothing is spent or recorded for them. Re-running as "full" later fills them in.
+  // A quick run is crawl + DNS + score only. Render and PageSpeed are the paid steps (the AI review and the draft are queued work, and a quick run
+  // queues neither); they are not even opened, so nothing is spent or recorded for them. Re-running as "full" later fills them in.
   const quick = p.stage === "quick";
   const business = await getBusiness(deps.db, p.businessId);
   if (!business) throw new Error(`Business ${p.businessId} not found`);
@@ -187,26 +185,19 @@ export async function runLead(
     } catch { return UNKNOWN_MAIL_DNS; }
   });
 
-  let review: AiReview | null = null;
-  if (!quick && deps.reviewer && measurable(crawl.siteStatus) && (rendered?.desktop || rendered?.mobile || crawl.facts)) {
-    try {
-      review = await step.do("review", async () => {
-        const img = async (k: string | null | undefined) => (k ? deps.raw.get(k).then(async (o) => (o ? b64(await o.arrayBuffer()) : null)) : null);
-        const [desktop, mobile] = await Promise.all([img(rendered?.desktop), img(rendered?.mobile)]);
-        const r = await reviewSite({
-          business: { name: business.name, category: business.category, address: business.address, website: crawl.finalUrl ?? site ?? "" },
-          facts: crawl.facts, pagespeedScore: ps?.performanceScore ?? null, desktopJpegB64: desktop, mobileJpegB64: mobile,
-        }, deps.reviewer!);
-        return r;
-      });
-    } catch { review = null; }
-  }
-
+  // The audit is scored on rules alone here. The AI review is queued for Claude (Claude Code works the queue); when it comes back the audit is
+  // scored again from the inputs stored below, and the draft is queued then. Nothing in this run waits for Claude.
   const audit = await step.do("score", async () => {
-    const s = score({ siteStatus: crawl.siteStatus, crawl: crawl.facts, pagespeed: ps, now: deps.now(),
-      mobile: rendered?.mobileFacts ?? null, review,
-      business: { category: business.category, rating: business.rating, reviewCount: business.review_count }, mailDns });
     const f = crawl.facts;
+    const inputs: ScoreInputs = { siteStatus: crawl.siteStatus, crawl: f, pagespeed: ps, mobile: rendered?.mobileFacts ?? null,
+      business: { category: business.category, rating: business.rating, reviewCount: business.review_count }, mailDns, now: deps.now().toISOString() };
+    const s = score({ ...inputs, now: new Date(inputs.now) });
+    const reviewable = !quick && measurable(crawl.siteStatus) && !!(rendered?.desktop || rendered?.mobile || f);
+    let inputsKey: string | null = null;
+    if (reviewable) {
+      inputsKey = scoreInputsKey(p.businessId, stamp);
+      await deps.raw.put(inputsKey, JSON.stringify(inputs));
+    }
     const a = await insertAudit(deps.db, {
       business_id: p.businessId, site_status: crawl.siteStatus, partial: measurable(crawl.siteStatus) && ps === null,
       pagespeed_mobile: ps?.performanceScore ?? null, lcp_ms: ps?.lcpMs ?? null, cls: ps?.cls ?? null,
@@ -216,25 +207,26 @@ export async function runLead(
       latest_content_date: f?.latestContentDate ?? null, broken_link_count: f?.brokenLinkCount ?? null,
       platform: f?.platform ?? null, // null = not crawled; "other" = crawled but unrecognised
       seo_score: ps?.seoScore ?? null, accessibility_score: ps?.accessibilityScore ?? null,
-      score: s.score, offer: s.offer, findings: withProvenance(s.findings, deps.now().toISOString()), raw_r2_key: crawl.rawKey,
-      health_score: s.health, niche: s.niche, category_scores: s.categoryScores, ai_review: review,
+      score: s.score, offer: s.offer, findings: withProvenance(s.findings, inputs.now), raw_r2_key: crawl.rawKey,
+      health_score: s.health, niche: s.niche, category_scores: s.categoryScores, ai_review: null, score_inputs_key: inputsKey,
       screenshots: { desktop: rendered?.desktop ?? null, mobile: rendered?.mobile ?? null }, site_links: crawl.links ?? {},
       // A note for the owner only: not a finding, never scored, and not passed to the drafter or the report.
       mail_warning: mailDns.hasMx === false ? "A site email address is at a domain with no mail records, so emails to it will likely bounce" : null,
     });
     await setScanStage(deps.db, p.businessId, quick ? "quick" : "full");
-    return { id: a.id, lowPriority: s.lowPriority };
-  });
-
-  const draftId = quick ? null : await step.do("draft", async () => {
-    if (audit.lowPriority && !p.forceDraft) return null;
-    // Checked here, at run time, so a lead suppressed after its workflow was queued (or re-audited) never gets an AI draft.
-    // The audit above still runs: a re-audit of a suppressed lead refreshes the audit, only the draft is withheld.
-    const current = await getBusiness(deps.db, p.businessId);
-    if (current && (await leadSuppression(deps.db, current))) return null;
-    return (await draftFor(deps, p.businessId, { steeringNote: p.steeringNote ?? null })).id;
+    // A quick run is crawl + DNS + score only: no review and no draft. A full run queues the review, and its draft follows once it is applied.
+    // With nothing to review (no site, or nothing readable) the draft is queued now, under the same rule.
+    if (!quick) {
+      if (reviewable) {
+        await enqueueTask(deps.db, SITE_REVIEW_KIND, { auditId: a.id, forceDraft: p.forceDraft, steeringNote: p.steeringNote ?? null },
+          { dedupeKey: a.id, targetType: "lead", targetId: p.businessId });
+      } else {
+        await enqueueDraftIfWanted(deps.db, { businessId: p.businessId, auditId: a.id, lowPriority: s.lowPriority, forceDraft: p.forceDraft, steeringNote: p.steeringNote });
+      }
+    }
+    return { id: a.id };
   });
 
   if (p.searchId) await step.do("progress", () => incrementProcessed(deps.db, p.searchId!).then(() => true));
-  return { auditId: audit.id, draftId };
+  return { auditId: audit.id };
 }
