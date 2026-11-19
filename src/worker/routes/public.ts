@@ -5,6 +5,7 @@ import type { Env } from "../env";
 import { z } from "zod";
 import { BookingFormSchema, bookingPage, cancelByToken, createVisitorBooking } from "../booking/create";
 import { publicReport } from "../db/reports";
+import { ensureDepositInvoice } from "../documents/deposit";
 import { SignFormSchema, proposalPage, signProposal, signedProposalFor } from "../documents/public";
 import { signedPdfResponse } from "../documents/signed";
 import { serveMedia } from "../video/media";
@@ -148,6 +149,7 @@ publicRoutes.post("/report/:token/book/cancel", async (c) => {
 publicRoutes.use("/p/:token", clientLimited);
 publicRoutes.use("/p/:token/sign", clientLimited);
 publicRoutes.use("/p/:token/pdf", clientLimited);
+publicRoutes.use("/p/:token/pay", clientLimited);
 
 publicRoutes.get("/p/:token", async (c) => {
   const token = c.req.param("token");
@@ -175,6 +177,15 @@ publicRoutes.get("/p/:token/pdf", async (c) => {
   if (!TOKEN.test(token)) return c.json(NOT_FOUND, 404);
   const doc = await signedProposalFor(c.env, token);
   return doc ? signedPdfResponse(c.env, doc) : c.json(NOT_FOUND, 404);
+});
+
+// The deposit's payment page: asks for the invoice again (the retry when it could not be made at signing) and answers with where the payment stands. Only a
+// signed document has one, and every other state is the same 404. There is nothing to read from the body, so it is not read.
+publicRoutes.post("/p/:token/pay", async (c) => {
+  const token = c.req.param("token");
+  if (!TOKEN.test(token)) return c.json(NOT_FOUND, 404);
+  const doc = await signedProposalFor(c.env, token);
+  return doc ? c.json(await ensureDepositInvoice(c.env, doc.id)) : c.json(NOT_FOUND, 404);
 });
 
 publicRoutes.all("*", (c) => c.json({ error: "not found" }, 404));

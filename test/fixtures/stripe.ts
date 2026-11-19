@@ -47,3 +47,37 @@ export function invoiceEvent(type: string, inv: InvoiceRow, over: { id?: string;
     data: { object: { id: inv.stripeInvoiceId, object: "invoice", amount_paid: inv.amountCents, currency: "usd", metadata: { document_id: inv.documentId, kind: "deposit" }, ...over.object } },
   };
 }
+
+export const stripeJson = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+export const stripeError = (message: string, status = 400) => stripeJson({ error: { message } }, status);
+
+/**
+ * A stand-in for the part of Stripe the deposit uses. It makes a customer, an invoice and an item as asked, answers a repeated Idempotency-Key with the
+ * first answer (as Stripe does), and counts what it really made. `fail` answers a call instead of the default; `invoice` answers a GET of an invoice.
+ */
+export function stripeApi(o: { fail?: (c: Call) => Response | null | undefined; invoice?: (id: string) => Record<string, unknown> } = {}) {
+  const made = { customers: 0, invoices: 0, items: 0 };
+  const replay = new Map<string, unknown>();
+  const tag = crypto.randomUUID().slice(0, 6); // ids are unique across the tests of a file, which share storage
+  let n = 0;
+  const api = fakeStripe((c) => {
+    const failure = o.fail?.(c);
+    if (failure) return failure;
+    const path = new URL(c.url).pathname;
+    if (c.method === "GET") {
+      const id = decodeURIComponent(path.split("/").pop()!);
+      return stripeJson(o.invoice?.(id) ?? { id, status: "open", amount_due: 0, amount_paid: 0, currency: "usd", hosted_invoice_url: "https://invoice.stripe.com/i/x" });
+    }
+    const idem = c.headers["idempotency-key"];
+    if (idem && replay.has(idem)) return stripeJson(replay.get(idem));
+    let body: Record<string, unknown>;
+    if (path === "/v1/customers") { made.customers++; body = { id: `cus_${tag}${++n}` }; }
+    else if (path === "/v1/invoices") { made.invoices++; body = { id: `in_${tag}${++n}` }; }
+    else if (path === "/v1/invoiceitems") { made.items++; body = { id: `ii_${tag}${++n}` }; }
+    else if (/^\/v1\/invoices\/[^/]+\/finalize$/.test(path)) body = { id: path.split("/")[3], status: "open", hosted_invoice_url: `https://invoice.stripe.com/i/${path.split("/")[3]}` };
+    else return stripeError(`no such route ${path}`, 404);
+    if (idem) replay.set(idem, body);
+    return stripeJson(body);
+  });
+  return { ...api, made, creates: () => api.calls.filter((c) => c.method === "POST") };
+}

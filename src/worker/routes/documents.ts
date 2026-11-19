@@ -6,8 +6,10 @@ import { logActivity } from "../db/activity";
 import { lastBookingFor } from "../db/bookings";
 import { getDeal } from "../db/deals";
 import { DocumentStateError, getDocument, listForDeal, signaturesFor, type Document } from "../db/documents";
+import { getInvoiceForDocument } from "../db/invoices";
 import { getSettings } from "../db/settings";
 import { legalGate, parseDocumentsConfig } from "../documents/config";
+import { ensureDepositInvoice } from "../documents/deposit";
 import { clientBase } from "../documents/mail";
 import { ProposalError } from "../documents/proposal";
 import { PROPOSAL_CSP, renderProposalHtml } from "../documents/render";
@@ -50,8 +52,11 @@ documentRoutes.get("/deals/:id/proposal", async (c) => {
   const deal = await getDeal(c.env.DB, c.req.param("id"));
   if (!deal) return c.json({ error: "not found" }, 404);
   const [history, settings, booking] = await Promise.all([listForDeal(c.env.DB, deal.id), getSettings(c.env.DB), lastBookingFor(c.env.DB, deal.businessId, "discovery")]);
+  const current = history.find((d) => WORKING.includes(d.status)) ?? null;
   return c.json({
-    current: history.find((d) => WORKING.includes(d.status)) ?? null, history,
+    current, history,
+    // The current document's deposit invoice, once it has one (the Deal tab shows its state, and a retry when there is none).
+    invoice: current ? await getInvoiceForDocument(c.env.DB, current.id) : null,
     legalGate: legalGate(parseDocumentsConfig(settings.documents_config)), clientBase: clientBase(c.env),
     // Who the proposal goes to when the form leaves the contact blank: the person who booked the discovery call.
     defaultContact: booking ? { name: booking.contactName, email: booking.contactEmail } : null,
@@ -113,6 +118,14 @@ documentRoutes.post("/documents/:id/test-send", async (c) => {
     console.error("proposal test send failed", e instanceof Error ? e.message : "unknown error");
     return c.json({ error: `The test copy was made but the email did not go: ${e instanceof Error ? e.message : "unknown error"}` }, 502);
   }
+});
+
+/** The owner's retry for a deposit invoice that could not be made: the same idempotent call the client's pay button makes. Only a signed proposal has a deposit. */
+documentRoutes.post("/documents/:id/deposit", async (c) => {
+  const doc = await getDocument(c.env.DB, c.req.param("id"));
+  if (!doc) return c.json({ error: "not found" }, 404);
+  if (doc.status !== "signed") return c.json({ error: "only a signed proposal has a deposit" }, 409);
+  return c.json(await ensureDepositInvoice(c.env, doc.id));
 });
 
 documentRoutes.post("/documents/:id/void", async (c) => {

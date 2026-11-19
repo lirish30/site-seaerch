@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatExpiry, mailtoOf, nameProblem, safeHttpsUrl, signError, signReady } from "../src/client/proposalPageView";
+import { formatExpiry, mailtoOf, nameProblem, payError, safeHttpsUrl, signError, signReady } from "../src/client/proposalPageView";
 
 describe("signReady", () => {
   const ok = { name: "Pat Jones", consent: true, authority: true };
@@ -84,5 +84,15 @@ describe("safeHttpsUrl and mailtoOf", () => {
   it("only a plain address is a mailto link", () => {
     expect(mailtoOf("logan@siteline.test")).toBe("mailto:logan@siteline.test");
     for (const bad of ["", "no at sign", "a@b.co?subject=x&bcc=evil@x.co", "a b@c.co", "<a@b.co>", "a@b.co\nBcc: x@y.co"]) expect(mailtoOf(bad), JSON.stringify(bad)).toBeNull();
+  });
+});
+
+describe("payError", () => {
+  it("names the one thing the client can do, and shows nothing the server sent", () => {
+    expect(payError(500)).toBe("We couldn't open the payment page. Try again.");
+    expect(payError(200)).toBe("We couldn't open the payment page. Try again.");
+    expect(payError(404)).toMatch(/no longer available/);
+    expect(payError(429)).toMatch(/Too many tries/);
+    expect(payError(0)).toMatch(/could not reach the server/);
   });
 });

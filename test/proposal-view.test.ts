@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { contactOf, editsOf, formOf, isProposalDirty, proposalSteps, sendBlockers } from "../src/client/proposalView";
+import { contactOf, depositLine, editsOf, formOf, isProposalDirty, proposalSteps, sendBlockers } from "../src/client/proposalView";
 import { DEFAULT_ASSUMPTIONS, DEFAULT_OUT_OF_SCOPE } from "../src/worker/documents/proposal";
 import type { Document } from "../src/worker/db/documents";
 import { proposal } from "./fixtures/documents";
@@ -79,5 +79,27 @@ describe("the proposal form", () => {
     expect(isProposalDirty({ ...f, scopeNotes: "More" }, saved, defaults)).toBe(true);
     expect(isProposalDirty(formOf(null, defaults), null, defaults)).toBe(false);
     expect(isProposalDirty({ ...formOf(null, defaults), optionId: "a" }, null, defaults)).toBe(true);
+  });
+});
+
+describe("depositLine", () => {
+  const signed = doc({ status: "signed", signedAt: "2026-12-02T09:00:00.000Z" }); // the fixture's deposit is 199850
+  it("is null until the proposal is signed: nothing is owed yet", () => {
+    for (const status of ["draft", "sent", "viewed", "void", "expired"] as const) expect(depositLine(doc({ status }), null), status).toBeNull();
+  });
+  it("a signed proposal with no invoice says not created and offers the retry", () => {
+    expect(depositLine(signed, null)).toEqual({ text: "Deposit $1,998.50: not created", retry: true });
+  });
+  it("an invoice says where it stands, with no retry", () => {
+    expect(depositLine(signed, { status: "open", mismatch: null })).toEqual({ text: "Deposit $1,998.50: open.", retry: false });
+    expect(depositLine(signed, { status: "paid", mismatch: null })).toEqual({ text: "Deposit $1,998.50: paid.", retry: false });
+    expect(depositLine(signed, { status: "void", mismatch: null })).toMatchObject({ text: expect.stringContaining("void"), retry: false });
+    expect(depositLine(signed, { status: "failed", mismatch: null })!.text).toMatch(/payment failed/);
+  });
+  it("uses the amount the signed proposal froze, and says so when a payment did not match", () => {
+    const content = { ...proposal(), schedule: { ...proposal().schedule, depositCents: 154999 } };
+    expect(depositLine(doc({ status: "signed", content }), null)!.text).toBe("Deposit $1,549.99: not created");
+    expect(depositLine(signed, { status: "open", mismatch: "amount paid 100 is not the 199850 invoiced" })!.text)
+      .toBe("Deposit $1,998.50: open. Stripe reported a payment that did not match: amount paid 100 is not the 199850 invoiced.");
   });
 });

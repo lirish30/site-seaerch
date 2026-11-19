@@ -47,7 +47,7 @@ const str = (v: unknown): string => String(v ?? "").slice(0, 40);
  * What an invoice.paid says that we do not agree with, or null when it matches: the amount paid is exactly the cents we invoiced, in dollars,
  * and the invoice was made for this document (the metadata we set when creating it).
  */
-function paidProblem(inv: InvoiceRow, obj: Record<string, any>): string | null {
+export function paidProblem(inv: InvoiceRow, obj: Record<string, any>): string | null {
   const problems: string[] = [];
   if (obj.amount_paid !== inv.amountCents) problems.push(`amount paid ${str(obj.amount_paid)} is not the ${inv.amountCents} invoiced`);
   if (obj.currency !== "usd") problems.push(`currency ${str(obj.currency)} is not usd`);

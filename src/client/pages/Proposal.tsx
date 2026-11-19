@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
 import Icon from "../components/Icon";
 import { dollars } from "../packagesView";
-import { formatExpiry, mailtoOf, safeHttpsUrl, signError, signReady } from "../proposalPageView";
+import { formatExpiry, mailtoOf, payError, safeHttpsUrl, signError, signReady } from "../proposalPageView";
 import { isReportToken } from "../reportView";
 import type { OpenProposal, PublicPayment, PublicProposal } from "../../worker/documents/public";
 
@@ -36,18 +36,45 @@ function Skeleton() {
   );
 }
 
-/** Where the deposit stands after signing. The server decides the state; the link is only shown when it is https. */
-function Payment({ payment }: { payment: PublicPayment }) {
+/**
+ * Where the deposit stands after signing. The server decides the state; the link is only shown when it is https. When the payment page could not be made,
+ * the button asks the server for it again (the same call the owner's retry makes) and shows whatever it answers.
+ */
+function Payment({ payment, token, onChange }: { payment: PublicPayment; token: string; onChange: (p: PublicPayment) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function again() {
+    if (busy) return;
+    setBusy(true); setError("");
+    try {
+      const res = await fetch(`/api/public/p/${token}/pay`, { method: "POST", credentials: "omit" });
+      if (!res.ok) { setError(payError(res.status)); return; }
+      const next = (await res.json()) as PublicPayment;
+      onChange(next);
+      if (next.state === "unavailable") setError(payError(200));
+    } catch { setError(payError(0)); }
+    finally { setBusy(false); }
+  }
+
   if (payment.state === "none") return null;
   if (payment.state === "paid") return <section className="pp-pay" aria-label="Deposit"><p className="pp-pay-title">Deposit received: {dollars(payment.amountCents)}</p><p>Thank you. We will be in touch about the next step.</p></section>;
-  if (payment.state === "unavailable") return <section className="pp-pay" aria-label="Deposit"><p className="pp-pay-title">Your deposit link is not ready yet</p><p>We will email it to you. You do not need to do anything now.</p></section>;
+  if (payment.state === "unavailable") {
+    return (
+      <section className="pp-pay" aria-label="Deposit">
+        <p className="pp-pay-title">We couldn't open the payment page. Try again.</p>
+        {error && <p className="error" role="alert">{error}</p>}
+        <button type="button" className="btn primary" disabled={busy} onClick={() => void again()}>{busy ? "Opening…" : "Try again"}</button>
+      </section>
+    );
+  }
   const url = safeHttpsUrl(payment.url);
   return (
     <section className="pp-pay" aria-label="Deposit">
       <p className="pp-pay-title">Deposit due: {dollars(payment.amountCents)}</p>
       {url
-        ? <a className="btn primary" href={url} rel="noopener noreferrer">Pay the deposit</a>
+        ? <a className="btn primary" href={url} target="_blank" rel="noopener noreferrer">Pay deposit</a>
         : <p>We will email you the payment link.</p>}
+      <p>The payment page opens in a new tab. A bank transfer (ACH) can take a few days to clear.</p>
     </section>
   );
 }
@@ -153,7 +180,7 @@ export default function Proposal() {
         </header>
         <article className="rp-card">
           {signed && token && <Signed page={page} token={token} />}
-          {signed && <Payment payment={page.payment} />}
+          {signed && token && <Payment payment={page.payment} token={token} onChange={(payment) => setPage({ ...page, payment })} />}
           <iframe className="pp-frame" title={`Proposal for ${page.clientName}`} sandbox="" srcDoc={page.html} referrerPolicy="no-referrer" />
           {!signed && (
             <form className="pp-sign" onSubmit={(e) => void sign(e)}>

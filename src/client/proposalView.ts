@@ -1,6 +1,8 @@
 import type { Deal } from "../worker/db/deals";
 import type { Document } from "../worker/db/documents";
+import type { InvoiceRow } from "../worker/db/invoices";
 import { DEFAULT_ASSUMPTIONS, DEFAULT_OUT_OF_SCOPE, type ProposalEdits } from "../worker/documents/proposal";
+import { dollars } from "./packagesView";
 
 type StepDoc = Pick<Document, "status" | "sentAt" | "firstViewedAt" | "signedAt" | "paidAt" | "voidReason" | "expiresAt">;
 export interface ProposalStep { label: string; at: string | null; done: boolean }
@@ -20,6 +22,25 @@ export function proposalSteps(doc: StepDoc): ProposalStep[] {
   if (doc.status === "void") return [...steps.filter((s) => s.done), { label: `Voided: ${doc.voidReason ?? "no reason given"}`, at: null, done: true }];
   if (doc.status === "expired") return [...steps.filter((s) => s.done), { label: "Expired", at: doc.expiresAt, done: true }];
   return steps;
+}
+
+/** The Deal tab's line about the deposit: where the invoice stands, and whether there is a retry to offer (when there is no invoice at all). */
+export interface DepositLine { text: string; retry: boolean }
+
+const INVOICE_STATE: Record<InvoiceRow["status"], string> = {
+  open: "open", paid: "paid", void: "void (it can no longer be paid)", uncollectible: "marked uncollectible", failed: "the last payment failed, the client can try again",
+};
+
+/**
+ * "Deposit $1,998.50: open / paid / not created, retry" for a signed proposal, or null while it is not signed (nothing is owed yet). The amount is the one the
+ * signed proposal froze. A payment that did not match the invoice is said so on the same line.
+ */
+export function depositLine(doc: Pick<Document, "status" | "content">, invoice: Pick<InvoiceRow, "status" | "mismatch"> | null): DepositLine | null {
+  if (doc.status !== "signed") return null;
+  const amount = `Deposit ${dollars(doc.content.schedule.depositCents)}`;
+  if (!invoice) return { text: `${amount}: not created`, retry: true };
+  const mismatch = invoice.mismatch ? ` Stripe reported a payment that did not match: ${invoice.mismatch}.` : "";
+  return { text: `${amount}: ${INVOICE_STATE[invoice.status]}.${mismatch}`, retry: false };
 }
 
 /** What stops a draft from going for approval, in the order to fix it. Empty when it can go. */

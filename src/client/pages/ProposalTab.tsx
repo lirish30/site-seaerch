@@ -3,13 +3,17 @@ import { Link } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { optionSummary } from "../dealView";
 import type { Package } from "../packagesView";
-import { contactOf, editsOf, proposalSteps, sendBlockers, type ProposalForm } from "../proposalView";
+import { contactOf, depositLine, editsOf, proposalSteps, sendBlockers, type ProposalForm } from "../proposalView";
 import type { Deal } from "../../worker/db/deals";
 import type { Document } from "../../worker/db/documents";
+import type { InvoiceRow } from "../../worker/db/invoices";
 
 /** What the server says about a deal's proposal (`GET /api/deals/:id/proposal`). */
 export interface ProposalData {
-  current: Document | null; history: Document[]; legalGate: string | null; clientBase: string | null; defaultContact: { name: string; email: string } | null;
+  current: Document | null;
+  /** The current document's deposit invoice, once it has one. */
+  invoice: InvoiceRow | null;
+  history: Document[]; legalGate: string | null; clientBase: string | null; defaultContact: { name: string; email: string } | null;
 }
 
 const errorText = (e: unknown, fallback: string) => (e instanceof Error ? e.message : fallback);
@@ -71,6 +75,11 @@ export default function ProposalTab({ deal, catalog, data, form, setForm, dirty,
     await api.post<{ approvalId: string }>(`/documents/${current!.id}/send`);
     setNotice("Sent for your approval. Approving it on the Home page sends the link and countersigns it as you.");
   });
+  const retryDeposit = () => run(async () => {
+    const out = await api.post<{ state: string }>(`/documents/${current!.id}/deposit`);
+    await onReload(undefined);
+    setNotice(out.state === "open" || out.state === "paid" ? "The deposit invoice is ready." : "Stripe could not make the invoice. The reason is on the lead's timeline.");
+  });
   const voidIt = () => run(async () => {
     if (!reason.trim()) throw new Error("Say why you are voiding it (it is kept in the history).");
     const doc = await api.post<Document>(`/documents/${current!.id}/void`, { reason: reason.trim() });
@@ -84,6 +93,7 @@ export default function ProposalTab({ deal, catalog, data, form, setForm, dirty,
 
   const blockers = current ? sendBlockers({ legalGate: data.legalGate, clientBase: data.clientBase, doc: current }) : [];
   const canSend = !!current && current.status === "draft" && !dirty && !busy && !closed && blockers.length === 0;
+  const deposit = current ? depositLine(current, data.invoice) : null;
   const link = current?.token && data.clientBase ? `${data.clientBase}/p/${current.token}` : null;
 
   return (
@@ -153,6 +163,12 @@ export default function ProposalTab({ deal, catalog, data, form, setForm, dirty,
           <ol className="proposal-steps">
             {proposalSteps(current).map((s) => <li key={s.label} className={s.done ? "done" : ""}>{s.done ? "Done" : "Waiting"}: {s.label}{s.at ? ` (${when(s.at)})` : ""}</li>)}
           </ol>
+          {deposit && (
+            <div className="cp-actions" role="status">
+              <span>{deposit.text}</span>
+              {deposit.retry && <button type="button" className="btn-ghost-sm" disabled={busy} onClick={retryDeposit}>Retry</button>}
+            </div>
+          )}
           {link && (
             <div className="cp-actions">
               <input readOnly aria-label="Client link" className="proposal-link" value={link} onFocus={(e) => e.currentTarget.select()} />

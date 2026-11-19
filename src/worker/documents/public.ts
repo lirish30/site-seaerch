@@ -7,6 +7,7 @@ import { getSettings } from "../db/settings";
 import type { Env } from "../env";
 import { legalGate, parseDocumentsConfig } from "./config";
 import { CONSENT_LABEL, ESIGN_DISCLOSURE, ESIGN_VERSION, authorityLabel } from "./consent";
+import { ensureDepositInvoice, paymentFor, type PublicPayment } from "./deposit";
 import { renderProposalHtml } from "./render";
 import { ensureSignedPdf, sendSignedCopy } from "./signed";
 import { isClientToken } from "./token";
@@ -15,11 +16,7 @@ import { isClientToken } from "./token";
 const USER_AGENT_MAX = 300;
 const IP_MAX = 64;
 
-export type PublicPayment =
-  | { state: "none" }
-  | { state: "open"; amountCents: number; url: string }
-  | { state: "paid"; amountCents: number }
-  | { state: "unavailable" };
+export type { PublicPayment };
 
 /** What the page shows while a proposal is open to sign, or after it is signed (the paper stays readable). */
 export interface OpenProposal {
@@ -97,7 +94,7 @@ async function pageFor(env: Env, doc: Document, now: Date, view: { userAgent: st
   return {
     state: doc.status === "signed" ? "signed" : "open", html, contentSha256: doc.contentSha256 ?? "", expiresAt: doc.expiresAt, clientName,
     disclosure: ESIGN_DISCLOSURE, consentLabel: CONSENT_LABEL, authorityLabel: authorityLabel(clientName),
-    signed: mine ? { name: mine.signerName, at: mine.signedAt } : null, payment: { state: "none" }, contactEmail,
+    signed: mine ? { name: mine.signerName, at: mine.signedAt } : null, payment: await paymentFor(env, doc), contactEmail,
   };
 }
 
@@ -115,9 +112,11 @@ export async function proposalPage(env: Env, token: string, o: { now: Date; user
 const AFTER_SIGN_STEPS: { name: string; run: (env: Env, doc: Document) => Promise<unknown> }[] = [
   { name: "signed pdf", run: async (env, doc) => { const r = await ensureSignedPdf(env, doc.id); if (!r.ok) console.error("proposal: no signed PDF yet", r.status); } },
   { name: "signed copy", run: sendSignedCopy },
+  // Last, and never the only way to get an invoice: the page's pay button asks for it again (`ensureDepositInvoice` is idempotent), as does the owner's retry.
+  { name: "deposit invoice", run: (env, doc) => ensureDepositInvoice(env, doc.id) },
 ];
 
-/** Runs after a signature is stored: the signed PDF, the signed copy by mail (and later the deposit invoice). Never throws: nothing here may undo a signature. */
+/** Runs after a signature is stored: the signed PDF, the signed copy by mail and the deposit invoice. Never throws: nothing here may undo a signature. */
 export async function afterSign(env: Env, doc: Document): Promise<void> {
   for (const step of AFTER_SIGN_STEPS) {
     try { await step.run(env, doc); }

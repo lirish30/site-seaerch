@@ -9,6 +9,22 @@ export async function logActivity(db: D1Database, businessId: string, kind: Acti
   await activityStmt(db, businessId, kind, detail).run();
 }
 
+/**
+ * Logs a line unless the same one (same lead, kind and detail) is already there, in one statement so two callers at once leave one. `since` (an ISO time)
+ * limits "already there" to lines newer than it, which keeps a repeating failure from filling the timeline. True when a line was written.
+ */
+export async function logActivityOnce(db: D1Database, businessId: string, kind: ActivityKind, detail: string, since = ""): Promise<boolean> {
+  const res = await db.prepare(
+    `INSERT INTO activity (id, business_id, kind, detail, created_at)
+     SELECT ?1, ?2, ?3, ?4, ?5 WHERE NOT EXISTS (SELECT 1 FROM activity WHERE business_id = ?2 AND kind = ?3 AND detail = ?4 AND created_at > ?6)`,
+  ).bind(crypto.randomUUID(), businessId, kind, detail, new Date().toISOString(), since).run();
+  return (res.meta.changes ?? 0) === 1;
+}
+
+export async function hasActivity(db: D1Database, businessId: string, kind: ActivityKind, detail: string): Promise<boolean> {
+  return !!(await db.prepare(`SELECT 1 AS x FROM activity WHERE business_id = ? AND kind = ? AND detail = ? LIMIT 1`).bind(businessId, kind, detail).first());
+}
+
 export async function listActivity(db: D1Database, businessId: string, limit = 50): Promise<Activity[]> {
   return (await db.prepare(`SELECT * FROM activity WHERE business_id = ? ORDER BY created_at DESC LIMIT ?`)
     .bind(businessId, limit).all<Activity>()).results;

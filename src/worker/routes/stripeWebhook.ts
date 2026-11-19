@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { onInvoicePaid } from "../documents/deposit";
 import type { Env } from "../env";
 import { handleStripeEvent, verifyStripeSignature, type StripeEvent } from "../stripe/webhook";
 
@@ -46,8 +47,8 @@ stripeWebhookRoutes.post("/", async (c) => {
   try { event = JSON.parse(raw); } catch { return c.body(null, 400); }
   if (!isEvent(event)) return c.body(null, 400);
   try {
-    // Task 10 adds the production onPaid. Another delivery of the same event still in flight: 503, so Stripe retries later.
-    if ((await handleStripeEvent(c.env, event)) === "busy") return c.body(null, 503);
+    // Another delivery of the same event still in flight: 503, so Stripe retries later.
+    if ((await handleStripeEvent(c.env, event, { onPaid: onInvoicePaid })) === "busy") return c.body(null, 503);
   } catch (e) {
     // The event id and the error's message only: never the body, which carries a client's details.
     console.error("stripe webhook: could not apply", event.id, e instanceof Error ? e.message : "unknown error");

@@ -51,6 +51,16 @@ export function signError(status: number): string {
   }
 }
 
+/** What the page says when asking for the payment page fails. Nothing the server sent is shown. */
+export function payError(status: number): string {
+  switch (status) {
+    case 404: return "This link is no longer available.";
+    case 429: return "Too many tries. Wait a minute and try again.";
+    case 0: return "We could not reach the server. Check your connection and try again.";
+    default: return "We couldn't open the payment page. Try again.";
+  }
+}
+
 /** The address when it is an https link, otherwise null: a payment link from the server is never put in an href unchecked. */
 export function safeHttpsUrl(u: string): string | null {
   if (!u.startsWith("https://")) return null;

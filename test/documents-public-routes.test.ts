@@ -97,7 +97,7 @@ describe("POST /p/:token/sign", () => {
     const a = await sent();
     const res = await post(a.token, form(a.hash), { "cf-connecting-ip": "203.0.113.77", "user-agent": "Mozilla/5.0 RouteTest" });
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ state: "signed", signed: { name: "Pat Jones" }, payment: { state: "none" } });
+    expect(await res.json()).toMatchObject({ state: "signed", signed: { name: "Pat Jones" }, payment: { state: "unavailable" } }); // no Stripe key in a test run: no invoice
     const [mine] = (await signaturesFor(env.DB, a.doc.id)).filter((s) => s.role === "client");
     expect(mine).toMatchObject({ signerName: "Pat Jones", signerEmail: "pat@ace.test", ip: "203.0.113.77", userAgent: "Mozilla/5.0 RouteTest", contentSha256: a.hash });
   });
