@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { getBusiness } from "../db/businesses";
 import { logActivity } from "../db/activity";
+import { requestCallPrep } from "../queue/callPrep";
 import { STAGE_ORDER, DealInputError, DealMoveError, createDeal, getDeal, listDeals, moveDeal, openDealFor } from "../db/deals";
 
 const StartBody = z.object({ skipCall: z.boolean().optional() }).strict();
@@ -33,6 +34,15 @@ dealRoutes.post("/:id/move", async (c) => {
     if (e instanceof DealInputError) return c.json({ error: "invalid body", fields: { lostReason: [e.message] } }, 400);
     throw e;
   }
+});
+
+/** Asks Claude for the deal's call prep again. One prep is open at a time: while one is queued or claimed, a second ask returns `created: false` and changes nothing. */
+dealRoutes.post("/:id/prep", async (c) => {
+  const deal = await getDeal(c.env.DB, c.req.param("id"));
+  if (!deal) return c.json({ error: "not found" }, 404);
+  if (deal.stage === "won" || deal.stage === "lost") return c.json({ error: "the deal is closed" }, 409);
+  const { taskId, created } = await requestCallPrep(c.env.DB, deal.id);
+  return c.json({ queued: true, created, taskId });
 });
 
 /** Mounted at /api/leads: starts a deal by hand. A lead with an open deal gets that deal back (200) and nothing is logged. */

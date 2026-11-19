@@ -583,3 +583,20 @@ table.niche tr.leader { background:var(--positive-soft); box-shadow:inset 3px 0 
 
 /* A key/value row whose value is free text (a booking answer): wrap it instead of cutting it short. */
 .kv.wrap .v > span { white-space:normal; overflow:visible; text-overflow:clip; overflow-wrap:anywhere; }
+
+/* Call prep panel (lead sidebar). */
+.callprep .cp-actions { display:flex; gap:8px; flex-wrap:wrap; }
+.callprep h4 { margin:0 0 6px; font-size:12px; line-height:16px; font-weight:500; color:var(--text-3); text-transform:uppercase; letter-spacing:.04em; }
+.callprep section p { margin:0 0 4px; font-size:13px; line-height:19px; overflow-wrap:anywhere; }
+.callprep .cp-list { margin:0; padding-left:20px; display:flex; flex-direction:column; gap:8px; font-size:13px; line-height:19px; overflow-wrap:anywhere; } .callprep ul.cp-list { list-style:disc; }
+.callprep .cp-note { color:var(--signal-strong); }
+/* "Print" puts print-callprep on the body: only this panel prints, as one column, in black on white. */
+@media print {
+  body.print-callprep * { visibility:hidden; }
+  body.print-callprep .callprep, body.print-callprep .callprep * { visibility:visible; }
+  body.print-callprep .callprep { position:absolute; left:0; top:0; width:100%; margin:0; border:0; color:#000; background:#fff; }
+  body.print-callprep .callprep > summary, body.print-callprep .callprep .cp-actions, body.print-callprep .callprep .chev { display:none; }
+  body.print-callprep .callprep .prop-body { display:block; padding:0 24px; columns:1; }
+  body.print-callprep .callprep section { break-inside:avoid; margin-bottom:14px; }
+  body.print-callprep .callprep .cp-note, body.print-callprep .callprep .muted { color:#333; }
+}

@@ -54,6 +54,7 @@ export function describeActivity(a: Pick<Activity, "kind" | "detail">): Activity
     case "video_watch": return { icon: "eye", tone: "positive", title: d ?? "Watched the video audit", detail: null, bubble: false };
     case "booked": return { icon: "calendar", tone: "positive", title: "Call booked", detail: d, bubble: false };
     case "booking_cancelled": return { icon: "calendar", tone: "warning", title: "Call cancelled", detail: d, bubble: false };
+    case "call_prep": return { icon: "sparkles", tone: d?.includes("did not") ? "warning" : "signal", title: d ?? "Call prep", detail: null, bubble: false };
     case "snoozed": return { icon: "clock", tone: "neutral", title: "Snoozed", detail: d, bubble: false };
     default: return { icon: "info", tone: "neutral", title: upperFirst(a.kind.replace(/_/g, " ")), detail: d, bubble: false };
   }

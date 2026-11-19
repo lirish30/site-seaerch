@@ -1,13 +1,13 @@
 import type { PackageSnapshot } from "./packages";
 import type { Option } from "../sales/options";
+import type { CallPrep } from "../queue/callPrep";
 
 export const STAGE_ORDER = ["booked", "discovery_done", "recommendation_booked", "recommended", "proposal_sent", "won", "lost"] as const;
 export type DealStage = (typeof STAGE_ORDER)[number];
 export const isDealStage = (s: unknown): s is DealStage => typeof s === "string" && (STAGE_ORDER as readonly string[]).includes(s);
 
-/** Defined with the discovery notes, call prep and recap work (Tasks 8 and 9); until then these columns stay empty and are read as `null`. */
+/** Defined with the discovery notes and recap work (Task 9); until then these columns stay empty and are read as `null`. */
 type DiscoveryNotes = unknown;
-type CallPrep = unknown;
 type CallRecap = unknown;
 
 export interface Deal {
@@ -35,13 +35,25 @@ function parse<T>(s: string | null, ok: (v: unknown) => boolean): T | null {
   try { const v = JSON.parse(s); return ok(v) ? (v as T) : null; } catch { return null; }
 }
 
+const isStrings = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === "string");
+const isObjects = (v: unknown) => Array.isArray(v) && v.every((x) => x !== null && typeof x === "object");
+/**
+ * Whether a stored call prep has the shape the panel reads. The column holds what Claude's result was when it was stored, so this guards against a
+ * hand-edited or older row (the panel then falls back to the fixed structure and questions) rather than re-validating a result `apply` already checked.
+ */
+const isCallPrep = (v: unknown): boolean => {
+  const o = v as Record<string, unknown> | null;
+  return o !== null && typeof o === "object" && typeof o.opener === "string" && typeof o.generatedAt === "string" && isObjects(o.flags) && isObjects(o.questionNotes)
+    && isObjects(o.pushbacks) && isStrings(o.watchFor);
+};
+
 const toDeal = (r: Row): Deal => ({
   id: r.id, businessId: r.business_id, stage: r.stage, source: r.source, skipCall: !!r.skip_call,
   options: parse<Option[]>(r.options, Array.isArray),
   recommendedOptionId: r.recommended_option_id,
   priceSnapshot: parse<PackageSnapshot[]>(r.price_snapshot, Array.isArray) ?? [],
   valueCents: r.value_cents,
-  notes: parse(r.notes, (v) => v !== null), callPrep: parse(r.call_prep, (v) => v !== null), recap: parse(r.recap, (v) => v !== null),
+  notes: parse(r.notes, (v) => v !== null), callPrep: parse<CallPrep>(r.call_prep, isCallPrep), recap: parse(r.recap, (v) => v !== null),
   deckFrozenAt: r.deck_frozen_at, lostReason: r.lost_reason, createdAt: r.created_at, updatedAt: r.updated_at, closedAt: r.closed_at,
 });
 
@@ -100,6 +112,11 @@ export async function moveDeal(db: D1Database, id: string, to: DealStage, opts: 
     .bind(to, to === "lost" ? reason : deal.lostReason, now, isClosed(to) ? now : null, id, deal.stage).run();
   if ((res.meta.changes ?? 0) !== 1) throw new DealMoveError("the deal changed; reload and try again");
   return (await getDeal(db, id))!;
+}
+
+/** Stores the call prep Claude wrote. It is background work, so the deal's `updated_at` (which orders the board) is left alone. */
+export function saveCallPrepStmt(db: D1Database, id: string, prep: CallPrep): D1PreparedStatement {
+  return db.prepare(`UPDATE deals SET call_prep = ? WHERE id = ?`).bind(JSON.stringify(prep), id);
 }
 
 /** Every deal with its lead's name, newest activity first. */
