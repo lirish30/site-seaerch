@@ -1,8 +1,5 @@
-import { createExecutionContext, env } from "cloudflare:test";
+import { env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import worker from "../src/worker/index";
-import { approve } from "../src/worker/approvals/decide";
-import { createSendApproval } from "../src/worker/approvals/proposalSend";
 import { listActivity } from "../src/worker/db/activity";
 import { getBusiness } from "../src/worker/db/businesses";
 import { getDeal, moveDeal } from "../src/worker/db/deals";
@@ -10,19 +7,13 @@ import { getDocument, signaturesFor } from "../src/worker/db/documents";
 import { getInvoiceForDocument } from "../src/worker/db/invoices";
 import { setStripeFetchForTests } from "../src/worker/documents/deposit";
 import { canonicalJson, sha256Hex } from "../src/worker/documents/hash";
-import { proposalPage, signProposal } from "../src/worker/documents/public";
-import { draftProposal } from "../src/worker/documents/service";
 import { setPdfRendererForTests } from "../src/worker/documents/signed";
-import type { Env } from "../src/worker/env";
 import { setMailDeps } from "../src/worker/mail/deps";
-import { readyToSend, seedProposalDeal, stubPdfRenderer } from "./fixtures/documents";
-import { KEY, SECRET, invoiceEvent, sign, stripeApi } from "./fixtures/stripe";
+import { readyToSend, stubPdfRenderer } from "./fixtures/documents";
+import { invoiceEvent } from "./fixtures/stripe";
+import { deliver, signedDeal } from "./fixtures/close";
 
 // The whole close, through the entry points the app really uses, with the world replaced by fakes: Stripe, the mail transport and the PDF browser.
-const NOW = new Date("2026-12-01T17:00:00.000Z");
-const SIGNED_AT = new Date("2026-12-02T09:00:00.000Z");
-const E = { ...env, STRIPE_SECRET_KEY: KEY, STRIPE_WEBHOOK_SECRET: SECRET } as Env;
-
 let mail: Awaited<ReturnType<typeof readyToSend>>;
 let errors: ReturnType<typeof vi.spyOn>;
 beforeEach(async () => {
@@ -31,34 +22,6 @@ beforeEach(async () => {
   stubPdfRenderer();
 });
 afterEach(() => { errors.mockRestore(); setMailDeps(null); setPdfRendererForTests(null); setStripeFetchForTests(null); });
-
-/** Delivers a signed event to the public webhook the way Stripe does. */
-async function deliver(event: unknown): Promise<number> {
-  const body = JSON.stringify(event);
-  const res = await worker.fetch(new Request("https://x/hooks/stripe", { method: "POST", body, headers: { "stripe-signature": await sign(body) } }), E, createExecutionContext());
-  return res.status;
-}
-
-/** A deal at `recommended`, drafted, approved for sending, opened by the client and signed by them: everything up to the payment. */
-async function signedDeal() {
-  const api = stripeApi();
-  setStripeFetchForTests(api.f);
-  const s = await seedProposalDeal();
-  const draft = await draftProposal(E, s.dealId, { optionId: "b", edits: { scopeNotes: "A new site." } }, NOW);
-  const approval = await createSendApproval(E, draft);
-  expect(await approve(E, approval.id)).toEqual({ ok: true });
-  const sent = (await getDocument(env.DB, draft.id))!;
-  expect(sent.status).toBe("sent");
-  expect((await getDeal(env.DB, s.dealId))!.stage).toBe("proposal_sent");
-
-  const page = await proposalPage(E, sent.token!, { now: SIGNED_AT, userAgent: "TestBrowser/1.0" });
-  expect(page).toMatchObject({ state: "open", contentSha256: sent.contentSha256 });
-  expect((await getDocument(env.DB, draft.id))!.status).toBe("viewed");
-
-  const signed = await signProposal(E, sent.token!, { name: "Pat Jones", consent: true, authority: true, sha256: sent.contentSha256 }, { now: SIGNED_AT, ip: "203.0.113.9", userAgent: "TestBrowser/1.0" });
-  expect(signed.ok).toBe(true);
-  return { ...s, api, approval, docId: draft.id, token: sent.token! };
-}
 
 const kinds = async (businessId: string) => (await listActivity(env.DB, businessId, 200)).map((a) => a.kind);
 
