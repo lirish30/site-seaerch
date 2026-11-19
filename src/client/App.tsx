@@ -24,6 +24,7 @@ import Mailboxes from "./pages/settings/Mailboxes";
 import Campaigns from "./pages/Campaigns";
 import Pipeline from "./pages/Pipeline";
 import DealPage from "./pages/Deal";
+import DeckPage from "./pages/Deck";
 import NicheTest from "./pages/NicheTest";
 import Google from "./pages/settings/Google";
 import Usage from "./pages/settings/Usage";
@@ -58,6 +59,7 @@ export default function App() {
             <Route path="/campaigns" element={<Campaigns />} />
             <Route path="/pipeline" element={<Pipeline />} />
             <Route path="/deals/:id" element={<DealPage />} />
+            <Route path="/deals/:id/deck" element={<DeckPage />} />
             <Route path="/radar" element={<Radar />} />
             <Route path="/niche-test" element={<NicheTest />} />
             <Route path="/settings" element={<SettingsHome />} />

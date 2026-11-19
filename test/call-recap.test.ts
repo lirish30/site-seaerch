@@ -8,7 +8,7 @@ import { getTaskKind } from "../src/worker/queue/registry";
 import { listActivity } from "../src/worker/db/activity";
 import { listAgentActions } from "../src/worker/db/agentActions";
 import { bookingFor, getBooking } from "../src/worker/db/bookings";
-import { getDeal, moveDeal } from "../src/worker/db/deals";
+import { getDeal, moveDeal, stampDeckFrozen } from "../src/worker/db/deals";
 import { listCurrentPackages } from "../src/worker/db/packages";
 import { emptyNotes } from "../src/worker/sales/notes";
 import { optionTotals } from "../src/worker/sales/options";
@@ -187,6 +187,14 @@ describe("call.recap kind", () => {
     expect((await getTask(env.DB, task.id))!.status).toBe("done");
     expect((await listAgentActions(env.DB, { record_type: "deal", record_id: deal.id })).map((a) => a.summary)).toEqual([expect.stringMatching(/call recap ready/)]);
     expect((await listActivity(env.DB, b.id)).filter((a) => a.kind === "call_recap").map((a) => a.detail)).toEqual(["Call recap ready"]);
+  });
+
+  it("apply clears a frozen deck: the deck is a draft again and the next view freezes the new prices", async () => {
+    const { deal } = await seedRecapDeal();
+    await stampDeckFrozen(env.DB, deal.id);
+    expect((await getDeal(env.DB, deal.id))!.deckFrozenAt).not.toBeNull();
+    expect(await completeTask(env, (await queued(deal.id)).id, good())).toEqual({ ok: true });
+    expect((await getDeal(env.DB, deal.id))!.deckFrozenAt).toBeNull();
   });
 
   it("apply never moves the stage", async () => {

@@ -1,0 +1,121 @@
+import { Hono } from "hono";
+import type { Env } from "../env";
+import { latestAudit } from "../db/audits";
+import { lastBookingFor } from "../db/bookings";
+import { getBusiness } from "../db/businesses";
+import { logActivity } from "../db/activity";
+import { freezeDeckOn, getDeal, stampDeckFrozen, type Deal } from "../db/deals";
+import { listCurrentPackages, snapshotOf } from "../db/packages";
+import { getSettings } from "../db/settings";
+import { latestVideoFor } from "../db/videoAudits";
+import { listWorkSamples } from "../db/workSamples";
+import { offerOf } from "../queue/callRecap";
+import { buildDeck, planProblems, problemsOf, scorecardOf, type DeckInput } from "../sales/deck";
+import { renderDeckHtml } from "../sales/deckHtml";
+import { emptyNotes } from "../sales/notes";
+import { htmlToPdf } from "../render/render";
+
+/** A screenshot bigger than this is left out of the deck rather than bloat it (the PDF would carry it too). */
+export const MAX_DECK_IMAGE_BYTES = 400 * 1024;
+
+const base64 = (bytes: Uint8Array): string => {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+};
+
+/** An R2 image as a `data:` URI, or null when it is missing, over the size limit, or cannot be read: a deck never fails over a picture. */
+export async function imageDataUri(bucket: R2Bucket, key: string | null | undefined): Promise<string | null> {
+  if (!key) return null;
+  try {
+    const obj = await bucket.get(key);
+    if (!obj || obj.size > MAX_DECK_IMAGE_BYTES) return null;
+    const type = obj.httpMetadata?.contentType;
+    const mime = type && /^image\/(jpeg|png|webp|gif)$/.test(type) ? type : /\.png$/i.test(key) ? "image/png" : "image/jpeg";
+    return `data:${mime};base64,${base64(new Uint8Array(await obj.arrayBuffer()))}`;
+  } catch {
+    return null;
+  }
+}
+
+/** "<Business> - Recommendation - <YYYY-MM-DD>.pdf" with anything a header or a file system would object to taken out. */
+export function deckFileName(name: string, now: Date): string {
+  const clean = name.replace(/[^\p{L}\p{N} ._-]/gu, " ").replace(/\s+/g, " ").trim().slice(0, 80) || "Website";
+  return `${clean} - Recommendation - ${now.toISOString().slice(0, 10)}.pdf`;
+}
+
+/** Everything the deck is built from, read now. Only a deal with its recap and options has one. */
+async function loadInput(env: Env, deal: Deal, now: Date): Promise<DeckInput | null> {
+  if (!deal.recap || !deal.options) return null;
+  const business = await getBusiness(env.DB, deal.businessId);
+  if (!business) return null;
+  const [audit, video, settings, samples, packages, discovery] = await Promise.all([
+    latestAudit(env.DB, deal.businessId), latestVideoFor(env.DB, deal.businessId), getSettings(env.DB), listWorkSamples(env.DB), listCurrentPackages(env.DB),
+    lastBookingFor(env.DB, deal.businessId, "discovery"),
+  ]);
+  const plan = video?.plan ?? null;
+  const images: Record<string, string | null> = {};
+  for (const p of planProblems(plan).slice(0, 3)) if (!(p.shotId in images)) images[p.shotId] = await imageDataUri(env.RAW, p.previewKey);
+  return {
+    deal, now,
+    business: { name: business.name, ownerName: discovery?.contactName?.trim() || null },
+    notes: deal.notes ?? emptyNotes(), recap: deal.recap,
+    problems: problemsOf(plan, audit?.findings ?? [], images),
+    scorecard: audit ? scorecardOf(audit) : [],
+    // Work samples carry a link and a result line, not a picture.
+    samples: samples.map((s) => ({ name: s.title, blurb: s.result_line, imageDataUri: null })),
+    settings: { your_name: settings.your_name, bio: settings.bio, contact_email: settings.contact_email, role_title: settings.role_title },
+    catalog: packages.map((p) => ({ ...snapshotOf(p), includes: p.includes, summary: p.summary })),
+  };
+}
+
+const NEED_RECAP = { error: "draft the recap first" };
+
+/** The deck's own pieces, as a function of what it may use: tests hand in a fake PDF renderer. */
+export function deckRoutes(deps: { pdf?: (binding: Fetcher, html: string) => Promise<Uint8Array> } = {}) {
+  const pdf = deps.pdf ?? htmlToPdf;
+  const app = new Hono<{ Bindings: Env }>();
+  const headers = {
+    "cache-control": "no-store",
+    // The deck makes no request of its own; the page that frames it is this app's.
+    "content-security-policy": "default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'self'",
+  };
+
+  /** The deck as the deal stands. The first view freezes the prices: `deckFrozenAt` is stamped and the stored snapshot is what the slides show. */
+  async function render(env: Env, id: string, print: boolean, now: Date) {
+    const deal = await getDeal(env.DB, id);
+    if (!deal) return { status: 404 as const, error: "not found" };
+    const input = await loadInput(env, deal, now);
+    if (!input) return { status: 409 as const, error: NEED_RECAP.error };
+    if (!deal.deckFrozenAt) await stampDeckFrozen(env.DB, deal.id, now);
+    const html = renderDeckHtml(buildDeck(input), { title: `${input.business.name} - Recommendation`, print });
+    return { status: 200 as const, html, deal, name: input.business.name };
+  }
+
+  app.get("/:id/deck.html", async (c) => {
+    const r = await render(c.env, c.req.param("id"), false, new Date());
+    return r.status === 200 ? c.html(r.html, 200, headers) : c.json({ error: r.error }, r.status);
+  });
+
+  app.get("/:id/deck.pdf", async (c) => {
+    if (!c.env.BROWSER) return c.json({ error: "PDF export needs the Browser Rendering binding" }, 501);
+    const now = new Date();
+    const r = await render(c.env, c.req.param("id"), true, now);
+    if (r.status !== 200) return c.json({ error: r.error }, r.status);
+    const bytes = await pdf(c.env.BROWSER, r.html);
+    await logActivity(c.env.DB, r.deal.businessId, "export", "Downloaded recommendation deck PDF");
+    return new Response(new Uint8Array(bytes), { headers: { "content-type": "application/pdf", "content-disposition": `attachment; filename="${deckFileName(r.name, now)}"` } });
+  });
+
+  /** Freezes the deck on today's catalog: the options' packages are snapshotted again at their current prices. */
+  app.post("/:id/deck/freeze", async (c) => {
+    const deal = await getDeal(c.env.DB, c.req.param("id"));
+    if (!deal) return c.json({ error: "not found" }, 404);
+    if (!deal.recap || !deal.options) return c.json(NEED_RECAP, 409);
+    if (deal.stage === "won" || deal.stage === "lost") return c.json({ error: "the deal is closed" }, 409);
+    await freezeDeckOn(c.env.DB, deal.id, offerOf(deal.options, await listCurrentPackages(c.env.DB)));
+    return c.json(await getDeal(c.env.DB, deal.id));
+  });
+
+  return app;
+}

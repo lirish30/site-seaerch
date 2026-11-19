@@ -84,3 +84,17 @@ export function callDoneCheck(form: NotesForm, callHeldAt: string | null, saved:
   return { ok: true, save: n.answers.length > 0 || n.goals.length > 0 || n.currentState.length > 0 || n.avgJobValueCents !== null || n.missedJobsPerMonth !== null || n.decisionMakers !== ""
     || n.platform !== (saved?.platform ?? "other"), notes: n };
 }
+
+/**
+ * The packages in the deck whose current catalog price differs from the one the deal froze (price, setup fee or term), one line each. Empty when the deck is
+ * still right, or the deal has no snapshot. The catalog is the current version of each package (`listCurrentPackages`).
+ */
+export function priceDrift(deal: Pick<Deal, "priceSnapshot">, catalog: Package[]): string[] {
+  return deal.priceSnapshot.flatMap((s) => {
+    const now = catalog.find((p) => p.key === s.key);
+    if (!now) return [];
+    const then = formatPrice({ ...s, altPriceCents: null });
+    const current = formatPrice(now);
+    return current === then ? [] : [`${s.name} is now ${current}; the deck has ${then}.`];
+  });
+}

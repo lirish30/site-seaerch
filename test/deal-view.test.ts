@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { callDoneCheck, formOf, isNotesDirty, nextActions, notesOf, optionSummary } from "../src/client/dealView";
+import { callDoneCheck, formOf, isNotesDirty, nextActions, notesOf, optionSummary, priceDrift } from "../src/client/dealView";
 import { dealHref } from "../src/client/pipelineView";
 import type { Package } from "../src/worker/db/packages";
 import type { CallRecap } from "../src/worker/queue/callRecap";
@@ -132,5 +132,28 @@ describe("callDoneCheck", () => {
     const storedWp = { ...emptyNotes(), platform: "wordpress" as const };
     expect(callDoneCheck(formOf(storedWp), null, storedWp)).toMatchObject({ ok: true, save: false }); // same as stored
     expect(callDoneCheck({ ...formOf(storedWp), platform: "other" }, null, storedWp)).toMatchObject({ ok: true, save: true }); // changed from stored
+  });
+});
+
+describe("priceDrift", () => {
+  const snap = (key: Package["key"], name: string, kind: Package["kind"], priceCents: number, o: Partial<Package> = {}) =>
+    ({ key, version: 1, name, kind, priceCents, setupCents: 0, termMonths: null, fromPrice: false, ...o });
+  const pkg = (s: ReturnType<typeof snap>, o: Partial<Package> = {}): Package => ({
+    ...s, id: `pkg_${s.key}_${s.version}`, altPriceCents: null, summary: "", includes: [], wordpressOnly: false, publicOffer: true, active: true, createdAt: "", ...o,
+  });
+  const frozen = [snap("quick_fix", "Quick Fix", "one_time", 79700), snap("care", "Care", "monthly", 12900), snap("local_seo", "Local SEO", "monthly", 79700, { setupCents: 75000, termMonths: 6 })];
+
+  it("priceDrift lists packages whose current price differs from the frozen one", () => {
+    const catalog = [pkg(frozen[0], { priceCents: 89700, version: 2 }), pkg(frozen[1]), pkg(frozen[2], { setupCents: 85000, version: 2 })];
+    expect(priceDrift({ priceSnapshot: frozen }, catalog)).toEqual([
+      "Quick Fix is now $897; the deck has $797.",
+      "Local SEO is now $797/mo + $850 setup, 6-month first term; the deck has $797/mo + $750 setup, 6-month first term.",
+    ]);
+  });
+
+  it("is empty when nothing changed, when there is no snapshot, and for a package no longer in the catalog", () => {
+    expect(priceDrift({ priceSnapshot: frozen }, frozen.map((s) => pkg(s)))).toEqual([]);
+    expect(priceDrift({ priceSnapshot: [] }, frozen.map((s) => pkg(s)))).toEqual([]);
+    expect(priceDrift({ priceSnapshot: frozen }, [])).toEqual([]);
   });
 });

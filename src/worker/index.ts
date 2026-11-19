@@ -32,6 +32,7 @@ import { helperRoutes } from "./routes/helper";
 import { helperAdminRoutes } from "./routes/helperAdmin";
 import { packageRoutes } from "./routes/packages";
 import { dealRoutes, leadDealRoutes } from "./routes/deals";
+import { deckRoutes } from "./routes/deck";
 import { bookingRoutes } from "./routes/bookings";
 import "./approvals/leadNote";
 import "./approvals/emailSend";
@@ -73,6 +74,7 @@ app.route("/api/queue", queueRoutes);
 app.route("/api/helper", helperAdminRoutes);
 app.route("/api/packages", packageRoutes);
 app.route("/api/deals", dealRoutes);
+app.route("/api/deals", deckRoutes()); // /:id/deck.html, /:id/deck.pdf, /:id/deck/freeze
 app.route("/api/leads", leadDealRoutes); // /:id/deal
 app.route("/api/bookings", bookingRoutes);
 // Mounted last at /api: /api/leads/:id/cro-audit(s), /api/cro-items/:id, /api/cro-audits/:id/... (all behind requireAuth).

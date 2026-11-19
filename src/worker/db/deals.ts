@@ -140,16 +140,29 @@ export async function saveNotes(db: D1Database, id: string, notes: DiscoveryNote
 /** The three options with what they were priced from: the packages (at the versions used), the recommended one and its value. */
 export interface DealOffer { options: Option[]; recommendedOptionId: "a" | "b" | "c"; priceSnapshot: PackageSnapshot[]; valueCents: number }
 
-/** Stores the recap Claude wrote with its options, in one statement. Background work, so `updated_at` is left alone (like the call prep). */
+/**
+ * Stores the recap Claude wrote with its options, in one statement. Background work, so `updated_at` is left alone (like the call prep). A new recap
+ * brings a new price snapshot, so the deck is a draft again (`deck_frozen_at` cleared): the next view freezes the new prices.
+ */
 export function saveRecapStmt(db: D1Database, id: string, recap: CallRecap, o: DealOffer): D1PreparedStatement {
-  return db.prepare(`UPDATE deals SET recap = ?, options = ?, recommended_option_id = ?, price_snapshot = ?, value_cents = ? WHERE id = ?`)
+  return db.prepare(`UPDATE deals SET recap = ?, options = ?, recommended_option_id = ?, price_snapshot = ?, value_cents = ?, deck_frozen_at = NULL WHERE id = ?`)
     .bind(JSON.stringify(recap), JSON.stringify(o.options), o.recommendedOptionId, JSON.stringify(o.priceSnapshot), o.valueCents, id);
 }
 
-/** Stores Logan's edit of the three options. His own work, so it counts as a touch. */
+/** Stores Logan's edit of the three options. His own work, so it counts as a touch. It re-snapshots the prices, so the deck is a draft again (`deck_frozen_at` cleared). */
 export async function saveOptions(db: D1Database, id: string, o: DealOffer): Promise<void> {
-  await db.prepare(`UPDATE deals SET options = ?, recommended_option_id = ?, price_snapshot = ?, value_cents = ?, updated_at = ? WHERE id = ?`)
+  await db.prepare(`UPDATE deals SET options = ?, recommended_option_id = ?, price_snapshot = ?, value_cents = ?, deck_frozen_at = NULL, updated_at = ? WHERE id = ?`)
     .bind(JSON.stringify(o.options), o.recommendedOptionId, JSON.stringify(o.priceSnapshot), o.valueCents, new Date().toISOString(), id).run();
+}
+
+/** The first view of the deck freezes it: stamps the time when it is not stamped yet, and leaves the stored prices as the recap or the last option edit snapshotted them. */
+export async function stampDeckFrozen(db: D1Database, id: string, now = new Date()): Promise<void> {
+  await db.prepare(`UPDATE deals SET deck_frozen_at = ? WHERE id = ? AND deck_frozen_at IS NULL`).bind(now.toISOString(), id).run();
+}
+
+/** Freezes the deck on the catalog as it is now: the new price snapshot and the value that goes with it, and the time. Not a touch (`updated_at` is left alone). */
+export async function freezeDeckOn(db: D1Database, id: string, o: Pick<DealOffer, "priceSnapshot" | "valueCents">, now = new Date()): Promise<void> {
+  await db.prepare(`UPDATE deals SET price_snapshot = ?, value_cents = ?, deck_frozen_at = ? WHERE id = ?`).bind(JSON.stringify(o.priceSnapshot), o.valueCents, now.toISOString(), id).run();
 }
 
 /** Every deal with its lead's name, newest activity first. */

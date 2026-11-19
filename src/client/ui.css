@@ -606,6 +606,10 @@ table.niche tr.leader { background:var(--positive-soft); box-shadow:inset 3px 0 
 .deal-actions { display:flex; flex-wrap:wrap; gap:8px; margin:0; padding:0; list-style:none; }
 .deal-actions li { padding:4px 10px; border-radius:999px; background:var(--bg-muted); font-size:13px; line-height:19px; color:var(--text-2); }
 .deal-actions li.done { color:var(--text-3); text-decoration:line-through; }
+.deck-page { display:flex; flex-direction:column; gap:10px; padding:12px 20px 16px; height:calc(100vh - 8px); min-height:520px; }
+.deck-bar { display:flex; flex-wrap:wrap; align-items:center; gap:12px; }
+.deck-spacer { flex:1; }
+.deck-frame { flex:1; min-height:0; width:100%; border:1px solid var(--border, #d9e0e6); border-radius:10px; background:#0f1720; }
 .deal-form, .deal-recap, .deal-editor { display:flex; flex-direction:column; gap:14px; }
 .deal-field { display:flex; flex-direction:column; gap:6px; margin:0; padding:0; border:0; min-width:0; font-size:13px; line-height:19px; }
 .deal-field > span, .deal-field > legend { font-weight:500; color:var(--text-2); padding:0; }

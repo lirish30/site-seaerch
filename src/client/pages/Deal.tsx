@@ -4,7 +4,7 @@ import { api, ApiError } from "../api";
 import { formatSlot } from "../bookingView";
 import CallPrepPanel from "../components/CallPrepPanel";
 import UpcomingBooking from "../components/UpcomingBooking";
-import { callDoneCheck, formOf, isNotesDirty, nextActions, notesOf, optionSummary, type NotesForm } from "../dealView";
+import { callDoneCheck, formOf, isNotesDirty, nextActions, notesOf, optionSummary, priceDrift, type NotesForm } from "../dealView";
 import { dollars, formatPrice, parseDollars, type Package } from "../packagesView";
 import { STAGE_LABEL } from "../pipelineView";
 import type { Deal } from "../../worker/db/deals";
@@ -16,7 +16,7 @@ type Tab = "prep" | "notes" | "recap" | "deck";
 const POLL_MS = 15_000;
 const errorText = (e: unknown, fallback: string) => (e instanceof Error ? e.message : fallback);
 
-/** A deal's page: the prep for the call, the notes from it, the recap with the three options and the follow-up meeting. The deck is the next step. */
+/** A deal's page: the prep for the call, the notes from it, the recap with the three options and the follow-up meeting. The deck tab opens the recommendation deck. */
 export default function DealPage() {
   const { id = "" } = useParams();
   const [deal, setDeal] = useState<Deal | null>(null);
@@ -61,7 +61,7 @@ export default function DealPage() {
   if (!deal || !tab || !form) return <div className="deal"><p className="muted deal-body">Loading…</p></div>;
 
   const actions = nextActions(deal);
-  const TABS: [Tab, string][] = [["prep", "Prep"], ["notes", "Notes"], ["recap", "Recap"], ["deck", "Deck (next step)"]];
+  const TABS: [Tab, string][] = [["prep", "Prep"], ["notes", "Notes"], ["recap", "Recap"], ["deck", "Deck"]];
   return (
     <div className="deal">
       <header className="page-header">
@@ -84,7 +84,7 @@ export default function DealPage() {
         {tab === "prep" && <CallPrepPanel leadId={deal.businessId} findings={lead?.findings ?? []} />}
         {tab === "notes" && <NotesTab deal={deal} form={form} setForm={setForm} audit={lead} dirty={dirty} onChange={setDeal} />}
         {tab === "recap" && <RecapTab deal={deal} catalog={catalog} onChange={setDeal} />}
-        {tab === "deck" && <p className="muted">The deck is built from the notes and the recap in the next step.</p>}
+        {tab === "deck" && <DeckTab deal={deal} catalog={catalog} />}
       </div>
     </div>
   );
@@ -161,6 +161,28 @@ function NotesTab({ deal, form, setForm, audit, dirty, onChange }: {
         {dirty && !saved && <span className="muted small">Unsaved changes.</span>}
         {saved && <span className="muted small" role="status">Saved.</span>}
         {deal.notes?.callHeldAt && <span className="muted small">Call held {new Date(deal.notes.callHeldAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}.</span>}
+      </div>
+    </section>
+  );
+}
+
+function DeckTab({ deal, catalog }: { deal: Deal; catalog: Package[] }) {
+  if (!deal.recap || !deal.options) return <p className="muted">Draft the recap first: the deck is built from the notes and the recap.</p>;
+  const drift = priceDrift(deal, catalog);
+  const frozen = deal.deckFrozenAt ? new Date(deal.deckFrozenAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : null;
+  return (
+    <section className="deal-recap" aria-label="Deck">
+      <p>{frozen ? `Prices frozen ${frozen}. The deck shows those prices even if the catalog changes.` : "Draft: the prices freeze the first time you open the deck or download the PDF."}</p>
+      {drift.length > 0 && (
+        <div className="warn small" role="status">
+          <p>The catalog has changed since the prices were frozen:</p>
+          <ul>{drift.map((d) => <li key={d}>{d}</li>)}</ul>
+          <p>Open the deck and choose “Freeze prices” to use today’s prices.</p>
+        </div>
+      )}
+      <div className="cp-actions">
+        <Link className="btn" to={`/deals/${deal.id}/deck`}>Open the deck</Link>
+        <a className="btn-ghost-sm" href={`/api/deals/${deal.id}/deck.pdf`} download>Download PDF</a>
       </div>
     </section>
   );
