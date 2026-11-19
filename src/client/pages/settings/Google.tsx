@@ -54,7 +54,7 @@ export default function Google() {
                   {connected ? <>
                     <b>Connected as {status.email ?? "your account"}</b>
                     <span>{status.connected_at ? `Since ${sinceLabel(status.connected_at)} · ` : ""}token stored encrypted</span>
-                    <span>{status.calendar ? "Calendar booking is on." : "Reconnect to turn on booking."}</span>
+                    <span>{status.calendar ? "Calendar booking is on." : "Reconnect to turn on booking, and leave both Calendar boxes ticked."}</span>
                   </> : status.configured ? <>
                     <b>Not connected</b>
                     <span>Connect to save reports to Drive.</span>

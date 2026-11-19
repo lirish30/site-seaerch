@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { describe, it, expect, beforeEach } from "vitest";
-import { freeBusy, createEvent, deleteEvent, calendarToken, hasCalendarScope } from "../src/worker/google/calendar";
-import { SCOPES, authUrl } from "../src/worker/google/oauth";
+import { freeBusy, createEvent, deleteEvent, calendarToken } from "../src/worker/google/calendar";
+import { SCOPES, authUrl, hasCalendarScope } from "../src/worker/google/oauth";
 import { encryptSecret } from "../src/worker/google/crypto";
 import { saveGoogleAuth } from "../src/worker/db/google";
 
@@ -28,6 +28,13 @@ describe("freeBusy", () => {
     expect(calls[0].body).toEqual({ timeMin: "2026-12-01T00:00:00.000Z", timeMax: "2026-12-08T00:00:00.000Z", items: [{ id: "primary" }] });
   });
 
+  it("throws when Google answers 200 with calendar errors, rather than reading it as free", async () => {
+    const { f } = fake(() => Response.json({ calendars: { primary: { errors: [{ domain: "global", reason: "notFound" }] } } }));
+    await expect(freeBusy(f, "t", new Date(0), new Date(1))).rejects.toThrow(/notFound/);
+    const { f: g } = fake(() => Response.json({ calendars: { primary: { busy: [], errors: [] } } }));
+    expect(await freeBusy(g, "t", new Date(0), new Date(1))).toEqual([]);
+  });
+
   it("returns no intervals when the calendar has none, and throws when Google refuses", async () => {
     expect(await freeBusy(fake(() => Response.json({ calendars: { primary: {} } })).f, "t", new Date(0), new Date(1))).toEqual([]);
     await expect(freeBusy(fake(() => Response.json({ error: { message: "nope" } }, { status: 403 })).f, "t", new Date(0), new Date(1))).rejects.toThrow(/403/);
@@ -47,6 +54,11 @@ describe("createEvent", () => {
   it("returns a null meetUrl when Google gave no link", async () => {
     const { f } = fake(() => Response.json({ id: "ev2" }));
     expect(await createEvent(f, "tok", EVENT)).toEqual({ eventId: "ev2", meetUrl: null });
+  });
+
+  it("falls back to the video entry point when there is no hangoutLink", async () => {
+    const { f } = fake(() => Response.json({ id: "ev3", conferenceData: { entryPoints: [{ entryPointType: "phone", uri: "tel:+1" }, { entryPointType: "video", uri: "https://meet.google.com/zzz-yyyy-xxx" }] } }));
+    expect(await createEvent(f, "tok", EVENT)).toEqual({ eventId: "ev3", meetUrl: "https://meet.google.com/zzz-yyyy-xxx" });
   });
 
   it("sends the requestId and no attendee updates", async () => {
@@ -124,10 +136,14 @@ describe("scopes", () => {
     expect(u.searchParams.has("include_granted_scopes")).toBe(false);
   });
 
-  it("hasCalendarScope needs at least one of the two calendar scopes", () => {
+  it("hasCalendarScope needs both calendar scopes: either one alone is not enough", () => {
+    const events = "https://www.googleapis.com/auth/calendar.events";
+    const busy = "https://www.googleapis.com/auth/calendar.freebusy";
     expect(hasCalendarScope(null)).toBe(false);
     expect(hasCalendarScope("openid email")).toBe(false);
-    expect(hasCalendarScope("openid https://www.googleapis.com/auth/calendar.events")).toBe(true);
-    expect(hasCalendarScope("https://www.googleapis.com/auth/calendar.freebusy")).toBe(true);
+    expect(hasCalendarScope(`openid ${events}`)).toBe(false);
+    expect(hasCalendarScope(busy)).toBe(false);
+    expect(hasCalendarScope(`openid email ${events} ${busy}`)).toBe(true);
+    expect(hasCalendarScope(`${busy}\n${events}`)).toBe(true);
   });
 });

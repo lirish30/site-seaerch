@@ -1,31 +1,29 @@
 import type { Env } from "../env";
 import { getGoogleAuth } from "../db/google";
-import { googleAccess, GoogleNotConnected } from "../routes/google";
+import { googleAccess, GoogleNotConnected } from "./access";
 import { google } from "./api";
-import type { Fetch } from "./oauth";
+import { hasCalendarScope, type Fetch } from "./oauth";
 
 const BASE = "https://www.googleapis.com/calendar/v3";
-const CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/calendar.freebusy"];
-
 /** A busy stretch, in epoch milliseconds. */
 export interface Interval { start: number; end: number }
 
-/** True when the granted scopes (Google's space-separated string) include either calendar scope. NULL, from before booking existed, is false. */
-export const hasCalendarScope = (scope: string | null | undefined): boolean => !!scope && scope.split(" ").some((s) => CALENDAR_SCOPES.includes(s));
-
 /** Busy times on the primary calendar between `from` and `to`. */
 export async function freeBusy(f: Fetch, token: string, from: Date, to: Date): Promise<Interval[]> {
-  const r = await google<{ calendars?: { primary?: { busy?: { start: string; end: string }[] } } }>(f, token, `${BASE}/freeBusy`, {
+  const r = await google<{ calendars?: { primary?: { busy?: { start: string; end: string }[]; errors?: { reason?: string }[] } } }>(f, token, `${BASE}/freeBusy`, {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ timeMin: from.toISOString(), timeMax: to.toISOString(), items: [{ id: "primary" }] }),
   });
+  // A 200 can still carry per-calendar errors (notFound, internalError) and no busy list. Treating that as "free" would offer slots over real events.
+  const errors = r.calendars?.primary?.errors ?? [];
+  if (errors.length) throw new Error(`Google freeBusy failed: ${errors.map((e) => e.reason ?? "unknown").join(", ")}`);
   return (r.calendars?.primary?.busy ?? []).map((b) => ({ start: Date.parse(b.start), end: Date.parse(b.end) }));
 }
 
 /** Creates the event with a Google Meet link. sendUpdates=none: the app sends the confirmation mail, not Google. A retry with the same requestId does not make a second Meet. */
 export async function createEvent(f: Fetch, token: string,
   e: { summary: string; description: string; start: string; end: string; attendeeEmail: string; requestId: string }): Promise<{ eventId: string; meetUrl: string | null }> {
-  const r = await google<{ id: string; hangoutLink?: string }>(f, token, `${BASE}/calendars/primary/events?conferenceDataVersion=1&sendUpdates=none`, {
+  const r = await google<{ id: string; hangoutLink?: string; conferenceData?: { entryPoints?: { entryPointType?: string; uri?: string }[] } }>(f, token, `${BASE}/calendars/primary/events?conferenceDataVersion=1&sendUpdates=none`, {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({
       summary: e.summary, description: e.description,
@@ -34,7 +32,7 @@ export async function createEvent(f: Fetch, token: string,
       conferenceData: { createRequest: { requestId: e.requestId, conferenceSolutionKey: { type: "hangoutsMeet" } } },
     }),
   });
-  return { eventId: r.id, meetUrl: r.hangoutLink ?? null };
+  return { eventId: r.id, meetUrl: r.hangoutLink ?? r.conferenceData?.entryPoints?.find((p) => p.entryPointType === "video")?.uri ?? null };
 }
 
 /** Deletes the event without notifying the guest. Already gone (404 or 410) counts as success. */

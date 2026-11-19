@@ -29,7 +29,7 @@ import { composeEmail } from "../email/render";
 import { reportFor, reportFileName } from "../report/data";
 import { htmlToPdf } from "../render/render";
 import { renderDoc } from "../report/html";
-import { googleAccess, GoogleNotConnected } from "./google";
+import { googleAccess, GoogleNotConnected } from "../google/access";
 import { ensureFolder, uploadFile } from "../google/api";
 import { setGoogleFolder } from "../db/google";
 
