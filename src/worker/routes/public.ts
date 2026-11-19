@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import { getCookie } from "hono/cookie";
+import { verifySession } from "../auth";
 import type { Env } from "../env";
 import { publicReport } from "../db/reports";
 import { serveMedia } from "../video/media";
@@ -54,7 +56,11 @@ async function readCapped(req: Request, max: number): Promise<string | null> {
 // body and a failed write are all the same to the caller, so it learns nothing about which links exist. Pages that are only fetched never send it.
 publicRoutes.post("/report/:token/events", async (c) => {
   const token = c.req.param("token");
-  if (TOKEN.test(token)) {
+  // The owner testing their own link is not a prospect watching it. The session cookie is same-site, so the beacon carries it (sendBeacon cannot leave it off);
+  // a valid one means "the owner": answered like everything else, recorded as nothing. An invalid or expired cookie is just a stranger.
+  const session = getCookie(c, "session");
+  const owner = !!session && (await verifySession(c.env.SESSION_SECRET, session, Date.now()).catch(() => false));
+  if (TOKEN.test(token) && !owner) {
     try {
       const text = await readCapped(c.req.raw, MAX_EVENT_BYTES);
       const body = text ? ViewEventSchema.safeParse(JSON.parse(text)) : null;

@@ -1,5 +1,7 @@
 import { env, SELF } from "cloudflare:test";
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { signSession } from "../src/worker/auth";
+import { deleteBusiness } from "../src/worker/db/businesses";
 import { setVideoStatus } from "../src/worker/db/videoAudits";
 import { createReport, revokeReports } from "../src/worker/db/reports";
 import { saveSettings } from "../src/worker/db/settings";
@@ -177,6 +179,46 @@ describe("recording watch events", () => {
     expect(await sessions(token)).toHaveLength(1);
     await beacon(token, pad(200 - JSON.stringify(base).length + 1).replace(sid(1), sid(2)));
     expect(await sessions(token)).toHaveLength(1);
+  });
+
+  it("a logged-in owner's views are not recorded", async () => {
+    const { token, b } = await published();
+    const ownerBeacon = (e: Ev) => SELF.fetch(`https://x/api/public/report/${token}/events`, { method: "POST", body: JSON.stringify(e), headers: { cookie, "content-type": "application/json" } });
+    for (const e of [{ type: "open" }, { type: "play" }, { type: "progress", pct: 90 }, { type: "end" }]) {
+      const r = await ownerBeacon({ session: sid(1), ...e });
+      expect(r.status).toBe(204);
+      expect(await r.text()).toBe("");
+    }
+    expect(await sessions(token)).toEqual([]);
+    expect(await watchLog(b.id)).toEqual([]);
+    // The same link seen by a prospect (no cookie) still counts.
+    await send(token, { session: sid(2), type: "play" });
+    expect(await watchLog(b.id)).toEqual(["Watched the video audit"]);
+  });
+
+  it("an invalid or expired session cookie does not block recording", async () => {
+    const { token } = await published();
+    const expired = await signSession(env.SESSION_SECRET, Date.now() - 1000);
+    const forged = `${Date.now() + 86_400_000}.${"A".repeat(43)}`;
+    let i = 0;
+    for (const c of [`session=${expired}`, `session=${forged}`, "session=garbage", "session="]) {
+      await SELF.fetch(`https://x/api/public/report/${token}/events`, { method: "POST", body: JSON.stringify({ session: sid(++i), type: "open" }), headers: { cookie: c, "content-type": "application/json" } });
+    }
+    expect(await sessions(token)).toHaveLength(4);
+  });
+
+  it("deleting a lead removes its view sessions and marks", async () => {
+    const t = await published();
+    const other = await published();
+    for (const x of [t, other]) await send(x.token, { session: sid(1), type: "end" });
+    const count = async (table: string, token: string) => (await env.DB.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE token = ?`).bind(token).first<{ n: number }>())!.n;
+    expect(await count("video_sessions", t.token)).toBe(1);
+    expect(await count("video_view_marks", t.token)).toBe(2);
+    await deleteBusiness(env.DB, t.b.id);
+    expect(await count("video_sessions", t.token)).toBe(0);
+    expect(await count("video_view_marks", t.token)).toBe(0);
+    expect(await count("video_sessions", other.token)).toBe(1);
+    expect(await count("video_view_marks", other.token)).toBe(2);
   });
 
   it("the beacon route answers 204 with no body and is never cached or indexed", async () => {
