@@ -229,3 +229,31 @@ describe("GET /api/bookings (the owner's list)", () => {
     expect((await (await SELF.fetch("https://x/api/bookings", { headers: { cookie } })).json<any[]>()).length).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe("GET /api/today/calls (the Today card)", () => {
+  let cookie = "";
+  beforeAll(async () => {
+    const r = await SELF.fetch("https://x/api/login", { method: "POST", body: JSON.stringify({ password: "test-pass" }), headers: { "content-type": "application/json" } });
+    cookie = r.headers.get("set-cookie")!.split(";")[0];
+  });
+  const at = (ms: number) => new Date(Date.now() + ms).toISOString();
+  const seed = async (name: string, startMs: number) => {
+    const { b } = await seedLead(name);
+    return insertBookingIfFree(env.DB, { businessId: b.id, dealId: null, kind: "discovery", startAt: at(startMs), endAt: at(startMs + 20 * 60_000), contactName: "Pat", contactEmail: "pat@acme.test", contactPhone: "208-555-0100",
+      answers: { topic: "private", budgetId: "797-1999", timeline: "This month", decisionMaker: "me" }, source: "visitor" });
+  };
+
+  it("needs a session", async () => {
+    expect((await SELF.fetch("https://x/api/today/calls")).status).toBe(401);
+  });
+
+  it("lists the next 7 days only, soonest first, without what the guest answered", async () => {
+    const soon = (await seed("Soon Co", 2 * 3_600_000))!, far = await seed("Far Co", 10 * 86_400_000);
+    expect(far).not.toBeNull();
+    const res = await SELF.fetch("https://x/api/today/calls", { headers: { cookie } });
+    expect(res.status).toBe(200);
+    const { calls } = await res.json<{ calls: Record<string, unknown>[] }>();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual({ id: soon.id, businessId: soon.businessId, businessName: "Soon Co", contactName: "Pat", startAt: soon.startAt, meetUrl: null });
+  });
+});

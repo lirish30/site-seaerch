@@ -95,7 +95,7 @@ export async function liveReportTarget(db: D1Database, token: string, now = new 
 }
 
 /** The cold-link base without a trailing slash, or "" when it is missing or not https. */
-const httpsBase = (raw: string | undefined) => { const v = raw?.trim().replace(/\/+$/, "") ?? ""; return /^https:\/\/[^/\s]+/.test(v) ? v : ""; };
+export const httpsBase = (raw: string | undefined) => { const v = raw?.trim().replace(/\/+$/, "") ?? ""; return /^https:\/\/[^/\s]+/.test(v) ? v : ""; };
 
 /**
  * The lead a report link belongs to, whether or not the link is still live (expired or revoked). Only for the guest's cancel link, which must keep

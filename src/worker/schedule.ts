@@ -8,10 +8,13 @@ import { EXPIRE_AFTER_DAYS, expireOldTasks } from "./queue/db";
 import { healCroHandovers } from "./queue/cro";
 import "./helper/kinds"; // expiring a helper job runs its kind's hook, so every kind must be registered
 import { expireOldHelperJobs } from "./helper/jobs";
+import { sendDueReminders } from "./booking/reminders";
 
 /** The cron strings in wrangler.jsonc. The daily one MUST stay first there: test/radar-info.test.ts reads the first entry. */
 export const DAILY_CRON = "17 13 * * *";
 export const MAIL_SYNC_CRON = "*/15 * * * *";
+/** Every five minutes: only the booking reminders, which need a finer tick than the mail sync gives (a "10 minutes before" mail cannot land on a 15-minute one). */
+export const REMINDER_CRON = "*/5 * * * *";
 
 /**
  * One part of a cron run, logged and contained: its failure is never allowed to stop another part or fail the cron. A `quiet` part that
@@ -27,13 +30,18 @@ async function part(name: string, run: () => Promise<unknown>, quiet = false): P
 }
 
 /**
- * Routes one Cron Trigger. The 15-minute cron only syncs mail. Any other cron (the daily one) starts due radars, scans for due sequence steps, gives
+ * Routes one Cron Trigger. The 15-minute cron only syncs mail and the 5-minute one only sends due booking reminders. Any other cron (the daily one) starts due radars, scans for due sequence steps, gives
  * up on Claude tasks and Mac helper jobs nobody picked up in 14 days and re-queues CRO roadmaps that were never handed over. This is unattended work: it can only start
  * searches, create approvals and close queue tasks, never send, and it never throws.
  */
 export async function runScheduled(env: Env, cron: string, now: Date): Promise<void> {
   if (cron === MAIL_SYNC_CRON) {
     await part("mail sync", () => syncAllMailboxes(env), true);
+    return;
+  }
+  if (cron === REMINDER_CRON) {
+    // Quiet unless a reminder went out or was held back: it runs 288 times a day.
+    await part("booking reminders", async () => { const r = await sendDueReminders(env, now); return r.sent || r.skipped ? r : undefined; }, true);
     return;
   }
   await part("radar run", () => runDueRadars({ db: env.DB, now: () => now, startWorkflow: searchWorkflowStarter(env) }));

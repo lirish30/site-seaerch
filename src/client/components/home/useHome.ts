@@ -8,6 +8,7 @@ import type { LeadRow, TodayItem } from "../../types";
 import { APPROVE_BATCH, canBulkApprove, type ApprovalItem, type SpendLevel } from "../../approvalsView";
 import type { QueueStatus } from "../../queueView";
 import type { HelperStatus } from "../../helperView";
+import type { CallRow } from "../../callsView";
 
 /** One piece of the page: its data once loaded, or why it could not be. The pieces load and fail independently. */
 export interface Part<T> { data: T | null; error: string }
@@ -37,6 +38,7 @@ export function useHome() {
   const [queue, setQueue] = useState<Part<QueueStatus>>(empty);
   const [helper, setHelper] = useState<Part<HelperStatus>>(empty);
   const [watched, setWatched] = useState<Part<WatchedLead[]>>(empty);
+  const [calls, setCalls] = useState<Part<CallRow[]>>(empty);
   const [approvalErrs, setApprovalErrs] = useState<Readonly<Record<string, string>>>({});
   const [pending, setPending] = useState(0);
   const [reloads, setReloads] = useState(0);
@@ -57,7 +59,7 @@ export function useHome() {
     };
     // A reload keeps what is on screen until the new data arrives; only the error is cleared.
     const keep = <T,>(set: (f: (p: Part<T>) => Part<T>) => void) => set((p) => ({ ...p, error: "" }));
-    keep(setItems); keep(setSummary); keep(setLeads); keep(setMoney); keep(setApprovals); keep(setSpend); keep(setQueue); keep(setHelper); keep(setWatched);
+    keep(setItems); keep(setSummary); keep(setLeads); keep(setMoney); keep(setApprovals); keep(setSpend); keep(setQueue); keep(setHelper); keep(setWatched); keep(setCalls);
     run(() => api.get<{ items: TodayItem[] }>("/today"), (r) => setItems({ data: r.items, error: "" }), (m) => setItems((p) => ({ ...p, error: m })), "Couldn't load your list.");
     run(() => api.get<TodaySummary>("/today/summary"), (r) => setSummary({ data: r, error: "" }), (m) => setSummary((p) => ({ ...p, error: m })), "Couldn't load your numbers.");
     run(() => api.get<LeadRow[]>("/leads?limit=500"), (rows) => setLeads({
@@ -73,6 +75,8 @@ export function useHome() {
     run(() => api.get<HelperStatus>("/helper/status"), (r) => setHelper({ data: r, error: "" }), (m) => setHelper((p) => ({ ...p, error: m })), "Couldn't load the Mac helper's state.");
     run(() => api.get<{ watched: WatchedLead[] }>("/video-audits/watched"), (r) => setWatched({ data: r.watched, error: "" }),
       (m) => setWatched((p) => ({ ...p, error: m })), "Couldn't load who watched your videos.");
+    run(() => api.get<{ calls: CallRow[] }>("/today/calls"), (r) => setCalls({ data: r.calls, error: "" }),
+      (m) => setCalls((p) => ({ ...p, error: m })), "Couldn't load your booked calls.");
     return () => { cancelled = true; };
   }, [reloads]);
 
@@ -155,5 +159,5 @@ export function useHome() {
     ids.forEach((id) => mark(id, false));
   }, []);
 
-  return { approvals, spend, queue, helper, watched, approvalErrs, approveOne, rejectOne, approveAll, items, summary, leads, money, loading: pending > 0, reload, act, fullScan, errs, busy, scans };
+  return { approvals, spend, queue, helper, watched, calls, approvalErrs, approveOne, rejectOne, approveAll, items, summary, leads, money, loading: pending > 0, reload, act, fullScan, errs, busy, scans };
 }

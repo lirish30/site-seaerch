@@ -12,6 +12,7 @@ import { getSettings } from "../db/settings";
 import { calendarToken, createEvent, deleteEvent, freeBusy } from "../google/calendar";
 import { stopOutreach } from "../sequence/stop";
 import { queueCallPrep } from "./callPrep";
+import { sendConfirmation } from "./mail";
 import { parseConfig, DURATION_MIN, type BookingConfig } from "./config";
 import { getBookingFetch } from "./deps";
 import { computeSlots, isOffered } from "./slots";
@@ -174,7 +175,8 @@ export async function createVisitorBooking(env: Env, token: string, form: Bookin
   // The deal exists and is linked: ask for the call prep (Task 8 fills this in). A failure here is not the guest's problem.
   try { await queueCallPrep(env, done.dealId!); }
   catch (e) { console.error("booking: could not queue the call prep", e instanceof Error ? e.message : "unknown error"); }
-  // TASK 7: send the booking confirmation here (a fixed template from the main mailbox to done.contactEmail, with the Meet link and the cancel link). Nothing is sent yet.
+  // The confirmation (a fixed template from the main mailbox). It never throws: if it cannot go out the booking stands and the lead's timeline says so.
+  await sendConfirmation(env, done, token);
   return { ok: true, booking: done };
 }
 

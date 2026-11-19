@@ -14,6 +14,8 @@ import { revokeReports } from "../src/worker/db/reports";
 import { saveSettings } from "../src/worker/db/settings";
 import { suppressLead } from "../src/worker/db/suppression";
 import { setMailDeps } from "../src/worker/mail/deps";
+import { saveMailbox } from "../src/worker/db/mailboxes";
+import type { OutboundMessage } from "../src/worker/mail/types";
 import { stopOutreach } from "../src/worker/sequence/stop";
 import "../src/worker/approvals/emailSend";
 import { NOW, SLOT, SLOT_2, WEEKDAY_WINDOWS, bookingOn, connectGoogle, fakeGoogle, form, googleEnv, resetBookingTables, seedLead, setBookingConfig } from "./fixtures/booking";
@@ -83,8 +85,9 @@ describe("createVisitorBooking", () => {
     expect((await listActivity(env.DB, b.id)).filter((a) => a.kind === "booked")).toHaveLength(1);
     expect(queueCallPrep).toHaveBeenCalledTimes(1);
     expect(queueCallPrep).toHaveBeenCalledWith(e, deal.id);
-    // The confirmation email is Task 7's job: nothing is sent here.
+    // The main mailbox is not set up in this test, so no confirmation goes out and the timeline says why; the booking stands.
     expect(smtp).toBe(0);
+    expect((await listActivity(env.DB, b.id)).filter((a) => a.detail?.startsWith("confirmation not sent:")).map((a) => a.detail)).toEqual(["confirmation not sent: mailbox is not configured"]);
   });
 
   it("slot busy on the calendar since page load is refused", async () => {
@@ -425,5 +428,50 @@ describe("BookingFormSchema", () => {
     expect(bad({ decisionMaker: "nobody" })).toBe(false);
     expect(bad({ start: undefined })).toBe(false);
     expect(bad({ extra: "field" })).toBe(false);
+  });
+});
+
+describe("the confirmation", () => {
+  const MAIN = { enabled: 1 as const, smtp_host: "smtp.main.test", smtp_port: 465, imap_host: "imap.main.test", imap_port: 993, username: "logan@main.test", from_email: "logan@main.test", from_name: "Logan" };
+  let out: OutboundMessage[] = [];
+  let fail: Error | null = null;
+  beforeEach(async () => {
+    out = []; fail = null;
+    setMailDeps({ smtp: async (_mb, _pw, m) => { if (fail) throw fail; out.push(m); }, now: () => NOW });
+    await env.DB.prepare(`DELETE FROM messages`).run();
+    await saveMailbox(env.DB, "main", MAIN);
+  });
+  afterEach(() => saveMailbox(env.DB, "main", { enabled: 0, smtp_host: "", from_email: "" }));
+  const notSent = async (businessId: string) => (await listActivity(env.DB, businessId)).filter((a) => a.detail?.startsWith("confirmation not sent:")).map((a) => a.detail);
+
+  it("goes from the main mailbox to the typed address with the Meet link and a cancel link on the outreach host", async () => {
+    const { b, token } = await seedLead();
+    const r = await book(token);
+    if (!r.ok) throw new Error("booking failed");
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ to: "pat@acme.test", from: { email: "logan@main.test" } });
+    expect(out[0].subject).toBe("Your call is booked for Tue, Nov 24 at 10:00 AM PST");
+    expect(out[0].text).toContain("https://meet.google.com/abc-defg-h1");
+    expect(out[0].text).toContain(`https://go.hellositeline.test/r/${token}/book?cancel=${r.booking.cancelToken}`);
+    expect(out[0].text).not.toContain("1 Main St"); // no cold-mail footer
+    expect(await notSent(b.id)).toEqual([]);
+  });
+
+  it("a mail server failure never undoes the booking", async () => {
+    const { b, token } = await seedLead();
+    fail = new Error("smtp down");
+    const r = await book(token);
+    expect(r.ok).toBe(true);
+    expect(await rows()).toHaveLength(1);
+    expect(google.deleted()).toHaveLength(0);
+    expect(await notSent(b.id)).toEqual(["confirmation not sent: smtp down"]);
+  });
+
+  it("a main mailbox that is switched off sends nothing and says so", async () => {
+    await saveMailbox(env.DB, "main", { enabled: 0 });
+    const { b, token } = await seedLead();
+    expect((await book(token)).ok).toBe(true);
+    expect(out).toHaveLength(0);
+    expect(await notSent(b.id)).toEqual(["confirmation not sent: mailbox main is not enabled"]);
   });
 });

@@ -5,7 +5,9 @@ import { createSearch } from "../src/worker/db/searches";
 import { upsertBusiness } from "../src/worker/db/businesses";
 import { createCampaign } from "../src/worker/db/campaigns";
 import { getRadar } from "../src/worker/db/radar";
-import { runScheduled } from "../src/worker/schedule";
+import { REMINDER_CRON, runScheduled } from "../src/worker/schedule";
+import { insertBookingIfFree } from "../src/worker/db/bookings";
+import { seedLead } from "./fixtures/booking";
 import { setMailDeps } from "../src/worker/mail/deps";
 import { saveMailbox } from "../src/worker/db/mailboxes";
 import type { ImapFetch } from "../src/worker/mail/types";
@@ -78,6 +80,30 @@ describe("runScheduled", () => {
     expect(created).toHaveLength(0);
     expect((await getRadar(env.DB, "r"))!.last_search_id).toBeNull();
     expect(await enrollmentStep()).toBe(2); // the sequence scan is daily too
+  });
+
+  it("REMINDER_CRON runs only the reminder sweep", async () => {
+    expect(REMINDER_CRON).toBe("*/5 * * * *");
+    await seedRadar(); await seedDueCall();
+    const start = new Date(NOW.getTime() + 60 * 60_000);
+    const { b } = await seedLead("Reminder Co");
+    await insertBookingIfFree(env.DB, { businessId: b.id, dealId: null, kind: "discovery", startAt: start.toISOString(), endAt: new Date(start.getTime() + 20 * 60_000).toISOString(),
+      contactName: "Pat", contactEmail: "pat@acme.test", contactPhone: null, answers: null, source: "visitor" });
+    await saveMailbox(env.DB, "main", { enabled: 1, smtp_host: "smtp.main.test", smtp_port: 465, imap_host: "imap.main.test", imap_port: 993, username: "l@main.test", from_email: "l@main.test", from_name: "L" });
+    const out: string[] = [];
+    let synced = 0;
+    setMailDeps({ smtp: async (_mb, _pw, m) => { out.push(m.subject); }, imap: async () => { synced++; throw new Error("the mail sync must not run"); } });
+    try {
+      await runScheduled(env, REMINDER_CRON, NOW);
+      expect(out).toEqual(["Your call is in 1 hour"]);
+      expect(created).toHaveLength(0); // no radar run
+      expect((await getRadar(env.DB, "r"))!.last_search_id).toBeNull();
+      expect(await enrollmentStep()).toBe(2); // no sequence scan
+      expect(synced).toBe(0); // no mail sync
+    } finally {
+      await env.DB.prepare(`DELETE FROM bookings`).run();
+      await saveMailbox(env.DB, "main", { enabled: 0, smtp_host: "", from_email: "" });
+    }
   });
 
   it("an unknown cron string is treated as the daily one", async () => {

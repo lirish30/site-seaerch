@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../env";
 import { getBusiness } from "../db/businesses";
+import { upcomingBookings } from "../db/bookings";
 import { logActivity } from "../db/activity";
 import { buildToday, isTodayKind, snoozeDetail } from "../today";
 import { buildSummary } from "../todaySummary";
@@ -11,6 +12,13 @@ const Snooze = z.object({ days: z.number({ error: "days must be a whole number f
 export const todayRoutes = new Hono<{ Bindings: Env }>();
 
 todayRoutes.get("/", async (c) => c.json({ items: await buildToday(c.env.DB, new Date()) }));
+
+/** The confirmed calls in the next 7 days, for the Calls card: who, when and the Meet link. Nothing the guest answered on the form leaves here. */
+todayRoutes.get("/calls", async (c) => {
+  const now = new Date();
+  const all = await upcomingBookings(c.env.DB, now, new Date(now.getTime() + 7 * 86_400_000));
+  return c.json({ calls: all.map((b) => ({ id: b.id, businessId: b.businessId, businessName: b.businessName, contactName: b.contactName, startAt: b.startAt, meetUrl: b.meetUrl })) });
+});
 
 /** The Home KPI cards, pipeline counts and recent activity. */
 todayRoutes.get("/summary", async (c) => c.json(await buildSummary(c.env.DB, new Date())));
