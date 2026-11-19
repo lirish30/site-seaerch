@@ -1,4 +1,4 @@
-import { createPacer, REQUEST_GAP_MS, writeOutcome, type Outcome, type PublicOnboarding, type WriteKind } from "../../onboardView";
+import { createPacer, REQUEST_GAP_MS, unloadPlan, writeOutcome, type Outcome, type PublicOnboarding, type UnloadPlan, type WriteKind } from "../../onboardView";
 
 /** What a file the server took looks like. */
 export interface SavedFile { id: string; fileName: string; sizeBytes: number }
@@ -19,6 +19,12 @@ export interface OnboardApi {
   saveText(itemId: string, text: string): Promise<Outcome>;
   upload(itemId: string, file: File): Promise<{ outcome: Outcome; file?: SavedFile }>;
   removeFile(fileId: string): Promise<Outcome>;
+  /** What to do with the answers waiting when the tab goes away (see `unloadPlan`). */
+  answersUnload(pending: Record<string, string>, inFlight: Record<string, string> | null): UnloadPlan;
+  /** The same for one item's text. */
+  textUnload(itemId: string, pending: string, inFlight: string | null): UnloadPlan;
+  /** Sends a `keepalive` plan at once, outside the pacer: a closing or frozen tab would never get through the pacer's wait. */
+  sendNow(plan: Extract<UnloadPlan, { action: "keepalive" }>, kind: "answers" | "text"): Promise<Outcome>;
 }
 
 type Body = { error?: unknown; fields?: unknown; file?: unknown } | null;
@@ -69,5 +75,8 @@ export function makeApi(token: string): OnboardApi {
       return { outcome, file: outcome.kind === "ok" ? savedFile(body?.file) : undefined };
     }),
     removeFile: (fileId) => paced(async () => (await send(`${base}/files/${encodeURIComponent(fileId)}`, { method: "DELETE" }, "delete")).outcome),
+    answersUnload: (pending, inFlight) => unloadPlan(pending, inFlight, `${base}/answers`, (a) => ({ answers: a })),
+    textUnload: (itemId, pending, inFlight) => unloadPlan(pending, inFlight, `${base}/items/${encodeURIComponent(itemId)}/text`, (text) => ({ text })),
+    sendNow: async (plan, kind) => (await send(plan.url, { method: plan.method, headers: JSON_HEADERS, body: plan.body, keepalive: true }, kind)).outcome,
   };
 }

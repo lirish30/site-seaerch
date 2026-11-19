@@ -227,3 +227,9 @@
   .ob .rp-card, .ob-item { box-shadow:none; break-inside:avoid; }
   .ob textarea, .ob input[type=text] { border:0; padding:0; resize:none; }
 }
+.ob-confirm { display:flex; flex-direction:column; gap:8px; padding:16px; border:1px solid var(--border-strong); border-radius:12px; background:var(--bg-muted); }
+.ob-confirm:focus-visible { outline:2px solid var(--border-focus); outline-offset:2px; }
+.ob-confirm p { margin:0; font:400 14px/21px var(--font); color:var(--text-2); }
+.ob-confirm .ob-confirm-title { font:600 16px/24px var(--font); color:var(--text); }
+.ob-confirm-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:6px; }
+.ob-confirm-actions .btn { flex:1 1 140px; height:44px; }

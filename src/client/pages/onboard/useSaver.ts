@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AUTOSAVE_MS, type Outcome } from "../../onboardView";
+import { AUTOSAVE_MS, type Outcome, type UnloadPlan } from "../../onboardView";
 
 export interface SaveState {
   phase: "idle" | "dirty" | "saving" | "saved" | "error";
@@ -9,10 +9,17 @@ export interface SaveState {
 }
 
 export interface SaverOptions<T> {
-  /** Sends a value and says how it went. Never throws. */
+  /** Sends a value (through the page's pacer) and says how it went. Never throws. */
   send: (value: T) => Promise<Outcome>;
   /** Joins a value waiting to go with a newer one (answers add up; text is replaced). Default: the newer one wins. */
   merge?: (older: T, newer: T) => T;
+  /**
+   * For the moment the tab is hidden or the box goes away: `plan` says what to do with the waiting value (given what is already in flight) and `fire` sends a
+   * keepalive plan at once. Without it, the waiting value goes the normal, paced way.
+   */
+  unload?: { plan: (pending: T, inFlight: T | null) => UnloadPlan; fire: (plan: Extract<UnloadPlan, { action: "keepalive" }>) => Promise<Outcome> };
+  /** True while a refused value is still outstanding: the box is then never reported as fully saved. */
+  blocked?: () => boolean;
   onSaved?: () => void;
   onLocked?: () => void;
   onGone?: () => void;
@@ -22,21 +29,52 @@ const IDLE: SaveState = { phase: "idle", message: "", retryable: false };
 
 /**
  * Debounced autosave for one box. `schedule` keeps the latest value and sends it once typing has paused for AUTOSAVE_MS, never once per keystroke; `flush`
- * sends right away (on blur, on submit, when the tab is hidden or the box goes away) and resolves true when nothing is left unsaved. Sends never overlap, a value
- * that could not be sent for a passing reason goes back in the queue and is tried again after a wait that grows, and a refusal is shown and not retried.
+ * sends right away (on blur, on submit) and resolves true when nothing is left unsaved. Sends never overlap, a value that could not be sent for a passing
+ * reason goes back in the queue and is tried again after a wait that grows, and a refusal is shown and not retried. When the tab is hidden (or the page is
+ * left, or the box goes away) the waiting value is sent once, immediately, as a keepalive request that skips the pacer, unless it is too big or already on its way.
  */
 export function useSaver<T>(opts: SaverOptions<T>): { state: SaveState; schedule: (v: T) => void; flush: () => Promise<boolean> } {
   const o = useRef(opts);
   o.current = opts;
   const [state, setState] = useState<SaveState>(IDLE);
   const pending = useRef<{ value: T } | null>(null);
+  const inFlight = useRef<{ value: T } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const retryTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const line = useRef<Promise<boolean>>(Promise.resolve(true));
   const clean = useRef(true);
   const failures = useRef(0);
   const alive = useRef(true);
+  const flushRef = useRef<() => Promise<boolean>>(() => Promise.resolve(true));
   const show = useCallback((s: SaveState) => { if (alive.current) setState(s); }, []);
+
+  /** What to do once a send has been answered. Returns whether the value is saved. */
+  const settle = useCallback((outcome: Outcome, value: T): boolean => {
+    const waiting = pending.current as { value: T } | null; // typed during the send
+    if (outcome.kind === "ok") {
+      failures.current = 0;
+      clean.current = !o.current.blocked?.();
+      show(waiting ? { phase: "dirty", message: "", retryable: false } : { phase: "saved", message: "Saved", retryable: false });
+      o.current.onSaved?.();
+      return clean.current;
+    }
+    clean.current = false;
+    if (outcome.kind === "retry") {
+      // Put it back (joined with anything typed meanwhile) and try again later.
+      pending.current = { value: waiting && o.current.merge ? o.current.merge(value, waiting.value) : waiting ? waiting.value : value };
+      failures.current += 1;
+      show({ phase: "error", message: outcome.message, retryable: true });
+      if (alive.current) retryTimer.current = setTimeout(() => void flushRef.current(), outcome.afterMs * Math.min(failures.current, 4));
+    } else if (outcome.kind === "locked") {
+      show({ phase: "error", message: outcome.message, retryable: false });
+      o.current.onLocked?.();
+    } else if (outcome.kind === "gone") {
+      o.current.onGone?.();
+    } else {
+      show({ phase: "error", message: outcome.message, retryable: false });
+    }
+    return false;
+  }, [show]);
 
   const flush = useCallback((): Promise<boolean> => {
     clearTimeout(timer.current);
@@ -45,35 +83,15 @@ export function useSaver<T>(opts: SaverOptions<T>): { state: SaveState; schedule
       const job = pending.current;
       if (!job) return clean.current;
       pending.current = null;
+      inFlight.current = job;
       show({ phase: "saving", message: "Saving...", retryable: false });
       const outcome = await o.current.send(job.value);
-      if (outcome.kind === "ok") {
-        failures.current = 0;
-        clean.current = true;
-        show((pending.current as { value: T } | null) ? { phase: "dirty", message: "", retryable: false } : { phase: "saved", message: "Saved", retryable: false });
-        o.current.onSaved?.();
-        return true;
-      }
-      clean.current = false;
-      if (outcome.kind === "retry") {
-        // Put it back (joined with anything typed meanwhile) and try again later.
-        const newer = pending.current as { value: T } | null; // typed during the send
-        pending.current = { value: newer && o.current.merge ? o.current.merge(job.value, newer.value) : newer ? newer.value : job.value };
-        failures.current += 1;
-        show({ phase: "error", message: outcome.message, retryable: true });
-        if (alive.current) retryTimer.current = setTimeout(() => void flush(), outcome.afterMs * Math.min(failures.current, 4));
-      } else if (outcome.kind === "locked") {
-        show({ phase: "error", message: outcome.message, retryable: false });
-        o.current.onLocked?.();
-      } else if (outcome.kind === "gone") {
-        o.current.onGone?.();
-      } else {
-        show({ phase: "error", message: outcome.message, retryable: false });
-      }
-      return false;
+      inFlight.current = null;
+      return settle(outcome, job.value);
     });
     return line.current;
-  }, [show]);
+  }, [show, settle]);
+  flushRef.current = flush;
 
   const schedule = useCallback((value: T) => {
     const waiting = pending.current;
@@ -85,21 +103,40 @@ export function useSaver<T>(opts: SaverOptions<T>): { state: SaveState; schedule
     timer.current = setTimeout(() => void flush(), AUTOSAVE_MS);
   }, [flush, show]);
 
-  // Leaving the tab or the page: send what is waiting rather than lose it.
+  /** The tab was hidden or the box is going away: send what is waiting once, now. */
+  const sendOnLeave = useCallback(() => {
+    const job = pending.current;
+    if (!job) return; // nothing waiting: nothing to send (a second event right after the first lands here)
+    const unload = o.current.unload;
+    const plan: UnloadPlan = unload ? unload.plan(job.value, inFlight.current?.value ?? null) : { action: "paced" };
+    if (plan.action === "paced") { void flush(); return; }
+    clearTimeout(timer.current);
+    clearTimeout(retryTimer.current);
+    pending.current = null;
+    if (plan.action === "none") return; // the same thing is already on its way, and that send settles it
+    const sent = job;
+    inFlight.current = sent;
+    void unload!.fire(plan).then((outcome) => {
+      if (inFlight.current === sent) inFlight.current = null;
+      settle(outcome, sent.value);
+    });
+  }, [flush, settle]);
+
   useEffect(() => {
     alive.current = true;
-    const hide = () => { if (document.visibilityState === "hidden" && pending.current) void flush(); };
+    const hide = () => { if (document.visibilityState === "hidden") sendOnLeave(); };
+    const leave = () => sendOnLeave();
     document.addEventListener("visibilitychange", hide);
-    window.addEventListener("pagehide", hide);
+    window.addEventListener("pagehide", leave);
     return () => {
       document.removeEventListener("visibilitychange", hide);
-      window.removeEventListener("pagehide", hide);
-      alive.current = false;
-      clearTimeout(retryTimer.current);
-      if (pending.current) void flush();
+      window.removeEventListener("pagehide", leave);
       clearTimeout(timer.current);
+      clearTimeout(retryTimer.current);
+      sendOnLeave(); // before `alive` goes false so a failed send still queues its retry state
+      alive.current = false;
     };
-  }, [flush]);
+  }, [sendOnLeave]);
 
   return { state, schedule, flush };
 }

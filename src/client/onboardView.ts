@@ -175,3 +175,25 @@ export function createPacer(gapMs: number, clock: Clock = realClock): <T>(job: (
     return run;
   };
 }
+
+// ---------- Sending what is waiting when the tab goes away ----------
+
+/** The most a `keepalive` request may carry is 64 KB (all of them in flight together); stay under it with room for headers. */
+export const KEEPALIVE_LIMIT_BYTES = 60 * 1024;
+
+/**
+ * What to do with the value that is waiting when the tab is hidden or closed.
+ * - `none`: nothing to send (nothing waiting, or the same thing is already on its way).
+ * - `keepalive`: send this one request now, outside the pacer (a closed or frozen tab would never reach a pacer's wait), with `keepalive: true`.
+ * - `paced`: the request is too big for keepalive, so it goes the normal way.
+ */
+export type UnloadPlan = { action: "none" } | { action: "keepalive"; url: string; method: "PUT"; body: string } | { action: "paced" };
+
+/** Decides the plan for one box. `pending` is what is waiting (null for nothing), `inFlight` is what has already been sent and not answered. */
+export function unloadPlan<T>(pending: T | null, inFlight: T | null, url: string, bodyOf: (v: T) => unknown, limit: number = KEEPALIVE_LIMIT_BYTES): UnloadPlan {
+  if (pending === null) return { action: "none" };
+  const body = JSON.stringify(bodyOf(pending));
+  if (inFlight !== null && JSON.stringify(bodyOf(inFlight)) === body) return { action: "none" };
+  if (new TextEncoder().encode(body).length > limit) return { action: "paced" };
+  return { action: "keepalive", url, method: "PUT", body };
+}
