@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api";
 import { Callout, Field, Row } from "../components/SettingsPage";
-import { fieldErrors, parseJobValue } from "../campaignView";
+import { VIDEO_EMAIL_LABEL, fieldErrors, parseJobValue, videoEmailHelp } from "../campaignView";
 import type { Campaign, CampaignStatus, SequenceStep } from "../types";
 import StepEditor from "./StepEditor";
 
@@ -19,6 +19,7 @@ export default function CampaignEditor({ campaign, onChange, run, anyRunning, on
   const [loadErr, setLoadErr] = useState("");
   const [status, setStatus] = useState<CampaignStatus>(campaign.status);
   const [value, setValue] = useState(campaign.est_job_value_usd === null ? "" : String(campaign.est_job_value_usd));
+  const [videoEmail, setVideoEmail] = useState<0 | 1>(campaign.video_email);
   const [errs, setErrs] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<{ bad: boolean; lines: string[] } | null>(null);
@@ -30,15 +31,15 @@ export default function CampaignEditor({ campaign, onChange, run, anyRunning, on
   }, [campaign.id]);
   const id = (f: string) => `cp-${campaign.id}-${f}`;
   const say = (bad: boolean, ...lines: string[]) => setResult({ bad, lines });
-  const dirty = status !== campaign.status || value.trim() !== (campaign.est_job_value_usd === null ? "" : String(campaign.est_job_value_usd));
+  const dirty = status !== campaign.status || videoEmail !== campaign.video_email || value.trim() !== (campaign.est_job_value_usd === null ? "" : String(campaign.est_job_value_usd));
 
   async function save() {
     const job = parseJobValue(value);
     if (!job.ok) { setErrs({ est_job_value_usd: "Enter an amount of 0 or more, or leave it blank." }); say(true, "Not saved: fix the highlighted fields."); return; }
     setSaving(true); setErrs({}); setResult(null);
     try {
-      const saved = await api.patch<Campaign>(`/campaigns/${campaign.id}`, { status, est_job_value_usd: job.value });
-      onChange(saved); setStatus(saved.status); setValue(saved.est_job_value_usd === null ? "" : String(saved.est_job_value_usd)); say(false, "Saved.");
+      const saved = await api.patch<Campaign>(`/campaigns/${campaign.id}`, { status, est_job_value_usd: job.value, video_email: videoEmail });
+      onChange(saved); setStatus(saved.status); setVideoEmail(saved.video_email); setValue(saved.est_job_value_usd === null ? "" : String(saved.est_job_value_usd)); say(false, "Saved.");
     } catch (e) {
       if (e instanceof ApiError && e.status === 400) { setErrs(fieldErrors(e.fields)); say(true, "Not saved: fix the highlighted fields."); }
       else say(true, `Not saved: ${e instanceof ApiError ? e.message : "request failed"}`);
@@ -58,6 +59,11 @@ export default function CampaignEditor({ campaign, onChange, run, anyRunning, on
           <input id={id("value")} inputMode="decimal" value={value} disabled={off} autoComplete="off" onChange={(e) => { setValue(e.target.value); setErrs((x) => ({ ...x, est_job_value_usd: "" })); }} />
         </Field>
       </Row>
+      <label className="check" htmlFor={id("video")}>
+        <input id={id("video")} className="cb" type="checkbox" checked={videoEmail === 1} disabled={off} aria-describedby={videoEmail === 1 ? id("video-help") : undefined} onChange={(e) => setVideoEmail(e.target.checked ? 1 : 0)} />
+        {VIDEO_EMAIL_LABEL}
+      </label>
+      {videoEmail === 1 && <p className="bx-muted" id={id("video-help")}>{videoEmailHelp(videoEmail)}</p>}
       <div className="cp-actions">
         <button type="button" className="btn primary" onClick={() => void save()} disabled={off || !dirty}>{saving ? "Saving…" : "Save"}</button>
         <button type="button" className="btn" onClick={onRun} disabled={off || anyRunning || campaign.status === "archived"} aria-describedby={campaign.status === "archived" ? id("archived") : undefined}>

@@ -123,3 +123,36 @@ describe("composeEmail", () => {
     expect(e.text).toBe("Hi Ann,\n\nA short note.\n\nLogan");
   });
 });
+
+describe("composeEmail hero", () => {
+  const hero = { src: "https://go.x.test/api/public/report/tok/media/preview.gif", href: "https://go.x.test/r/tok", alt: "Video audit for Acme" };
+  const draft = { subject: "Hi", body: "Hi Dana,\n\nI made a video.", include_footer: true };
+
+  it("no hero gives identical output", () => {
+    const plain = composeEmail(base, draft);
+    expect(composeEmail(base, { ...draft, hero: undefined })).toEqual(plain);
+    expect(plain.html).not.toContain("<img");
+    expect(plain.text).not.toContain("Watch it here");
+  });
+
+  it("hero image sits after the body and before the signature", () => {
+    const { html } = composeEmail({ ...base, signature_json: JSON.stringify(sig) }, { ...draft, hero });
+    const img = html.indexOf(`<img src="${hero.src}"`);
+    expect(img).toBeGreaterThan(html.indexOf("I made a video."));
+    expect(img).toBeLessThan(html.indexOf("Logan Irish"));
+    expect(html).toContain(`<a href="${hero.href}"`);
+    expect(html).toContain('width="480"');
+    expect(html).toContain('alt="Video audit for Acme"');
+  });
+
+  it("plain text carries the watch line", () => {
+    const { text } = composeEmail(base, { ...draft, hero });
+    expect(text).toBe(`Hi Dana,\n\nI made a video.\n\nWatch it here: ${hero.href}\n\nLogan Irish\nIrish Web\n\n123 Main St, Boise, ID 83702\nReply 'no thanks' and I won't follow up.`);
+  });
+
+  it("alt text is escaped", () => {
+    const { html } = composeEmail(base, { ...draft, hero: { ...hero, alt: `Video audit for "Bob" <b>& Sons'` } });
+    expect(html).toContain('alt="Video audit for &quot;Bob&quot; &lt;b&gt;&amp; Sons&#39;"');
+    expect(html).not.toContain("<b>");
+  });
+});

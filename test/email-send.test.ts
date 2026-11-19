@@ -357,6 +357,40 @@ describe("email.send", () => {
     expect(await approve(env, (await mk({ body: "My work: https://other.example/portfolio" })).id)).toEqual({ ok: true });
   });
 
+  describe("a video email's hero image", () => {
+    const hero = { src: "https://go.hellositeline.test/api/public/report/tok/media/preview.gif", href: "https://go.hellositeline.test/r/tok", alt: "Video audit for Acme Plumbing" };
+
+    it("sends the gif and the watch line when the hero is on the outreach host", async () => {
+      expect(await approve(env, (await mk({ heroImage: hero })).id)).toEqual({ ok: true });
+      expect(smtpCalls[0].text).toContain("Watch it here: https://go.hellositeline.test/r/tok");
+      expect(smtpCalls[0].html).toContain(`<img src="${hero.src}"`);
+    });
+
+    it("an OUTREACH_LINK_BASE changed after approval blocks the send with a clear reason", async () => {
+      const a = await mk({ heroImage: hero });
+      const e = env as { OUTREACH_LINK_BASE?: string };
+      const saved = e.OUTREACH_LINK_BASE;
+      try {
+        e.OUTREACH_LINK_BASE = "https://go2.hellositeline.test";
+        const r = await approve(env, a.id);
+        expect(r).toMatchObject({ ok: false, status: 502 });
+        const msg = (r as { error: string }).error;
+        expect(msg).toContain("video link");
+        expect(msg).toContain(hero.href);
+        expect(msg).toContain("go2.hellositeline.test");
+        expect(smtpCalls).toHaveLength(0);
+        e.OUTREACH_LINK_BASE = undefined; // no base at all cannot vouch for the hero either
+        const unset = await approve(env, a.id);
+        expect(unset).toMatchObject({ ok: false });
+        expect((unset as { error: string }).error).toContain("OUTREACH_LINK_BASE");
+        expect(smtpCalls).toHaveLength(0);
+        e.OUTREACH_LINK_BASE = saved; // put back, the same approval goes out
+        expect(await approve(env, a.id)).toEqual({ ok: true });
+        expect(smtpCalls).toHaveLength(1);
+      } finally { e.OUTREACH_LINK_BASE = saved; }
+    });
+  });
+
   it("a signature with a personal website and a CDN logo still sends", async () => {
     await saveSettings(env.DB, { signature_json: JSON.stringify({
       name: "Logan Irish", website: "https://loganirish.com", links: [{ label: "Work", url: "https://loganirish.com/work" }],

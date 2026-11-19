@@ -3,13 +3,14 @@ import type { Finding } from "../types";
 import type { MailboxKey } from "../mail/types";
 import { getMailDeps } from "../mail/deps";
 import { checkConflict } from "../conflict";
-import { buildEmailSendApproval, mailboxFromEmail } from "../approvals/emailSend";
+import { buildEmailSendApproval, mailboxFromEmail, type HeroImage } from "../approvals/emailSend";
 import { createApproval, createApprovalUnlessOpen } from "../db/approvals";
 import { getBusiness, businessDomain, updateLead } from "../db/businesses";
 import { getCampaign, listSteps, type SequenceStep } from "../db/campaigns";
 import { listContacts } from "../db/contacts";
 import { isPlaceholderDraft, latestDraft } from "../db/drafts";
 import { latestAudit } from "../db/audits";
+import { publishedVideoForAudit } from "../db/videoAudits";
 import { ensureReport } from "../db/reports";
 import { logActivity } from "../db/activity";
 import { getSettings } from "../db/settings";
@@ -31,7 +32,9 @@ const oneLine = (e: unknown) => String((e as Error)?.message ?? e).replace(/\s+/
  * Enrolls a lead in a campaign and proposes Email 1 from the lead's current draft. Nothing is sent: it creates the enrollment and one
  * `email.send` approval for Logan. The enrollment starts with no due time; that is computed when Email 1 is actually sent
  * (`advanceAfterSend`), so Email 2 can never be proposed before Email 1 has gone out.
- * Order of refusals: unknown lead or campaign 404, already enrolled 409, no draft or no address 400, conflict 422.
+ * A campaign with `video_email` on also needs the lead's latest audit to have a published video (else 400 "make and approve the video first"); Email 1 then
+ * carries that video: the report link is minted here (nothing else makes one before the first send) and the payload gets a `heroImage` (the preview GIF, linking to the report page).
+ * Order of refusals: unknown lead or campaign 404, already enrolled 409, no draft or no address 400, no published video 400, conflict 422, an unusable OUTREACH_LINK_BASE 422.
  */
 export async function startSequence(env: Env, o: { businessId: string; campaignId: string; mailbox?: MailboxKey }): Promise<StartResult> {
   const db = env.DB;
@@ -52,16 +55,30 @@ export async function startSequence(env: Env, o: { businessId: string; campaignI
   const to = (chosen ?? pickRecipient(contacts, businessDomain(business)).emailContact)?.value.trim();
   if (!to) return { ok: false, error: "no email address", status: 400 };
 
+  const audit = campaign.video_email === 1 ? await latestAudit(db, o.businessId) : null;
+  if (campaign.video_email === 1 && !(audit && (await publishedVideoForAudit(db, audit.id)))) return { ok: false, error: "make and approve the video first", status: 400 };
+
   const gate = await checkConflict(db, { email: to, businessId: o.businessId });
   if (gate.blocked) return { ok: false, error: gate.reason, status: 422 };
 
   const now = getMailDeps().now();
+  let heroImage: HeroImage | undefined;
+  if (audit) {
+    try {
+      const base = linkBase(env);
+      const token = (await ensureReport(db, o.businessId, audit.id, now)).token;
+      heroImage = { src: `${base}/api/public/report/${token}/media/preview.gif`, href: `${base}/r/${token}`, alt: heroAlt(business.name) };
+    } catch (e) {
+      if (e instanceof StepSkip) return { ok: false, error: e.message, status: 422 };
+      throw e;
+    }
+  }
   const enrollmentId = crypto.randomUUID(), mailbox = o.mailbox ?? "outreach";
   let spec: ReturnType<typeof buildEmailSendApproval>;
   try { // validate the whole approval first, so a draft that cannot be sent creates nothing
     spec = buildEmailSendApproval({
       mailbox, businessId: o.businessId, to, subject: draft.subject, body: draft.body, includeFooter: draft.include_footer,
-      enrollmentId, stepIndex: 0, title: `Email 1 to ${business.name}`, drafted_by: "logan",
+      enrollmentId, stepIndex: 0, title: `Email 1 to ${business.name}`, drafted_by: "logan", ...(heroImage ? { heroImage } : {}),
     }, await getSettings(db), await mailboxFromEmail(db, mailbox));
   } catch (e) {
     return { ok: false, error: `the draft cannot be sent: ${oneLine(e)}`, status: 422 };
@@ -169,6 +186,10 @@ function linkBase(env: Env): string {
   if (/(^|\.)workers\.dev$/i.test(u.hostname)) throw new StepSkip("OUTREACH_LINK_BASE is not set to a cold-link host (workers.dev is never used)");
   return raw.replace(/\/+$/, "");
 }
+
+const HERO_ALT_MAX = 120;
+/** "Video audit for <business name>" as one line of at most 120 characters: a scraped name may hold newlines, tabs or a great deal of text. */
+const heroAlt = (businessName: string) => `Video audit for ${businessName}`.replace(/\s+/g, " ").trim().slice(0, HERO_ALT_MAX).trimEnd();
 
 const firstName = (full: string | null | undefined) => full?.trim().split(/\s+/)[0] || null;
 

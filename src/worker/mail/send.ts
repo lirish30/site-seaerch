@@ -35,9 +35,9 @@ export async function loadSendable(env: Env, key: MailboxKey, requireEnabled: bo
  * The text and html that will be sent. Cold mail (the outreach mailbox) always carries the footer, so `includeFooter`
  * is ignored there. `forceFooter` is false only for test messages to the mailbox itself.
  */
-export function composeOutbound(s: Settings, p: Pick<SendInput, "mailbox" | "subject" | "body" | "includeFooter">, forceFooter = true): ComposedEmail {
+export function composeOutbound(s: Settings, p: Pick<SendInput, "mailbox" | "subject" | "body" | "includeFooter" | "heroImage">, forceFooter = true): ComposedEmail {
   const include = p.mailbox === "outreach" && forceFooter ? true : p.includeFooter;
-  return composeEmail(s, { subject: p.subject, body: p.body, include_footer: include });
+  return composeEmail(s, { subject: p.subject, body: p.body, include_footer: include, ...(p.heroImage ? { hero: p.heroImage } : {}) });
 }
 
 /** The main brand domain. Cold email never links it (or any subdomain, such as clients.): cold links use OUTREACH_LINK_BASE. */
@@ -56,14 +56,23 @@ const linkBaseHost = (base: string): string | null => { try { return new URL(bas
  * Why this message may not be sent because of the links in it, or null when it is clean.
  * Every mailbox: no workers.dev. Outreach only: no link to the main brand domain, and no public-page link on a host other than
  * the one in OUTREACH_LINK_BASE (checked only when it is set; a set but invalid or non-https value blocks cold sends). Third-party hosts (a signature website, a logo CDN) pass.
+ * A video email's `hero` is held to more: on the outreach mailbox both its links must be on the host OUTREACH_LINK_BASE names right now, and with no
+ * base to compare to the send is blocked, so a base changed after approval cannot send a link to the old host.
  */
-export function linkProblem(c: Pick<ComposedEmail, "text" | "html">, mailbox: MailboxKey, linkBase: string | undefined): string | null {
+export function linkProblem(c: Pick<ComposedEmail, "text" | "html">, mailbox: MailboxKey, linkBase: string | undefined, hero?: { src: string; href: string }): string | null {
   const all = `${c.text}\n${c.html}`;
   if (/workers\.dev/i.test(all)) return "message mentions workers.dev; links must use your own domain";
   if (mailbox !== "outreach") return null;
   const baseHost = linkBase?.trim() ? linkBaseHost(linkBase.trim()) : null;
   // A configured but unparseable (or non-https) base must not silently switch the public-page rule off.
   if (linkBase?.trim() && !baseHost) return `OUTREACH_LINK_BASE (${linkBase.trim()}) is not a valid URL, so cold email is blocked until it is fixed (expected something like https://go.example.com)`;
+  if (hero) {
+    if (!baseHost) return "this video email needs OUTREACH_LINK_BASE (https only) to be set, so its video link can be checked, and it is not";
+    for (const url of [hero.href, hero.src]) {
+      const host = hostOf(url);
+      if (host !== baseHost) return `video link ${url} is on ${host ?? "an unreadable host"}, but OUTREACH_LINK_BASE is now ${linkBase!.trim().replace(/\/+$/, "")}; re-propose the email so the video link uses it`;
+    }
+  }
   for (const url of new Set([...all.matchAll(URL_RE)].map((m) => m[0].replace(TRAILING, "")))) {
     let u: URL;
     try { u = new URL(url); } catch { continue; }
@@ -155,7 +164,7 @@ export async function sendEmail(env: Env, p: SendInput, opts: { approvalId: stri
   }
   const composed = composeOutbound(settings, p, real);
   if (real) {
-    const problem = linkProblem(composed, p.mailbox, env.OUTREACH_LINK_BASE);
+    const problem = linkProblem(composed, p.mailbox, env.OUTREACH_LINK_BASE, p.heroImage);
     if (problem) throw new Error(problem);
     if (p.mailbox === "outreach" && !(await isReplyToInbound(db, p))) await assertWithinLimit(db, mb, now);
   }
