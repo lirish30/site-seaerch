@@ -20,6 +20,7 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
   { slug: "footer", label: "Mailing footer", icon: "shield", group: "Account" },
   { slug: "helper", label: "Mac helper", icon: "zap", group: "Account" },
   { slug: "voice-test", label: "Video voice", icon: "mail", group: "Outreach" },
+  { slug: "packages", label: "Packages", icon: "card", group: "Account" },
 ];
 const GROUPS = ["You", "Outreach", "Lead scoring", "Account"] as const;
 const COUNTED: [string, string][] = [["work-samples", "/work-samples"], ["services", "/services"], ["fit-profiles", "/fit-profiles"], ["suppressions", "/suppressions"]];

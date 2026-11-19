@@ -30,6 +30,7 @@ import { nicheRoutes } from "./routes/niche";
 import { queueRoutes } from "./routes/queue";
 import { helperRoutes } from "./routes/helper";
 import { helperAdminRoutes } from "./routes/helperAdmin";
+import { packageRoutes } from "./routes/packages";
 import "./approvals/leadNote";
 import "./approvals/emailSend";
 import "./approvals/videoPublish";
@@ -68,6 +69,7 @@ app.route("/api/campaigns", campaignRoutes);
 app.route("/api/niche", nicheRoutes);
 app.route("/api/queue", queueRoutes);
 app.route("/api/helper", helperAdminRoutes);
+app.route("/api/packages", packageRoutes);
 // Mounted last at /api: /api/leads/:id/cro-audit(s), /api/cro-items/:id, /api/cro-audits/:id/... (all behind requireAuth).
 app.route("/api", croRoutes);
 // Also mounted at /api: /api/leads/:id/video and /api/video-audits/:id/... (behind requireAuth).
