@@ -160,4 +160,16 @@ describe("video.publish approval", () => {
     expect((await api(`/api/video-audits/${v.id}/media/video.mp4`)).status).toBe(404);
     void createApproval;
   });
+
+  it("video.publish is still registered on the worker entry path", async () => {
+    // Through the Worker (SELF), not this file's own import: the approvals route must find the handler.
+    const { v } = await renderedVideo();
+    await createPublishApproval(env, v.id);
+    const a = await approvalOf(v.id);
+    const r = await api(`/api/approvals/${a.id}/approve`, { method: "POST", body: "{}" });
+    expect(r.status).toBe(200);
+    expect((await getVideoAudit(env.DB, v.id))!.status).toBe("published");
+    const list = await (await api(`/api/approvals?status=approved`)).json<any>();
+    expect(list.items.find((i: any) => i.id === a.id)?.label).toBe("Publish video");
+  });
 });
