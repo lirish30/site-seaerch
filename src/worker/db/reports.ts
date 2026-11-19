@@ -97,6 +97,15 @@ export async function liveReportTarget(db: D1Database, token: string, now = new 
 /** The cold-link base without a trailing slash, or "" when it is missing or not https. */
 const httpsBase = (raw: string | undefined) => { const v = raw?.trim().replace(/\/+$/, "") ?? ""; return /^https:\/\/[^/\s]+/.test(v) ? v : ""; };
 
+/**
+ * The lead a report link belongs to, whether or not the link is still live (expired or revoked). Only for the guest's cancel link, which must keep
+ * working after the report is gone: cancelling lets a slot go, it shows nothing and sends nothing. Null for a token that was never issued.
+ */
+export async function reportBusinessId(db: D1Database, token: string): Promise<string | null> {
+  const r = await db.prepare(`SELECT business_id FROM audit_reports WHERE token = ?`).bind(token).first<{ business_id: string }>();
+  return r?.business_id ?? null;
+}
+
 /** The ONLY shape exposed publicly. Fields are copied one by one so nothing else can leak in by accident. `linkBase` is OUTREACH_LINK_BASE. */
 export async function publicReport(db: D1Database, token: string, now = new Date(), o: { linkBase?: string } = {}): Promise<PublicReport | null> {
   const r = await db.prepare(

@@ -20,19 +20,32 @@ export async function freeBusy(f: Fetch, token: string, from: Date, to: Date): P
   return (r.calendars?.primary?.busy ?? []).map((b) => ({ start: Date.parse(b.start), end: Date.parse(b.end) }));
 }
 
-/** Creates the event with a Google Meet link. sendUpdates=none: the app sends the confirmation mail, not Google. A retry with the same requestId does not make a second Meet. */
+/**
+ * Creates the event with a Google Meet link. sendUpdates=none: the app sends the confirmation mail, not Google. A retry with the same requestId does not make a second Meet.
+ * With `id` (the caller's own, 5 to 1024 characters of a-v and 0-9) the event is made under that id, so a caller that never heard the answer still knows what to delete.
+ * Google answers 409 when that id already exists; that counts as created only if a plain GET of the id returns a live event, and is a failure otherwise.
+ */
 export async function createEvent(f: Fetch, token: string,
-  e: { summary: string; description: string; start: string; end: string; attendeeEmail: string; requestId: string }): Promise<{ eventId: string; meetUrl: string | null }> {
-  const r = await google<{ id: string; hangoutLink?: string; conferenceData?: { entryPoints?: { entryPointType?: string; uri?: string }[] } }>(f, token, `${BASE}/calendars/primary/events?conferenceDataVersion=1&sendUpdates=none`, {
-    method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      summary: e.summary, description: e.description,
-      start: { dateTime: e.start }, end: { dateTime: e.end },
-      attendees: [{ email: e.attendeeEmail }],
-      conferenceData: { createRequest: { requestId: e.requestId, conferenceSolutionKey: { type: "hangoutsMeet" } } },
-    }),
-  });
-  return { eventId: r.id, meetUrl: r.hangoutLink ?? r.conferenceData?.entryPoints?.find((p) => p.entryPointType === "video")?.uri ?? null };
+  e: { summary: string; description: string; start: string; end: string; attendeeEmail: string; requestId: string; id?: string }): Promise<{ eventId: string; meetUrl: string | null }> {
+  type Made = { id: string; status?: string; hangoutLink?: string; conferenceData?: { entryPoints?: { entryPointType?: string; uri?: string }[] } };
+  const out = (r: Made) => ({ eventId: r.id, meetUrl: r.hangoutLink ?? r.conferenceData?.entryPoints?.find((p) => p.entryPointType === "video")?.uri ?? null });
+  try {
+    return out(await google<Made>(f, token, `${BASE}/calendars/primary/events?conferenceDataVersion=1&sendUpdates=none`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ...(e.id && { id: e.id }),
+        summary: e.summary, description: e.description,
+        start: { dateTime: e.start }, end: { dateTime: e.end },
+        attendees: [{ email: e.attendeeEmail }],
+        conferenceData: { createRequest: { requestId: e.requestId, conferenceSolutionKey: { type: "hangoutsMeet" } } },
+      }),
+    }));
+  } catch (err) {
+    if (!e.id || !/^Google API 409\b/.test((err as Error).message)) throw err;
+    const existing = await google<Made>(f, token, `${BASE}/calendars/primary/events/${encodeURIComponent(e.id)}`);
+    if (existing.id !== e.id || existing.status === "cancelled") throw err; // a deleted event still answers a GET: it is not a booking
+    return out(existing);
+  }
 }
 
 /** Deletes the event without notifying the guest. Already gone (404 or 410) counts as success. */

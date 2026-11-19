@@ -59,11 +59,14 @@ describe("createVisitorBooking", () => {
     // The calendar event: one, for the 20 minutes asked for, with the guest and a Meet request. No mail goes from Google.
     expect(google.created()).toHaveLength(1);
     expect(google.created()[0].url).toContain("sendUpdates=none");
+    // The event is made under the booking's own id (its uuid without dashes), so it is known even if Google's answer never arrives.
+    expect(google.created()[0].body.id).toBe(out.booking.id.replace(/-/g, ""));
+    expect(google.created()[0].body.id).toMatch(/^[0-9a-v]{32}$/);
     expect(google.created()[0].body).toMatchObject({ start: { dateTime: SLOT }, end: { dateTime: "2026-11-24T18:20:00.000Z" }, attendees: [{ email: "pat@acme.test" }] });
     expect(google.created()[0].body.conferenceData.createRequest.requestId).toBe(out.booking.id);
     // The booking row.
     expect(out.booking).toMatchObject({ businessId: b.id, kind: "discovery", status: "confirmed", startAt: SLOT, endAt: "2026-11-24T18:20:00.000Z", contactName: "Pat Jones",
-      contactEmail: "pat@acme.test", contactPhone: "208-555-0100", calendarEventId: "ev1", meetUrl: "https://meet.google.com/abc-defg-h1", source: "visitor",
+      contactEmail: "pat@acme.test", contactPhone: "208-555-0100", calendarEventId: out.booking.id.replace(/-/g, ""), meetUrl: "https://meet.google.com/abc-defg-h1", source: "visitor",
       answers: { topic: "A new website", budgetId: "797-1999", timeline: "This month", decisionMaker: "me" } });
     expect(out.booking.cancelToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect((await bookingFor(env.DB, b.id, "discovery"))!.id).toBe(out.booking.id);
@@ -134,6 +137,8 @@ describe("createVisitorBooking", () => {
     const { b, token } = await seedLead();
     expect(await book(token)).toMatchObject({ ok: false, status: 503 });
     expect(google.created()).toHaveLength(1); // tried once, never blindly retried
+    // The event may exist even though the call failed, so its id is cleared (the id is the one the create call was sent).
+    expect(google.deleted().map((c) => c.url)).toEqual([expect.stringContaining(`/events/${google.created()[0].body.id}`)]);
     expect((await rows()).map((r) => r.status)).toEqual(["cancelled"]);
     expect(await bookingFor(env.DB, b.id, "discovery")).toBeNull();
     expect(await openDealFor(env.DB, b.id)).toBeNull();
@@ -144,6 +149,19 @@ describe("createVisitorBooking", () => {
     expect((await book(token)).ok).toBe(true);
   });
 
+  it("a createEvent that throws (a timeout) still clears the event it may have made, under the same id", async () => {
+    google = fakeGoogle({ createThrows: true });
+    setBookingDeps({ fetch: google.f });
+    const { b, token } = await seedLead();
+    expect(await book(token)).toMatchObject({ ok: false, status: 503 });
+    expect(google.created()).toHaveLength(1);
+    const id = google.created()[0].body.id;
+    expect(id).toBe((await rows())[0].id.replace(/-/g, ""));
+    expect(google.deleted().map((c) => c.url)).toEqual([expect.stringContaining(`/events/${id}`)]);
+    expect((await rows()).map((r) => r.status)).toEqual(["cancelled"]);
+    expect(await bookingFor(env.DB, b.id, "discovery")).toBeNull();
+  });
+
   it("a failure after the event exists deletes the event and cancels the row", async () => {
     const { b, token } = await seedLead();
     const orig = env.DB.prepare.bind(env.DB);
@@ -152,7 +170,7 @@ describe("createVisitorBooking", () => {
     try { out = await book(token); } finally { (env.DB as any).prepare = orig; }
     expect(out).toMatchObject({ ok: false, status: 503 });
     expect(google.created()).toHaveLength(1);
-    expect(google.deleted().map((c) => c.url)).toEqual([expect.stringContaining("/events/ev1")]);
+    expect(google.deleted().map((c) => c.url)).toEqual([expect.stringContaining(`/events/${(await rows())[0].id.replace(/-/g, "")}`)]);
     expect((await rows()).map((r) => r.status)).toEqual(["cancelled"]);
     expect(await bookingFor(env.DB, b.id, "discovery")).toBeNull();
     expect(queueCallPrep).not.toHaveBeenCalled();
@@ -271,7 +289,7 @@ describe("cancelByToken", () => {
     expect(await cancelByToken(e, token, out.booking.cancelToken, later)).toEqual({ ok: true });
     expect(await cancelByToken(e, token, out.booking.cancelToken, new Date(later.getTime() + 60_000))).toEqual({ ok: true });
     expect(google.deleted()).toHaveLength(1);
-    expect(google.deleted()[0].url).toContain("/events/ev1");
+    expect(google.deleted()[0].url).toContain(`/events/${out.booking.id.replace(/-/g, "")}`);
     const after = (await getBookingByCancelToken(env.DB, b.id, out.booking.cancelToken))!;
     expect(after).toMatchObject({ status: "cancelled", cancelledAt: later.toISOString() });
     expect(await bookingFor(env.DB, b.id, "discovery")).toBeNull();
@@ -281,6 +299,77 @@ describe("cancelByToken", () => {
     expect((await getBusiness(env.DB, b.id))!.lead_status).toBe("replied");
     // The guest can book again after cancelling.
     expect((await book(token, { start: SLOT_2 })).ok).toBe(true);
+  });
+
+  /** A booked call and its report link, ready to cancel. */
+  async function booked(name = "Ace Plumbing", start = SLOT) {
+    const lead = await seedLead(name);
+    const out = await book(lead.token, { start, email: `${name.replace(/\W/g, "").toLowerCase()}@acme.test` });
+    if (!out.ok) throw new Error("booking failed");
+    return { ...lead, booking: out.booking, eventId: out.booking.id.replace(/-/g, "") };
+  }
+
+  it("cancel works with an expired report token and the right cancel token, and deletes the event", async () => {
+    const { b, token, booking, eventId } = await booked();
+    await env.DB.prepare(`UPDATE audit_reports SET expires_at = ? WHERE token = ?`).bind("2020-01-01T00:00:00.000Z", token).run();
+    expect(await cancelByToken(e, token, booking.cancelToken, NOW)).toEqual({ ok: true });
+    expect(google.deleted().map((c) => c.url)).toEqual([expect.stringContaining(`/events/${eventId}`)]);
+    expect(await bookingFor(env.DB, b.id, "discovery")).toBeNull();
+  });
+
+  it("cancel works with a revoked report token", async () => {
+    const { b, token, booking } = await booked();
+    await revokeReports(env.DB, b.id);
+    expect(await cancelByToken(e, token, booking.cancelToken, NOW)).toEqual({ ok: true });
+    expect(google.deleted()).toHaveLength(1);
+    expect(await bookingFor(env.DB, b.id, "discovery")).toBeNull();
+  });
+
+  it("cancel works for a do-not-contact lead: letting the slot go is always allowed", async () => {
+    const { b, token, booking } = await booked();
+    await addDoNotContact(env.DB, { kind: "email", value: "pat@acme.test", reason: "opt_out" });
+    await addDoNotContact(env.DB, { kind: "name", value: "Ace Plumbing", reason: "other" });
+    await env.DB.prepare(`UPDATE businesses SET lead_status = 'won' WHERE id = ?`).bind(b.id).run();
+    expect(await cancelByToken(e, token, booking.cancelToken, NOW)).toEqual({ ok: true });
+    expect(await bookingFor(env.DB, b.id, "discovery")).toBeNull();
+    expect(google.deleted()).toHaveLength(1);
+  });
+
+  it("an expired report token with a wrong or another lead's cancel token still changes nothing, and answers the same", async () => {
+    const a = await booked("A Co"), other = await booked("B Co", SLOT_2);
+    google.busy.length = 0;
+    await env.DB.prepare(`UPDATE audit_reports SET expires_at = ? WHERE token IN (?, ?)`).bind("2020-01-01T00:00:00.000Z", a.token, other.token).run();
+    const answers = [
+      await cancelByToken(e, a.token, "x".repeat(43), NOW), // wrong cancel token
+      await cancelByToken(e, a.token, other.booking.cancelToken, NOW), // another lead's cancel token
+      await cancelByToken(e, "U".repeat(43), a.booking.cancelToken, NOW), // a report token that was never issued
+      await cancelByToken(e, "short", a.booking.cancelToken, NOW), // not a token at all
+      await cancelByToken(e, a.token, "short", NOW),
+    ];
+    for (const r of answers) expect(r).toEqual({ ok: false });
+    expect(google.deleted()).toHaveLength(0);
+    expect((await bookingFor(env.DB, a.b.id, "discovery"))!.status).toBe("confirmed");
+    expect((await bookingFor(env.DB, other.b.id, "discovery"))!.status).toBe("confirmed");
+  });
+
+  it("a second cancel after the report has expired is ok and does not delete twice", async () => {
+    const { token, booking } = await booked();
+    await env.DB.prepare(`UPDATE audit_reports SET expires_at = ? WHERE token = ?`).bind("2020-01-01T00:00:00.000Z", token).run();
+    expect(await cancelByToken(e, token, booking.cancelToken, NOW)).toEqual({ ok: true });
+    expect(await cancelByToken(e, token, booking.cancelToken, new Date(NOW.getTime() + 60_000))).toEqual({ ok: true });
+    expect(google.deleted()).toHaveLength(1);
+  });
+
+  it("a call that has started cannot be cancelled", async () => {
+    const { b, token, booking } = await booked();
+    const atStart = new Date(booking.startAt), after = new Date(Date.parse(booking.startAt) + 60_000);
+    expect(await cancelByToken(e, token, booking.cancelToken, atStart)).toEqual({ ok: false });
+    expect(await cancelByToken(e, token, booking.cancelToken, after)).toEqual({ ok: false });
+    expect(google.deleted()).toHaveLength(0);
+    expect((await bookingFor(env.DB, b.id, "discovery"))!.status).toBe("confirmed");
+    // One minute before it starts is still fine.
+    expect(await cancelByToken(e, token, booking.cancelToken, new Date(Date.parse(booking.startAt) - 60_000))).toEqual({ ok: true });
+    expect(google.deleted()).toHaveLength(1);
   });
 
   it("a cancel the calendar refuses leaves the booking confirmed so it can be tried again", async () => {

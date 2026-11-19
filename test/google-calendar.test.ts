@@ -95,6 +95,45 @@ describe("deleteEvent", () => {
   });
 });
 
+describe("createEvent with an id", () => {
+  const ID = "0123456789abcdef0123456789abcdef";
+  it("sends the id in the insert body, and leaves it out when none is given", async () => {
+    const { f, calls } = fake(() => Response.json({ id: ID, hangoutLink: "https://meet.google.com/abc" }));
+    expect(await createEvent(f, "tok", { ...EVENT, id: ID })).toEqual({ eventId: ID, meetUrl: "https://meet.google.com/abc" });
+    expect(calls[0].body.id).toBe(ID);
+    await createEvent(f, "tok", EVENT);
+    expect("id" in calls[1].body).toBe(false);
+  });
+
+  it("a 409 is the event already made when a plain GET of the id returns it", async () => {
+    const { f, calls } = fake((c) => c.method === "POST"
+      ? Response.json({ error: { message: "The requested identifier already exists." } }, { status: 409 })
+      : Response.json({ id: ID, status: "confirmed", hangoutLink: "https://meet.google.com/zzz" }));
+    expect(await createEvent(f, "tok", { ...EVENT, id: ID })).toEqual({ eventId: ID, meetUrl: "https://meet.google.com/zzz" });
+    expect(calls.map((c) => c.method)).toEqual(["POST", "GET"]);
+    expect(calls[1].url).toBe(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${ID}`);
+  });
+
+  it("a 409 is a failure when the GET finds nothing, a cancelled event, or another id", async () => {
+    const conflict = () => Response.json({ error: { message: "The requested identifier already exists." } }, { status: 409 });
+    const never = fake((c) => (c.method === "POST" ? conflict() : Response.json({ error: { message: "Not Found" } }, { status: 404 })));
+    await expect(createEvent(never.f, "tok", { ...EVENT, id: ID })).rejects.toThrow(/409|404/);
+    const gone = fake((c) => (c.method === "POST" ? conflict() : Response.json({ id: ID, status: "cancelled" })));
+    await expect(createEvent(gone.f, "tok", { ...EVENT, id: ID })).rejects.toThrow(/409/);
+    const other = fake((c) => (c.method === "POST" ? conflict() : Response.json({ id: "someotherid", status: "confirmed" })));
+    await expect(createEvent(other.f, "tok", { ...EVENT, id: ID })).rejects.toThrow(/409/);
+  });
+
+  it("a 409 with no id given, and any other error, is thrown without a GET", async () => {
+    const a = fake(() => Response.json({ error: { message: "dup" } }, { status: 409 }));
+    await expect(createEvent(a.f, "tok", EVENT)).rejects.toThrow(/409/);
+    const b = fake(() => Response.json({ error: { message: "down" } }, { status: 500 }));
+    await expect(createEvent(b.f, "tok", { ...EVENT, id: ID })).rejects.toThrow(/500/);
+    expect(a.calls).toHaveLength(1);
+    expect(b.calls).toHaveLength(1);
+  });
+});
+
 describe("calendarToken", () => {
   const e = { ...env, GOOGLE_CLIENT_ID: "cid", GOOGLE_CLIENT_SECRET: "sec" };
   beforeEach(async () => { await env.DB.prepare(`DELETE FROM google_auth`).run(); });

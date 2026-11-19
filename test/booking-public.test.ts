@@ -123,6 +123,17 @@ describe("POST /report/:token/book", () => {
     expect((await post(token, { nope: 1 }, "book/cancel")).status).toBe(400);
   });
 
+  it("the cancel link still works through the route after the report link has expired", async () => {
+    const { token } = await seedLead();
+    const slot = (await (await get(token)).json<any>()).slots[0] as string;
+    const { booking } = await (await post(token, form({ start: slot }))).json<any>();
+    await env.DB.prepare(`UPDATE audit_reports SET expires_at = ? WHERE token = ?`).bind("2020-01-01T00:00:00.000Z", token).run();
+    expect((await get(token)).status).toBe(404); // the page is gone ...
+    const res = await post(token, { cancelToken: booking.cancelToken }, "book/cancel"); // ... the cancel is not
+    expect([res.status, await res.json()]).toEqual([200, { ok: true }]);
+    expect(google.deleted()).toHaveLength(1);
+  });
+
   it("rejects a bad body with a 400 that does not echo what was typed", async () => {
     const { token } = await seedLead();
     for (const body of ["{not json", "", "[]", JSON.stringify(form({ name: "" })), JSON.stringify(form({ email: "ECHO-ME" })), JSON.stringify({ ...form(), extra: "x" })]) {

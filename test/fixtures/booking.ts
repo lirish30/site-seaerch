@@ -31,7 +31,7 @@ export interface Call { url: string; method: string; body: any }
  * A stand-in for Google: token refresh, free/busy, event create and event delete. `busy` is what free/busy reports; created events are
  * added to it afterwards, as the real calendar would.
  */
-export function fakeGoogle(o: { busy?: { start: string; end: string }[]; createFails?: boolean; freeBusyFails?: boolean; freeBusyErrors?: boolean; deleteFails?: boolean } = {}) {
+export function fakeGoogle(o: { busy?: { start: string; end: string }[]; createFails?: boolean; freeBusyFails?: boolean; freeBusyErrors?: boolean; deleteFails?: boolean; createThrows?: boolean } = {}) {
   const calls: Call[] = [];
   const busy = [...(o.busy ?? [])];
   let n = 0;
@@ -46,9 +46,11 @@ export function fakeGoogle(o: { busy?: { start: string; end: string }[]; createF
       return Response.json({ calendars: { primary: { busy } } });
     }
     if (method === "POST" && url.includes("/calendars/primary/events")) {
+      if (o.createThrows) throw new TypeError("network timeout"); // the call may or may not have reached Google
       if (o.createFails) return Response.json({ error: { message: "calendar down" } }, { status: 500 });
       busy.push({ start: body.start.dateTime, end: body.end.dateTime });
-      return Response.json({ id: `ev${++n}`, hangoutLink: `https://meet.google.com/abc-defg-h${n}` });
+      n++;
+      return Response.json({ id: body.id ?? `ev${n}`, hangoutLink: `https://meet.google.com/abc-defg-h${n}` });
     }
     if (method === "DELETE" && url.includes("/calendars/primary/events/")) {
       if (o.deleteFails) return Response.json({ error: { message: "nope" } }, { status: 500 });

@@ -63,6 +63,8 @@ export default function Book({ token }: { token: string }) {
 
   useEffect(() => {
     let cancelled = false;
+    // The cancel link never needs the page's data (and the report link may have expired since): it goes straight to its own confirm step.
+    if (cancelToken) { setLoad("ok"); return; }
     setLoad("loading");
     fetch(`/api/public/report/${token}/book`, { credentials: "omit" })
       .then(async (res) => {
@@ -102,16 +104,7 @@ export default function Book({ token }: { token: string }) {
     } catch { setCancel("failed"); }
   }
 
-  if (load === "loading") return <main className="rp" aria-busy="true"><div className="rp-wrap rp-wrap-narrow"><div className="rp-card" role="status" aria-label="Loading"><span className="rp-sk" style={{ height: 28, width: "70%" }} /><span className="rp-sk" style={{ height: 120 }} /></div></div></main>;
-  if (load === "error") return (
-    <Message icon="alert" title="Couldn't load this page">
-      <p>Something went wrong on our side, or your connection dropped. Please try again.</p>
-      <button type="button" className="btn" onClick={() => setAttempt((n) => n + 1)}>Try again</button>
-    </Message>
-  );
-  if (load === "gone" || !page) return <Message icon="link" title="This link isn't available"><p>It may have expired or been turned off. Reply to the email you got and we'll sort it out.</p></Message>;
-
-  // The cancel link from the email: ask first, then do it.
+  // The cancel link from the email: ask first (opening the link only shows this; a mail scanner that fetches it cancels nothing), then do it.
   if (cancelToken) {
     if (cancel === "done") return <Message icon="check" title="Your call is cancelled"><p>No hard feelings. You can pick another time whenever you like.</p><a className="btn" href={`/r/${token}/book`}>Pick another time</a></Message>;
     return (
@@ -122,6 +115,15 @@ export default function Book({ token }: { token: string }) {
       </Message>
     );
   }
+
+  if (load === "loading") return <main className="rp" aria-busy="true"><div className="rp-wrap rp-wrap-narrow"><div className="rp-card" role="status" aria-label="Loading"><span className="rp-sk" style={{ height: 28, width: "70%" }} /><span className="rp-sk" style={{ height: 120 }} /></div></div></main>;
+  if (load === "error") return (
+    <Message icon="alert" title="Couldn't load this page">
+      <p>Something went wrong on our side, or your connection dropped. Please try again.</p>
+      <button type="button" className="btn" onClick={() => setAttempt((n) => n + 1)}>Try again</button>
+    </Message>
+  );
+  if (load === "gone" || !page) return <Message icon="link" title="This link isn't available"><p>It may have expired or been turned off. Reply to the email you got and we'll sort it out.</p></Message>;
 
   if (booked) {
     const meet = safeMeetUrl(booked.meetUrl);

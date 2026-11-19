@@ -7,7 +7,7 @@ import {
 } from "../db/bookings";
 import { getBusiness } from "../db/businesses";
 import { createDeal } from "../db/deals";
-import { liveReportTarget } from "../db/reports";
+import { liveReportTarget, reportBusinessId } from "../db/reports";
 import { getSettings } from "../db/settings";
 import { calendarToken, createEvent, deleteEvent, freeBusy } from "../google/calendar";
 import { stopOutreach } from "../sequence/stop";
@@ -95,6 +95,9 @@ const forDescription = (s: string, max = 600) => s.replace(/\s+/g, " ").trim().s
 /** Text for an event title, which is plain: one line, no angle brackets. */
 const forTitle = (s: string) => s.replace(/\s+/g, " ").replace(/[<>]/g, "").trim().slice(0, 120);
 
+/** The calendar event's id for a booking: its uuid without dashes (lowercase hex is valid for Google, 5 to 1024 characters of a-v and 0-9). Deterministic, so the id is known even when the create call never answered. */
+const eventIdFor = (bookingId: string) => bookingId.replace(/-/g, "");
+
 const when = (iso: string, tz: string) =>
   new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" })
     .format(new Date(iso)).replace(/[  ]/g, " ");
@@ -136,6 +139,7 @@ export async function createVisitorBooking(env: Env, token: string, form: Bookin
   try {
     // Asked once. `requestId` only stops a second Meet link; it would not stop a second event, so there is no retry here.
     event = await createEvent(f, calToken, {
+      id: eventIdFor(booking.id),
       summary: `Discovery call: ${forTitle(business.name)}`,
       description: [
         "Booked from the report page.", `Name: ${forDescription(form.name, 100)}`, `Email: ${forDescription(form.email, 254)}`, form.phone ? `Phone: ${forDescription(form.phone, 30)}` : "",
@@ -146,6 +150,8 @@ export async function createVisitorBooking(env: Env, token: string, form: Bookin
     });
   } catch (e) {
     console.error("booking: could not create the calendar event", e instanceof Error ? e.message : "unknown error");
+    // A timeout or a dropped connection can still leave the event made, and its id is ours, so take it down. Nothing there is fine (404 and 410 count as done).
+    await deleteEvent(f, calToken, eventIdFor(booking.id)).catch((err) => console.error("booking: could not clear a possible event", err instanceof Error ? err.message : "unknown error"));
     await cancelBooking(env.DB, booking.id, now).catch((err) => console.error("booking: could not release the slot", err instanceof Error ? err.message : "unknown error"));
     return unavailable("could not book that time, please try again");
   }
@@ -172,18 +178,24 @@ export async function createVisitorBooking(env: Env, token: string, form: Bookin
   return { ok: true, booking: done };
 }
 
+const TOKEN = /^[A-Za-z0-9_-]{43}$/;
+
 /**
  * Cancels the call a guest's cancel link names. The event is deleted first, so a cancel Google refuses leaves the booking confirmed and can be tried
- * again; then the row is cancelled. A second cancel is `ok: true` and does nothing. A wrong report token or cancel token is `ok: false` and does nothing.
- * It moves nothing else: the deal and the lead stay where they were.
+ * again; then the row is cancelled. A second cancel is `ok: true` and does nothing. A wrong report token or cancel token is `ok: false` and does nothing,
+ * and the answer is the same for an unknown report and a wrong cancel token.
+ * Cancelling only lets a slot go, so it does not wait for the report link to be live (it may have expired or been revoked since the guest booked) and it
+ * does not run the conflict gate (a do-not-contact guest can still release their slot). The cancel token is still scoped to the report's own lead.
+ * A call that has started cannot be cancelled. It moves nothing else: the deal and the lead stay where they were.
  */
 export async function cancelByToken(env: Env, token: string, cancelToken: string, now: Date): Promise<{ ok: boolean }> {
-  const target = await liveReportTarget(env.DB, token, now);
-  if (!target) return { ok: false };
-  const booking = await getBookingByCancelToken(env.DB, target.businessId, cancelToken);
+  if (!TOKEN.test(token) || !TOKEN.test(cancelToken)) return { ok: false };
+  const businessId = await reportBusinessId(env.DB, token);
+  if (!businessId) return { ok: false };
+  const booking = await getBookingByCancelToken(env.DB, businessId, cancelToken);
   if (!booking) return { ok: false };
   if (booking.status === "cancelled") return { ok: true };
-  if (booking.status !== "confirmed") return { ok: false };
+  if (booking.status !== "confirmed" || booking.startAt <= now.toISOString()) return { ok: false };
   if (booking.calendarEventId) {
     try {
       const calToken = await calendarToken(env, getBookingFetch());
