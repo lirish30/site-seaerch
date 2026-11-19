@@ -68,10 +68,11 @@ export async function draftProposal(
     packages, catalogHourly: { hourlyCents: hourly.priceCents, hourlyCareCents: hourly.altPriceCents }, edits: o.edits,
     config: parseDocumentsConfig(settings.documents_config), platform, now, version,
   });
+  // Withdraw the waiting approval BEFORE the draft changes: approved in the gap, it would send the edited content under a card that describes the old one.
+  if (existing) await withdrawSendApprovals(db, [existing.id], "the draft was edited after it was sent for approval");
   const doc = reuse
     ? await updateDraft(db, reuse.id, content)
     : await createDraft(db, { dealId, businessId: deal.businessId, optionId: o.optionId, content, test: o.test });
-  if (existing) await withdrawSendApprovals(db, [existing.id], "the draft was edited after it was sent for approval");
   return doc;
 }
 
@@ -98,6 +99,9 @@ export async function sendProblems(env: Env, doc: Document, o: { approvalId?: st
   if (doc.test) problems.push("test documents go out with Send a test only");
   const retry = !!o.approvalId && doc.approvalId === o.approvalId && (doc.status === "sent" || doc.status === "viewed");
   if (doc.status !== "draft" && !retry) problems.push(`this proposal is ${doc.status}, not a draft`);
+  // The owner's approval countersigns the proposal in these names, so neither may be blank.
+  if (!settings.your_name.trim()) problems.push("Add your name in Settings before sending: it is your signature on the proposal.");
+  if (!settings.contact_email.trim()) problems.push("Add your contact email in Settings before sending: it is your signature on the proposal.");
   const mailbox = await mainMailboxProblem(env);
   if (mailbox) problems.push(`The main mailbox cannot send: ${mailbox}`);
   if (!clientBase(env)) problems.push(CLIENT_BASE_PROBLEM);
@@ -170,7 +174,7 @@ export async function sendTest(env: Env, doc: Document, now = new Date()): Promi
 
 /** Voids a document with the reason and withdraws any approval still waiting to send it. A void one is returned as it is. */
 export async function voidProposal(db: D1Database, doc: Document, reason: string): Promise<Document> {
-  const voided = await voidDocument(db, doc.id, reason);
+  // Withdrawn first, so an approval made in the gap finds a draft that is still a draft only if the void then fails.
   await withdrawSendApprovals(db, [doc.id], "the proposal was voided");
-  return voided;
+  return voidDocument(db, doc.id, reason);
 }

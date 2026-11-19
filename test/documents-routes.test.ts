@@ -193,6 +193,21 @@ describe("/api/documents/:id", () => {
     expect((await call("POST", "/api/documents/nope/void", { reason: "x" })).status).toBe(404);
   });
 
+  it("PUT and void withdraw a waiting approval", async () => {
+    const s = await seedProposalDeal();
+    const { doc } = await draft(s);
+    const status = (id: string) => env.DB.prepare(`SELECT status FROM approvals WHERE id = ?`).bind(id).first<{ status: string }>().then((r) => r!.status);
+    const first = (await (await call("POST", `/api/documents/${doc.id}/send`)).json<any>()).approvalId;
+    expect(await status(first)).toBe("pending");
+    expect((await call("PUT", `/api/documents/${doc.id}`, { edits: { scopeNotes: "Edited." } })).status).toBe(200);
+    expect(await status(first)).toBe("rejected");
+    const second = (await (await call("POST", `/api/documents/${doc.id}/send`)).json<any>()).approvalId;
+    expect(second).not.toBe(first);
+    expect(await status(second)).toBe("pending");
+    expect((await call("POST", `/api/documents/${doc.id}/void`, { reason: "changed my mind" })).status).toBe(200);
+    expect(await status(second)).toBe("rejected");
+  });
+
   it("a signed document cannot be voided", async () => {
     const s = await seedProposalDeal();
     const { doc } = await draft(s);

@@ -104,9 +104,12 @@ describe("a draft that changes after it was sent for approval", () => {
     const a = await createSendApproval(env, draft);
     await draftProposal(env, s.dealId, { optionId: "b", edits: { scopeNotes: "Changed after the approval was made." } }, NOW);
     expect(await env.DB.prepare(`SELECT status FROM approvals WHERE id = ?`).bind(a.id).first()).toMatchObject({ status: "rejected" });
+    // Replacing the draft with a test copy (a different kind of document) withdraws it as well, and so does voiding.
     const fresh = await createSendApproval(env, (await getDocument(env.DB, draft.id))!);
     expect(fresh.id).not.toBe(a.id);
     expect(fresh.preview).toContain("Starter Site");
+    await draftProposal(env, s.dealId, { optionId: "b", edits: {}, test: true }, NOW);
+    expect(await env.DB.prepare(`SELECT status FROM approvals WHERE id = ?`).bind(fresh.id).first()).toMatchObject({ status: "rejected" });
   });
 });
 
@@ -125,6 +128,16 @@ describe("sendProblems", () => {
     const { doc } = await draft();
     await saveSettings(env.DB, { documents_config: "{}" });
     expect((await sendProblems(env, doc)).join(" ")).toMatch(/Oregon lawyer/);
+  });
+
+  it("a blank signer name or contact email is a problem, so the countersignature is never blank", async () => {
+    const { doc } = await draft();
+    await saveSettings(env.DB, { your_name: "  " });
+    expect((await sendProblems(env, doc)).join(" ")).toMatch(/Add your name/);
+    await saveSettings(env.DB, { your_name: "Logan Irish", contact_email: " " });
+    expect((await sendProblems(env, doc)).join(" ")).toMatch(/Add your contact email/);
+    await saveSettings(env.DB, { contact_email: "logan@siteline.test" });
+    expect(await sendProblems(env, doc)).toEqual([]);
   });
 
   it("a test document is always refused", async () => {
