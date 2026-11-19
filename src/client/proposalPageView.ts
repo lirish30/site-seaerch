@@ -5,9 +5,12 @@ export const NAME_MAX = 120;
 
 /**
  * Characters a typed signature may not hold: control characters (including the C1 range), line and paragraph separators, the bidi marks, embeddings,
- * overrides and isolates (which can make a name read as another), and zero-width spaces. The joiners U+200C and U+200D stay: some scripts need them.
+ * overrides and isolates (which can make a name read as another), and every other format character (zero-width, word joiner, soft hyphen) plus the
+ * fillers that draw nothing (Hangul and Khmer fillers, the combining grapheme joiner, the braille blank). The joiners U+200C and U+200D stay: some scripts need them.
  */
-const UNSAFE = /[\p{Cc}\u2028\u2029\u061c\u200b\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]/u;
+const UNSAFE = /(?![\u200c\u200d])\p{Cf}|[\p{Cc}\u2028\u2029\u3164\u115f\u1160\uffa0\u17b4\u17b5\u034f\u2800]/u;
+/** Characters that draw nothing: stripped before the visible letters are counted. */
+const INVISIBLE = /[\p{Cf}\p{Cc}\u3164\u115f\u1160\uffa0\u17b4\u17b5\u034f\u2800]/gu;
 
 /** Why a typed name cannot be a signature, or null when it can. Judged on the trimmed name; length is in characters. */
 export function nameProblem(name: string): string | null {
@@ -16,7 +19,7 @@ export function nameProblem(name: string): string | null {
   if (length < NAME_MIN) return "Type your full name to sign.";
   if (length > NAME_MAX) return "That name is too long.";
   if (UNSAFE.test(n)) return "Your name has hidden or control characters. Retype it with plain letters.";
-  if (!/\p{L}/u.test(n)) return "Your name needs at least one letter.";
+  if ([...n.replace(INVISIBLE, "")].filter((c) => /\p{L}/u.test(c)).length < 2) return "Your name needs at least two letters.";
   return null;
 }
 

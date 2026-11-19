@@ -35,6 +35,17 @@ describe("nameProblem", () => {
     }
   });
 
+  it("refuses names that are invisible or have fewer than two visible letters", () => {
+    const bad = ["\u3164\u3164", "A\u2060\u2060", "\u00adA\u00ad", "\u115f\u1160", "\uffa0\uffa0", "\u17b4\u17b5", "\u034f\u034f", "\u2800\u2800", "\u2060\u2060",
+      "A\u3164", "A\u2800", "A\u00ad", "A\u17b4", "A\u034f", "A\u1160", "A\uffa0", "A\u115f", "A\u200b"];
+    for (const n of bad) expect(nameProblem(n), JSON.stringify(n)).not.toBeNull();
+    expect(nameProblem("A 1")).toMatch(/letter/i); // one visible letter
+  });
+
+  it("keeps joiners and ordinary names with accents", () => {
+    for (const n of ["Jos\u00e9 N\u00fa\u00f1ez", "Re\u200dza Karimi", "\u0645\u0631\u0636\u064a\u0629\u200c\u0645", "Zo\u00eb O\u2019Brien", "Anne-Marie"]) expect(nameProblem(n), JSON.stringify(n)).toBeNull();
+  });
+
   it("counts characters, not UTF-16 units", () => {
     expect(nameProblem("😀😀")).toMatch(/letter/i); // two characters, no letter
     expect(nameProblem("Aé".repeat(60))).toBeNull(); // 120 characters
