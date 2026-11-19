@@ -10,6 +10,8 @@ export interface Env {
   LOGIN_LIMITER?: RateLimit;
   /** Throttles the public booking routes per report link and client IP. Optional, like LOGIN_LIMITER. */
   BOOKING_LIMITER?: RateLimit;
+  /** Throttles a client's proposal page and signing per proposal link and client IP. Optional, like the others. */
+  CLIENT_LIMITER?: RateLimit;
   APP_PASSWORD: string;
   SESSION_SECRET: string;
   /** Bearer token for the /mcp endpoint (Worker secret). */
