@@ -51,6 +51,13 @@ describe("createOnboarding", () => {
     expect(await getOnboardingForDeal(env.DB, "nope")).toBeNull();
   });
 
+  it("an invalid kind rejects instead of returning silently", async () => {
+    const s = await seedDeal();
+    const doc = await createDraft(env.DB, { dealId: s.dealId, businessId: s.businessId, optionId: "b", content: proposal() });
+    await expect(createOnboarding(env.DB, { businessId: s.businessId, dealId: s.dealId, documentId: doc.id, kind: "bogus" as unknown as "build", test: false, items: ITEMS })).rejects.toThrow();
+    expect(await getOnboardingForDeal(env.DB, s.dealId)).toBeNull();
+  });
+
   it("items come back in position order", async () => {
     const s = await seed();
     const items = await listItems(env.DB, s.onboarding.id);
@@ -64,6 +71,11 @@ describe("createOnboarding", () => {
 });
 
 describe("tokens", () => {
+  it("getOnboardingByToken is null for a token that never existed", async () => {
+    await seed();
+    expect(await getOnboardingByToken(env.DB, "x".repeat(43))).toBeNull();
+  });
+
   it("getOnboardingByToken is null after revoke and works again after a new link", async () => {
     const s = await seed();
     const old = s.onboarding.token;
@@ -154,6 +166,35 @@ describe("items", () => {
     await setItemStatus(env.DB, about.id, "not_applicable");
     await saveItemText(env.DB, about.id, "x", T1);
     expect((await listItems(env.DB, s.onboarding.id))[1].status).toBe("not_applicable");
+  });
+});
+
+describe("files on settled items", () => {
+  const file = (id: string, itemId: string) => ({ id, itemId, r2Key: `onboarding/x/${id}`, fileName: `${id}.png`, contentType: "image/png", sizeBytes: 1, now: T1 });
+
+  it("a new file on an accepted item makes it received again", async () => {
+    const s = await seed();
+    const logo = (await listItems(env.DB, s.onboarding.id))[0];
+    await setItemStatus(env.DB, logo.id, "accepted");
+    await addFile(env.DB, file("fa1", logo.id));
+    expect((await listItems(env.DB, s.onboarding.id))[0].status).toBe("received");
+  });
+
+  it("a new file on a not_applicable item makes it received again", async () => {
+    const s = await seed();
+    const logo = (await listItems(env.DB, s.onboarding.id))[0];
+    await setItemStatus(env.DB, logo.id, "not_applicable");
+    await addFile(env.DB, file("fn1", logo.id));
+    expect((await listItems(env.DB, s.onboarding.id))[0].status).toBe("received");
+  });
+
+  it("removeFile on an accepted item leaves its status", async () => {
+    const s = await seed();
+    const logo = (await listItems(env.DB, s.onboarding.id))[0];
+    await addFile(env.DB, file("fr1", logo.id));
+    await setItemStatus(env.DB, logo.id, "accepted");
+    expect((await removeFile(env.DB, "fr1"))!.id).toBe("fr1");
+    expect((await listItems(env.DB, s.onboarding.id))[0].status).toBe("accepted");
   });
 });
 

@@ -89,7 +89,8 @@ export async function createOnboarding(db: D1Database, o: {
   const now = nowIso();
   const res = await db.batch([
     db.prepare(
-      `INSERT OR IGNORE INTO onboardings (id, business_id, deal_id, document_id, kind, test, token, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO onboardings (id, business_id, deal_id, document_id, kind, test, token, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (deal_id) DO NOTHING`,
     ).bind(id, o.businessId, o.dealId, o.documentId, o.kind, o.test ? 1 : 0, newClientToken(), now, now),
     ...o.items.map((it, position) =>
       db.prepare(
@@ -98,7 +99,10 @@ export async function createOnboarding(db: D1Database, o: {
       ).bind(crypto.randomUUID(), id, it.key, it.label, it.instructions, it.kind, it.phase, position, now, id)),
   ]);
   if ((res[0].meta.changes ?? 0) === 1) return { onboarding: (await getOnboarding(db, id))!, created: true };
-  return { onboarding: (await getOnboardingForDeal(db, o.dealId))!, created: false };
+  // Only the deal's own row can have made the insert do nothing (any other violation raised above), so it must be there.
+  const existing = await getOnboardingForDeal(db, o.dealId);
+  if (!existing) throw new Error(`onboarding for deal ${o.dealId} was neither created nor found`);
+  return { onboarding: existing, created: false };
 }
 
 export async function getAnswers(db: D1Database, id: string): Promise<Record<string, string>> {
@@ -151,12 +155,12 @@ export async function saveItemText(db: D1Database, itemId: string, text: string,
   ).bind(text, now, text, itemId).run();
 }
 
-/** Records an uploaded file (the bytes are already in R2 under r2Key). The item becomes `received` unless the owner already settled it. */
+/** Records an uploaded file (the bytes are already in R2 under r2Key). The item becomes `received` whatever it was, so a new file on an accepted or not-applicable item comes back for the owner to review. */
 export async function addFile(db: D1Database, f: Omit<OnboardingFile, "uploadedAt"> & { now: string }): Promise<void> {
   await db.batch([
     db.prepare(`INSERT INTO onboarding_files (id, item_id, r2_key, file_name, content_type, size_bytes, uploaded_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
       .bind(f.id, f.itemId, f.r2Key, f.fileName, f.contentType, f.sizeBytes, f.now),
-    db.prepare(`UPDATE onboarding_items SET status = CASE WHEN ${KEEP_STATUS} THEN status ELSE 'received' END, updated_at = ? WHERE id = ?`).bind(f.now, f.itemId),
+    db.prepare(`UPDATE onboarding_items SET status = 'received', updated_at = ? WHERE id = ?`).bind(f.now, f.itemId),
   ]);
 }
 
