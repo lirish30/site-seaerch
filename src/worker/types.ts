@@ -120,7 +120,7 @@ export interface Person {
 export const ACTIVITY_KINDS = [
   "status", "archived", "restored", "website", "reaudit", "score_flagged", "export", "draft", "cro_audit", "suppressed", "import", "bulk",
   "today_done", "snoozed", "starred", "unstarred", "note", "email_sent", "email_reply", "email_bounce",
-  "video_watch", "deal_created", "deal_moved",
+  "video_watch", "deal_created", "deal_moved", "booked", "booking_cancelled",
 ] as const;
 export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
 export interface Activity { id: string; business_id: string; kind: ActivityKind; detail: string | null; created_at: string; }

@@ -2,6 +2,8 @@ import { Hono } from "hono";
 import { getCookie } from "hono/cookie";
 import { verifySession } from "../auth";
 import type { Env } from "../env";
+import { z } from "zod";
+import { BookingFormSchema, bookingPage, cancelByToken, createVisitorBooking } from "../booking/create";
 import { publicReport } from "../db/reports";
 import { serveMedia } from "../video/media";
 import { MAX_EVENT_BYTES, ViewEventSchema, recordEvent } from "../video/views";
@@ -24,7 +26,7 @@ publicRoutes.get("/report/:token", async (c) => {
   const token = c.req.param("token");
   // Unknown, expired, revoked and malformed tokens are indistinguishable.
   if (!TOKEN.test(token)) return c.json({ error: "not found" }, 404);
-  const report = await publicReport(c.env.DB, token);
+  const report = await publicReport(c.env.DB, token, new Date(), { linkBase: c.env.OUTREACH_LINK_BASE });
   return report ? c.json(report) : c.json({ error: "not found" }, 404);
 });
 
@@ -68,6 +70,51 @@ publicRoutes.post("/report/:token/events", async (c) => {
     } catch { /* not JSON, or the write failed: still nothing to say */ }
   }
   return c.body(null, 204);
+});
+
+// The booking page (Plan 4). Every answer for a link that is gone, and for a lead that may not be contacted, is the same 404; a malformed token never
+// reaches the database. What a person types here is stored as typed and is never part of a response.
+const MAX_BOOK_BYTES = 8 * 1024;
+const NOT_FOUND = { error: "not found" } as const;
+const CancelBody = z.object({ cancelToken: z.string().regex(TOKEN) }).strict();
+
+/** The JSON body, capped at 8 KB: the body, or the response that refuses it (413 too long, 400 not JSON). */
+async function readJson(req: Request): Promise<{ ok: true; body: unknown } | { ok: false; status: 400 | 413 }> {
+  const text = await readCapped(req, MAX_BOOK_BYTES);
+  if (text === null) return { ok: false, status: 413 };
+  try { return { ok: true, body: JSON.parse(text) }; } catch { return { ok: false, status: 400 }; }
+}
+
+publicRoutes.get("/report/:token/book", async (c) => {
+  const token = c.req.param("token");
+  if (!TOKEN.test(token)) return c.json(NOT_FOUND, 404);
+  const r = await bookingPage(c.env, token, new Date());
+  if (r.ok) return c.json(r.page);
+  return r.status === 404 ? c.json(NOT_FOUND, 404) : c.json({ error: r.error, fallbackUrl: r.fallbackUrl ?? "" }, r.status);
+});
+
+publicRoutes.post("/report/:token/book", async (c) => {
+  const token = c.req.param("token");
+  if (!TOKEN.test(token)) return c.json(NOT_FOUND, 404);
+  const read = await readJson(c.req.raw);
+  if (!read.ok) return c.json({ error: read.status === 413 ? "too large" : "invalid body" }, read.status);
+  const parsed = BookingFormSchema.safeParse(read.body);
+  // Only the names of the fields that failed: what was typed is never echoed.
+  if (!parsed.success) return c.json({ error: "invalid body", fields: Object.keys(z.flattenError(parsed.error).fieldErrors) }, 400);
+  const r = await createVisitorBooking(c.env, token, parsed.data, new Date());
+  if (!r.ok) return r.status === 404 ? c.json(NOT_FOUND, 404) : c.json({ error: r.error, ...(r.fallbackUrl !== undefined && { fallbackUrl: r.fallbackUrl }) }, r.status);
+  const b = r.booking;
+  return c.json({ booking: { start: b.startAt, end: b.endAt, meetUrl: b.meetUrl, cancelToken: b.cancelToken } }, 201);
+});
+
+publicRoutes.post("/report/:token/book/cancel", async (c) => {
+  const token = c.req.param("token");
+  if (!TOKEN.test(token)) return c.json(NOT_FOUND, 404);
+  const read = await readJson(c.req.raw);
+  if (!read.ok) return c.json({ error: read.status === 413 ? "too large" : "invalid body" }, read.status);
+  const parsed = CancelBody.safeParse(read.body);
+  if (!parsed.success) return c.json({ error: "invalid body" }, 400);
+  return c.json(await cancelByToken(c.env, token, parsed.data.cancelToken, new Date()));
 });
 
 publicRoutes.all("*", (c) => c.json({ error: "not found" }, 404));

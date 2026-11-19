@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import Icon, { LogoMark } from "../components/Icon";
 import { sendEvent } from "../beacon";
+import Book from "./Book";
 import { crossedMarks, percentPlayed } from "../videoViewsView";
 import {
-  basedOnText, bookingLabel, emailLabel, expiryText, groupFindings, hasSender, isHttpsLogo, isReportToken, senderInitials, senderLine, senderTitle, summaryText, videoNote, mediaUrl,
+  basedOnText, bookingLabel, emailLabel, expiryText, groupFindings, hasSender, isHttpsLogo, isReportToken, reportRoute, senderInitials, senderLine, senderTitle, summaryText, videoNote, mediaUrl,
   type ReportData,
 } from "../reportView";
 
@@ -77,8 +78,13 @@ function Skeleton() {
 }
 
 // Public page: deliberately bypasses api.ts, whose 401 handling redirects to /login.
+// One wildcard route, so truncated or extended links land here instead of the app shell: `<token>` is the report, `<token>/book` its booking page.
 export default function Report() {
-  const token = useParams()["*"]; // wildcard route, so truncated or extended links land here instead of the app shell
+  const route = reportRoute(useParams()["*"]);
+  return route.book && isReportToken(route.token) ? <Book token={route.token} /> : <ReportPage token={route.token} />;
+}
+
+function ReportPage({ token }: { token: string | undefined }) {
   const [r, setR] = useState<ReportData | null>(null);
   const [state, setState] = useState<"loading" | "ok" | "gone" | "error">("loading");
   const [attempt, setAttempt] = useState(0);
@@ -123,7 +129,10 @@ export default function Report() {
 
   const groups = groupFindings(r.findings);
   const note = r.video ? videoNote(r.video) : "";
-  const booking = r.video && r.bookingUrl ? bookingLabel(r.bookingUrl) : "";
+  // The server only sends a link when it should show: the old link beside a video, or the per-lead booking page whenever booking is on.
+  const booking = r.bookingUrl ? bookingLabel(r.bookingUrl) : "";
+  const ownPage = !!token && (r.bookingUrl ?? "").endsWith(`/r/${token}/book`); // this app's booking page opens here; the owner's own link opens in a new tab
+  const bookButton = booking ? <a className="btn primary rp-book" href={r.bookingUrl} {...(ownPage ? {} : { target: "_blank" })} rel="noopener noreferrer"><Icon name="calendar" size={16} />{booking}</a> : null;
   const { sender } = r;
   const title = senderTitle(sender);
   return (
@@ -145,9 +154,10 @@ export default function Report() {
             <section className="rp-video" aria-label="Video walkthrough">
               <ReportVideo token={token} />
               {note && <p className="rp-video-note">{note}</p>}
-              {booking && <a className="btn primary rp-book" href={r.bookingUrl} target="_blank" rel="noopener noreferrer"><Icon name="calendar" size={16} />{booking}</a>}
+              {bookButton}
             </section>
           )}
+          {!r.video && bookButton && <section className="rp-video" aria-label="Book a call">{bookButton}</section>}
 
           <div className="rp-summary">
             {groups.length ? <>

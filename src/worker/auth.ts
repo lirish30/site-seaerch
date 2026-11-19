@@ -49,12 +49,13 @@ export async function loginThrottled(c: Context<{ Bindings: Env }>) {
 const PUBLIC = new Set(["/api/health", "/api/login", "/api/google/callback", "/api/passkey/login/options", "/api/passkey/login/verify"]);
 
 // The only unauthenticated data routes: the report under this prefix (a single non-empty token segment), its video files (`<token>/media/<name>`; the route
-// itself accepts three names) and, for POST only, the watch beacon (`<token>/events`), nothing else.
+// itself accepts three names), the booking page (`<token>/book`, read and book) and, for POST only, the watch beacon (`<token>/events`) and the guest's
+// cancel (`<token>/book/cancel`), nothing else.
 const PUBLIC_REPORT_PREFIX = "/api/public/report/";
 const isPublicReport = (path: string, method: string) => {
   if (!path.startsWith(PUBLIC_REPORT_PREFIX) || path.length === PUBLIC_REPORT_PREFIX.length) return false;
   const rest = path.slice(PUBLIC_REPORT_PREFIX.length);
-  return !rest.includes("/") || /^[^/]+\/media\/[^/]+$/.test(rest) || (method === "POST" && /^[^/]+\/events$/.test(rest));
+  return !rest.includes("/") || /^[^/]+\/media\/[^/]+$/.test(rest) || /^[^/]+\/book$/.test(rest) || (method === "POST" && /^[^/]+\/(events|book\/cancel)$/.test(rest));
 };
 
 export const requireAuth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {

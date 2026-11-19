@@ -13,6 +13,7 @@ import { initials, leadTier, TIER_LABEL } from "../scoreView";
 import ActivityTab from "../components/ActivityTab";
 import PeoplePanel from "../components/PeoplePanel";
 import DealChip from "../components/DealChip";
+import UpcomingBooking from "../components/UpcomingBooking";
 import StarToggle from "../components/StarToggle";
 import CroPanel from "../components/CroPanel";
 import { shareState } from "../reportView";
@@ -45,7 +46,7 @@ const ACTIVITY_LABEL: Record<string, string> = {
   note: "Note",
   status: "Status", archived: "Archived", restored: "Restored", website: "Website changed", reaudit: "Re-audit",
   score_flagged: "Score flagged", export: "Exported", draft: "Draft", cro_audit: "CRO audit", suppressed: "Suppressed", import: "Imported", bulk: "Bulk change",
-  today_done: "Marked done in Today", snoozed: "Snoozed in Today", starred: "Starred", unstarred: "Unstarred", job_found: "New role spotted", deal_created: "Deal started", deal_moved: "Deal moved",
+  today_done: "Marked done in Today", snoozed: "Snoozed in Today", starred: "Starred", unstarred: "Unstarred", job_found: "New role spotted", deal_created: "Deal started", deal_moved: "Deal moved", booked: "Call booked", booking_cancelled: "Call cancelled",
 };
 
 const TABS = ["overview", "issues", "plan", "email", "activity"] as const;
@@ -408,6 +409,8 @@ export default function LeadDetail() {
             </div>
             <textarea id="notes" className="notes-box" aria-label="Notes" placeholder="Add a note…" value={notes} onChange={(e) => setNotes(e.target.value)} onBlur={saveNotes} />
           </PropSection>
+
+          <UpcomingBooking leadId={b.id} />
 
           <PropSection icon="user" title="Point of contact">
             {poc ? (

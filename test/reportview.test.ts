@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupFindings, summaryText, isHttpsLogo, isReportToken, shareState, senderInitials, emailLabel, senderLine, hasSender, senderTitle, expiryText, basedOnText, longDate, videoNote, bookingLabel } from "../src/client/reportView";
+import { groupFindings, summaryText, isHttpsLogo, isReportToken, shareState, senderInitials, emailLabel, senderLine, hasSender, senderTitle, expiryText, basedOnText, longDate, videoNote, bookingLabel, reportRoute } from "../src/client/reportView";
 
 const f = (severity: "high" | "medium" | "low", evidence: string) => ({ severity, evidence });
 
@@ -72,5 +72,20 @@ describe("reportView", () => {
     expect(bookingLabel("http://cal.example.com/me")).toBe("");
     expect(bookingLabel("javascript:alert(1)")).toBe("");
     expect(bookingLabel("")).toBe("");
+  });
+});
+
+describe("reportRoute", () => {
+  const t = "T".repeat(43);
+  it("reads a report path and its booking page", () => {
+    expect(reportRoute(t)).toEqual({ token: t, book: false });
+    expect(reportRoute(`${t}/book`)).toEqual({ token: t, book: true });
+    expect(reportRoute(`${t}/book/`)).toEqual({ token: t, book: true });
+  });
+  it("leaves anything else whole, for the token check to refuse", () => {
+    expect(reportRoute(undefined)).toEqual({ token: undefined, book: false });
+    expect(reportRoute(`${t}/other`)).toEqual({ token: `${t}/other`, book: false });
+    expect(reportRoute(`${t}/book/more`)).toEqual({ token: `${t}/book/more`, book: false });
+    expect(isReportToken(reportRoute(`${t}/book/more`).token)).toBe(false);
   });
 });

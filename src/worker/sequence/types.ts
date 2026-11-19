@@ -5,7 +5,7 @@ export type EnrollmentStatus = "active" | "nurture" | "replied" | "stopped" | "b
 export const LIVE_STATUSES: readonly EnrollmentStatus[] = ["active", "nurture"];
 export const isLive = (s: EnrollmentStatus): boolean => LIVE_STATUSES.includes(s);
 
-export type StopReason = "replied" | "opt_out" | "bounced" | "manual";
+export type StopReason = "replied" | "opt_out" | "bounced" | "manual" | "booked";
 
 export interface Enrollment {
   id: string; business_id: string; campaign_id: string; mailbox_key: MailboxKey; to_email: string;

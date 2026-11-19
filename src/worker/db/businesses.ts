@@ -172,7 +172,7 @@ export async function deleteBusiness(db: D1Database, id: string, raw?: R2Bucket)
     db.prepare(`DELETE FROM cro_items WHERE cro_audit_id IN (SELECT id FROM cro_audits WHERE business_id = ?)`).bind(id),
     // Viewing data is keyed by report token: it goes before the audit_reports rows that say whose it is.
     ...["video_sessions", "video_view_marks"].map((t) => db.prepare(`DELETE FROM ${t} WHERE token IN (SELECT token FROM audit_reports WHERE business_id = ?)`).bind(id)),
-    ...["search_results", "audits", "contacts", "drafts", "people", "activity", "cro_audits", "video_audits", "audit_reports", "job_postings", "career_sources", "deals"].map((t) =>
+    ...["search_results", "audits", "contacts", "drafts", "people", "activity", "cro_audits", "video_audits", "audit_reports", "job_postings", "career_sources", "bookings", "deals"].map((t) =>
       db.prepare(`DELETE FROM ${t} WHERE business_id = ?`).bind(id)),
     db.prepare(`DELETE FROM businesses WHERE id = ?`).bind(id),
   ]);

@@ -580,3 +580,6 @@ table.niche tr.leader { background:var(--positive-soft); box-shadow:inset 3px 0 
 .pl-card { display:flex; flex-direction:column; gap:6px; align-items:flex-start; padding:10px; border:1px solid var(--border); border-radius:8px; background:var(--bg-surface); color:var(--text); font-size:13px; line-height:19px; text-decoration:none; box-shadow:var(--shadow-card); }
 .pl-card:hover { border-color:var(--border-strong); }
 @media (max-width: 720px) { .pl-msg { padding:16px; } .pl-board { padding:16px 16px 24px; } }
+
+/* A key/value row whose value is free text (a booking answer): wrap it instead of cutting it short. */
+.kv.wrap .v > span { white-space:normal; overflow:visible; text-overflow:clip; overflow-wrap:anywhere; }

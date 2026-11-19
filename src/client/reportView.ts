@@ -25,7 +25,13 @@ export function summaryText(counts: Record<Severity, number>): string {
 // Defence in depth: the server already blanks non-https logos, but the client never trusts that.
 export const isHttpsLogo = (url: string) => url.startsWith("https://");
 
-export const isReportToken = (t: string | undefined) => !!t && /^[A-Za-z0-9_-]{43}$/.test(t);
+export const isReportToken = (t: string | undefined): t is string => !!t && /^[A-Za-z0-9_-]{43}$/.test(t);
+
+/** What the public `/r/*` route is asking for: a report, or its booking page (`<token>/book`). Anything else is left whole for the token check to refuse. */
+export function reportRoute(rest: string | undefined): { token: string | undefined; book: boolean } {
+  const m = /^([^/]+)\/book\/?$/.exec(rest ?? "");
+  return m ? { token: m[1], book: true } : { token: rest, book: false };
+}
 
 /** What the owner's share control shows: any active link (current or older) can be revoked. */
 export function shareState(report: { token: string } | null, otherActive: number) {
