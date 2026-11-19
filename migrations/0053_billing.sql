@@ -28,9 +28,11 @@ CREATE TABLE invoices (
 CREATE UNIQUE INDEX uq_invoices_document_kind ON invoices(document_id, kind);
 CREATE INDEX idx_invoices_deal ON invoices(deal_id);
 
--- A webhook event id is inserted before the event is handled, so a repeat delivery (Stripe retries, or two at once) is seen as a duplicate.
+-- A webhook event is claimed (inserted with processed_at NULL, received_at = the claim time) before it is handled and marked processed_at once handled.
+-- A claim older than the lease (2 minutes) that was never finished can be taken over, so an event that failed or whose Worker died is retried, never lost.
 CREATE TABLE stripe_events (
   id TEXT PRIMARY KEY,
   type TEXT NOT NULL,
-  received_at TEXT NOT NULL
+  received_at TEXT NOT NULL,
+  processed_at TEXT
 );

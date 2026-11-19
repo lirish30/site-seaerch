@@ -53,6 +53,7 @@ describe("createDepositInvoice", () => {
     expect(inv.form.get("collection_method")).toBe("send_invoice");
     expect(inv.form.get("days_until_due")).toBe("7");
     expect(inv.form.get("auto_advance")).toBe("false");
+    expect(inv.form.get("pending_invoice_items_behavior")).toBe("exclude");
     expect(inv.form.get("metadata[document_id]")).toBe("doc_1");
     expect(inv.form.get("metadata[deal_id]")).toBe("deal_1");
     expect(inv.form.get("metadata[business_id]")).toBe("biz_1");

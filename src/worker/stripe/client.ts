@@ -81,6 +81,7 @@ export async function createDepositInvoice(
   if (!Number.isSafeInteger(o.amountCents) || o.amountCents <= 0) throw new RangeError("an invoice is for a whole, positive number of cents");
   const inv = await call<{ id?: unknown }>(f, key, "POST", "/v1/invoices", {
     customer: o.customerId, currency: "usd", collection_method: "send_invoice", days_until_due: 7, auto_advance: false,
+    pending_invoice_items_behavior: "exclude", // the one line is attached by invoice id below, never swept in from the customer's pending items
     payment_settings: { payment_method_types: ["card", "us_bank_account"] },
     metadata: { document_id: o.documentId, deal_id: o.dealId, business_id: o.businessId, kind: "deposit" },
   }, `${idempotencyKey}:invoice`);

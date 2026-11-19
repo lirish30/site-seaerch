@@ -1,4 +1,4 @@
-import { forgetEvent, getInvoiceByStripeId, markInvoice, recordEvent, type InvoiceRow, type InvoiceStatus } from "../db/invoices";
+import { claimEvent, finishEvent, getInvoiceByStripeId, markInvoice, releaseEvent, type InvoiceRow, type InvoiceStatus } from "../db/invoices";
 import type { Env } from "../env";
 
 const enc = new TextEncoder();
@@ -37,7 +37,8 @@ export async function verifyStripeSignature(rawBody: string, header: string | nu
 
 /** The part of a Stripe event this app reads. */
 export interface StripeEvent { id: string; type: string; data: { object: Record<string, any> } }
-export type StripeResult = "applied" | "duplicate" | "ignored" | "mismatch";
+/** `busy`: another delivery of this event is being handled right now; the route answers 503 so Stripe tries again later. */
+export type StripeResult = "applied" | "duplicate" | "ignored" | "mismatch" | "busy";
 
 const MAX_NOTE = 200;
 const str = (v: unknown): string => String(v ?? "").slice(0, 40);
@@ -77,7 +78,8 @@ async function apply(env: Env, event: StripeEvent, deps: StripeDeps): Promise<St
 
   const problem = paidProblem(inv, obj);
   if (problem) {
-    await markInvoice(env.DB, inv.id, { mismatch: problem });
+    // Guarded like the moves: a note never lands on an invoice that is already paid or void.
+    await markInvoice(env.DB, inv.id, { mismatch: problem }, { notFrom: ["paid", "void"] });
     return "mismatch";
   }
   // A retry after a failed onPaid keeps the first paid time.
@@ -87,19 +89,26 @@ async function apply(env: Env, event: StripeEvent, deps: StripeDeps): Promise<St
   return "applied";
 }
 
-export interface StripeDeps { onPaid?: (env: Env, inv: InvoiceRow) => Promise<void> }
+export interface StripeDeps { onPaid?: (env: Env, inv: InvoiceRow) => Promise<void>; /** The clock, for the event lease. */ now?: () => Date }
 
 /**
- * Handles one verified event. The event id is inserted FIRST (INSERT OR IGNORE), so a repeat, or two deliveries at once, is a `duplicate` that does nothing.
- * If anything after that throws (our database, or onPaid), the id is deleted again before the error goes up, so Stripe's retry of the same event is
- * handled afresh instead of being swallowed as a duplicate. A throw therefore means "retry me"; the route turns it into a 500.
+ * Handles one verified event, claiming it first: the id is inserted with no processed time, and only the caller that holds the claim applies it.
+ * Another delivery of an event that is finished is a `duplicate`, and of one whose claim is under 2 minutes old a `busy` (the route answers 503).
+ * An unfinished claim older than that (the Worker died, or the release below failed) is taken over, so an event is never lost as "processed".
+ * The event is marked processed only after the state update and onPaid have succeeded. On any failure the claim is released (dated to the epoch) and the
+ * error rethrown, which the route turns into a 500; the retry re-claims at once. onPaid can therefore run again for the same event: it must be idempotent.
  */
 export async function handleStripeEvent(env: Env, event: StripeEvent, deps: StripeDeps = {}): Promise<StripeResult> {
-  if (!(await recordEvent(env.DB, event.id, event.type))) return "duplicate";
+  const now = deps.now ?? (() => new Date());
+  const claim = await claimEvent(env.DB, event.id, event.type, now());
+  if (claim !== "claimed") return claim;
   try {
-    return await apply(env, event, deps);
+    const result = await apply(env, event, deps);
+    await finishEvent(env.DB, event.id, now());
+    return result;
   } catch (e) {
-    await forgetEvent(env.DB, event.id).catch(() => {});
+    // Never delete the row: a failed release only means the next delivery waits for the lease. Log the id, not the payload.
+    await releaseEvent(env.DB, event.id).catch(() => console.error("stripe webhook: could not release the claim on event", event.id));
     throw e;
   }
 }

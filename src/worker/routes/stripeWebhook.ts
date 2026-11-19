@@ -31,7 +31,7 @@ const isEvent = (v: any): v is StripeEvent =>
 
 /**
  * Stripe's webhook. Mounted outside /api/*, so it has no session: the signature is the only credential.
- * Answers carry no body. 503 secret not set; 413 too large; 400 bad signature or not an event; 500 our own write failed (Stripe retries);
+ * Answers carry no body. 503 secret not set, or this event is being handled by another delivery; 413 too large; 400 bad signature or not an event; 500 our own write failed (Stripe retries);
  * 200 for everything else, applied or not (a duplicate, an event we ignore or a payment that did not match), so Stripe stops retrying.
  */
 export const stripeWebhookRoutes = new Hono<{ Bindings: Env }>();
@@ -46,7 +46,8 @@ stripeWebhookRoutes.post("/", async (c) => {
   try { event = JSON.parse(raw); } catch { return c.body(null, 400); }
   if (!isEvent(event)) return c.body(null, 400);
   try {
-    await handleStripeEvent(c.env, event); // Task 10 adds the production onPaid
+    // Task 10 adds the production onPaid. Another delivery of the same event still in flight: 503, so Stripe retries later.
+    if ((await handleStripeEvent(c.env, event)) === "busy") return c.body(null, 503);
   } catch (e) {
     // The event id and the error's message only: never the body, which carries a client's details.
     console.error("stripe webhook: could not apply", event.id, e instanceof Error ? e.message : "unknown error");

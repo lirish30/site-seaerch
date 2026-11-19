@@ -68,13 +68,40 @@ export async function saveStripeCustomer(db: D1Database, businessId: string, str
   return (await getStripeCustomer(db, businessId))!;
 }
 
-/** Marks a webhook event as seen. False when it already was (a repeat delivery). */
-export async function recordEvent(db: D1Database, eventId: string, type: string): Promise<boolean> {
-  const res = await db.prepare(`INSERT OR IGNORE INTO stripe_events (id, type, received_at) VALUES (?, ?, ?)`).bind(eventId, type, new Date().toISOString()).run();
+/** Inserts an event claim (not yet processed). False when the id was already there. */
+export async function recordEvent(db: D1Database, eventId: string, type: string, now: Date = new Date()): Promise<boolean> {
+  const res = await db.prepare(`INSERT OR IGNORE INTO stripe_events (id, type, received_at) VALUES (?, ?, ?)`).bind(eventId, type, now.toISOString()).run();
   return (res.meta.changes ?? 0) === 1;
 }
 
-/** Takes an event back out, so Stripe's retry of it is handled afresh. Used only when handling it failed. */
-export async function forgetEvent(db: D1Database, eventId: string): Promise<void> {
-  await db.prepare(`DELETE FROM stripe_events WHERE id = ?`).bind(eventId).run();
+/** How long a claim on an event holds before another delivery may take it over. */
+export const EVENT_LEASE_MS = 2 * 60_000;
+/** A released claim is dated here, so the next delivery finds it expired. */
+export const EPOCH = "1970-01-01T00:00:00.000Z";
+
+/**
+ * Claims a webhook event for handling. `claimed`: this caller handles it. `duplicate`: it was already handled. `busy`: another delivery holds a fresh claim.
+ * An unfinished claim older than the lease is taken over with a conditional update, so of several deliveries racing for it exactly one wins.
+ */
+export async function claimEvent(db: D1Database, eventId: string, type: string, now: Date = new Date()): Promise<"claimed" | "duplicate" | "busy"> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (await recordEvent(db, eventId, type, now)) return "claimed";
+    const row = await db.prepare(`SELECT received_at, processed_at FROM stripe_events WHERE id = ?`).bind(eventId).first<{ received_at: string; processed_at: string | null }>();
+    if (!row) continue; // gone between the insert and the read: claim it afresh
+    if (row.processed_at !== null) return "duplicate";
+    if (Date.parse(row.received_at) > now.getTime() - EVENT_LEASE_MS) return "busy";
+    const res = await db.prepare(`UPDATE stripe_events SET received_at = ? WHERE id = ? AND processed_at IS NULL AND received_at = ?`).bind(now.toISOString(), eventId, row.received_at).run();
+    return (res.meta.changes ?? 0) === 1 ? "claimed" : "busy";
+  }
+  return "busy";
+}
+
+/** The event has been handled: later deliveries of it are duplicates. */
+export async function finishEvent(db: D1Database, eventId: string, now: Date = new Date()): Promise<void> {
+  await db.prepare(`UPDATE stripe_events SET processed_at = ? WHERE id = ?`).bind(now.toISOString(), eventId).run();
+}
+
+/** Gives up a claim after a failure, so the next delivery can take the event at once instead of waiting out the lease. */
+export async function releaseEvent(db: D1Database, eventId: string): Promise<void> {
+  await db.prepare(`UPDATE stripe_events SET received_at = ? WHERE id = ? AND processed_at IS NULL`).bind(EPOCH, eventId).run();
 }

@@ -91,8 +91,21 @@ describe("handleStripeEvent", () => {
     const onPaid = vi.fn(async () => {});
     const evt = invoiceEvent("invoice.paid", invoice);
     const out = await Promise.all([handleStripeEvent(env, evt, { onPaid }), handleStripeEvent(env, evt, { onPaid })]);
-    expect(out.sort()).toEqual(["applied", "duplicate"]);
+    // The loser sees either the winner's fresh claim (busy) or its finished one (duplicate), never a second apply.
+    expect(out.filter((o) => o === "applied")).toHaveLength(1);
+    expect(out.filter((o) => o === "duplicate" || o === "busy")).toHaveLength(1);
     expect(onPaid).toHaveBeenCalledTimes(1);
+  });
+
+  it("a mismatch never puts a note on an invoice that is already paid or void", async () => {
+    const paid = await seedInvoice(), voided = await seedInvoice();
+    await handleStripeEvent(env, invoiceEvent("invoice.paid", paid.invoice));
+    await handleStripeEvent(env, invoiceEvent("invoice.voided", voided.invoice));
+    for (const inv of [paid.invoice, voided.invoice]) {
+      expect(await handleStripeEvent(env, invoiceEvent("invoice.paid", inv, { object: { amount_paid: 1 } }))).toBe("mismatch");
+    }
+    expect(await getInvoiceByStripeId(env.DB, paid.invoice.stripeInvoiceId)).toMatchObject({ status: "paid", mismatch: null });
+    expect(await getInvoiceByStripeId(env.DB, voided.invoice.stripeInvoiceId)).toMatchObject({ status: "void", mismatch: null });
   });
 
   it("a different amount is a mismatch and does not call onPaid", async () => {
@@ -202,37 +215,107 @@ describe("handleStripeEvent", () => {
     expect(onPaid).toHaveBeenCalledTimes(1);
   });
 
-  // ---- a failure writing our own state must not leave the event marked as processed ----
+  // ---- an event is claimed, marked processed only once handled, and never lost as processed ----
 
-  /** An Env whose database refuses writes to invoices. */
-  const brokenWrites = (): Env => ({ ...env, DB: new Proxy(env.DB, { get: (t, k) => k === "prepare"
-    ? (sql: string) => { if (/^\s*UPDATE invoices/i.test(sql)) throw new Error("D1 is down"); return t.prepare(sql); }
+  /** An Env whose database throws on any statement matching one of the patterns. */
+  const breakOn = (...res: RegExp[]): Env => ({ ...env, DB: new Proxy(env.DB, { get: (t, k) => k === "prepare"
+    ? (sql: string) => { if (res.some((r) => r.test(sql))) throw new Error("D1 is down"); return t.prepare(sql); }
     : (t as any)[k].bind(t) }) } as Env);
+  const eventRow = (id: string) => env.DB.prepare(`SELECT received_at, processed_at FROM stripe_events WHERE id = ?`).bind(id).first<{ received_at: string; processed_at: string | null }>();
+  const EPOCH = "1970-01-01T00:00:00.000Z";
 
-  it("a failed write throws and leaves the event unrecorded, so Stripe's retry applies it", async () => {
+  it("an applied event is marked processed, and a repeat is a duplicate", async () => {
+    const { invoice } = await seedInvoice();
+    const evt = invoiceEvent("invoice.paid", invoice);
+    expect(await handleStripeEvent(env, evt)).toBe("applied");
+    expect((await eventRow(evt.id))!.processed_at).not.toBeNull();
+    expect(await handleStripeEvent(env, evt)).toBe("duplicate");
+  });
+
+  it("ignored and mismatch events are marked processed too", async () => {
+    const { invoice } = await seedInvoice();
+    const a = invoiceEvent("invoice.paid", { ...invoice, stripeInvoiceId: "in_not_ours" }), b = invoiceEvent("invoice.paid", invoice, { object: { amount_paid: 1 } }), c = invoiceEvent("customer.created", invoice);
+    expect([await handleStripeEvent(env, a), await handleStripeEvent(env, b), await handleStripeEvent(env, c)]).toEqual(["ignored", "mismatch", "ignored"]);
+    for (const e of [a, b, c]) expect((await eventRow(e.id))!.processed_at, e.type).not.toBeNull();
+    expect(await handleStripeEvent(env, b)).toBe("duplicate");
+  });
+
+  it("a failed write throws, keeps the row unprocessed and released, and the retry applies at once", async () => {
     const { invoice } = await seedInvoice();
     const onPaid = vi.fn(async () => {});
     const evt = invoiceEvent("invoice.paid", invoice);
-    await expect(handleStripeEvent(brokenWrites(), evt, { onPaid })).rejects.toThrow("D1 is down");
+    await expect(handleStripeEvent(breakOn(/^\s*UPDATE invoices/i), evt, { onPaid })).rejects.toThrow("D1 is down");
     expect(onPaid).not.toHaveBeenCalled();
     expect((await getInvoiceByStripeId(env.DB, invoice.stripeInvoiceId))!.status).toBe("open");
-    // The retry is the same event id; it must not be treated as a duplicate.
+    expect(await eventRow(evt.id)).toEqual({ received_at: EPOCH, processed_at: null });
     expect(await handleStripeEvent(env, evt, { onPaid })).toBe("applied");
     expect(onPaid).toHaveBeenCalledTimes(1);
+    expect((await eventRow(evt.id))!.processed_at).not.toBeNull();
   });
 
-  it("a failing onPaid throws and leaves the event unrecorded, and the retry calls onPaid again", async () => {
+  it("a failing onPaid throws and is retried: onPaid runs again, and the first paid time is kept", async () => {
     const { invoice } = await seedInvoice();
     const evt = invoiceEvent("invoice.paid", invoice);
     const failing = vi.fn(async () => { throw new Error("could not start the build"); });
     await expect(handleStripeEvent(env, evt, { onPaid: failing })).rejects.toThrow("could not start the build");
+    expect((await eventRow(evt.id))!.processed_at).toBeNull();
+    const firstPaidAt = (await getInvoiceByStripeId(env.DB, invoice.stripeInvoiceId))!.paidAt;
+    expect(firstPaidAt).not.toBeNull();
     const ok = vi.fn(async () => {});
     expect(await handleStripeEvent(env, evt, { onPaid: ok })).toBe("applied");
     expect(ok).toHaveBeenCalledTimes(1);
-    const row = (await getInvoiceByStripeId(env.DB, invoice.stripeInvoiceId))!;
-    expect(row.status).toBe("paid");
-    // A retry keeps the first paid time.
-    expect(row.paidAt).not.toBeNull();
+    expect(await getInvoiceByStripeId(env.DB, invoice.stripeInvoiceId)).toMatchObject({ status: "paid", paidAt: firstPaidAt });
+  });
+
+  it("a failed release leaves the row unprocessed, busy until the lease ends, and then a delivery re-claims it", async () => {
+    const { invoice } = await seedInvoice();
+    const onPaid = vi.fn(async () => {});
+    const evt = invoiceEvent("invoice.paid", invoice);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const t0 = new Date("2026-12-01T10:00:00.000Z");
+    // Both the state write and the release fail: D1 is down for the whole delivery.
+    await expect(handleStripeEvent(breakOn(/^\s*UPDATE invoices/i, /^\s*UPDATE stripe_events SET received_at/i), evt, { onPaid, now: () => t0 })).rejects.toThrow("D1 is down");
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(log.mock.calls)).toContain(evt.id);
+    expect(JSON.stringify(log.mock.calls)).not.toMatch(/amount_paid|metadata/);
+    log.mockRestore();
+    expect(await eventRow(evt.id)).toEqual({ received_at: t0.toISOString(), processed_at: null });
+    // Stripe's immediate retry finds the claim fresh...
+    expect(await handleStripeEvent(env, evt, { onPaid, now: () => new Date(t0.getTime() + 30_000) })).toBe("busy");
+    expect(onPaid).not.toHaveBeenCalled();
+    // ...and a delivery after the 2-minute lease takes the event over.
+    expect(await handleStripeEvent(env, evt, { onPaid, now: () => new Date(t0.getTime() + 2 * 60_000 + 1) })).toBe("applied");
+    expect(onPaid).toHaveBeenCalledTimes(1);
+    expect((await getInvoiceByStripeId(env.DB, invoice.stripeInvoiceId))!.status).toBe("paid");
+  });
+
+  it("an event whose Worker died mid-way (a stale unfinished claim) is re-claimed and applied", async () => {
+    const { invoice } = await seedInvoice();
+    const evt = invoiceEvent("invoice.paid", invoice);
+    await env.DB.prepare(`INSERT INTO stripe_events (id, type, received_at) VALUES (?, ?, ?)`).bind(evt.id, evt.type, new Date(Date.now() - 10 * 60_000).toISOString()).run();
+    expect(await handleStripeEvent(env, evt)).toBe("applied");
+    expect((await getInvoiceByStripeId(env.DB, invoice.stripeInvoiceId))!.status).toBe("paid");
+  });
+
+  it("a delivery while another holds a fresh claim is busy and applies nothing", async () => {
+    const { invoice } = await seedInvoice();
+    const onPaid = vi.fn(async () => {});
+    const evt = invoiceEvent("invoice.paid", invoice);
+    await env.DB.prepare(`INSERT INTO stripe_events (id, type, received_at) VALUES (?, ?, ?)`).bind(evt.id, evt.type, new Date().toISOString()).run();
+    expect(await handleStripeEvent(env, evt, { onPaid })).toBe("busy");
+    expect(onPaid).not.toHaveBeenCalled();
+    expect((await getInvoiceByStripeId(env.DB, invoice.stripeInvoiceId))!.status).toBe("open");
+  });
+
+  it("of several deliveries racing for a stale claim, one applies", async () => {
+    const { invoice } = await seedInvoice();
+    const onPaid = vi.fn(async () => {});
+    const evt = invoiceEvent("invoice.paid", invoice);
+    await env.DB.prepare(`INSERT INTO stripe_events (id, type, received_at) VALUES (?, ?, ?)`).bind(evt.id, evt.type, new Date(Date.now() - 10 * 60_000).toISOString()).run();
+    const out = await Promise.all([1, 2, 3].map(() => handleStripeEvent(env, evt, { onPaid })));
+    expect(out.filter((o) => o === "applied")).toHaveLength(1);
+    expect(out.filter((o) => o !== "applied").every((o) => o === "busy" || o === "duplicate")).toBe(true);
+    expect(onPaid).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -321,6 +404,17 @@ describe("POST /hooks/stripe", () => {
     expect((await getInvoiceByStripeId(env.DB, s.invoice.stripeInvoiceId))!.status).toBe("open");
     expect((await post(body, headers, withSecret)).status).toBe(200);
     expect((await getInvoiceByStripeId(env.DB, s.invoice.stripeInvoiceId))!.status).toBe("paid");
+  });
+
+  it("an event another delivery is handling right now is a 503 with no body, and is not applied", async () => {
+    const s = await seedInvoice({ amountCents: 555 });
+    const id = `evt_${crypto.randomUUID()}`;
+    const body = JSON.stringify({ id, type: "invoice.paid", data: { object: { id: s.invoice.stripeInvoiceId, amount_paid: 555, currency: "usd", metadata: { document_id: s.documentId } } } });
+    await env.DB.prepare(`INSERT INTO stripe_events (id, type, received_at) VALUES (?, 'invoice.paid', ?)`).bind(id, new Date().toISOString()).run();
+    const res = await post(body, { "stripe-signature": await sign(body) }, withSecret);
+    expect(res.status).toBe(503);
+    expect(await res.text()).toBe("");
+    expect((await getInvoiceByStripeId(env.DB, s.invoice.stripeInvoiceId))!.status).toBe("open");
   });
 
   it("a body over 1 MB is refused before it is read in full", async () => {
