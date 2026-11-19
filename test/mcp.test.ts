@@ -87,6 +87,18 @@ describe("mcp", () => {
     expect((await listAgentActions(env.DB, { limit: 500 })).some((a) => a.tool === "propose_approval" && /refused video\.publish/.test(a.summary))).toBe(true);
   });
 
+  it("mcp cannot propose proposal.send", async () => {
+    const count = async () => (await env.DB.prepare(`SELECT COUNT(*) AS n FROM approvals WHERE kind = 'proposal.send'`).first<{ n: number }>())!.n;
+    const before = await count();
+    const j = await call("propose_approval", { kind: "proposal.send", title: "Send the proposal", preview: "Harmless text", payload: { documentId: "any-document" }, record_type: "deal", record_id: "d1" });
+    expect(j.result.isError).toBe(true);
+    expect(j.result.content[0].text).toMatch(/proposal\.send/);
+    expect(await count()).toBe(before);
+    expect((await listAgentActions(env.DB, { limit: 500 })).some((a) => a.tool === "propose_approval" && /refused proposal\.send/.test(a.summary))).toBe(true);
+    const unknown = await call("propose_approval", { kind: "nope.nothing", title: "t", preview: "p", payload: {} });
+    expect(unknown.result.content[0].text).not.toContain("proposal.send");
+  });
+
   it("propose lead.note creates pending approval and logs action", async () => {
     const before = (await listAgentActions(env.DB, { limit: 500 })).length;
     const j = await call("propose_approval", { kind: "lead.note", title: "Note", preview: "Add note", payload: { businessId: "b1", text: "hi" } });

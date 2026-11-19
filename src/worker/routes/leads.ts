@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../env";
 import type { Business, LeadStatus } from "../types";
+import { hasNonDraftDocument } from "../db/documents";
 import { getBusiness, listAllBusinesses, listQuickStageBusinesses, updateLead, domainOf, setArchived, deleteBusiness, applyBulk, undoBulk, normalizeTag, setStarred } from "../db/businesses";
 import { createFilter, deleteFilter, FilterLimit, FilterNameTaken, listFilters } from "../db/filters";
 import { listPeople, createPerson, updatePerson, deletePerson, pocsFor } from "../db/people";
@@ -291,6 +292,8 @@ leadRoutes.post("/:id/suppress", async (c) => {
 leadRoutes.delete("/:id", async (c) => {
   const id = c.req.param("id");
   if (!(await getBusiness(c.env.DB, id))) return c.json({ error: "not found" }, 404);
+  // A sent or signed proposal is a record we keep (e-signature retention): the lead stays while one exists.
+  if (await hasNonDraftDocument(c.env.DB, id)) return c.json({ error: "this lead has signed documents" }, 409);
   await deleteBusiness(c.env.DB, id, c.env.RAW);
   await cancelTasksFor(c.env.DB, "lead", id); // Claude work still queued for this lead (an AI review, say) is closed, so nobody does it
   return c.json({ ok: true });

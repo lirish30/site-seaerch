@@ -6,7 +6,7 @@ import SettingsPage from "../../components/SettingsPage";
 import type { WorkSample } from "../../emailView";
 import type { SettingsDoc, UsageRow } from "../../settingsData";
 import {
-  bookingSummary, hasBuiltSignature, profileMissing, samplesNeeded, setupItems, setupSentence, suppressionWord, voiceSummary,
+  bookingSummary, documentsSummary, hasBuiltSignature, profileMissing, samplesNeeded, setupItems, setupSentence, suppressionWord, voiceSummary,
 } from "../../settingsPagesView";
 import type { HelperStatus } from "../../helperView";
 import type { FitProfile, Service, Suppression } from "../../types";
@@ -52,6 +52,7 @@ function chips(d: Data): Record<string, Chip | null> {
     scores: { tone: "", text: "Guide" },
     packages: { tone: "", text: "Price catalog" },
     booking: wait(d.doc, () => bookingSummary(String(doc.booking_config ?? ""))),
+    documents: wait(d.doc, () => documentsSummary(String(doc.documents_config ?? ""))),
     security: { tone: "", text: "Passkeys" },
     "voice-test": wait(d.doc, () => (doc.voice_engine ? { tone: "positive", text: "Voice picked" } : doc.voice_ref_key ? { tone: "warning", text: "Run the voice test" } : { tone: "", text: "Not set up" })),
     helper: wait(d.helper, () => ((d.helper as HelperStatus).online ? { tone: "positive", text: "Online" } : { tone: "", text: "Offline" })),
@@ -90,6 +91,7 @@ const SECTIONS: { name: string; tint: "signal" | "info" | "positive" | "plain"; 
     { slug: "helper", title: "Mac helper", icon: "zap", text: "The app on your Mac that makes the voice and the video. Pair it here." },
     { slug: "packages", title: "Packages", icon: "card", text: "What you sell and what it costs. A price change saves as a new version." },
     { slug: "booking", title: "Booking", icon: "calendar", text: "The hours people can book a call, notice, buffer and the budget choices on the form." },
+    { slug: "documents", title: "Documents", icon: "pen", text: "The clause library, the lawyer-review record, the late fee and how long a proposal stays open." },
   ] },
 ];
 

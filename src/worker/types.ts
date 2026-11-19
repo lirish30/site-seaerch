@@ -121,7 +121,7 @@ export const ACTIVITY_KINDS = [
   "status", "archived", "restored", "website", "reaudit", "score_flagged", "export", "draft", "cro_audit", "suppressed", "import", "bulk",
   "today_done", "snoozed", "starred", "unstarred", "note", "email_sent", "email_reply", "email_bounce",
   "video_watch", "deal_created", "deal_moved", "booked", "booking_cancelled", "call_prep",
-  "call_recap", "followup_booked",
+  "call_recap", "followup_booked", "proposal_sent", "proposal_viewed", "proposal_signed", "proposal_void", "deposit_paid",
 ] as const;
 export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
 export interface Activity { id: string; business_id: string; kind: ActivityKind; detail: string | null; created_at: string; }
@@ -200,6 +200,8 @@ export interface Settings {
   ai_voice_note: number;
   /** JSON of a BookingConfig (availability windows, notice, buffer, budget options), or "{}" for the defaults. */
   booking_config: string;
+  /** JSON of a DocumentsConfig (legal-review record, late fee, proposal expiry), or "{}" for the defaults. */
+  documents_config: string;
 }
 export type TonePreset = "friendly_local" | "consultative" | "direct" | "formal";
 export type EmailLength = "short" | "medium" | "long";

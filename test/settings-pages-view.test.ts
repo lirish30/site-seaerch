@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  bookingSummary, hasBuiltSignature, isHttps, prettyLink, profileMissing, safeLink, samplesNeeded, samplesNudge, setupItems, setupSentence, suppressionWord, voiceSummary,
+  billingLine, billingProblem, bookingSummary, documentsProblem, documentsSummary, hasBuiltSignature, isHttps, prettyLink, profileMissing, readDocumentsDraft, safeLink, samplesNeeded, samplesNudge, setupItems, setupSentence, suppressionWord, voiceSummary,
 } from "../src/client/settingsPagesView";
 import type { Service, Suppression } from "../src/client/types";
 
@@ -60,5 +60,38 @@ describe("bookingSummary", () => {
     expect(bookingSummary("")).toEqual({ tone: "warning", text: "No hours set" });
     expect(bookingSummary(JSON.stringify({ windows: [{ weekday: 2, start: "09:00", end: "11:00" }] }))).toEqual({ tone: "positive", text: "1 weekly window" });
     expect(bookingSummary(JSON.stringify({ windows: [{ weekday: 2, start: "09:00", end: "11:00" }, { weekday: 3, start: "09:00", end: "11:00" }] })).text).toBe("2 weekly windows");
+  });
+});
+
+describe("documents settings helpers", () => {
+  it("reads a half-finished edit as typed, and the defaults for nothing", () => {
+    expect(readDocumentsDraft("")).toEqual({ legalReviewedAt: null, legalReviewer: "", lateFeePercentMonthly: 1.5, expiryDays: 30 });
+    expect(readDocumentsDraft("[]").expiryDays).toBe(30);
+    expect(readDocumentsDraft(JSON.stringify({ legalReviewedAt: "2026-12-01T00:00:00.000Z" })).legalReviewer).toBe("");
+  });
+  it("names what stops a save", () => {
+    expect(documentsProblem(readDocumentsDraft("{}"))).toBeNull();
+    expect(documentsProblem(readDocumentsDraft(JSON.stringify({ legalReviewedAt: "2026-12-01T00:00:00.000Z" })))).toBe("Name who reviewed the clauses");
+    expect(documentsProblem(readDocumentsDraft(JSON.stringify({ expiryDays: 3 })))).toMatch(/7 and 90/);
+    expect(documentsProblem(readDocumentsDraft(JSON.stringify({ lateFeePercentMonthly: 11 })))).toMatch(/0% and 10%/);
+  });
+  it("the overview chip warns until a review is recorded", () => {
+    expect(documentsSummary("{}")).toEqual({ tone: "warning", text: "Not lawyer-reviewed" });
+    expect(documentsSummary(JSON.stringify({ legalReviewedAt: "2026-12-01T00:00:00.000Z", legalReviewer: "A. Lawyer" }))).toEqual({ tone: "positive", text: "Reviewed 2026-12-01" });
+    expect(documentsSummary(JSON.stringify({ legalReviewedAt: "2026-12-01T00:00:00.000Z" })).tone).toBe("warning");
+  });
+});
+
+describe("billing line", () => {
+  it("names the mode, the webhook secret and the client base", () => {
+    expect(billingLine({ stripeMode: "test", webhookConfigured: true, clientBase: "https://clients.example.com" })).toBe("Stripe: test mode · webhook secret set · client links on https://clients.example.com");
+    expect(billingLine({ stripeMode: "live", webhookConfigured: false, clientBase: null })).toBe("Stripe: live mode · webhook secret not set · client links off");
+    expect(billingLine({ stripeMode: null, webhookConfigured: false, clientBase: null })).toBe("Stripe: not set up · webhook secret not set · client links off");
+  });
+  it("says what is missing, in the order it blocks", () => {
+    expect(billingProblem({ stripeMode: null, webhookConfigured: true, clientBase: "https://c.example" })).toMatch(/STRIPE_SECRET_KEY/);
+    expect(billingProblem({ stripeMode: "test", webhookConfigured: false, clientBase: "https://c.example" })).toMatch(/STRIPE_WEBHOOK_SECRET/);
+    expect(billingProblem({ stripeMode: "test", webhookConfigured: true, clientBase: null })).toMatch(/CLIENT_LINK_BASE/);
+    expect(billingProblem({ stripeMode: "live", webhookConfigured: true, clientBase: "https://c.example" })).toBeNull();
   });
 });

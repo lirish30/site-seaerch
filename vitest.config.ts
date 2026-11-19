@@ -17,6 +17,7 @@ export default defineConfig(async () => {
             WEBAUTHN_RP_ID: "x", WEBAUTHN_ORIGIN: "https://x",
             MAILBOX_OUTREACH_PASSWORD: "pw-out", MAILBOX_MAIN_PASSWORD: "pw-main",
             OUTREACH_LINK_BASE: "https://go.hellositeline.test",
+            CLIENT_LINK_BASE: "https://clients.hellositeline.test",
           },
         },
       }),

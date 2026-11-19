@@ -263,3 +263,8 @@
 .bk-opts { display:flex; flex-direction:column; gap:12px; margin:0 0 12px; padding:0; list-style:none; }
 .bk-opt { display:grid; grid-template-columns:minmax(0,1fr) 150px auto; gap:12px; align-items:end; }
 @media (max-width:640px) { .bk-day { grid-template-columns:1fr; } .bk-opt { grid-template-columns:1fr 1fr; } .bk-opt .btn-plain { grid-column:1 / -1; justify-self:start; } }
+
+/* Settings > Documents: the clause library, read top to bottom. */
+.dc-clauses { display:flex; flex-direction:column; gap:14px; margin:0; padding:0 0 0 20px; }
+.dc-clauses b { font:600 13px/19px var(--font); color:var(--text); }
+.dc-clauses p { margin:2px 0 0; font:400 13px/20px var(--font); color:var(--text-2); }

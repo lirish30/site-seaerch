@@ -66,13 +66,22 @@ export function browserRenderer(binding: Fetcher): Renderer {
   };
 }
 
-/** Prints self-contained HTML (the audit deck) to a 16:9 PDF in a real browser. */
-export async function htmlToPdf(binding: Fetcher, html: string): Promise<Uint8Array> {
+export type PdfFormat = "slide" | "letter";
+
+/** The print options for each format: the deck's 16:9 slides (the default), or portrait US Letter with 0.75 in margins for a proposal. */
+export function pdfOptions(format: PdfFormat = "slide") {
+  return format === "letter"
+    ? { format: "letter" as const, landscape: false, margin: { top: "0.75in", right: "0.75in", bottom: "0.75in", left: "0.75in" }, preferCSSPageSize: false, printBackground: true }
+    : { width: "1280px", height: "720px", preferCSSPageSize: true, printBackground: true };
+}
+
+/** Prints self-contained HTML to a PDF in a real browser: the audit deck's 16:9 slides by default, or with `format: "letter"` a portrait Letter page. */
+export async function htmlToPdf(binding: Fetcher, html: string, o: { format?: PdfFormat } = {}): Promise<Uint8Array> {
   const browser = await puppeteer.launch(binding);
   try {
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: "load" });
-    return await page.pdf({ width: "1280px", height: "720px", printBackground: true, preferCSSPageSize: true }) as Uint8Array;
+    return await page.pdf(pdfOptions(o.format)) as Uint8Array;
   } finally {
     await browser.close();
   }

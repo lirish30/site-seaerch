@@ -8,6 +8,7 @@ import { OptionsEditSchema, offerOf, optionProblems, requestCallRecap } from "..
 import { parseConfig } from "../booking/config";
 import { bookRecommendation, suggestFollowups } from "../booking/followup";
 import { bookingFor, markBookingHeld } from "../db/bookings";
+import { voidOpenProposals } from "../documents/service";
 import { listCurrentPackages } from "../db/packages";
 import { getSettings } from "../db/settings";
 import { DiscoveryNotesSchema, emptyNotes, hasNotes } from "../sales/notes";
@@ -31,10 +32,15 @@ dealRoutes.post("/:id/move", async (c) => {
   if (!parsed.success) return c.json(invalid(parsed.error), 400);
   const deal = await getDeal(c.env.DB, c.req.param("id"));
   if (!deal) return c.json({ error: "not found" }, 404);
+  // These two moves belong to the proposal: sending it (an approval) and the deposit (a payment). Nothing moves a deal there by hand.
+  if (parsed.data.to === "proposal_sent") return c.json({ error: "A deal moves to proposal sent when you approve sending the proposal. Use the Proposal tab." }, 409);
+  if (parsed.data.to === "won") return c.json({ error: "A deal moves to won when the deposit payment arrives. It cannot be moved there by hand." }, 409);
   if (parsed.data.to === "lost" && !parsed.data.lostReason) return c.json({ error: "invalid body", fields: { lostReason: ["a lost deal needs a reason"] } }, 400);
   try {
     const moved = await moveDeal(c.env.DB, deal.id, parsed.data.to, { lostReason: parsed.data.lostReason });
     await logActivity(c.env.DB, deal.businessId, "deal_moved", moved.stage === "lost" ? `${deal.stage} -> lost: ${moved.lostReason}` : `${deal.stage} -> ${moved.stage}`);
+    // A lost deal has no live proposal: the link stops working and a waiting send approval is withdrawn.
+    if (moved.stage === "lost") await voidOpenProposals(c.env.DB, deal.id, "the deal was marked lost");
     return c.json(moved);
   } catch (e) {
     if (e instanceof DealMoveError) return c.json({ error: e.message }, 409);

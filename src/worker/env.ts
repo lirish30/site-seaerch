@@ -10,6 +10,8 @@ export interface Env {
   LOGIN_LIMITER?: RateLimit;
   /** Throttles the public booking routes per report link and client IP. Optional, like LOGIN_LIMITER. */
   BOOKING_LIMITER?: RateLimit;
+  /** Throttles a client's proposal page and signing per proposal link and client IP. Optional, like the others. */
+  CLIENT_LIMITER?: RateLimit;
   APP_PASSWORD: string;
   SESSION_SECRET: string;
   /** Bearer token for the /mcp endpoint (Worker secret). */
@@ -30,4 +32,10 @@ export interface Env {
   MAILBOX_MAIN_PASSWORD?: string;
   /** Base URL for tracked outreach links (e.g. https://go.hellositeline.com). */
   OUTREACH_LINK_BASE?: string;
+  /** Base URL for a client's proposal link (https only, e.g. https://clients.sitelineweb.com). Never the cold-email host and never workers.dev. */
+  CLIENT_LINK_BASE?: string;
+  /** Stripe secret or restricted key (Worker secret, never in D1 or a log). sk_test_/rk_test_ is test mode. */
+  STRIPE_SECRET_KEY?: string;
+  /** Signing secret of the /hooks/stripe webhook endpoint (Worker secret). Unset, the webhook answers 503. */
+  STRIPE_WEBHOOK_SECRET?: string;
 }

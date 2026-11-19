@@ -10,7 +10,7 @@ const money = (cents: number) => `$${(cents / 100).toLocaleString("en-US", { max
  * One-time prices and setup fees (less setup discounts) are paid up front; monthly and subscription prices recur.
  * Quick Fix, Starter and Growth count up front at their listed price. Hourly is a rate, not a sum, so it adds to neither.
  */
-export function optionTotals(option: Option, catalog: Package[]): { upfrontCents: number; monthlyCents: number } {
+export function optionTotals(option: Option, catalog: Pick<Package, "key" | "kind" | "priceCents" | "setupCents">[]): { upfrontCents: number; monthlyCents: number } {
   let upfrontCents = 0, monthlyCents = 0;
   for (const item of option.items) {
     const p = catalog.find((c) => c.key === item.key);

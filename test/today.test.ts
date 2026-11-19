@@ -5,6 +5,11 @@ import { upsertBusiness } from "../src/worker/db/businesses";
 import { addSuppression } from "../src/worker/db/suppression";
 import { listActivity } from "../src/worker/db/activity";
 import { buildToday, parseSnooze, type TodayKind } from "../src/worker/today";
+import { createDeal, moveDeal } from "../src/worker/db/deals";
+import { createDraft, expireDue, markSent, recordView, signDocument, voidDocument } from "../src/worker/db/documents";
+import { canonicalJson, sha256Hex } from "../src/worker/documents/hash";
+import { newClientToken } from "../src/worker/documents/token";
+import { clientSig, proposal, providerSig } from "./fixtures/documents";
 
 const NOW = new Date("2026-10-04T12:00:00.000Z");
 const DAY = 86_400_000;
@@ -23,7 +28,7 @@ beforeAll(async () => {
 
 // buildToday reads every lead, so each test starts from an empty set.
 beforeEach(async () => {
-  for (const t of ["activity", "drafts", "audits", "search_results", "businesses", "suppressions"]) await env.DB.prepare(`DELETE FROM ${t}`).run();
+  for (const t of ["document_views", "document_signatures", "documents", "deals", "activity", "drafts", "audits", "search_results", "businesses", "suppressions"]) await env.DB.prepare(`DELETE FROM ${t}`).run();
 });
 
 let searchId = "";
@@ -151,6 +156,13 @@ describe("stalled_deal", () => {
     const id = await lead("Still stalled too", { status: "contacted", dealValue: 700 });
     for (const kind of ["deal_created", "deal_moved", "call_prep", "call_recap", "followup_booked"] as const) await act(id, kind, ago(1), "x");
     expect(await of("stalled_deal")).toHaveLength(1);
+  });
+  it("the proposal's own events are not contact with the prospect (a view, a signature, a void, the deposit), but sending it is", async () => {
+    const id = await lead("Proposal quiet", { status: "contacted", dealValue: 700 });
+    for (const kind of ["proposal_viewed", "proposal_signed", "proposal_void", "deposit_paid"] as const) await act(id, kind, ago(1), "x");
+    expect(await of("stalled_deal")).toHaveLength(1);
+    await act(id, "proposal_sent", ago(1), "x");
+    expect(await of("stalled_deal")).toEqual([]);
   });
   it("a prospect watching the video is engagement, so video_watch does un-stall a deal", async () => {
     const id = await lead("Watched", { status: "contacted", dealValue: 700 });
@@ -445,5 +457,101 @@ describe("starred_idle", () => {
     const q = await lead("Quick", { stage: "quick" });
     await audit(q, 80);
     expect((await today()).map((i) => i.kind)).toEqual(["draft_unsent", "starred_idle", "promising_quick_scan"]);
+  });
+});
+
+describe("proposal_follow_up", () => {
+  /** A lead whose deal is at proposal_sent with a proposal sent `days` days before NOW (to expire at `expiresAt`). */
+  async function proposalLead(name: string, days: number, o: { expiresAt?: string; stage?: "proposal_sent" | "lost"; test?: boolean; website?: string } = {}) {
+    const businessId = await lead(name, { website: o.website });
+    let deal = await createDeal(env.DB, { businessId, source: "manual" });
+    for (const stage of ["recommended", "proposal_sent"] as const) deal = await moveDeal(env.DB, deal.id, stage);
+    if (o.stage && o.stage !== "proposal_sent") deal = await moveDeal(env.DB, deal.id, o.stage, { lostReason: "went quiet" });
+    const draft = await createDraft(env.DB, { dealId: deal.id, businessId, optionId: "b", content: proposal() });
+    const sentAt = ago(days), expiresAt = o.expiresAt ?? ahead(20);
+    const frozen = { ...draft.content, header: { ...draft.content.header, sentOn: sentAt, expiresOn: expiresAt } };
+    const hash = await sha256Hex(canonicalJson(frozen));
+    const doc = await markSent(env.DB, draft.id, { token: newClientToken(), content: frozen, contentSha256: hash, sentAt, expiresAt, approvalId: null, provider: providerSig(hash), test: o.test });
+    return { businessId, doc, hash };
+  }
+
+  it("a proposal sent 3 days ago and unsigned appears", async () => {
+    const p = await proposalLead("Three days", 3);
+    const [item] = await of("proposal_follow_up");
+    expect(item).toMatchObject({ id: `proposal_follow_up:${p.businessId}`, kind: "proposal_follow_up", businessId: p.businessId, businessName: "Three days", due: null, priority: 65 });
+    expect(item.reason).toBe("Proposal sent 3 days ago, not opened");
+  });
+
+  it("one sent 2 days ago does not", async () => {
+    await proposalLead("Two days", 2);
+    await proposalLead("Just short", 3 - 1 / 86_400);
+    expect(await of("proposal_follow_up")).toEqual([]);
+  });
+
+  it("a signed one does not", async () => {
+    const p = await proposalLead("Signed", 5);
+    expect(await signDocument(env.DB, p.doc.id, clientSig(p.hash), ago(1))).toBe("signed");
+    expect(await of("proposal_follow_up")).toEqual([]);
+  });
+
+  it("a voided or expired one does not", async () => {
+    const v = await proposalLead("Voided", 5);
+    await voidDocument(env.DB, v.doc.id, "wrong option");
+    await proposalLead("Expired", 5, { expiresAt: ago(1) });
+    expect(await of("proposal_follow_up")).toEqual([]); // past its expiry but not yet swept: still not shown
+    await expireDue(env.DB, NOW.toISOString());
+    expect(await of("proposal_follow_up")).toEqual([]);
+  });
+
+  it("a lost deal's proposal does not", async () => {
+    await proposalLead("Lost", 5, { stage: "lost" });
+    expect(await of("proposal_follow_up")).toEqual([]);
+  });
+
+  it("a test copy of a proposal does not", async () => {
+    await proposalLead("Test copy", 5, { test: true });
+    expect(await of("proposal_follow_up")).toEqual([]);
+  });
+
+  it("the reason says opened or not opened", async () => {
+    const opened = await proposalLead("Opened", 4);
+    await recordView(env.DB, opened.doc.id, { now: ago(3), userAgent: null });
+    await proposalLead("Unopened", 6);
+    const reasons = Object.fromEntries((await of("proposal_follow_up")).map((i) => [i.businessName, i.reason]));
+    expect(reasons).toEqual({ Opened: "Proposal sent 4 days ago, opened, not signed", Unopened: "Proposal sent 6 days ago, not opened" });
+  });
+
+  it("counts the whole days since it was sent", async () => {
+    await proposalLead("Long wait", 10.9);
+    expect((await of("proposal_follow_up"))[0].reason).toBe("Proposal sent 10 days ago, not opened");
+  });
+
+  it("ranks between a stalled deal and an unsent draft", async () => {
+    await lead("Stalled", { status: "contacted", dealValue: 1000 });
+    await draft(await lead("Drafted"), ago(3));
+    await proposalLead("Waiting", 4);
+    expect((await today()).map((i) => i.kind)).toEqual(["stalled_deal", "proposal_follow_up", "draft_unsent"]);
+  });
+
+  it("stays for a suppressed lead, like the owner's other deal work", async () => {
+    const p = await proposalLead("Blocked client", 4, { website: "https://blocked.com" });
+    await addSuppression(env.DB, { kind: "domain", value: "blocked.com", reason: "client" });
+    expect((await of("proposal_follow_up")).map((i) => i.businessId)).toEqual([p.businessId]);
+  });
+
+  it("done and snooze hide it like any other kind, and a snooze that has run out brings it back", async () => {
+    const snoozed = await proposalLead("Snoozed", 4), done = await proposalLead("Done", 4), back = await proposalLead("Back", 4);
+    expect((await post(`/api/today/proposal_follow_up/${snoozed.businessId}/snooze`, { days: 3 })).status).toBe(200);
+    expect((await post(`/api/today/proposal_follow_up/${done.businessId}/done`)).status).toBe(200);
+    await act(back.businessId, "snoozed", ago(5), `proposal_follow_up|${ago(0.5)}`);
+    expect((await of("proposal_follow_up")).map((i) => i.businessName)).toEqual(["Back"]);
+    expect((await listActivity(env.DB, done.businessId)).some((a) => a.kind === "today_done" && a.detail === "proposal_follow_up")).toBe(true);
+  });
+
+  it("a proposal event does not un-stall the deal or count as contact", async () => {
+    const id = await lead("Quiet", { status: "contacted", dealValue: 1000 });
+    await act(id, "proposal_viewed", ago(1));
+    await act(id, "proposal_void", ago(1), "SL-ABCDEF v1: expired");
+    expect((await of("stalled_deal")).map((i) => i.businessId)).toEqual([id]);
   });
 });

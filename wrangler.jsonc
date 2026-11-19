@@ -6,7 +6,7 @@
   "assets": {
     "directory": "./dist/client",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/mcp", "/helper/*"]
+    "run_worker_first": ["/api/*", "/mcp", "/helper/*", "/hooks/*"]
   },
   "d1_databases": [
     { "binding": "DB", "database_name": "site-search", "database_id": "373804f6-ecf3-448e-a9ed-ddc82b853f01", "migrations_dir": "migrations" }
@@ -21,7 +21,8 @@
   ],
   "ratelimits": [
     { "name": "LOGIN_LIMITER", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } },
-    { "name": "BOOKING_LIMITER", "namespace_id": "1002", "simple": { "limit": 30, "period": 60 } }
+    { "name": "BOOKING_LIMITER", "namespace_id": "1002", "simple": { "limit": 30, "period": 60 } },
+    { "name": "CLIENT_LIMITER", "namespace_id": "1003", "simple": { "limit": 30, "period": 60 } }
   ],
   "triggers": { "crons": ["17 13 * * *", "*/15 * * * *", "*/5 * * * *"] },
   "observability": { "enabled": true }

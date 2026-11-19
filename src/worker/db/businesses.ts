@@ -3,6 +3,7 @@ import type { Business, LeadStatus, Listing, ScanStage } from "../types";
 import { isSocialOnlyUrl } from "../crawler/extract";
 import { namesSimilar } from "../import/names";
 import { activityStmt } from "./activity";
+import { deleteDraftDocumentStmts } from "./documents";
 
 export function domainOf(url: string | null): string | null {
   if (!url) return null;
@@ -128,6 +129,7 @@ export async function listTodayCandidates(db: D1Database, nowIso: string, minQui
       OR (lead_status IN ('contacted','replied') AND deal_value IS NOT NULL)
       OR (starred_at IS NOT NULL AND ${open})
       OR (scan_stage = 'quick' AND ${open} AND ${latestScore} >= ?)
+      OR EXISTS (SELECT 1 FROM deals dl JOIN documents doc ON doc.deal_id = dl.id WHERE dl.business_id = businesses.id AND dl.stage = 'proposal_sent' AND doc.status IN ('sent','viewed'))
     ) ORDER BY created_at, id`;
   const res = (await db.prepare(sql).bind(nowIso, minQuickScore).all<BusinessRow & { latest_draft_at: string | null; latest_score: number | null }>()).results;
   return res.map((r) => ({ ...fromBusinessRow(r), latest_draft_at: r.latest_draft_at ?? null, latest_score: r.latest_score ?? null }));
@@ -170,6 +172,8 @@ export async function deleteBusiness(db: D1Database, id: string, raw?: R2Bucket)
   const videoIds = raw ? (await db.prepare(`SELECT id FROM video_audits WHERE business_id = ?`).bind(id).all<{ id: string }>()).results.map((r) => r.id) : [];
   await db.batch([
     db.prepare(`DELETE FROM cro_items WHERE cro_audit_id IN (SELECT id FROM cro_audits WHERE business_id = ?)`).bind(id),
+    // Drafts go before the deals they hang off. A sent or signed document stays, so the deals delete below fails instead (the lead route refuses first).
+    ...deleteDraftDocumentStmts(db, id),
     // Viewing data is keyed by report token: it goes before the audit_reports rows that say whose it is.
     ...["video_sessions", "video_view_marks"].map((t) => db.prepare(`DELETE FROM ${t} WHERE token IN (SELECT token FROM audit_reports WHERE business_id = ?)`).bind(id)),
     ...["search_results", "audits", "contacts", "drafts", "people", "activity", "cro_audits", "video_audits", "audit_reports", "job_postings", "career_sources", "bookings", "deals"].map((t) =>

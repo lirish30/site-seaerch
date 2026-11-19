@@ -100,7 +100,7 @@ export interface BulkResult { updated: number; skipped: number; keptStarred?: nu
 export interface UndoResult { restored: number; skipped: number; }
 export interface SavedFilter { id: string; name: string; query: string; created_at: string; }
 
-export type TodayKind = "follow_up_due" | "draft_unsent" | "stalled_deal" | "starred_idle" | "promising_quick_scan";
+export type TodayKind = "follow_up_due" | "draft_unsent" | "stalled_deal" | "starred_idle" | "promising_quick_scan" | "proposal_follow_up";
 /** One thing to do today (GET /api/today). `id` is `${kind}:${businessId}`; `due` is set for follow-ups only. */
 export interface TodayItem { id: string; kind: TodayKind; businessId: string; businessName: string; reason: string; due: string | null; priority: number; }
 

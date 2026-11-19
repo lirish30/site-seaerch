@@ -2,6 +2,7 @@ import type { Service, Suppression } from "./types";
 import type { WorkSample } from "./emailView";
 import { readSignature } from "./emailView";
 import { readConfig } from "./bookingView";
+import { DEFAULT_DOCUMENTS_CONFIG, legalGate, type DocumentsConfig } from "../worker/documents/config";
 
 /** The same rule the worker applies to links in emails: http(s) only, and a bare "example.com" gets https. */
 export function safeLink(raw: string): string {
@@ -84,4 +85,40 @@ export const suppressionWord = (rows: Suppression[]) =>
 export function bookingSummary(raw: string): { tone: "warning" | "positive"; text: string } {
   const n = readConfig(raw).windows.length;
   return n === 0 ? { tone: "warning", text: "No hours set" } : { tone: "positive", text: `${n} weekly ${n === 1 ? "window" : "windows"}` };
+}
+
+/** The documents settings as the page edits them: missing keys take their default, and a half-finished edit is kept as typed (the worker is what refuses it). */
+export function readDocumentsDraft(raw: string): DocumentsConfig {
+  try { const v = JSON.parse(raw || "{}"); return v && typeof v === "object" && !Array.isArray(v) ? { ...DEFAULT_DOCUMENTS_CONFIG, ...v } : DEFAULT_DOCUMENTS_CONFIG; } catch { return DEFAULT_DOCUMENTS_CONFIG; }
+}
+
+/** What stops a save: a review recorded without a name, or a number out of range. Null when the page can save. */
+export function documentsProblem(c: DocumentsConfig): string | null {
+  if (c.legalReviewedAt !== null && !c.legalReviewer.trim()) return "Name who reviewed the clauses";
+  if (!(c.lateFeePercentMonthly >= 0 && c.lateFeePercentMonthly <= 10)) return "The late fee must be between 0% and 10% a month";
+  if (!Number.isInteger(c.expiryDays) || c.expiryDays < 7 || c.expiryDays > 90) return "A proposal must stay open between 7 and 90 days";
+  return null;
+}
+
+/** The overview chip for the Documents page: until a lawyer's review is recorded, no proposal can be sent to a client. */
+export function documentsSummary(raw: string): { tone: "warning" | "positive"; text: string } {
+  const c = readDocumentsDraft(raw);
+  return legalGate(c) ? { tone: "warning", text: "Not lawyer-reviewed" } : { tone: "positive", text: `Reviewed ${c.legalReviewedAt!.slice(0, 10)}` };
+}
+
+/** What GET /api/documents/config says about billing. Booleans and the mode only: the worker never sends a secret. */
+export interface BillingConfig { stripeMode: "test" | "live" | null; webhookConfigured: boolean; clientBase: string | null }
+
+/** The one line under Settings > Documents: "Stripe: test mode · webhook secret set · client links on https://...". Live mode and anything missing are flagged by the page. */
+export function billingLine(c: BillingConfig): string {
+  const stripe = c.stripeMode ? `Stripe: ${c.stripeMode} mode` : "Stripe: not set up";
+  return [stripe, c.webhookConfigured ? "webhook secret set" : "webhook secret not set", c.clientBase ? `client links on ${c.clientBase}` : "client links off"].join(" · ");
+}
+
+/** What is missing before a deposit can be invoiced and its payment seen, or null when all is set. */
+export function billingProblem(c: BillingConfig): string | null {
+  if (!c.stripeMode) return "Set STRIPE_SECRET_KEY (a Worker secret) to invoice deposits.";
+  if (!c.webhookConfigured) return "Set STRIPE_WEBHOOK_SECRET (a Worker secret) so a payment is noticed, and point a Stripe webhook at /hooks/stripe for the invoice.paid, invoice.voided, invoice.marked_uncollectible and invoice.payment_failed events.";
+  if (!c.clientBase) return "Set CLIENT_LINK_BASE (https) so a client has a link to the proposal.";
+  return null;
 }

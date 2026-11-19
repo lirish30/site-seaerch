@@ -22,11 +22,12 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
   { slug: "voice-test", label: "Video voice", icon: "mail", group: "Outreach" },
   { slug: "packages", label: "Packages", icon: "card", group: "Account" },
   { slug: "booking", label: "Booking", icon: "calendar", group: "Account" },
+  { slug: "documents", label: "Documents", icon: "pen", group: "Account" },
 ];
 const GROUPS = ["You", "Outreach", "Lead scoring", "Account"] as const;
 const COUNTED: [string, string][] = [["work-samples", "/work-samples"], ["services", "/services"], ["fit-profiles", "/fit-profiles"], ["suppressions", "/suppressions"]];
 
-/** Settings: an overview and the fifteen pages, with counts where a page holds a list. The search icon filters the list. */
+/** Settings: an overview and the pages, with counts where a page holds a list. The search icon filters the list. */
 export default function SettingsSidebar() {
   const { pathname } = useLocation();
   const navigate = useNavigate();

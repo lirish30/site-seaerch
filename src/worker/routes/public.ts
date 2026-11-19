@@ -5,6 +5,9 @@ import type { Env } from "../env";
 import { z } from "zod";
 import { BookingFormSchema, bookingPage, cancelByToken, createVisitorBooking } from "../booking/create";
 import { publicReport } from "../db/reports";
+import { ensureDepositInvoice } from "../documents/deposit";
+import { SignFormSchema, proposalPage, signProposal, signedProposalFor } from "../documents/public";
+import { signedPdfResponse } from "../documents/signed";
 import { serveMedia } from "../video/media";
 import { MAX_EVENT_BYTES, ViewEventSchema, recordEvent } from "../video/views";
 
@@ -75,21 +78,24 @@ publicRoutes.post("/report/:token/events", async (c) => {
 // The booking page (Plan 4). Every answer for a link that is gone, and for a lead that may not be contacted, is the same 404; a malformed token never
 // reaches the database. What a person types here is stored as typed and is never part of a response.
 const MAX_BOOK_BYTES = 8 * 1024;
+/** A sign request is a name, two booleans and a hash. */
+const MAX_SIGN_BYTES = 4 * 1024;
 const NOT_FOUND = { error: "not found" } as const;
 const CancelBody = z.object({ cancelToken: z.string().regex(TOKEN) }).strict();
 
-/** The JSON body, capped at 8 KB: the body, or the response that refuses it (413 too long, 400 not JSON). */
-async function readJson(req: Request): Promise<{ ok: true; body: unknown } | { ok: false; status: 400 | 413 }> {
-  const text = await readCapped(req, MAX_BOOK_BYTES);
+/** The JSON body, capped at `max` bytes (8 KB by default): the body, or the response that refuses it (413 too long, 400 not JSON). */
+async function readJson(req: Request, max = MAX_BOOK_BYTES): Promise<{ ok: true; body: unknown } | { ok: false; status: 400 | 413 }> {
+  const text = await readCapped(req, max);
   if (text === null) return { ok: false, status: 413 };
   try { return { ok: true, body: JSON.parse(text) }; } catch { return { ok: false, status: 400 }; }
 }
 
 // Every cold-outreach recipient holds a valid link, and a booking page read costs a Google token refresh and a free/busy call, so each booking route is
-// limited per link and client IP. The binding is optional (local and test runs without it are not limited), as with the login limiter.
-const bookingLimited: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
+// limited per link and client IP. The binding is optional (local and test runs without it are not limited), as with the login limiter. A client's proposal
+// link is limited the same way (its own binding), since its routes write: a view, and a signature.
+const limitedBy = (binding: (env: Env) => RateLimit | undefined): MiddlewareHandler<{ Bindings: Env }> => async (c, next) => {
   const token = c.req.param("token") ?? "";
-  const limiter = c.env.BOOKING_LIMITER;
+  const limiter = binding(c.env);
   // A malformed token is a 404 that never touches anything, so it is not counted.
   if (limiter && TOKEN.test(token)) {
     const { success } = await limiter.limit({ key: `${token}:${c.req.header("cf-connecting-ip") ?? "unknown"}` });
@@ -97,6 +103,8 @@ const bookingLimited: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => 
   }
   return next();
 };
+const bookingLimited = limitedBy((e) => e.BOOKING_LIMITER);
+const clientLimited = limitedBy((e) => e.CLIENT_LIMITER);
 publicRoutes.use("/report/:token/book", bookingLimited);
 publicRoutes.use("/report/:token/book/cancel", bookingLimited);
 
@@ -134,6 +142,50 @@ publicRoutes.post("/report/:token/book/cancel", async (c) => {
   const parsed = CancelBody.safeParse(read.body);
   if (!parsed.success) return c.json({ error: "invalid body" }, 400);
   return c.json(await cancelByToken(c.env, token, parsed.data.cancelToken, new Date()));
+});
+
+// The client's proposal page and click-to-sign. The same 404 for every link that is not live; a malformed token never reaches the database. The typed name
+// and the browser string are stored as typed and are only ever shown escaped.
+publicRoutes.use("/p/:token", clientLimited);
+publicRoutes.use("/p/:token/sign", clientLimited);
+publicRoutes.use("/p/:token/pdf", clientLimited);
+publicRoutes.use("/p/:token/pay", clientLimited);
+
+publicRoutes.get("/p/:token", async (c) => {
+  const token = c.req.param("token");
+  if (!TOKEN.test(token)) return c.json(NOT_FOUND, 404);
+  const page = await proposalPage(c.env, token, { now: new Date(), userAgent: c.req.header("user-agent") ?? null });
+  return page ? c.json(page) : c.json(NOT_FOUND, 404);
+});
+
+publicRoutes.post("/p/:token/sign", async (c) => {
+  const token = c.req.param("token");
+  if (!TOKEN.test(token)) return c.json(NOT_FOUND, 404);
+  const read = await readJson(c.req.raw, MAX_SIGN_BYTES);
+  if (!read.ok) return c.json({ error: read.status === 413 ? "too large" : "invalid body" }, read.status);
+  const parsed = SignFormSchema.safeParse(read.body);
+  // Only the names of the fields that failed: what was typed is never echoed.
+  if (!parsed.success) return c.json({ error: "invalid body", fields: Object.keys(z.flattenError(parsed.error).fieldErrors) }, 400);
+  const r = await signProposal(c.env, token, parsed.data, { now: new Date(), ip: c.req.header("cf-connecting-ip") ?? null, userAgent: c.req.header("user-agent") ?? null });
+  return r.ok ? c.json(r.page) : c.json({ error: r.error }, r.status);
+});
+
+// The signed PDF: only a signed document has one, and every other state (and every link that is not live) is the same 404. It is made on first request if
+// signing did not make it.
+publicRoutes.get("/p/:token/pdf", async (c) => {
+  const token = c.req.param("token");
+  if (!TOKEN.test(token)) return c.json(NOT_FOUND, 404);
+  const doc = await signedProposalFor(c.env, token);
+  return doc ? signedPdfResponse(c.env, doc) : c.json(NOT_FOUND, 404);
+});
+
+// The deposit's payment page: asks for the invoice again (the retry when it could not be made at signing) and answers with where the payment stands. Only a
+// signed document has one, and every other state is the same 404. There is nothing to read from the body, so it is not read.
+publicRoutes.post("/p/:token/pay", async (c) => {
+  const token = c.req.param("token");
+  if (!TOKEN.test(token)) return c.json(NOT_FOUND, 404);
+  const doc = await signedProposalFor(c.env, token);
+  return doc ? c.json(await ensureDepositInvoice(c.env, doc.id)) : c.json(NOT_FOUND, 404);
 });
 
 publicRoutes.all("*", (c) => c.json({ error: "not found" }, 404));

@@ -9,8 +9,10 @@ import { createApproval, listApprovals, UnknownKindError } from "../db/approvals
 import { getHandler, registeredKinds } from "../approvals/registry";
 import { checkConflict } from "../conflict";
 
+/** The kinds the app proposes itself, with a card it builds: an agent's own title and preview over one of these could mislead the person approving it. */
+const APP_PROPOSED = ["video.publish", "proposal.send"];
 /** The kinds an agent may propose: all but those the app proposes itself. */
-const proposableKinds = () => registeredKinds().filter((k) => k !== "video.publish");
+const proposableKinds = () => registeredKinds().filter((k) => !APP_PROPOSED.includes(k));
 import { logAgentAction } from "../db/agentActions";
 import { getBusiness } from "../db/businesses";
 import { isKnownRecipient } from "../db/contacts";
@@ -138,10 +140,10 @@ export function buildMcpServer(env: Env): McpServer {
   }, async (a) => {
     try {
       if (a.kind === "email.send") return await proposeEmailSend(a);
-      // A video is put up for approval by the app when it has rendered one, with a preview the app builds. An agent's own card over a video id could mislead.
-      if (a.kind === "video.publish") {
-        await log("propose_approval", "refused video.publish: the app proposes it itself");
-        return fail("video.publish cannot be proposed by the agent; the app proposes it itself when a video has been rendered.");
+      // A video, and a proposal (whose approval is also Logan's countersignature of what he read), are put up for approval by the app with a card it builds.
+      if (APP_PROPOSED.includes(a.kind)) {
+        await log("propose_approval", `refused ${a.kind}: the app proposes it itself`);
+        return fail(`${a.kind} cannot be proposed by the agent; the app proposes it itself.`);
       }
       const created = await createApproval(db, { ...a, drafted_by: "mcp" });
       await log("propose_approval", `proposed ${a.kind}: ${a.title}`, a.record_type && a.record_id ? { type: a.record_type, id: a.record_id } : undefined);

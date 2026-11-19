@@ -58,8 +58,12 @@ const isPublicReport = (path: string, method: string) => {
   return !rest.includes("/") || /^[^/]+\/media\/[^/]+$/.test(rest) || /^[^/]+\/book$/.test(rest) || (method === "POST" && /^[^/]+\/(events|book\/cancel)$/.test(rest));
 };
 
+// A client's proposal page (`GET /api/public/p/<token>`), its signed PDF (`GET .../pdf`) and click-to-sign (`POST .../sign`) and the deposit's pay page (`POST .../pay`): one non-empty token segment each, those methods only.
+const isPublicProposal = (path: string, method: string) =>
+  (method === "GET" && (/^\/api\/public\/p\/[^/]+$/.test(path) || /^\/api\/public\/p\/[^/]+\/pdf$/.test(path))) || (method === "POST" && /^\/api\/public\/p\/[^/]+\/(sign|pay)$/.test(path));
+
 export const requireAuth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
-  if (PUBLIC.has(c.req.path) || isPublicReport(c.req.path, c.req.method)) return next();
+  if (PUBLIC.has(c.req.path) || isPublicReport(c.req.path, c.req.method) || isPublicProposal(c.req.path, c.req.method)) return next();
   const token = getCookie(c, "session");
   if (!token || !(await verifySession(c.env.SESSION_SECRET, token, Date.now()))) return c.json({ error: "unauthorized" }, 401);
   return next();
