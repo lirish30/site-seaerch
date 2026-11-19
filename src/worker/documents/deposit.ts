@@ -5,6 +5,7 @@ import { getDocument, setPaid, type Document } from "../db/documents";
 import { getInvoiceForDocument, getStripeCustomer, insertInvoice, markInvoice, saveStripeCustomer, type InvoiceRow } from "../db/invoices";
 import type { Env } from "../env";
 import type { Fetch } from "../google/oauth";
+import { startOnboarding } from "../onboarding/start";
 import { stopOutreach } from "../sequence/stop";
 import { StripeError, createCustomer, createDepositInvoice, retrieveInvoice, stripeMode } from "../stripe/client";
 import { paidProblem } from "../stripe/webhook";
@@ -201,12 +202,17 @@ async function winDeal(env: Env, doc: Document): Promise<void> {
 /**
  * The production `onPaid`, run when a deposit invoice is paid (by the webhook, or found paid by the page). It can run more than once for one payment (the
  * webhook retries an event whose handling failed, and the page can find the payment too), so every step is safe to repeat. The document is marked paid last:
- * a document with a paid time has had all of this done. A test copy is marked paid and nothing else; a real one also wins its deal.
+ * a document with a paid time has had all of this done. A test copy is marked paid and nothing else; a real one also wins its deal and starts its onboarding.
  */
 export async function onInvoicePaid(env: Env, inv: InvoiceRow): Promise<void> {
   const doc = await getDocument(env.DB, inv.documentId);
   if (!doc) { console.error("deposit: a paid invoice has no document", inv.id); return; }
   await logActivityOnce(env.DB, doc.businessId, "deposit_paid", `Deposit ${dollars(inv.amountCents)} paid (${doc.content.header.reference} v${doc.version})${doc.test ? ", test copy" : ""}`);
-  if (!doc.test) await winDeal(env, doc);
+  if (!doc.test) {
+    await winDeal(env, doc);
+    // The welcome is put up for Logan's approval; a failure here is noted on the lead and must never stop the payment from being recorded.
+    try { await startOnboarding(env, doc); }
+    catch (e) { console.error("deposit: onboarding was not started", safeReason(e, env.STRIPE_SECRET_KEY)); }
+  }
   await setPaid(env.DB, doc.id, inv.paidAt ?? new Date().toISOString());
 }

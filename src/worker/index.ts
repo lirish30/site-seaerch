@@ -40,6 +40,7 @@ import "./approvals/leadNote";
 import "./approvals/emailSend";
 import "./approvals/videoPublish";
 import "./approvals/proposalSend";
+import "./approvals/onboardingWelcome";
 import { mcpRoute } from "./mcp/route";
 import { runScheduled } from "./schedule";
 
