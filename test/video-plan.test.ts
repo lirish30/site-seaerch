@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { DraftPlanSchema, SegmentSchema, MarkupSchema, SCRIPT_MS, checkPlanAgainst, estimateDurationMs, hashText, lineStale, planDurationMs,
+import { DraftPlanSchema, SegmentSchema, MarkupSchema, SCRIPT_MS, approvalBlockers, checkPlanAgainst, planStructureProblems, estimateDurationMs, hashText, lineStale, planDurationMs,
   type Segment, type Shot } from "../src/worker/video/plan";
 
 const words = (n: number, w = "word") => Array.from({ length: n }, () => w).join(" ");
@@ -150,5 +150,32 @@ describe("segment ids", () => {
     const d = draft();
     d.segments[0].id = "bad/id";
     expect(DraftPlanSchema.safeParse(d).success).toBe(false);
+  });
+});
+
+describe("script structure", () => {
+  const plan = (segments: Segment[]) => ({ shots: [shot("s1")], segments, narration: "clone" as const, version: 1 });
+  const good = () => draft().segments as Segment[];
+
+  it("planStructureProblems is empty for a hook, three problems, an offer and a cta", () => {
+    expect(planStructureProblems(good())).toEqual([]);
+  });
+
+  it("names every way the structure can be wrong", () => {
+    const g = good();
+    expect(planStructureProblems([g[0], g[0], g[1], g[2], g[3], g[4], g[5]]).join(" ")).toMatch(/exactly one hook/);
+    expect(planStructureProblems(g.filter((s) => s.role !== "offer")).join(" ")).toMatch(/exactly one offer/);
+    expect(planStructureProblems(g.slice(0, 5)).join(" ")).toMatch(/last segment must be the cta/);
+    expect(planStructureProblems(g.filter((s) => s.id !== "d")).join(" ")).toMatch(/exactly 3 problem segments, got 2/);
+    expect(planStructureProblems(g.map((s) => (s.id === "d" ? { ...s, findingCode: "slow_mobile" } : s))).join(" ")).toMatch(/distinct findingCodes/);
+  });
+
+  it("approvalBlockers lists a saved plan whose structure was edited away, and a good plan has none of them", () => {
+    const codes = ["slow_mobile", "no_contact_form", "stale_copyright"];
+    const withTwoHooks = good().map((s) => (s.id === "e" ? { ...s, role: "hook" as const } : s));
+    const blockers = approvalBlockers(plan(withTwoHooks), codes);
+    expect(blockers.some((b) => /exactly one hook/.test(b))).toBe(true);
+    expect(blockers.some((b) => /exactly one offer/.test(b))).toBe(true);
+    expect(approvalBlockers(plan(good()), codes).filter((b) => /right shape/.test(b))).toEqual([]);
   });
 });

@@ -78,20 +78,31 @@ export const PROBLEM_COUNT = 3;
 
 export const wordCount = (text: string): number => text.trim().split(/\s+/).filter(Boolean).length;
 
+/**
+ * What makes a script a script: the first line is the hook, the last the cta, and between them exactly one offer and three problems, each about
+ * a different finding. Claude's draft must have it, and so must a plan the owner has edited, because the renderer and the page rely on it.
+ * Returns problems in words; none means the structure is right. Says nothing about line lengths or markups.
+ */
+export function planStructureProblems(segments: Pick<Segment, "role" | "findingCode">[]): string[] {
+  const out: string[] = [];
+  if (segments[0]?.role !== "hook") out.push("the first segment must be the hook");
+  if (segments.length > 0 && segments[segments.length - 1].role !== "cta") out.push("the last segment must be the cta");
+  if (segments.filter((s) => s.role === "hook").length !== 1) out.push("there must be exactly one hook");
+  if (segments.filter((s) => s.role === "cta").length !== 1) out.push("there must be exactly one cta");
+  if (segments.filter((s) => s.role === "offer").length !== 1) out.push("there must be exactly one offer");
+  const problems = segments.filter((s) => s.role === "problem");
+  if (problems.length !== PROBLEM_COUNT) out.push(`there must be exactly ${PROBLEM_COUNT} problem segments, got ${problems.length}`);
+  const codes = problems.map((s) => s.findingCode);
+  if (codes.some((c) => !c)) out.push("every problem segment needs a findingCode");
+  else if (new Set(codes).size !== codes.length) out.push("problem segments must use distinct findingCodes");
+  return out;
+}
+
 /** What Claude returns: the segments only (the shots come from the capture, the audio from the voice step). */
 export const DraftPlanSchema = z.object({ segments: z.array(SegmentSchema.omit({ audio: true })) }).superRefine((d, ctx) => {
   const issue = (message: string, path: (string | number)[] = ["segments"]) => ctx.addIssue({ code: "custom", message, path });
   const segs = d.segments;
-  if (segs[0]?.role !== "hook") issue("the first segment must be the hook");
-  if (segs.length > 0 && segs[segs.length - 1].role !== "cta") issue("the last segment must be the cta");
-  if (segs.filter((s) => s.role === "hook").length !== 1) issue("there must be exactly one hook");
-  if (segs.filter((s) => s.role === "cta").length !== 1) issue("there must be exactly one cta");
-  if (segs.filter((s) => s.role === "offer").length !== 1) issue("there must be exactly one offer");
-  const problems = segs.filter((s) => s.role === "problem");
-  if (problems.length !== PROBLEM_COUNT) issue(`there must be exactly ${PROBLEM_COUNT} problem segments, got ${problems.length}`);
-  const codes = problems.map((s) => s.findingCode);
-  if (codes.some((c) => !c)) issue("every problem segment needs a findingCode");
-  else if (new Set(codes).size !== codes.length) issue("problem segments must use distinct findingCodes");
+  for (const m of planStructureProblems(segs)) issue(m);
   segs.forEach((s, i) => {
     const n = wordCount(s.text);
     if (n < LINE_WORDS.min || n > LINE_WORDS.max) issue(`line ${i + 1} has ${n} words; each line needs ${LINE_WORDS.min}-${LINE_WORDS.max}`, ["segments", i, "text"]);
@@ -146,7 +157,7 @@ export const lineStale = (seg: Segment): boolean => !seg.audio || seg.audio.text
 
 /**
  * Everything standing between a plan and its approval, in words the editor can show: lines with no words, callouts with no text (a draft is
- * allowed while editing), lines that must be recorded and have no current recording, then what `checkPlanAgainst` finds. Empty means go.
+ * allowed while editing), lines that must be recorded and have no current recording, the script's structure (one hook, three problems, one offer, one cta), then what `checkPlanAgainst` finds. Empty means go.
  */
 export function approvalBlockers(plan: VideoPlan, findingCodes: string[]): string[] {
   const blockers: string[] = [];
@@ -156,5 +167,7 @@ export function approvalBlockers(plan: VideoPlan, findingCodes: string[]): strin
     if (s.markups.some((m) => m.type === "callout" && m.text.trim() === "")) blockers.push(`Line ${n} has a callout with no text. Type its words or delete it.`);
     if (plan.narration === "recorded" && (lineStale(s) || s.audio?.source !== "recorded")) blockers.push(`Line ${n} needs a recording.`);
   });
-  return [...blockers, ...checkPlanAgainst(plan, findingCodes)];
+  // An edited plan is only checked by the schema and the refs when it is saved, so its structure is checked here, where the renderer's needs are enforced.
+  const structure = planStructureProblems(plan.segments).map((m) => `The script is not in the right shape: ${m}.`);
+  return [...blockers, ...structure, ...checkPlanAgainst(plan, findingCodes)];
 }

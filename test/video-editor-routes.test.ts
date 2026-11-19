@@ -64,8 +64,8 @@ const record = (videoId: string, segId: string, body: BodyInit, headers: Record<
   api(`/api/video-audits/${videoId}/segments/${segId}/recording`, { method: "PUT", body, headers: { "content-type": "audio/webm", "x-duration-ms": "9000", ...headers } });
 
 describe("PUT plan", () => {
-  it("plan edit outside review is refused", async () => {
-    const { v } = await reviewing({ status: "producing" });
+  it("plan edit outside review or production is refused", async () => {
+    const { v } = await reviewing({ status: "rendered" });
     const r = await put(`/api/video-audits/${v.id}/plan`, { segments: SEGMENTS(), narration: "recorded" });
     expect(r.status).toBe(409);
     expect((await getVideoAudit(env.DB, v.id))!.plan!.version).toBe(v.plan!.version);

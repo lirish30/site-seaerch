@@ -81,7 +81,7 @@ describe("run and once", () => {
     }) as unknown as typeof fetch;
     const t = io();
     expect(await main(["once"], { configPath: path, fetch: fetchImpl, ...t.deps })).toBe(0);
-    expect(bodies).toEqual([{ kinds: ["voice.segment", "voice.sample"] }]);
+    expect(bodies).toEqual([{ kinds: ["voice.segment", "voice.sample", "render"] }]);
   });
 
   it("names a config problem instead of crashing", async () => {

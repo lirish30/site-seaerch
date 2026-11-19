@@ -6,7 +6,7 @@ import { getBusiness } from "../db/businesses";
 import { createVideoAudit, getVideoAudit, latestVideoFor, moveVideoStatus, savePlan, setVideoStatus, type VideoAudit } from "../db/videoAudits";
 import { cancelTasksFor } from "../queue/db";
 import { cancelHelperJobsFor, helperJobsForVideo, helperStatus } from "../helper/jobs";
-import "../helper/kinds"; // a helper job is only valid for a registered kind
+import "../helper/kinds"; // a helper job is only valid for a registered kind (the render kind is registered there too)
 import { requestVideoScript } from "../queue/videoScript";
 import { MAX_MARKUPS, SegmentSchema, approvalBlockers, checkPlanRefs, hashText, type Segment, type VideoPlan } from "../video/plan";
 import { getSettings } from "../db/settings";
@@ -117,12 +117,14 @@ async function dropRecordings(raw: R2Bucket, before: Segment[], after: Segment[]
 /**
  * Saves the editor's plan: the lines, their markups and who narrates. The shots are not the editor's to change. A line keeps its audio only
  * when its words are unchanged (same text hash); anything the client sends as `audio` is ignored. A script that is too short or long
- * saves fine: that blocks approval, not editing.
+ * saves fine: that blocks approval, not editing. A video that is already being made (`producing`) can be edited too: it goes back to review,
+ * its plan's version moves on and the Mac's open jobs for it are closed, so a voice or render that is still running is thrown away and the
+ * owner approves the new plan again.
  */
 videoRoutes.put("/video-audits/:id/plan", async (c) => {
   const video = await getVideoAudit(c.env.DB, c.req.param("id"));
   if (!video) return c.json({ error: "not found" }, 404);
-  if (video.status !== "review" || !video.plan) return c.json({ error: "The plan can only be edited while the video is in review" }, 409);
+  if ((video.status !== "review" && video.status !== "producing") || !video.plan) return c.json({ error: "The plan can only be edited while the video is in review or being made" }, 409);
   const body = PlanBody.safeParse(await c.req.json().catch(() => null));
   if (!body.success) return c.json({ error: body.error.issues[0]?.message ?? "invalid" }, 400);
   const { segments, narration, version } = body.data;
@@ -143,7 +145,11 @@ videoRoutes.put("/video-audits/:id/plan", async (c) => {
     const old = before.get(s.id)?.audio;
     return old && old.textHash === hashText(s.text) ? { ...s, audio: old } : s;
   });
+  // A video being made goes back to review first, in one guarded statement, so a voice or render result that lands now is discarded (the video is no longer producing).
+  const wasProducing = video.status === "producing";
+  if (wasProducing && !(await moveVideoStatus(c.env.DB, video.id, ["producing"], "review", { error: null }))) return c.json({ error: "The video moved on while you were editing. Reload to see it." }, 409);
   const plan: VideoPlan = await savePlan(c.env.DB, video.id, { shots: video.plan.shots, segments: next, narration, version: video.plan.version });
+  if (wasProducing) await cancelHelperJobsFor(c.env.DB, video.id);
   await dropRecordings(c.env.RAW, video.plan.segments, next);
   return c.json({ plan });
 });

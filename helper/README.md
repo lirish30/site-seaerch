@@ -1,12 +1,12 @@
 # Siteline Mac helper
 
 A small Node program that runs on Logan's Mac. It asks Agency OS (the Worker) for work every few seconds, does it with local tools (cloned
-voice, ffmpeg, later HyperFrames) and sends the result back. It never receives a connection: the Worker cannot reach into the Mac, so nothing on
+voice, ffmpeg, HyperFrames) and sends the result back. It never receives a connection: the Worker cannot reach into the Mac, so nothing on
 the Mac needs to be exposed. Everything it does is $0 and local.
 
 It keeps no state except `~/.siteline-helper/config.json` and a cache folder (`~/.siteline-helper/cache`). **Deleting the cache is always safe.**
-The jobs it understands today: `voice.segment` (one script line in the cloned voice) and `voice.sample` (one clip of the blind voice test). The render job
-arrives with the render task.
+The jobs it understands: `voice.segment` (one script line in the cloned voice), `voice.sample` (one clip of the blind voice test) and `render` (the finished
+video, see "Rendering" below).
 
 ## Requirements
 
@@ -143,3 +143,22 @@ This is the part no test can do. Record the outcome in `docs/superpowers/notes/2
 3. Create a voice test from the Voice page; run `node helper/src/cli.ts once` until all three clips arrive (or run `run`).
 4. Write down: the install steps that worked, the seconds each engine took to synthesize about 20 seconds of speech, and which engine you picked.
 5. **Gate:** if no engine sounds right, switch new videos to "record yourself" (already the default when no engine is set). The rest of the plan continues.
+
+## Rendering
+
+The `render` job turns a video's plan into the MP4, a short preview GIF and a poster JPEG. It downloads every screenshot and every line's audio (a recording
+from the browser is converted to a wav first), measures each line with ffprobe, writes a HyperFrames project (`src/render/composition.ts`), renders it
+(`src/render/render.ts`: 1280x720, 30 fps, H.264 + AAC, `+faststart`, at most 40 MB, one retry at a lower bitrate), makes the GIF (480 px wide, 8 fps, at most 1.5 MB)
+and the poster (2 seconds in), and uploads the three files to the keys the job lists. A render of a long video takes a minute or two.
+
+Install HyperFrames once, pinned to the version this was checked with (see `docs/superpowers/notes/2026-11-hyperframes.md`):
+
+```sh
+npm install -g hyperframes@0.9.69        # then "hyperframes": "hyperframes" in the config works as it is
+# or, without a global install:
+cd ~/.siteline-helper && npm install hyperframes@0.9.69      # and set "hyperframes": "<that folder>/node_modules/.bin/hyperframes"
+```
+
+It also needs Google Chrome (or `hyperframes browser`), ffmpeg, and internet on a render: the page loads GSAP from a CDN and the first render fetches a font.
+The helper switches HyperFrames' own usage reporting off for every render. If a newer HyperFrames changes a flag, the command line is written in one place:
+`hyperframesArgs` in `src/render/render.ts`. `doctor` shows the installed version.

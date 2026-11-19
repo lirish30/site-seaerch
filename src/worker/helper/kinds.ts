@@ -1,8 +1,9 @@
 import { z } from "zod";
 import type { Env } from "../env";
 import { getVideoAudit, setSegmentAudio, setVideoStatus } from "../db/videoAudits";
-import { hashText } from "../video/plan";
+import { ShotSchema, SegmentSchema, hashText } from "../video/plan";
 import { allVoiced, productionDeps } from "../video/production";
+import { applyRender } from "../video/renderJob";
 import { cancelHelperJobsFor } from "./jobs";
 
 /**
@@ -62,7 +63,7 @@ export type VoiceSegmentResult = z.infer<typeof VoiceSegmentResult>;
 export const voiceSegmentKey = (p: Pick<VoiceSegmentPayload, "videoId" | "segmentId" | "text">): string => `video/${p.videoId}/audio/${p.segmentId}-${hashText(p.text)}.wav`;
 
 /** A video that cannot be made any further: it fails with the reason, unless it has moved on meanwhile, and its other helper jobs are closed. */
-async function failProducing(env: Env, videoId: string, why: string): Promise<void> {
+export async function failProducing(env: Env, videoId: string, why: string): Promise<void> {
   const v = await getVideoAudit(env.DB, videoId);
   if (v?.status === "producing") await setVideoStatus(env.DB, videoId, "failed", { error: why });
   await cancelHelperJobsFor(env.DB, videoId);
@@ -88,7 +89,10 @@ const voiceSegment: HelperKindDef<VoiceSegmentPayload, VoiceSegmentResult> = {
     if (!video || video.status !== "producing" || !seg || seg.text !== p.text) return;
     if (r.key !== expected) throw new HelperRefused(`that is not this job's output: the voice goes to ${expected}`);
     if (!(await env.RAW.head(expected))) throw new HelperRefused(`the voice file was never uploaded to ${expected}`);
-    const written = await setSegmentAudio(env.DB, p.videoId, p.segmentId, p.text, { key: r.key, source: "clone", durationMs: Math.round(r.durationMs), textHash: hashText(p.text) });
+    // A retry of a crashed apply finds this very audio already on the line: it is not written again (that would bump the plan's version, and a render queued
+    // for the old version would be thrown away), but the render is still queued, in case the crash came before it.
+    const already = seg.audio?.key === r.key && seg.audio.textHash === hashText(p.text);
+    const written = already || (await setSegmentAudio(env.DB, p.videoId, p.segmentId, p.text, { key: r.key, source: "clone", durationMs: Math.round(r.durationMs), textHash: hashText(p.text) }));
     if (!written) return;
     const now = await getVideoAudit(env.DB, p.videoId);
     if (now?.status === "producing" && now.plan && allVoiced(now.plan.segments)) await productionDeps.enqueueRender(env, p.videoId);
@@ -125,3 +129,41 @@ const voiceSample: HelperKindDef<VoiceSamplePayload, VoiceSampleResult> = {
   async apply() {},
 };
 registerHelperKind(voiceSample);
+
+/** The finished video: the MP4, a short preview GIF and a poster image, made from a video's plan, its screenshots and the audio of every line. */
+export const RENDER_KIND = "render";
+
+export const RenderPayload = z.object({
+  videoId: z.string().min(1),
+  /** The plan's version when the job was made. A result for any other version is thrown away. */
+  planVersion: z.number().int().nonnegative(),
+  plan: z.object({ shots: z.array(ShotSchema), segments: z.array(SegmentSchema) }),
+  /** The end card: whose video this is (`name` is the person, `business` their business). */
+  brand: z.object({ name: z.string(), business: z.string() }),
+  ctaText: z.string(),
+  /** Every R2 key the helper may read: each shot's full image and each line's audio. */
+  inputs: z.array(z.string().min(1)),
+});
+export type RenderPayload = z.infer<typeof RenderPayload>;
+export const RenderResult = z.object({
+  videoKey: z.string().min(1), gifKey: z.string().min(1), posterKey: z.string().min(1),
+  durationMs: z.number().nonnegative(), bytes: z.number().nonnegative(),
+});
+export type RenderResult = z.infer<typeof RenderResult>;
+
+/** Where a render's three files go. The plan's version is in the name, so the files of an older plan can never pass for the current one's. */
+export const renderKeys = (videoId: string, planVersion: number): { mp4: string; gif: string; jpg: string } => ({
+  mp4: `video/${videoId}/out/v${planVersion}.mp4`, gif: `video/${videoId}/out/v${planVersion}.gif`, jpg: `video/${videoId}/out/v${planVersion}.jpg`,
+});
+
+const render: HelperKindDef<RenderPayload, RenderResult> = {
+  kind: RENDER_KIND,
+  payload: RenderPayload,
+  result: RenderResult,
+  inputs: (p) => [...new Set(p.inputs)],
+  outputs: (p) => { const k = renderKeys(p.videoId, p.planVersion); return [k.mp4, k.gif, k.jpg]; },
+  apply: (env, p, r) => applyRender(env, p, r),
+  async onFail(env, p, error) { await failProducing(env, p.videoId, `The video could not be rendered: ${error}`); },
+  async onExpire(env, p) { await failProducing(env, p.videoId, "Your Mac helper didn't pick up the render in time. Start the video again when it is running."); },
+};
+registerHelperKind(render);

@@ -5,14 +5,11 @@ import { enqueueHelperJob } from "../helper/jobs";
 import { VOICE_SEGMENT_KIND, type VoiceEngine } from "../helper/kinds";
 import type { Settings } from "../types";
 import { hashText, lineStale, type Segment, type VideoPlan } from "./plan";
+import { enqueueRender } from "./renderJob";
 
-/**
- * Queues the render once every line of the video has its audio. Task 9 implements it (the `render` helper job); until then it does nothing.
- * Callers go through `productionDeps.enqueueRender`, so a test can replace it with a spy.
- */
-export async function enqueueRender(_env: Env, _videoId: string): Promise<void> {}
+export { enqueueRender };
 
-/** The one seam tests replace: what finishing the last line of a video does. */
+/** The one seam tests replace: what finishing the last line of a video does (`enqueueRender` queues the render, see renderJob.ts). */
 export const productionDeps = { enqueueRender };
 
 /** True when every line has audio that matches its current words (a clone or a recording alike). */

@@ -101,3 +101,17 @@ export async function setSegmentAudio(db: D1Database, videoId: string, segmentId
   ).bind(JSON.stringify(audio), new Date().toISOString(), videoId, segmentId, text).run();
   return (r.meta.changes ?? 0) > 0;
 }
+
+/**
+ * Marks a video rendered, but only while it is `producing` and its plan is still at `planVersion` (the one the render was made for), decided in the
+ * one statement: an edit that lands as the render finishes wins, and the late render is not kept. Returns whether this call moved it.
+ */
+export async function finishRender(
+  db: D1Database, id: string, planVersion: number, files: Pick<VideoAudit, "video_key" | "gif_key" | "poster_key" | "duration_ms">,
+): Promise<boolean> {
+  const r = await db.prepare(
+    `UPDATE video_audits SET status = 'rendered', video_key = ?, gif_key = ?, poster_key = ?, duration_ms = ?, error = NULL, updated_at = ?
+     WHERE id = ? AND status = 'producing' AND json_extract(plan, '$.version') = ?`,
+  ).bind(files.video_key, files.gif_key, files.poster_key, files.duration_ms, new Date().toISOString(), id, planVersion).run();
+  return (r.meta.changes ?? 0) > 0;
+}
