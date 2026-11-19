@@ -1,0 +1,15 @@
+{
+  "name": "siteline-helper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The Siteline Mac helper: polls the Worker for voice and render jobs and does them with local tools. No runtime dependencies.",
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "start": "node src/cli.ts run",
+    "once": "node src/cli.ts once",
+    "doctor": "node src/cli.ts doctor",
+    "test": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

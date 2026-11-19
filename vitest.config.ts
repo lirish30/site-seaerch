@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-pool-workers";
 
 export default defineConfig(async () => {
@@ -21,6 +21,7 @@ export default defineConfig(async () => {
         },
       }),
     ],
-    test: { setupFiles: ["./test/apply-migrations.ts"] },
+    // The Mac helper has its own Node test run (helper/vitest.config.ts); the Worker pool must not pick its tests up.
+    test: { setupFiles: ["./test/apply-migrations.ts"], exclude: [...configDefaults.exclude, "helper/**"] },
   };
 });
