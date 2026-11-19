@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  hasBuiltSignature, isHttps, prettyLink, profileMissing, safeLink, samplesNeeded, samplesNudge, setupItems, setupSentence, suppressionWord, voiceSummary,
+  bookingSummary, hasBuiltSignature, isHttps, prettyLink, profileMissing, safeLink, samplesNeeded, samplesNudge, setupItems, setupSentence, suppressionWord, voiceSummary,
 } from "../src/client/settingsPagesView";
 import type { Service, Suppression } from "../src/client/types";
 
@@ -51,5 +51,14 @@ describe("overview status", () => {
     const d = (kind: "domain" | "place_id") => ({ kind }) as Suppression;
     expect(suppressionWord([d("domain")])).toBe("1 domain");
     expect(suppressionWord([d("domain"), d("place_id")])).toBe("2 entries");
+  });
+});
+
+describe("bookingSummary", () => {
+  it("warns when no hours are set and counts the weekly windows once they are", () => {
+    expect(bookingSummary("{}")).toEqual({ tone: "warning", text: "No hours set" });
+    expect(bookingSummary("")).toEqual({ tone: "warning", text: "No hours set" });
+    expect(bookingSummary(JSON.stringify({ windows: [{ weekday: 2, start: "09:00", end: "11:00" }] }))).toEqual({ tone: "positive", text: "1 weekly window" });
+    expect(bookingSummary(JSON.stringify({ windows: [{ weekday: 2, start: "09:00", end: "11:00" }, { weekday: 3, start: "09:00", end: "11:00" }] })).text).toBe("2 weekly windows");
   });
 });

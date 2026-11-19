@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import Icon from "../components/Icon";
 import ApprovalsCard from "../components/home/ApprovalsCard";
+import CallsCard from "../components/home/CallsCard";
 import ActivityCard from "../components/home/ActivityCard";
 import HelperCard from "../components/home/HelperCard";
 import KpiCards from "../components/home/KpiCards";
@@ -45,6 +46,7 @@ export default function Today() {
           <div className="hm-lead">
           <ApprovalsCard approvals={h.approvals} errs={h.approvalErrs} busy={h.busy} onApprove={(a, p) => void h.approveOne(a, p)}
             onReject={(a, n) => void h.rejectOne(a, n)} onApproveAll={(g) => void h.approveAll(g)} onRetry={h.reload} />
+          <CallsCard calls={h.calls} onRetry={h.reload} />
           <QueueCard queue={h.queue} onRetry={h.reload} />
           <HelperCard helper={h.helper} onRetry={h.reload} />
           <WatchedCard watched={h.watched} onRetry={h.reload} />

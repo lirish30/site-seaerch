@@ -21,10 +21,11 @@ describe("google crypto + oauth state", () => {
     expect(await verifyState("sec", st.replace(/.$/, "0"), "n1", 2000)).toBe(st.endsWith("0"));
   });
 
-  it("auth URL asks for offline access with drive.file only (no Gmail scope of any kind)", () => {
+  it("auth URL asks for offline access with drive and calendar scopes (no Gmail scope of any kind)", () => {
     const u = new URL(authUrl({ clientId: "cid", clientSecret: "x", redirectUri: "https://app/api/google/callback" }, "st"));
     expect(u.searchParams.get("scope")).toBe(SCOPES.join(" "));
-    expect(SCOPES).toEqual(["openid", "email", "https://www.googleapis.com/auth/drive.file"]);
+    expect(SCOPES).toEqual(["openid", "email", "https://www.googleapis.com/auth/drive.file",
+      "https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/calendar.freebusy"]);
     expect(SCOPES.join(" ")).not.toContain("gmail");
     expect(u.searchParams.get("access_type")).toBe("offline");
     expect(u.searchParams.has("include_granted_scopes")).toBe(false); // a reconnect must not bring back a scope granted earlier

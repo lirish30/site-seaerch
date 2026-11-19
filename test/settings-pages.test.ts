@@ -68,10 +68,14 @@ describe("mailing footer and email defaults", () => {
 describe("google status", () => {
   it("reports when it was connected (only while connected), and the callback returns to the Google page", async () => {
     await env.DB.prepare(`DELETE FROM google_auth`).run();
-    expect(await (await api("/api/google/status")).json()).toEqual({ configured: false, connected: false, email: null });
-    await saveGoogleAuth(env.DB, "me@example.com", "sealed");
+    expect(await (await api("/api/google/status")).json()).toEqual({ configured: false, connected: false, email: null, calendar: false });
+    await saveGoogleAuth(env.DB, "me@example.com", "sealed", null);
     const st = await (await api("/api/google/status")).json<any>();
-    expect(st).toMatchObject({ connected: true, email: "me@example.com" });
+    expect(st).toMatchObject({ connected: true, email: "me@example.com", calendar: false }); // connected before the calendar scopes: needs a reconnect
+    await saveGoogleAuth(env.DB, "me@example.com", "sealed", "openid email https://www.googleapis.com/auth/calendar.events");
+    expect(await (await api("/api/google/status")).json()).toMatchObject({ connected: true, calendar: false }); // partial grant: one Calendar box was unticked
+    await saveGoogleAuth(env.DB, "me@example.com", "sealed", "openid email https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.freebusy");
+    expect(await (await api("/api/google/status")).json()).toMatchObject({ connected: true, calendar: true });
     expect(Date.parse(st.connected_at)).not.toBeNaN();
     await env.DB.prepare(`DELETE FROM google_auth`).run();
     const cb = await SELF.fetch("https://x/api/google/callback?code=c&state=bad", { redirect: "manual" });

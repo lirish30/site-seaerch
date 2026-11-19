@@ -2,12 +2,12 @@ import { STATUSES, type LeadRow, type LeadStatus } from "./types";
 
 export type Section = "home" | "leads" | "find" | "outreach" | "settings";
 
-/** Which rail section a path belongs to. Today is Home; lists, Promising and a lead are Leads; New search, searches, Radar, Niche test and Import are Find; Outreach and Campaigns are Outreach. */
+/** Which rail section a path belongs to. Today is Home; lists, Promising and a lead are Leads; New search, searches, Radar, Niche test and Import are Find; Outreach, Campaigns and the Pipeline are Outreach. */
 export function sectionOf(pathname: string): Section {
   if (pathname === "/today") return "home";
   if (pathname === "/leads" || pathname.startsWith("/leads/") || pathname === "/promising") return "leads";
   if (pathname === "/settings" || pathname.startsWith("/settings/")) return "settings";
-  if (pathname === "/outreach" || pathname === "/campaigns") return "outreach";
+  if (pathname === "/outreach" || pathname === "/campaigns" || pathname === "/pipeline") return "outreach";
   return "find";
 }
 
@@ -16,7 +16,7 @@ export type SidebarKind = "home" | "leads" | "find" | "outreach" | "settings";
 /** Only list-style pages get a contextual sidebar; a lead's own page uses the full width. */
 export function sidebarOf(pathname: string): SidebarKind | null {
   if (pathname === "/today") return "home";
-  if (pathname === "/outreach" || pathname === "/campaigns") return "outreach";
+  if (pathname === "/outreach" || pathname === "/campaigns" || pathname === "/pipeline") return "outreach";
   if (pathname === "/leads" || pathname === "/promising") return "leads";
   if (pathname === "/settings" || pathname.startsWith("/settings/")) return "settings";
   if (pathname.startsWith("/leads/")) return null;

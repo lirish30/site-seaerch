@@ -1,33 +1,18 @@
 import { Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import type { Env } from "../env";
-import { authUrl, exchangeCode, revoke, signState, verifyState, accessToken, type OAuthClient } from "../google/oauth";
+import { authUrl, exchangeCode, revoke, signState, verifyState, hasCalendarScope } from "../google/oauth";
 import { encryptSecret, decryptSecret } from "../google/crypto";
+import { oauthClient } from "../google/access";
 import { getGoogleAuth, saveGoogleAuth, deleteGoogleAuth } from "../db/google";
 
 const NONCE_COOKIE = "g_oauth";
-
-export function oauthClient(env: Env, origin: string): OAuthClient | null {
-  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) return null;
-  return { clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET, redirectUri: `${origin}/api/google/callback` };
-}
-
-export class GoogleNotConnected extends Error {}
-
-/** A fresh access token for the connected account, or GoogleNotConnected. */
-export async function googleAccess(env: Env, origin: string, f: typeof fetch = fetch) {
-  const client = oauthClient(env, origin);
-  const row = await getGoogleAuth(env.DB);
-  if (!client || !row) throw new GoogleNotConnected("Connect your Google account in Settings first");
-  const refresh = await decryptSecret(env.SESSION_SECRET, row.refresh_token_enc);
-  return { token: await accessToken(f, client, refresh), row };
-}
 
 export const googleRoutes = new Hono<{ Bindings: Env }>();
 
 googleRoutes.get("/status", async (c) => {
   const row = await getGoogleAuth(c.env.DB);
-  return c.json({ configured: !!oauthClient(c.env, new URL(c.req.url).origin), connected: !!row, email: row?.email ?? null, ...(row ? { connected_at: row.connected_at } : {}) });
+  return c.json({ configured: !!oauthClient(c.env, new URL(c.req.url).origin), connected: !!row, email: row?.email ?? null, calendar: hasCalendarScope(row?.scope), ...(row ? { connected_at: row.connected_at } : {}) });
 });
 
 googleRoutes.get("/connect", async (c) => {
@@ -52,7 +37,7 @@ googleRoutes.get("/callback", async (c) => {
   try {
     const t = await exchangeCode(fetch, client, code);
     if (!t.refresh_token) return back("failed");
-    await saveGoogleAuth(c.env.DB, t.email, await encryptSecret(c.env.SESSION_SECRET, t.refresh_token));
+    await saveGoogleAuth(c.env.DB, t.email, await encryptSecret(c.env.SESSION_SECRET, t.refresh_token), t.scope ?? null);
     return back("connected");
   } catch {
     return back("failed");

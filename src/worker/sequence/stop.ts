@@ -8,9 +8,9 @@ import { enrollmentsFor } from "../db/enrollments";
 import type { LeadStatus } from "../types";
 import type { StopReason } from "./types";
 
-const ENDS_AS: Record<StopReason, "replied" | "stopped" | "bounced"> = { replied: "replied", opt_out: "stopped", bounced: "bounced", manual: "stopped" };
+const ENDS_AS: Record<StopReason, "replied" | "stopped" | "bounced"> = { replied: "replied", opt_out: "stopped", bounced: "bounced", manual: "stopped", booked: "replied" };
 // Reasons that also move the lead; a client ('won') is never moved by an inbound stop.
-const LEAD_STATUS: Partial<Record<StopReason, LeadStatus>> = { replied: "replied", opt_out: "lost" };
+const LEAD_STATUS: Partial<Record<StopReason, LeadStatus>> = { replied: "replied", opt_out: "lost", booked: "replied" };
 
 /**
  * Ends every channel of outreach to a lead ("any stop ends every channel"). Order matters, so that a stop beats an approval that is
@@ -20,6 +20,7 @@ const LEAD_STATUS: Partial<Record<StopReason, LeadStatus>> = { replied: "replied
  *  - opt_out: enrollment `stopped`, the lead's domain and place id are suppressed, the address goes on do-not-contact (opt_out), lead `lost`.
  *  - bounced: enrollment `bounced`, the address goes on do-not-contact (bounced).
  *  - manual: enrollment `stopped`.
+ *  - booked: the lead booked a call. Ends as `replied` (stopped_reason `booked`) and moves the lead to `replied`, like a reply.
  * It works for a lead that was never enrolled (a reply to a one-off email) and is safe to repeat. `email` defaults to the address the
  * lead's latest sequence was writing to.
  */

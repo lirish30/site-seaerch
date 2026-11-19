@@ -2,6 +2,9 @@ import type { Finding } from "../types";
 import { businessDomain } from "./businesses";
 import { publishedVideoForAudit, type VideoAudit } from "./videoAudits";
 import { aiVoiceNote } from "../video/plan";
+import { parseConfig } from "../booking/config";
+import { hasCalendarScope } from "../google/oauth";
+import { getGoogleAuth } from "./google";
 
 export const REPORT_TTL_DAYS = 30;
 const DAY_MS = 86_400_000;
@@ -31,6 +34,13 @@ export async function ensureReport(db: D1Database, businessId: string, auditId: 
   return (await activeReportFor(db, businessId, auditId, now))!;
 }
 
+/** The lead's newest live report link (not revoked, not expired), whatever audit it is for, or null. */
+export async function liveTokenFor(db: D1Database, businessId: string, now = new Date()): Promise<string | null> {
+  const r = await db.prepare(`SELECT token FROM audit_reports WHERE business_id = ? AND revoked = 0 AND expires_at > ? ORDER BY created_at DESC LIMIT 1`)
+    .bind(businessId, now.toISOString()).first<{ token: string }>();
+  return r?.token ?? null;
+}
+
 export async function activeReportFor(db: D1Database, businessId: string, auditId: string, now = new Date()): Promise<ReportRow | null> {
   return db.prepare(
     `SELECT * FROM audit_reports WHERE business_id = ? AND audit_id = ? AND revoked = 0 AND expires_at > ? ORDER BY created_at DESC LIMIT 1`,
@@ -54,7 +64,11 @@ export interface PublicReport {
   sender: { name: string; businessName: string; email: string; logoUrl: string }; expiresAt: string;
   /** The audit's published video, or null. The files are served by the media route, never named here. */
   video: { durationMs: number; aiVoiceNote: boolean } | null;
-  /** The owner's booking link (https only) when there is a video to put it beside, else "". */
+  /**
+   * Where the "book a call" button goes. The per-lead page (`<link base>/r/<token>/book`) when booking is on: Google connected with both calendar
+   * scopes and at least one availability window. Otherwise the owner's own booking link (https only), and only when there is a video to put it beside.
+   * "" when neither applies.
+   */
   bookingUrl: string;
 }
 
@@ -87,16 +101,31 @@ export async function liveReportTarget(db: D1Database, token: string, now = new 
   return r ? { businessId: r.business_id, auditId: r.audit_id } : null;
 }
 
-/** The ONLY shape exposed publicly. Fields are copied one by one so nothing else can leak in by accident. */
-export async function publicReport(db: D1Database, token: string, now = new Date()): Promise<PublicReport | null> {
+/** The cold-link base without a trailing slash, or "" when it is missing or not https. */
+export const httpsBase = (raw: string | undefined) => { const v = raw?.trim().replace(/\/+$/, "") ?? ""; return /^https:\/\/[^/\s]+/.test(v) ? v : ""; };
+
+/**
+ * The lead a report link belongs to, whether or not the link is still live (expired or revoked). Only for the guest's cancel link, which must keep
+ * working after the report is gone: cancelling lets a slot go, it shows nothing and sends nothing. Null for a token that was never issued.
+ */
+export async function reportBusinessId(db: D1Database, token: string): Promise<string | null> {
+  const r = await db.prepare(`SELECT business_id FROM audit_reports WHERE token = ?`).bind(token).first<{ business_id: string }>();
+  return r?.business_id ?? null;
+}
+
+/** The ONLY shape exposed publicly. Fields are copied one by one so nothing else can leak in by accident. `linkBase` is OUTREACH_LINK_BASE. */
+export async function publicReport(db: D1Database, token: string, now = new Date(), o: { linkBase?: string } = {}): Promise<PublicReport | null> {
   const r = await db.prepare(
     `SELECT b.name AS business_name, b.domain AS domain, b.website_url AS website_url, a.created_at AS audited_at, a.partial AS partial, a.findings AS findings, r.expires_at AS expires_at, r.audit_id AS audit_id,
-            s.your_name AS your_name, s.business_name AS sender_business, s.contact_email AS contact_email, s.logo_url AS logo_url, s.booking_url AS booking_url, s.ai_voice_note AS ai_voice_note
+            s.your_name AS your_name, s.business_name AS sender_business, s.contact_email AS contact_email, s.logo_url AS logo_url, s.booking_url AS booking_url, s.ai_voice_note AS ai_voice_note, s.booking_config AS booking_config
      FROM audit_reports r JOIN audits a ON a.id = r.audit_id AND a.business_id = r.business_id JOIN businesses b ON b.id = r.business_id JOIN settings s ON s.id = 1
      WHERE r.token = ? AND r.revoked = 0 AND r.expires_at > ?`,
   ).bind(token, now.toISOString()).first<{ business_name: string; domain: string | null; website_url: string | null; audited_at: string; partial: number; findings: string; expires_at: string; audit_id: string;
-    your_name: string; sender_business: string; contact_email: string; logo_url: string; booking_url: string; ai_voice_note: number }>();
+    your_name: string; sender_business: string; contact_email: string; logo_url: string; booking_url: string; ai_voice_note: number; booking_config: string }>();
   if (!r) return null;
+  // Booking is on only when there is somewhere to send the person (a link base), times to offer (a window) and a calendar to book into (Google, both scopes).
+  const base = httpsBase(o.linkBase);
+  const bookingOn = !!base && parseConfig(r.booking_config).windows.length > 0 && hasCalendarScope((await getGoogleAuth(db))?.scope);
   const all = (JSON.parse(r.findings) as Pick<Finding, "severity" | "evidence">[]).filter((f) => typeof f?.evidence === "string" && f.evidence);
   const findings = SEVERITIES.flatMap((sev) => all.filter((f) => PUBLIC_SEVERITY[f.severity] === sev).map((f) => ({ severity: sev, evidence: f.evidence })));
   const published = await publishedVideoForAudit(db, r.audit_id);
@@ -107,6 +136,6 @@ export async function publicReport(db: D1Database, token: string, now = new Date
     sender: { name: r.your_name, businessName: r.sender_business, email: r.contact_email, logoUrl: r.logo_url.startsWith("https://") ? r.logo_url : "" },
     expiresAt: r.expires_at,
     video: published ? { durationMs: published.duration_ms ?? 0, aiVoiceNote: aiVoiceNote(r, published.plan) } : null,
-    bookingUrl: published && r.booking_url.startsWith("https://") ? r.booking_url : "",
+    bookingUrl: bookingOn ? `${base}/r/${token}/book` : published && r.booking_url.startsWith("https://") ? r.booking_url : "",
   };
 }

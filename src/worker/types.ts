@@ -120,7 +120,8 @@ export interface Person {
 export const ACTIVITY_KINDS = [
   "status", "archived", "restored", "website", "reaudit", "score_flagged", "export", "draft", "cro_audit", "suppressed", "import", "bulk",
   "today_done", "snoozed", "starred", "unstarred", "note", "email_sent", "email_reply", "email_bounce",
-  "video_watch",
+  "video_watch", "deal_created", "deal_moved", "booked", "booking_cancelled", "call_prep",
+  "call_recap", "followup_booked",
 ] as const;
 export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
 export interface Activity { id: string; business_id: string; kind: ActivityKind; detail: string | null; created_at: string; }
@@ -197,6 +198,8 @@ export interface Settings {
   booking_url: string;
   /** 1/0: a video says its voice is AI. */
   ai_voice_note: number;
+  /** JSON of a BookingConfig (availability windows, notice, buffer, budget options), or "{}" for the defaults. */
+  booking_config: string;
 }
 export type TonePreset = "friendly_local" | "consultative" | "direct" | "formal";
 export type EmailLength = "short" | "medium" | "long";

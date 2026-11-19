@@ -12,6 +12,9 @@ import { followUpLabel, followUpTone, STAGE_LABEL } from "../leadView";
 import { initials, leadTier, TIER_LABEL } from "../scoreView";
 import ActivityTab from "../components/ActivityTab";
 import PeoplePanel from "../components/PeoplePanel";
+import DealChip from "../components/DealChip";
+import UpcomingBooking from "../components/UpcomingBooking";
+import CallPrepPanel from "../components/CallPrepPanel";
 import StarToggle from "../components/StarToggle";
 import CroPanel from "../components/CroPanel";
 import { shareState } from "../reportView";
@@ -44,7 +47,7 @@ const ACTIVITY_LABEL: Record<string, string> = {
   note: "Note",
   status: "Status", archived: "Archived", restored: "Restored", website: "Website changed", reaudit: "Re-audit",
   score_flagged: "Score flagged", export: "Exported", draft: "Draft", cro_audit: "CRO audit", suppressed: "Suppressed", import: "Imported", bulk: "Bulk change",
-  today_done: "Marked done in Today", snoozed: "Snoozed in Today", starred: "Starred", unstarred: "Unstarred", job_found: "New role spotted",
+  today_done: "Marked done in Today", snoozed: "Snoozed in Today", starred: "Starred", unstarred: "Unstarred", job_found: "New role spotted", deal_created: "Deal started", deal_moved: "Deal moved", booked: "Call booked", booking_cancelled: "Call cancelled", call_prep: "Call prep", call_recap: "Call recap", followup_booked: "Recommendation meeting booked",
 };
 
 const TABS = ["overview", "issues", "plan", "email", "activity"] as const;
@@ -313,6 +316,7 @@ export default function LeadDetail() {
           {maps && <a className="chip-link" href={maps} target="_blank" rel="noreferrer"><Icon name="pin" size={13} />Google Maps<Icon name="arrow-up-right" size={12} /></a>}
           {b.phone && <a className="chip-link" href={`tel:${b.phone}`}><Icon name="phone" size={13} />{b.phone}</a>}
           {links.map(([k, u]) => <a key={k} className="chip-link" href={u} target="_blank" rel="noreferrer"><Icon name={LINK_ICON[k] ?? "link"} size={13} />{LINK_LABEL[k] ?? k}</a>)}
+          <DealChip leadId={b.id} onChanged={() => void load()} />
         </div>
         {d.suppressed && (
           <div className="suppressed-banner" role="alert">
@@ -406,6 +410,9 @@ export default function LeadDetail() {
             </div>
             <textarea id="notes" className="notes-box" aria-label="Notes" placeholder="Add a note…" value={notes} onChange={(e) => setNotes(e.target.value)} onBlur={saveNotes} />
           </PropSection>
+
+          <UpcomingBooking leadId={b.id} />
+          <CallPrepPanel leadId={b.id} findings={a?.findings ?? []} />
 
           <PropSection icon="user" title="Point of contact">
             {poc ? (

@@ -22,6 +22,9 @@ import FitProfiles from "./pages/settings/FitProfiles";
 import Suppressions from "./pages/settings/Suppressions";
 import Mailboxes from "./pages/settings/Mailboxes";
 import Campaigns from "./pages/Campaigns";
+import Pipeline from "./pages/Pipeline";
+import DealPage from "./pages/Deal";
+import DeckPage from "./pages/Deck";
 import NicheTest from "./pages/NicheTest";
 import Google from "./pages/settings/Google";
 import Usage from "./pages/settings/Usage";
@@ -30,6 +33,8 @@ import Footer from "./pages/settings/Footer";
 import Helper from "./pages/settings/Helper";
 import VoiceTest from "./pages/settings/VoiceTest";
 import Scores from "./pages/settings/Scores";
+import Packages from "./pages/settings/Packages";
+import Booking from "./pages/settings/Booking";
 import Shell from "./components/Shell";
 
 // Every page draws its own header and `.page-body` inside the panel.
@@ -52,6 +57,9 @@ export default function App() {
             <Route path="/import" element={<Import />} />
             <Route path="/outreach" element={<Outreach />} />
             <Route path="/campaigns" element={<Campaigns />} />
+            <Route path="/pipeline" element={<Pipeline />} />
+            <Route path="/deals/:id" element={<DealPage />} />
+            <Route path="/deals/:id/deck" element={<DeckPage />} />
             <Route path="/radar" element={<Radar />} />
             <Route path="/niche-test" element={<NicheTest />} />
             <Route path="/settings" element={<SettingsHome />} />
@@ -70,6 +78,8 @@ export default function App() {
             <Route path="/settings/helper" element={<Helper />} />
             <Route path="/settings/voice-test" element={<VoiceTest />} />
             <Route path="/settings/scores" element={<Scores />} />
+            <Route path="/settings/packages" element={<Packages />} />
+            <Route path="/settings/booking" element={<Booking />} />
           </Routes>
         </Shell>
       } />
