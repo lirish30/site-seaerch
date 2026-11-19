@@ -600,3 +600,25 @@ table.niche tr.leader { background:var(--positive-soft); box-shadow:inset 3px 0 
   body.print-callprep .callprep section { break-inside:avoid; margin-bottom:14px; }
   body.print-callprep .callprep .cp-note, body.print-callprep .callprep .muted { color:#333; }
 }
+
+/* Deal page: prep, notes, recap and the three options. */
+.deal-body { display:flex; flex-direction:column; gap:16px; padding:16px 28px 28px; max-width:920px; }
+.deal-actions { display:flex; flex-wrap:wrap; gap:8px; margin:0; padding:0; list-style:none; }
+.deal-actions li { padding:4px 10px; border-radius:999px; background:var(--bg-muted); font-size:13px; line-height:19px; color:var(--text-2); }
+.deal-actions li.done { color:var(--text-3); text-decoration:line-through; }
+.deal-form, .deal-recap, .deal-editor { display:flex; flex-direction:column; gap:14px; }
+.deal-field { display:flex; flex-direction:column; gap:6px; margin:0; padding:0; border:0; min-width:0; font-size:13px; line-height:19px; }
+.deal-field > span, .deal-field > legend { font-weight:500; color:var(--text-2); padding:0; }
+.deal .deal-field textarea { min-height:64px; }
+.deal-recap h3 { margin:6px 0 0; font-size:12px; line-height:16px; font-weight:500; color:var(--text-3); text-transform:uppercase; letter-spacing:.04em; }
+.deal-recap p, .deal-recap li { margin:0; font-size:14px; line-height:21px; overflow-wrap:anywhere; }
+.deal-recap ul { margin:0; padding-left:20px; display:flex; flex-direction:column; gap:4px; }
+.deal-reco { font-weight:600; }
+.deal-times { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.deal-options { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:12px; }
+.deal-option { display:flex; flex-direction:column; gap:8px; margin:0; padding:14px; border:1px solid var(--border); border-radius:10px; min-width:0; }
+.deal-option.rec { border-color:var(--border-strong); background:var(--bg-muted); }
+.deal-option h4 { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0; font-size:15px; line-height:21px; font-weight:600; overflow-wrap:anywhere; }
+.deal-pkg { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.deal-pkg label { display:flex; align-items:center; gap:8px; font-size:13px; }
+.deal-pkg input:not(.cb) { width:180px; }

@@ -3,9 +3,9 @@ import { Link } from "react-router-dom";
 import { api } from "../api";
 import Icon from "../components/Icon";
 import { dollars } from "../packagesView";
-import { STAGE_LABEL, groupByStage, isStale, type DealCard } from "../pipelineView";
+import { STAGE_LABEL, dealHref, groupByStage, isStale, type DealCard } from "../pipelineView";
 
-/** The sales board: one column per deal stage, each deal a card linking to its lead. */
+/** The sales board: one column per deal stage, each deal a card linking to its deal page. */
 export default function Pipeline() {
   const [deals, setDeals] = useState<DealCard[] | null>(null);
   const [failed, setFailed] = useState(false);
@@ -37,7 +37,7 @@ export default function Pipeline() {
               <h2>{STAGE_LABEL[col.stage]}<span className="pl-count">{col.deals.length}</span></h2>
               {col.deals.length === 0 && <p className="pl-empty">No deals</p>}
               {col.deals.map((d) => (
-                <Link key={d.id} to={`/leads/${d.businessId}`} className="pl-card">
+                <Link key={d.id} to={dealHref(d)} className="pl-card">
                   <strong>{d.businessName}</strong>
                   {d.valueCents !== null && <span className="muted">{dollars(d.valueCents)}</span>}
                   {isStale(d, now) && <span className="badge2 warning"><i className="dot" />No update in 7 days</span>}

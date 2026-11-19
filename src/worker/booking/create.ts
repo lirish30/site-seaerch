@@ -50,14 +50,14 @@ export interface BookingPage {
 }
 
 /** A calendar token when booking can run (windows set, Google connected with both calendar scopes), else null. A refresh that fails reads as "not available". */
-async function calendarFor(env: Env, cfg: BookingConfig): Promise<string | null> {
+export async function calendarFor(env: Env, cfg: BookingConfig): Promise<string | null> {
   if (!cfg.windows.length) return null;
   try { return await calendarToken(env, getBookingFetch()); }
   catch (e) { console.error("booking: could not get a calendar token", e instanceof Error ? e.message : "unknown error"); return null; }
 }
 
 /** Free/busy from now to one day past the horizon, so the last day's slots are checked too. Throws when Google fails: that is never "free". */
-const busyFor = (token: string, cfg: BookingConfig, now: Date) => freeBusy(getBookingFetch(), token, now, new Date(now.getTime() + (cfg.horizonDays + 1) * DAY));
+export const busyFor = (token: string, cfg: BookingConfig, now: Date) => freeBusy(getBookingFetch(), token, now, new Date(now.getTime() + (cfg.horizonDays + 1) * DAY));
 
 /** The live lead for a report link that may be contacted, or null: unknown, revoked, expired, do-not-contact, suppressed and won all read the same. */
 async function bookableLead(env: Env, token: string, now: Date, email = "") {
@@ -92,14 +92,14 @@ export async function bookingPage(env: Env, token: string, now: Date): Promise<{
 }
 
 /** Text for a Google Calendar description, which renders HTML: one line, angle brackets and ampersands escaped. */
-const forDescription = (s: string, max = 600) => s.replace(/\s+/g, " ").trim().slice(0, max).replace(/[&<>]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"));
+export const forDescription = (s: string, max = 600) => s.replace(/\s+/g, " ").trim().slice(0, max).replace(/[&<>]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"));
 /** Text for an event title, which is plain: one line, no angle brackets. */
-const forTitle = (s: string) => s.replace(/\s+/g, " ").replace(/[<>]/g, "").trim().slice(0, 120);
+export const forTitle = (s: string) => s.replace(/\s+/g, " ").replace(/[<>]/g, "").trim().slice(0, 120);
 
 /** The calendar event's id for a booking: its uuid without dashes (lowercase hex is valid for Google, 5 to 1024 characters of a-v and 0-9). Deterministic, so the id is known even when the create call never answered. */
-const eventIdFor = (bookingId: string) => bookingId.replace(/-/g, "");
+export const eventIdFor = (bookingId: string) => bookingId.replace(/-/g, "");
 
-const when = (iso: string, tz: string) =>
+export const when = (iso: string, tz: string) =>
   new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" })
     .format(new Date(iso)).replace(/[  ]/g, " ");
 
@@ -210,7 +210,7 @@ export async function cancelByToken(env: Env, token: string, cancelToken: string
   }
   if (await cancelBooking(env.DB, booking.id, now)) {
     const settings = await getSettings(env.DB);
-    await logActivity(env.DB, booking.businessId, "booking_cancelled", `Discovery call cancelled (was ${when(booking.startAt, parseConfig(settings.booking_config).timezone)})`);
+    await logActivity(env.DB, booking.businessId, "booking_cancelled", `${booking.kind === "discovery" ? "Discovery call" : "Recommendation meeting"} cancelled (was ${when(booking.startAt, parseConfig(settings.booking_config).timezone)})`);
   }
   return { ok: true };
 }

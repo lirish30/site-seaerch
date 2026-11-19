@@ -100,3 +100,18 @@ export async function bookingFor(db: D1Database, businessId: string, kind: Booki
   const r = await db.prepare(`SELECT * FROM bookings WHERE business_id = ? AND kind = ? AND status = 'confirmed' ORDER BY start_at LIMIT 1`).bind(businessId, kind).first<Row>();
   return r ? toBooking(r) : null;
 }
+
+/**
+ * The lead's most recent booking of this kind in any state, a cancelled one last: the call may already be held, and its contact is still who to write to.
+ * Null when the lead never booked one.
+ */
+export async function lastBookingFor(db: D1Database, businessId: string, kind: BookingKind): Promise<Booking | null> {
+  const r = await db.prepare(`SELECT * FROM bookings WHERE business_id = ? AND kind = ? ORDER BY status = 'cancelled', start_at DESC LIMIT 1`).bind(businessId, kind).first<Row>();
+  return r ? toBooking(r) : null;
+}
+
+/** Marks a confirmed booking as held (the call happened). True only for the call that did it. */
+export async function markBookingHeld(db: D1Database, id: string): Promise<boolean> {
+  const res = await db.prepare(`UPDATE bookings SET status = 'held' WHERE id = ? AND status = 'confirmed'`).bind(id).run();
+  return (res.meta.changes ?? 0) === 1;
+}

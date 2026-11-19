@@ -34,6 +34,13 @@ export async function ensureReport(db: D1Database, businessId: string, auditId: 
   return (await activeReportFor(db, businessId, auditId, now))!;
 }
 
+/** The lead's newest live report link (not revoked, not expired), whatever audit it is for, or null. */
+export async function liveTokenFor(db: D1Database, businessId: string, now = new Date()): Promise<string | null> {
+  const r = await db.prepare(`SELECT token FROM audit_reports WHERE business_id = ? AND revoked = 0 AND expires_at > ? ORDER BY created_at DESC LIMIT 1`)
+    .bind(businessId, now.toISOString()).first<{ token: string }>();
+  return r?.token ?? null;
+}
+
 export async function activeReportFor(db: D1Database, businessId: string, auditId: string, now = new Date()): Promise<ReportRow | null> {
   return db.prepare(
     `SELECT * FROM audit_reports WHERE business_id = ? AND audit_id = ? AND revoked = 0 AND expires_at > ? ORDER BY created_at DESC LIMIT 1`,

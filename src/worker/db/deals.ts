@@ -1,14 +1,12 @@
 import type { PackageSnapshot } from "./packages";
 import type { Option } from "../sales/options";
 import type { CallPrep } from "../queue/callPrep";
+import type { CallRecap } from "../queue/callRecap";
+import type { DiscoveryNotes } from "../sales/notes";
 
 export const STAGE_ORDER = ["booked", "discovery_done", "recommendation_booked", "recommended", "proposal_sent", "won", "lost"] as const;
 export type DealStage = (typeof STAGE_ORDER)[number];
 export const isDealStage = (s: unknown): s is DealStage => typeof s === "string" && (STAGE_ORDER as readonly string[]).includes(s);
-
-/** Defined with the discovery notes and recap work (Task 9); until then these columns stay empty and are read as `null`. */
-type DiscoveryNotes = unknown;
-type CallRecap = unknown;
 
 export interface Deal {
   id: string; businessId: string; stage: DealStage; source: "booking" | "manual"; skipCall: boolean;
@@ -47,13 +45,28 @@ const isCallPrep = (v: unknown): boolean => {
     && isObjects(o.pushbacks) && isStrings(o.watchFor);
 };
 
+/** Whether stored notes have the shape the Notes tab and the recap read: the column holds what the notes schema accepted, so this only guards a hand-edited or older row. */
+const isNotes = (v: unknown): boolean => {
+  const o = v as Record<string, unknown> | null;
+  const num = (x: unknown) => x === null || typeof x === "number";
+  return o !== null && typeof o === "object" && isObjects(o.answers) && (o.answers as { n?: unknown; text?: unknown }[]).every((a) => typeof a.n === "number" && typeof a.text === "string")
+    && isStrings(o.goals) && isStrings(o.currentState) && num(o.avgJobValueCents) && num(o.missedJobsPerMonth)
+    && (o.platform === "wordpress" || o.platform === "other") && typeof o.decisionMakers === "string" && (o.callHeldAt === null || typeof o.callHeldAt === "string");
+};
+/** Whether a stored recap has the shape the Recap tab reads (the options are a separate column). */
+const isRecap = (v: unknown): boolean => {
+  const o = v as Record<string, unknown> | null;
+  return o !== null && typeof o === "object" && typeof o.playback === "string" && typeof o.recommendation === "string" && typeof o.leadType === "string"
+    && typeof o.generatedAt === "string" && isStrings(o.goals) && isStrings(o.currentState);
+};
+
 const toDeal = (r: Row): Deal => ({
   id: r.id, businessId: r.business_id, stage: r.stage, source: r.source, skipCall: !!r.skip_call,
   options: parse<Option[]>(r.options, Array.isArray),
   recommendedOptionId: r.recommended_option_id,
   priceSnapshot: parse<PackageSnapshot[]>(r.price_snapshot, Array.isArray) ?? [],
   valueCents: r.value_cents,
-  notes: parse(r.notes, (v) => v !== null), callPrep: parse<CallPrep>(r.call_prep, isCallPrep), recap: parse(r.recap, (v) => v !== null),
+  notes: parse<DiscoveryNotes>(r.notes, isNotes), callPrep: parse<CallPrep>(r.call_prep, isCallPrep), recap: parse<CallRecap>(r.recap, isRecap),
   deckFrozenAt: r.deck_frozen_at, lostReason: r.lost_reason, createdAt: r.created_at, updatedAt: r.updated_at, closedAt: r.closed_at,
 });
 
@@ -117,6 +130,26 @@ export async function moveDeal(db: D1Database, id: string, to: DealStage, opts: 
 /** Stores the call prep Claude wrote. It is background work, so the deal's `updated_at` (which orders the board) is left alone. */
 export function saveCallPrepStmt(db: D1Database, id: string, prep: CallPrep): D1PreparedStatement {
   return db.prepare(`UPDATE deals SET call_prep = ? WHERE id = ?`).bind(JSON.stringify(prep), id);
+}
+
+/** Stores Logan's discovery notes. It is his own work on the deal, so it counts as a touch (`updated_at`), unlike the queue's background writes. */
+export async function saveNotes(db: D1Database, id: string, notes: DiscoveryNotes): Promise<void> {
+  await db.prepare(`UPDATE deals SET notes = ?, updated_at = ? WHERE id = ?`).bind(JSON.stringify(notes), new Date().toISOString(), id).run();
+}
+
+/** The three options with what they were priced from: the packages (at the versions used), the recommended one and its value. */
+export interface DealOffer { options: Option[]; recommendedOptionId: "a" | "b" | "c"; priceSnapshot: PackageSnapshot[]; valueCents: number }
+
+/** Stores the recap Claude wrote with its options, in one statement. Background work, so `updated_at` is left alone (like the call prep). */
+export function saveRecapStmt(db: D1Database, id: string, recap: CallRecap, o: DealOffer): D1PreparedStatement {
+  return db.prepare(`UPDATE deals SET recap = ?, options = ?, recommended_option_id = ?, price_snapshot = ?, value_cents = ? WHERE id = ?`)
+    .bind(JSON.stringify(recap), JSON.stringify(o.options), o.recommendedOptionId, JSON.stringify(o.priceSnapshot), o.valueCents, id);
+}
+
+/** Stores Logan's edit of the three options. His own work, so it counts as a touch. */
+export async function saveOptions(db: D1Database, id: string, o: DealOffer): Promise<void> {
+  await db.prepare(`UPDATE deals SET options = ?, recommended_option_id = ?, price_snapshot = ?, value_cents = ?, updated_at = ? WHERE id = ?`)
+    .bind(JSON.stringify(o.options), o.recommendedOptionId, JSON.stringify(o.priceSnapshot), o.valueCents, new Date().toISOString(), id).run();
 }
 
 /** Every deal with its lead's name, newest activity first. */

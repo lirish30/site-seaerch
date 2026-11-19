@@ -78,16 +78,16 @@ export async function sendBookingMail(env: Env, b: Booking, m: BookingMail): Pro
 }
 
 /**
- * Sends the confirmation for a booking that just went through. It never throws: a confirmation that cannot go out (mailbox not set up, switched off, the
+ * Sends the confirmation for a booking that just went through. `token` is the lead's report link, for the cancel link; without one the mail says to reply. It never throws: a confirmation that cannot go out (mailbox not set up, switched off, the
  * address now on a do-not-contact list, a mail server error) is logged on the lead's timeline and in the Worker log, and the booking stands.
  */
-export async function sendConfirmation(env: Env, b: Booking, token: string): Promise<void> {
+export async function sendConfirmation(env: Env, b: Booking, token: string | null): Promise<void> {
   try {
     const problem = await mainMailboxProblem(env);
     if (problem) throw new Error(problem);
     const gate = await checkConflict(env.DB, { email: b.contactEmail, businessId: b.businessId });
     if (gate.blocked) throw new Error(gate.reason);
-    await sendBookingMail(env, b, renderConfirmation(b, await getSettings(env.DB), guestLinkBase(env.OUTREACH_LINK_BASE), token));
+    await sendBookingMail(env, b, renderConfirmation(b, await getSettings(env.DB), token ? guestLinkBase(env.OUTREACH_LINK_BASE) : "", token ?? ""));
   } catch (e) {
     const reason = oneLine(e instanceof Error ? e.message : "unknown error").slice(0, 200);
     console.error("booking: confirmation not sent", reason);

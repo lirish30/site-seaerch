@@ -23,3 +23,6 @@ export function isStale(deal: Pick<DealCard, "stage" | "updatedAt">, now: Date):
   const at = Date.parse(deal.updatedAt);
   return Number.isFinite(at) && now.getTime() - at >= STALE_AFTER_MS;
 }
+
+/** Where a card on the board goes: the deal's own page. */
+export const dealHref = (d: Pick<DealCard, "id">): string => `/deals/${d.id}`;
