@@ -101,6 +101,7 @@ function OutreachSidebar() {
       <SideItem to="/outreach?view=contacted" icon="send" label="Contacted" count={counts?.contacted} active={onQueue && view === "contacted"} />
       <SideItem to="/outreach?view=replied" icon="inbox" label="Replied" count={counts?.replied} active={onQueue && view === "replied"} />
       <SideItem to="/campaigns" icon="kanban" label="Campaigns" active={pathname === "/campaigns"} />
+      <SideItem to="/pipeline" icon="layout" label="Pipeline" active={pathname === "/pipeline"} />
       <div className="side-spacer" />
       <SideItem to="/settings" icon="sliders" label="Email voice" active={false} />
       <SideItem to="/settings" icon="pen" label="Signature" active={false} />

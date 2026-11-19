@@ -22,6 +22,7 @@ import FitProfiles from "./pages/settings/FitProfiles";
 import Suppressions from "./pages/settings/Suppressions";
 import Mailboxes from "./pages/settings/Mailboxes";
 import Campaigns from "./pages/Campaigns";
+import Pipeline from "./pages/Pipeline";
 import NicheTest from "./pages/NicheTest";
 import Google from "./pages/settings/Google";
 import Usage from "./pages/settings/Usage";
@@ -53,6 +54,7 @@ export default function App() {
             <Route path="/import" element={<Import />} />
             <Route path="/outreach" element={<Outreach />} />
             <Route path="/campaigns" element={<Campaigns />} />
+            <Route path="/pipeline" element={<Pipeline />} />
             <Route path="/radar" element={<Radar />} />
             <Route path="/niche-test" element={<NicheTest />} />
             <Route path="/settings" element={<SettingsHome />} />

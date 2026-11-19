@@ -558,3 +558,25 @@ table.niche td.cell-name .badge2 { margin-top:6px; }
 table.niche tr.leader { background:var(--positive-soft); box-shadow:inset 3px 0 0 var(--positive); } table.niche tr.leader:hover { background:var(--positive-soft); }
 .niche-job { position:relative; display:flex; flex-direction:column; gap:4px; margin:0; } .niche-job input { width:110px; padding:4px 8px 4px 20px; font-size:13px; }
 .niche-dollar { position:absolute; left:8px; top:5px; font-size:13px; line-height:19px; color:var(--text-3); pointer-events:none; }
+
+/* Pipeline board */
+.pl-msg { padding:16px 28px; }
+.pl-board { display:flex; gap:12px; padding:16px 28px 28px; overflow-x:auto; align-items:flex-start; }
+.pl-col { flex:0 0 220px; display:flex; flex-direction:column; gap:8px; padding:10px; border-radius:10px; background:var(--bg-muted); }
+.pl-col h2 { margin:0; display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; line-height:16px; font-weight:600; color:var(--text-2); }
+.pl-count { font-weight:500; color:var(--text-3); }
+.pl-empty { margin:0; font-size:12px; color:var(--text-3); }
+.pl-card { display:flex; flex-direction:column; gap:6px; align-items:flex-start; padding:10px; border:1px solid var(--border); border-radius:8px; background:var(--bg-surface); color:var(--text); font-size:13px; line-height:19px; text-decoration:none; box-shadow:var(--shadow-card); }
+.pl-card:hover { border-color:var(--border-strong); }
+@media (max-width: 720px) { .pl-msg { padding:16px; } .pl-board { padding:16px 16px 24px; } }
+
+/* Pipeline board */
+.pl-msg { padding:16px 28px; }
+.pl-board { display:flex; gap:12px; padding:16px 28px 28px; overflow-x:auto; align-items:flex-start; }
+.pl-col { flex:0 0 220px; display:flex; flex-direction:column; gap:8px; padding:10px; border-radius:10px; background:var(--bg-muted); }
+.pl-col h2 { margin:0; display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; line-height:16px; font-weight:600; color:var(--text-2); }
+.pl-count { font-weight:500; color:var(--text-3); }
+.pl-empty { margin:0; font-size:12px; color:var(--text-3); }
+.pl-card { display:flex; flex-direction:column; gap:6px; align-items:flex-start; padding:10px; border:1px solid var(--border); border-radius:8px; background:var(--bg-surface); color:var(--text); font-size:13px; line-height:19px; text-decoration:none; box-shadow:var(--shadow-card); }
+.pl-card:hover { border-color:var(--border-strong); }
+@media (max-width: 720px) { .pl-msg { padding:16px; } .pl-board { padding:16px 16px 24px; } }
