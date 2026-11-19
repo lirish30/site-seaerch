@@ -35,6 +35,7 @@ import { dealRoutes, leadDealRoutes } from "./routes/deals";
 import { deckRoutes } from "./routes/deck";
 import { bookingRoutes } from "./routes/bookings";
 import { documentRoutes } from "./routes/documents";
+import { stripeWebhookRoutes } from "./routes/stripeWebhook";
 import "./approvals/leadNote";
 import "./approvals/emailSend";
 import "./approvals/videoPublish";
@@ -47,6 +48,8 @@ const app = new Hono<{ Bindings: Env }>();
 app.all("/mcp", mcpRoute);
 // Also outside /api/*: the Mac helper sends a device token (never the cookie), which requireHelper checks on every /helper route.
 app.route("/helper", helperRoutes);
+// Also outside /api/*: Stripe calls this with no cookie; the route checks the Stripe-Signature header against STRIPE_WEBHOOK_SECRET.
+app.route("/hooks/stripe", stripeWebhookRoutes);
 app.use("/api/*", requireAuth);
 app.get("/api/health", (c) => c.json({ ok: true }));
 app.route("/api", authRoutes);

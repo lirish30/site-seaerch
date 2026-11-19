@@ -34,4 +34,8 @@ export interface Env {
   OUTREACH_LINK_BASE?: string;
   /** Base URL for a client's proposal link (https only, e.g. https://clients.hellositeline.com). Never the cold-email host and never workers.dev. */
   CLIENT_LINK_BASE?: string;
+  /** Stripe secret or restricted key (Worker secret, never in D1 or a log). sk_test_/rk_test_ is test mode. */
+  STRIPE_SECRET_KEY?: string;
+  /** Signing secret of the /hooks/stripe webhook endpoint (Worker secret). Unset, the webhook answers 503. */
+  STRIPE_WEBHOOK_SECRET?: string;
 }

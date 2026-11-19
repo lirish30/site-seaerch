@@ -105,3 +105,20 @@ export function documentsSummary(raw: string): { tone: "warning" | "positive"; t
   const c = readDocumentsDraft(raw);
   return legalGate(c) ? { tone: "warning", text: "Not lawyer-reviewed" } : { tone: "positive", text: `Reviewed ${c.legalReviewedAt!.slice(0, 10)}` };
 }
+
+/** What GET /api/documents/config says about billing. Booleans and the mode only: the worker never sends a secret. */
+export interface BillingConfig { stripeMode: "test" | "live" | null; webhookConfigured: boolean; clientBase: string | null }
+
+/** The one line under Settings > Documents: "Stripe: test mode · webhook secret set · client links on https://...". Live mode and anything missing are flagged by the page. */
+export function billingLine(c: BillingConfig): string {
+  const stripe = c.stripeMode ? `Stripe: ${c.stripeMode} mode` : "Stripe: not set up";
+  return [stripe, c.webhookConfigured ? "webhook secret set" : "webhook secret not set", c.clientBase ? `client links on ${c.clientBase}` : "client links off"].join(" · ");
+}
+
+/** What is missing before a deposit can be invoiced and its payment seen, or null when all is set. */
+export function billingProblem(c: BillingConfig): string | null {
+  if (!c.stripeMode) return "Set STRIPE_SECRET_KEY (a Worker secret) to invoice deposits.";
+  if (!c.webhookConfigured) return "Set STRIPE_WEBHOOK_SECRET (a Worker secret) so a payment is noticed, and point a Stripe webhook at /hooks/stripe for the invoice.paid, invoice.voided, invoice.marked_uncollectible and invoice.payment_failed events.";
+  if (!c.clientBase) return "Set CLIENT_LINK_BASE (https) so a client has a link to the proposal.";
+  return null;
+}

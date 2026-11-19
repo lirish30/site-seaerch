@@ -5,7 +5,7 @@ import { CLAUSE_LIBRARY_VERSION, clausesFor } from "../../../worker/documents/cl
 import { PACKAGE_KEYS } from "../../../worker/db/packages";
 import { DEFAULT_DOCUMENTS_CONFIG, legalGate, type DocumentsConfig } from "../../../worker/documents/config";
 import type { Package } from "../../packagesView";
-import { documentsProblem, readDocumentsDraft } from "../../settingsPagesView";
+import { billingLine, billingProblem, documentsProblem, readDocumentsDraft, type BillingConfig } from "../../settingsPagesView";
 import { useSettingsDoc } from "../../settingsData";
 
 /** Settings > Documents: the lawyer-review record, the late fee, how long a proposal stays open, and every clause as the app writes it. */
@@ -18,6 +18,9 @@ export default function Documents() {
   const reviewed = cfg.legalReviewedAt !== null;
   const [packages, setPackages] = useState<Package[] | null>(null);
   useEffect(() => { api.get<Package[]>("/packages").then(setPackages).catch(() => setPackages([])); }, []);
+  const [billing, setBilling] = useState<BillingConfig | null>(null);
+  useEffect(() => { api.get<BillingConfig>("/documents/config").then(setBilling).catch(() => setBilling(null)); }, []);
+  const billingIssue = billing ? billingProblem(billing) : null;
   const hourly = packages?.find((p) => p.key === "hourly");
   const provider = doc.value("business_name").trim() || doc.value("your_name").trim() || "the provider";
   // Every optional clause shows here (all packages, Care declined), so the reviewer reads the whole library once.
@@ -51,6 +54,11 @@ export default function Documents() {
             </Row>
           )}
           {problem && <p className="bx-err" role="alert">{problem}</p>}
+        </Card>
+        <Card title="Payments" sub="Deposits are invoiced through Stripe. The keys are Worker secrets: this page shows only whether they are set.">
+          <p>{billing ? billingLine(billing) : "Checking…"}</p>
+          {billing?.stripeMode === "live" && <Callout tone="warn" icon="alert">Live mode: a deposit invoice charges a real client.</Callout>}
+          {billingIssue && <Callout tone="info">{billingIssue}</Callout>}
         </Card>
         <Card title="Terms">
           <Row>

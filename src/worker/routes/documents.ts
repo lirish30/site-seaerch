@@ -12,6 +12,7 @@ import { clientBase } from "../documents/mail";
 import { ProposalError } from "../documents/proposal";
 import { PROPOSAL_CSP, renderProposalHtml } from "../documents/render";
 import { signedPdfResponse } from "../documents/signed";
+import { stripeMode } from "../stripe/client";
 import { draftProposal, editDraft, sendProblems, sendTest, voidProposal } from "../documents/service";
 
 const invalid = (error: z.ZodError) => ({ error: "invalid body", fields: z.flattenError(error).fieldErrors });
@@ -40,6 +41,10 @@ function failure(c: { json: (body: unknown, status: 409 | 422) => Response }, e:
 
 /** Mounted at /api: /deals/:id/proposal and /documents/:id/... (all behind requireAuth). */
 export const documentRoutes = new Hono<{ Bindings: Env }>();
+
+/** What the Documents settings page shows about billing: the Stripe mode and whether the webhook secret is set (never a secret) and where client links point. */
+documentRoutes.get("/documents/config", (c) =>
+  c.json({ stripeMode: stripeMode(c.env.STRIPE_SECRET_KEY), webhookConfigured: !!c.env.STRIPE_WEBHOOK_SECRET, clientBase: clientBase(c.env) }));
 
 documentRoutes.get("/deals/:id/proposal", async (c) => {
   const deal = await getDeal(c.env.DB, c.req.param("id"));
