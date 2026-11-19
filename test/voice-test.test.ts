@@ -199,14 +199,62 @@ describe("the blind voice test", () => {
     expect(await latest()).toEqual({ test: null });
   });
 
-  it("reports a clip the Mac gave up on", async () => {
+  const failClip = (engine: string, error: string) =>
+    env.DB.prepare(`UPDATE helper_jobs SET status = 'failed', error = ? WHERE kind = ? AND json_extract(payload, '$.engine') = ?`).bind(error, VOICE_SAMPLE_KIND, engine).run();
+  const labelOf = async (id: string, engine: string) => {
+    const labels = JSON.parse((await env.DB.prepare(`SELECT labels FROM voice_tests WHERE id = ?`).bind(id).first<{ labels: string }>())!.labels) as Record<string, string>;
+    return Object.keys(labels).find((l) => labels[l] === engine)!;
+  };
+
+  it("reports a clip the Mac gave up on, without naming its engine before a pick", async () => {
     await withReference();
     const { id } = await createVoiceTest(env);
-    await env.DB.prepare(`UPDATE helper_jobs SET status = 'failed', error = 'engine missing' WHERE kind = ? AND json_extract(payload, '$.engine') = 'chatterbox'`).bind(VOICE_SAMPLE_KIND).run();
-    const t = (await latest()).test!;
+    await failClip("chatterbox", "chatterbox failed to load: Traceback in qwen3-tts / openvoice-v2");
+    const res = await api("/api/voice-tests/latest");
+    const text = await res.text();
+    const t = (JSON.parse(text) as Latest).test!;
     expect(t.id).toBe(id);
     expect(t.clips.filter((c) => c.status === "failed")).toHaveLength(1);
+    expect((t.clips.find((c) => c.status === "failed") as any).error).toBe("Your Mac couldn't make this clip.");
     expect(t.pending).toBe(3);
+    for (const e of ["qwen", "chatterbox", "openvoice"]) {
+      expect(text.toLowerCase()).not.toContain(e);
+      expect([...res.headers.entries()].join().toLowerCase()).not.toContain(e);
+    }
+  });
+
+  it("a pick from a pending clip is refused", async () => {
+    await withReference();
+    const { id } = await createVoiceTest(env);
+    const r = await post(`/api/voice-tests/${id}/choose`, { label: "A" });
+    expect(r.status).toBe(409);
+    expect((await r.json<any>()).error).toBe("That clip isn't ready yet.");
+    expect((await getSettings(env.DB)).voice_engine).toBeNull();
+    expect((await latest()).test!.chosen).toBeNull();
+  });
+
+  it("a pick from a failed clip is refused, but a ready one can still be picked", async () => {
+    await withReference();
+    const { id } = await createVoiceTest(env);
+    await failClip("chatterbox", "boom");
+    await finishAll(id); // the other two clips finish
+    const bad = await labelOf(id, "chatterbox");
+    const r = await post(`/api/voice-tests/${id}/choose`, { label: bad });
+    expect(r.status).toBe(409);
+    expect((await r.json<any>()).error).toBe("That clip isn't ready yet.");
+    expect((await getSettings(env.DB)).voice_engine).toBeNull();
+    const good = await labelOf(id, "qwen3-tts");
+    expect((await post(`/api/voice-tests/${id}/choose`, { label: good })).status).toBe(200);
+    expect((await getSettings(env.DB)).voice_engine).toBe("qwen3-tts");
+    // Once picked, the real reason is shown.
+    expect((await latest()).test!.clips.find((c) => c.status === "failed")).toMatchObject({ error: "boom" });
+  });
+
+  it("a done job whose file was never uploaded is not ready to pick", async () => {
+    await withReference();
+    const { id } = await createVoiceTest(env);
+    await env.DB.prepare(`UPDATE helper_jobs SET status = 'done' WHERE kind = ?`).bind(VOICE_SAMPLE_KIND).run();
+    expect((await post(`/api/voice-tests/${id}/choose`, { label: "A" })).status).toBe(409);
   });
 
   it("choosing sets the engine and reveals the names", async () => {
@@ -227,11 +275,12 @@ describe("the blind voice test", () => {
   it("choosing twice is refused", async () => {
     await withReference();
     const { id } = await createVoiceTest(env);
+    await finishAll(id);
     expect((await post(`/api/voice-tests/${id}/choose`, { label: "A" })).status).toBe(200);
     const engine = (await getSettings(env.DB)).voice_engine;
     expect((await post(`/api/voice-tests/${id}/choose`, { label: "C" })).status).toBe(409);
     expect((await getSettings(env.DB)).voice_engine).toBe(engine);
-    await expect(chooseVoice(env.DB, id, "B")).rejects.toThrow();
+    await expect(chooseVoice(env, id, "B")).rejects.toThrow();
   });
 
   it("refuses a bad label and an unknown test", async () => {
@@ -272,7 +321,8 @@ describe("the blind voice test", () => {
   it("none of these clears the voice", async () => {
     await withReference();
     const { id } = await createVoiceTest(env);
-    await chooseVoice(env.DB, id, "A");
+    await finishAll(id);
+    await chooseVoice(env, id, "A");
     expect((await getSettings(env.DB)).voice_engine).not.toBeNull();
     expect((await post("/api/voice-tests/none")).status).toBe(200);
     const s = await getSettings(env.DB);

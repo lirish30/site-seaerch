@@ -78,13 +78,16 @@ export async function createVoiceTest(env: Env, lineText?: string): Promise<{ id
  * The owner's pick: the engine behind a label becomes the voice for new videos. Only the newest test can be picked from, and only once.
  * Everything that stops it is a `VoiceTestError`.
  */
-export async function chooseVoice(db: D1Database, testId: string, label: VoiceLabel): Promise<{ engine: VoiceEngine }> {
+export async function chooseVoice(env: Env, testId: string, label: VoiceLabel): Promise<{ engine: VoiceEngine }> {
+  const db = env.DB;
   if (!isLabel(label)) throw new VoiceTestError(400, "label must be A, B or C");
   const row = await db.prepare(`SELECT * FROM voice_tests WHERE id = ?`).bind(testId).first<TestRow>();
   if (!row) throw new VoiceTestError(404, "not found");
   if (row.chosen) throw new VoiceTestError(409, "You already picked from this test.");
   if ((await latestRow(db))?.id !== testId) throw new VoiceTestError(409, "A newer test replaced this one.");
   const engine = labelsOf(row)[label];
+  // Only a clip that was heard can be picked: its job is done and its file is there. The other two need not be ready (an engine that cannot run must not block a choice).
+  if ((await clipState(env, row.id, engine, await clipJobs(db, row.id))).status !== "ready") throw new VoiceTestError(409, "That clip isn't ready yet.");
   const marked = await db.prepare(`UPDATE voice_tests SET chosen = ? WHERE id = ? AND chosen IS NULL`).bind(label, testId).run();
   if ((marked.meta.changes ?? 0) === 0) throw new VoiceTestError(409, "You already picked from this test.");
   await db.prepare(`UPDATE settings SET voice_engine = ? WHERE id = 1`).bind(engine).run();
@@ -111,6 +114,20 @@ async function clipJobs(db: D1Database, testId: string): Promise<Map<VoiceEngine
   return new Map(rows.map((r) => [r.engine, r]));
 }
 
+/** Where one clip stands. `error` is the raw reason a failed clip failed; it can name an engine, so a caller must not show it before a pick. */
+async function clipState(env: Env, testId: string, engine: VoiceEngine, jobs: Map<VoiceEngine, ClipJob>): Promise<{ status: ClipStatus; error?: string }> {
+  const job = jobs.get(engine);
+  if (!job) return { status: "failed", error: "this clip was never queued" };
+  if (job.status === "done") {
+    return (await env.RAW.head(voiceSampleKey({ testId, engine }))) ? { status: "ready" } : { status: "failed", error: "your Mac finished the clip but it was never uploaded" };
+  }
+  if (job.status === "failed" || job.status === "expired") return { status: "failed", error: job.error ?? "your Mac could not make this clip" };
+  return { status: "pending" };
+}
+
+/** What a failed clip says before a pick. The helper's own words can name the engine, which would undo the blind test. */
+export const GENERIC_CLIP_ERROR = "Your Mac couldn't make this clip.";
+
 /** The newest test as the page sees it. Which engine is behind which label stays out of it until a pick is made. */
 export async function latestVoiceTest(env: Env, now: Date = new Date()): Promise<VoiceTestView | null> {
   const row = await latestRow(env.DB);
@@ -119,17 +136,9 @@ export async function latestVoiceTest(env: Env, now: Date = new Date()): Promise
   const jobs = await clipJobs(env.DB, row.id);
   const clips: VoiceTestView["clips"] = [];
   for (const label of LABELS) {
-    const engine = labels[label];
-    const job = jobs.get(engine);
-    const url = `/api/voice-tests/${row.id}/clips/${label}`;
-    let status: ClipStatus = "pending";
-    let error: string | undefined;
-    if (!job) { status = "failed"; error = "this clip was never queued"; }
-    else if (job.status === "done") {
-      if (await env.RAW.head(voiceSampleKey({ testId: row.id, engine }))) status = "ready";
-      else { status = "failed"; error = "your Mac finished the clip but it was never uploaded"; }
-    } else if (job.status === "failed" || job.status === "expired") { status = "failed"; error = job.error ?? "your Mac could not make this clip"; }
-    clips.push({ label, url, status, ...(error ? { error } : {}) });
+    const state = await clipState(env, row.id, labels[label], jobs);
+    const error = state.status === "failed" ? (row.chosen ? state.error : GENERIC_CLIP_ERROR) : undefined;
+    clips.push({ label, url: `/api/voice-tests/${row.id}/clips/${label}`, status: state.status, ...(error ? { error } : {}) });
   }
   return {
     id: row.id, createdAt: row.created_at, line: row.line_text, chosen: row.chosen, pending: clips.filter((c) => c.status !== "ready").length,

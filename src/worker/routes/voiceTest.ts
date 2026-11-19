@@ -75,7 +75,7 @@ voiceTestRoutes.post("/voice-tests/none", async (c) => { await clearVoice(c.env.
 voiceTestRoutes.post("/voice-tests/:id/choose", async (c) => {
   const body = z.object({ label: z.string() }).safeParse(await c.req.json().catch(() => null));
   if (!body.success || !isLabel(body.data.label)) return c.json({ error: "label must be A, B or C" }, 400);
-  try { return c.json(await chooseVoice(c.env.DB, c.req.param("id"), body.data.label)); } catch (e) { return fail(c, e); }
+  try { return c.json(await chooseVoice(c.env, c.req.param("id"), body.data.label)); } catch (e) { return fail(c, e); }
 });
 
 /** One clip by label, never by engine name. */
