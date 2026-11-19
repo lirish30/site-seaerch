@@ -59,6 +59,15 @@ describe("approval links", () => {
   });
 });
 
+describe("approvalLink for a reminder", () => {
+  it("an onboarding reminder or Friday update opens its deal", () => {
+    const a = { ...item("n", "onboarding.nudge", "2026-11-01T00:00:00Z"), record_type: "deal", record_id: "deal-9" };
+    expect(approvalLink(a)).toEqual({ to: "/deals/deal-9", label: "Open the onboarding" });
+    expect(approvalLink({ ...a, record_type: "lead" })).toBeNull();
+    expect(approvalLink({ ...a, record_id: null })).toBeNull();
+  });
+});
+
 describe("canBulkApprove", () => {
   it("a video is never published by an approve-all: it is watched and approved on its own", () => {
     expect(canBulkApprove("video.publish")).toBe(false);

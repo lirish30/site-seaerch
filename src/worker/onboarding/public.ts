@@ -40,6 +40,7 @@ const LABEL_MAX = 100;
 const notFound: WriteResult = { ok: false, status: 404 };
 const closedResult: WriteResult = { ok: false, status: 409, error: "this onboarding is closed" };
 const lockedResult: WriteResult = { ok: false, status: 409, error: "the questionnaire was already submitted" };
+const settledResult: WriteResult = { ok: false, status: 409, error: "this item is already settled" };
 const bad = (fields?: string[]): WriteResult => ({ ok: false, status: 400, ...(fields?.length && { fields }) });
 
 /** The onboarding behind a link, or null: not a token, unknown or revoked. A malformed token is never looked up. */
@@ -99,6 +100,8 @@ export async function saveClientAnswers(env: Env, token: string, answers: Record
 
   const known = new Set(questionsFor(o.kind).map((q) => q.id));
   const mine = Object.entries(answers).filter(([id]) => known.has(id));
+  // Nothing this form asks was sent: nothing is saved, and the client has not "written" (the silence clock is not reset).
+  if (!mine.length) return { ok: true };
   const notText = mine.filter(([, v]) => typeof v !== "string").map(([id]) => id);
   if (notText.length) return bad(notText);
   const cleaned = Object.fromEntries(mine.map(([id, v]) => [id, cleanText(v, v.length)]));
@@ -136,7 +139,7 @@ export async function submitClientQuestionnaire(env: Env, token: string, now: Da
 }
 
 /**
- * Saves the text for a checklist item. The item must belong to this onboarding (404 otherwise, as for an unknown one) and take text (400 for a files item).
+ * Saves the text for a checklist item. The item must belong to this onboarding (404 otherwise, as for an unknown one) and take text (400 for a files item). An item the owner already accepted or marked not needed is settled: 409.
  * More than 5000 characters is refused (400), and text that reads like a login is a 422 naming the item: nothing typed is ever repeated back. An empty text
  * clears the item. Stamps the client's activity, logs what came in once per item per day, and logs a return after a long silence.
  */
@@ -148,6 +151,8 @@ export async function saveClientItemText(env: Env, token: string, itemId: string
   const item = items.find((i) => i.id === itemId);
   if (!item) return notFound;
   if (item.kind !== "text" || typeof text !== "string") return bad();
+  // Accepted and not-needed items are settled (as for uploads): the owner reopens one with "Ask again".
+  if (item.status === "accepted" || item.status === "not_applicable") return settledResult;
 
   const cleaned = cleanText(text, text.length);
   if (cleaned.length > ITEM_TEXT_MAX) return bad([item.id]);

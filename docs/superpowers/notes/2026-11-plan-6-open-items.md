@@ -10,7 +10,7 @@ One end-to-end test (`test/onboarding-flow.test.ts`) drives the real entry point
 1. Apply the new remote migration `0054_onboarding` before deploying. Migrations first: the new Worker reads tables the old schema lacks.
 2. Confirm `CLIENT_LINK_BASE` (already set for proposals) serves `/o/<anything>` as a 404 page, not an error, and that the custom domain routes `/o/*` to the Worker. Until it is set, a welcome cannot be approved ("Set CLIENT_LINK_BASE").
 3. Record a welcome video of a minute or less, host it, and paste its https link on the Deal's Onboarding panel. A welcome still waiting for approval shows the new link in its preview.
-4. Run "Start a test onboarding" on a TEST lead, never on a deal with a real proposal: a test onboarding cannot be removed from its deal, and it would block the real one for good (the button refuses a deal with a real proposal). Then: approve the welcome, open the link on a phone, answer the questions, upload photos from the camera roll including a HEIC, check the owner panel, download a file, and look at the Friday and reminder approvals the daily sweep drafts.
+4. Run "Start a test onboarding" on a TEST lead, never on a deal with a real proposal: a test onboarding cannot be removed from its deal, and it would block the real one for good (the button refuses a deal with a real proposal, and a real proposal can no longer be drafted or sent on a deal that has a test onboarding: "Use a new test lead for rehearsals"). Then: approve the welcome, open the link on a phone, answer the questions, upload photos from the camera roll including a HEIC, check the owner panel, download a file, and look at the Friday and reminder approvals the daily sweep drafts.
 5. Read every question (`src/worker/onboarding/templates.ts`, `QUESTIONS`) and every item instruction (`ITEM_TEMPLATES`) as the client will read them. They are shipped wording, not reviewed wording.
 6. Remember what was and was not checked: the panel and the client page were only checked by typecheck, build and mocked-fetch browser runs, never against the real Worker and R2. Expect layout fixes on the first real look, and check the phone upload flow in particular (camera roll, HEIC, a slow connection).
 
@@ -23,7 +23,8 @@ One end-to-end test (`test/onboarding-flow.test.ts`) drives the real entry point
 6. Whether the Friday email waits for projects. The "done / next" half of the Friday update is Plan 7, so today the Friday email lists only what the client has sent and what is still open, with no project progress.
 7. Answers lock after the client submits the questionnaire, and there is no owner unlock. A client who needs to change an answer has to tell you.
 8. A reminder and a Friday update can both be queued on the same day (the ladder and the Friday rule are independent), so a silent client can have two approvals waiting.
-9. A test onboarding can never be removed from its deal (the `deal_id` is unique and there is no delete). The panel refuses to start one on a deal with a real proposal for that reason.
+9. A test onboarding can never be removed from its deal (the `deal_id` is unique and there is no delete). The panel refuses to start one on a deal with a real proposal for that reason, and a real proposal cannot be drafted or sent on a deal that has one.
+10. A test onboarding is swept (reminders, Friday updates) for 21 days after it is made, then left alone; it never writes the back-of-queue note on the lead.
 
 ## Known gaps (decided, not fixed)
 
@@ -39,7 +40,7 @@ Start and welcome
 - The retry guards in `onboardingWelcome.ts` (lines about 173-178: closed, revoked, mailbox) re-run before `sendEmail` short-circuits, so a crash after the send plus a changed state leaves the due dates unwritten (skip the guards when an outbound row for the approval already sent); `sentAt = now()` at a retry shifts the due dates; a real welcome logs the send twice (the email note and `onboarding_welcome`); a stale `sendEmail` `skipLimits` comment (`send.ts` about lines 161-162); a test onboarding requires the document's contact email though it mails only the owner; a weak assertion at `test/onboarding-start.test.ts` about line 578; missing tests: a test onboarding with an empty `settings.contact_email`, a failing `markWelcomeSent`.
 
 Client API
-- The answers lock and the `closedAt` check are read-then-write (an autosave can land after a concurrent submit; guard it in SQL); `saveItemText` and `touchClient` are not batched; a PUT with empty or only-unknown answers still stamps activity and can log `onboarding_resumed` (it resets the silence clock); 422 and 400 both answer a generic "invalid body" plus the ids (the client cannot tell a credential refusal from a bad value); the `onboarding_received` dedupe is keyed on the item label, not its id; the page GET runs `listFiles` once per files item (N queries); test noise from a bare `submitQuestionnaire` call near `test/onboarding-public.test.ts:774`; header assertions only on the 200, 400 and 404 answers, and no 413 test for item text.
+- The answers lock and the `closedAt` check are read-then-write (an autosave can land after a concurrent submit; guard it in SQL); `saveItemText` and `touchClient` are not batched; 422 and 400 both answer a generic "invalid body" plus the ids (the client cannot tell a credential refusal from a bad value); the `onboarding_received` dedupe is keyed on the item label, not its id; the page GET runs `listFiles` once per files item (N queries); test noise from a bare `submitQuestionnaire` call near `test/onboarding-public.test.ts:774`; header assertions only on the 200, 400 and 404 answers, and no 413 test for item text.
 - HAND-OFF to Task 5/6: writes answer `{ok:true}` and the page refetches the GET after a submit; the limiter allows 30 requests a minute per link and IP, so UI autosave must debounce; Task 5 may reuse the exported `endsSilence`, `logResumed` and `logReceived` from `onboarding/public.ts`.
 
 Uploads
@@ -54,15 +55,24 @@ Client UI
 
 Owner routes and panel
 - `console.error` is muted in the routes test and never asserted; `OwnerFields` typed state is not resynced on Refresh and Save re-sends both fields; the "Open Home to approve" link shows after the approval; `POST /welcome` can create a second approval after an approved-but-failed one (the UI hides it); revoke and new link are allowed on a closed onboarding; the panel's rendering was never viewed (check it in the real app); the Deal tab visibility rule is untested.
-- Residual ordering: a signed TEST copy, then a test onboarding, then a real proposal drafted, signed and paid on the same deal is still blocked (a loud note, no recovery); consider blocking `createDraft`/`markSent` of a real proposal when the deal has a test onboarding, or adding a delete route. A welcome still pending cannot be approved after a revoke until a new link is made (the confirm warns).
+- A welcome still pending cannot be approved after a revoke until a new link is made (the confirm warns).
 
 Sweep
-- A crash window between `recordNudge` and `createApproval`: a null `approval_id` cannot be told apart from an intentional lower-level mark (the same if `forgetNudge` fails); a reminder and a Friday update on the same day both queue (decision 8); raw SQL `recordedKeys` in `sweep.ts` (the sweep now reads them through `listNudgeKeys`); test onboardings write "no reply for 14 days: back-of-queue" notes to the real lead's timeline.
+- A crash window between `recordNudge` and `createApproval`: a null `approval_id` cannot be told apart from an intentional lower-level mark (the same if `forgetNudge` fails); a reminder and a Friday update on the same day both queue (decision 8); raw SQL `recordedKeys` in `sweep.ts` (the sweep now reads them through `listNudgeKeys`).
 - Supersession counts any newer key with an approval id regardless of that approval's status (reject the newer one, then approve the older one, and the older is skipped); the skip note text is prefixed "reminder skipped:" even for a Friday update.
 
 Today
 - "Welcome email is waiting for you" ignores the welcome approval's state (a rejected or never-created one shows daily until done or snoozed); the suppressed-lead test does not prove the lead is suppressed; no explicit open-but-complete onboarding test; `listOpenItems` loads test onboardings' items needlessly.
 - Accepted at Task 9: an archived lead shows nothing on Today (like `proposal_follow_up`); `onboarding_*` kinds were not added to `NOT_CONTACT` (`onboarding_received` is real client contact); received-but-unaccepted items show at any stage.
+
+Final review (accepted leftovers)
+- Onboarding tokens never expire, and a closed onboarding's page stays readable (a closed one refuses writes).
+- The Friday text says "as the week ends" even when the approval is sent on a Monday.
+- A reminder and a Friday update can both queue on one Friday.
+- `skipLimits` on the welcome and nudge sends skips the conflict gate (this matches booking mail).
+- The `/o/` prefix blocks third-party cold links whose path starts with `/o/`.
+- Custom-item due dates typed before the welcome goes out are overwritten by `markWelcomeSent`.
+- The credential check (`looksLikeCredential`) now needs a word boundary in front ("compass: north" is fine), but a sentence such as "Our secret: we answer in 5 min" is still refused, because "secret" starts a word there; the client is told to remove it.
 
 ## Rulings made during the run
 1. R1 (pre-flight): the Task 1 file list omits `routes/leads.ts` but a step edits it; allowed, the lead-delete guard lives there.
@@ -75,3 +85,4 @@ Today
 8. R7: `onboarding.welcome` is added to the bulk-approve exclusion in `src/client/approvalsView.ts` (`canBulkApprove`) as part of Task 7, because the welcome preview asks you to add a video link first.
 9. R8: a client upload to an `accepted` item is 409 (accepted means settled; you use "Ask again" (status waiting) to reopen it; the Task 7 UI must expose it). Limit statuses: the 11th file is 409 and the 250 MB total is 413. Concern: the limits are checked then written, not transactional (the rate limiter bounds it): deferred.
 10. Implementers and reviewers ran on Sonnet per Logan's standing preference, although the skill prefers the most capable model. Cost if wrong: a shallower cross-cutting review.
+11. Final review fix wave: test onboardings are swept for 21 days only; a real proposal cannot be drafted/sent on a deal with a test onboarding (rehearse on a test lead). Cost if wrong: rehearsal reminders stop after 3 weeks.

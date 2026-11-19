@@ -323,6 +323,44 @@ describe("a test onboarding", () => {
   });
 });
 
+describe("a test onboarding is swept for 21 days only", () => {
+  /** Both onboardings were made at T0, the day the welcome went out. */
+  async function pair() {
+    const real = await seed();
+    const test = await seed({ test: true });
+    await env.DB.prepare(`UPDATE onboardings SET created_at = ? WHERE id IN (?, ?)`).bind(iso(T0), real.id, test.id).run();
+    return { real, test };
+  }
+
+  it("inside the 21 days both kinds are drafted for", async () => {
+    await readyToSend();
+    const { real, test } = await pair();
+    expect(await sweep(at(20 * DAY))).toMatchObject({ reminders: 2 });
+    expect(await nudges(real.dealId)).toHaveLength(1);
+    expect(await nudges(test.dealId)).toHaveLength(1);
+  });
+
+  it("from day 21 only the real onboarding is swept", async () => {
+    await readyToSend();
+    const { real, test } = await pair();
+    expect(await sweep(at(21 * DAY))).toMatchObject({ reminders: 1 });
+    expect(await nudges(real.dealId)).toHaveLength(1);
+    expect(await nudges(test.dealId)).toEqual([]);
+    expect(await keys(test.id)).toEqual([]);
+  });
+
+  it("a test onboarding never writes the back-of-queue note, a real one of the same age does", async () => {
+    await readyToSend();
+    const { real, test } = await pair();
+    const r = await sweep(at(15 * DAY));
+    expect(r.waiting).toBe(1);
+    expect(await activity(real.businessId, "onboarding_waiting")).toHaveLength(1);
+    expect(await activity(test.businessId, "onboarding_waiting")).toEqual([]);
+    // still inside its 21 days, the rehearsal is drafted for as before
+    expect(await nudges(test.dealId)).toHaveLength(1);
+  });
+});
+
 describe("the approval", () => {
   it("approving a reminder sends it to the contact from the main mailbox", async () => {
     const mail = await readyToSend();

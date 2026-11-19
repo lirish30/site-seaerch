@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import Icon from "../../components/Icon";
-import { checkFile, dueLabel, FILE_ACCEPT, formatBytes, itemStateLabel, MAX_FILES_PER_ITEM, type PublicOnboardingItem } from "../../onboardView";
+import { checkFile, dueLabel, FILE_ACCEPT, formatBytes, itemLocked, itemStateLabel, MAX_FILES_PER_ITEM, type PublicOnboardingItem } from "../../onboardView";
 import type { OnboardApi, SavedFile } from "./api";
 import type { PageHooks } from "./Questionnaire";
 import SaveNote from "./SaveNote";
@@ -96,7 +96,7 @@ function FileBox({ item, api, hooks, readOnly }: { item: PublicOnboardingItem; a
 /** One thing we asked for. The owner's label and instructions and the client's own text are all shown as React text. */
 export default function ItemCard({ item, api, now, timezone, readOnly, hooks }: Props) {
   const done = item.status !== "waiting";
-  const locked = readOnly || item.status === "accepted" || item.status === "not_applicable";
+  const locked = itemLocked(item, readOnly);
   return (
     <li className={`ob-item${done ? " ob-item-done" : ""}`}>
       <div className="ob-item-head">

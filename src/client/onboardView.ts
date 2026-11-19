@@ -46,6 +46,9 @@ export function dueLabel(iso: string | null, now: Date, tz: string): string {
 // ---------- Labels ----------
 
 const STATE_LABELS: Record<ItemStatus, string> = { waiting: "Waiting on you", received: "Received", accepted: "Accepted", not_applicable: "Not needed" };
+/** Whether the client can no longer type into or upload to an item: the page is read-only, or the owner accepted it or marked it not needed (an "Ask again" reopens it). */
+export const itemLocked = (item: { status: ItemStatus }, readOnly: boolean): boolean => readOnly || item.status === "accepted" || item.status === "not_applicable";
+
 export const itemStateLabel = (s: ItemStatus): string => STATE_LABELS[s] ?? "Waiting on you";
 
 const clampDone = (p: { done: number; total: number }) => (p.total > 0 ? Math.min(Math.max(Math.floor(p.done) || 0, 0), p.total) : 0);
@@ -119,6 +122,9 @@ export type Outcome =
   /** The link is dead. */
   | { kind: "gone" };
 
+/** What a client is told when they type into an item that was accepted or marked not needed since the page loaded. */
+export const SETTLED_MESSAGE = "This item was already reviewed, so it can't be changed here. Reply to the email if something needs to change.";
+
 const LOGIN_MESSAGE = "This looks like a login or password. Please remove it. We'll ask for access a safer way.";
 
 /** Reads how long a 429 asks us to wait: whole seconds from `Retry-After`, kept between 5 and 60 seconds, 15 when it says nothing usable. */
@@ -144,6 +150,7 @@ export function writeOutcome(status: number, body: { error?: unknown; fields?: u
   if (status === 0) return { kind: "retry", message: "We couldn't reach the server. Check your connection and we'll try again.", afterMs: 10_000 };
   if (status >= 500) return { kind: "retry", message: "Something went wrong on our side. We'll try again.", afterMs: 10_000 };
   if (status === 404) return { kind: "gone" };
+  if (status === 409 && kind === "text" && /settled/i.test(String(body?.error ?? ""))) return { kind: "locked", message: SETTLED_MESSAGE };
   if (status === 409) return { kind: "locked", message: serverWords(body, "This can't be changed any more.") };
   if (status === 413) return { kind: "rejected", message: "That file is too big. The limit is 20 MB for each file.", fields: [] };
   if (status === 415) return { kind: "rejected", message: "We don't accept that kind of file. Please send photos, PDF, Word (DOCX) or text files.", fields: [] };

@@ -92,7 +92,7 @@ export function cleanText(s: string, max: number): string {
 }
 
 /** Whether the text reads like someone typing a login: "password: ...", "api key = ...". The answer is refused; the form says never to send these. */
-export const looksLikeCredential = (s: string): boolean => /(pass(word|code|phrase)?|pwd|login|api[ _-]?key|secret|token)\s*[:=]/i.test(s);
+export const looksLikeCredential = (s: string): boolean => /\b(pass(word|code|phrase)?|pwd|login|api[ _-]?key|secret|token)\s*[:=]/i.test(s);
 
 /**
  * What is wrong with these answers, by question id only: a problem never repeats what the client typed. With `requireAll` (the submit) a required question

@@ -367,9 +367,9 @@ describe("owner onboarding routes", () => {
       expect(accepted.status).toBe(200);
       expect((await accepted.json<any>()).item).toMatchObject({ id: about.id, status: "accepted" });
       expect((await item(s.id, "about")).status).toBe("accepted");
-      // Nothing the client says on the page moves it back (the owner's word stands) until he asks again.
-      expect((await client("PUT", `${s.token}/items/${about.id}/text`, { text: "changed my mind" })).status).toBe(200);
-      expect((await item(s.id, "about")).status).toBe("accepted");
+      // The owner's word stands until he asks again: the client's text is refused, not saved over it.
+      expect((await client("PUT", `${s.token}/items/${about.id}/text`, { text: "changed my mind" })).status).toBe(409);
+      expect(await item(s.id, "about")).toMatchObject({ status: "accepted", textValue: "We started in 1999." });
 
       expect((await setStatus(about.id, "waiting")).status).toBe(200);
       expect((await item(s.id, "about")).status).toBe("waiting");

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  canSubmit, checkFile, createPacer, dueLabel, formatBytes, groupByPhase, itemStateLabel, progressLabel, progressPercent, writeOutcome,
+  canSubmit, checkFile, createPacer, dueLabel, formatBytes, groupByPhase, itemLocked, itemStateLabel, progressLabel, progressPercent, SETTLED_MESSAGE, writeOutcome,
 } from "../src/client/onboardView";
 
 const LA = "America/Los_Angeles";
@@ -32,6 +32,23 @@ describe("dueLabel", () => {
     expect(dueLabel("", now, LA)).toBe("No date yet");
     expect(dueLabel("not a date", now, LA)).toBe("No date yet");
     expect(dueLabel("2026-12-05T07:30:00Z", now, "Not/AZone")).toMatch(/^Due \w{3}, Dec \d+$/);
+  });
+});
+
+describe("itemLocked", () => {
+  it("an accepted or not-needed item, or any item on a read-only page, takes no more from the client", () => {
+    expect(itemLocked({ status: "accepted" }, false)).toBe(true);
+    expect(itemLocked({ status: "not_applicable" }, false)).toBe(true);
+    expect(itemLocked({ status: "waiting" }, true)).toBe(true);
+    expect(itemLocked({ status: "waiting" }, false)).toBe(false);
+    expect(itemLocked({ status: "received" }, false)).toBe(false);
+  });
+  it("a text write refused because the item is settled says so, in words that name no one's text", () => {
+    const o = writeOutcome(409, { error: "this item is already settled" }, null, "text");
+    expect(o).toEqual({ kind: "locked", message: SETTLED_MESSAGE });
+    expect(SETTLED_MESSAGE).toMatch(/already reviewed/);
+    // a closed onboarding keeps its own words
+    expect(writeOutcome(409, { error: "this onboarding is closed" }, null, "text")).toMatchObject({ kind: "locked", message: "This onboarding is closed" });
   });
 });
 

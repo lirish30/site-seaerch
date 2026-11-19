@@ -33,6 +33,7 @@ export function approvalLink(a: Pick<ApprovalItem, "kind" | "record_type" | "rec
   if (a.kind === "video.publish" && a.record_type === "lead" && a.record_id) return { to: `/leads/${encodeURIComponent(a.record_id)}/video`, label: "Watch and edit the video" };
   if (a.kind === "proposal.send" && a.record_type === "deal" && a.record_id) return { to: `/deals/${encodeURIComponent(a.record_id)}`, label: "Open the proposal" };
   if (a.kind === "onboarding.welcome" && a.record_type === "deal" && a.record_id) return { to: `/deals/${encodeURIComponent(a.record_id)}`, label: "Open the onboarding" };
+  if (a.kind === "onboarding.nudge" && a.record_type === "deal" && a.record_id) return { to: `/deals/${encodeURIComponent(a.record_id)}`, label: "Open the onboarding" };
   return null;
 }
 

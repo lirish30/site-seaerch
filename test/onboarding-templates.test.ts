@@ -127,7 +127,7 @@ describe("cleanText", () => {
 
 describe("looksLikeCredential", () => {
   it("matches the usual shapes and not plain prose", () => {
-    for (const s of ["password: x", "Password = x", "my login: bob", "api key: abc", "API_KEY=abc", "secret: s", "token=abc", "pwd: z", "passphrase : z"]) expect(looksLikeCredential(s), s).toBe(true);
-    for (const s of ["We take passwords seriously", "Call us: 555-1234", "Tokens of appreciation", "Our service area: Tacoma"]) expect(looksLikeCredential(s), s).toBe(false);
+    for (const s of ["password: x", "Password = x", "my login: bob", "api key: abc", "API_KEY=abc", "secret: s", "token=abc", "pwd: z", "passphrase : z", "my pass: x", "wifi password=abc"]) expect(looksLikeCredential(s), s).toBe(true);
+    for (const s of ["We take passwords seriously", "Call us: 555-1234", "Tokens of appreciation", "Our service area: Tacoma", "compass: north", "bypass: the main road", "Tollpass: 5 dollars"]) expect(looksLikeCredential(s), s).toBe(false);
   });
 });

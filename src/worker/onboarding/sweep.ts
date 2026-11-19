@@ -11,6 +11,8 @@ import { clientBase } from "../documents/mail";
 import { SILENCE_DAYS, nudgesDue, stageOf, type Nudge } from "./schedule";
 
 const DAY = 86_400_000;
+/** A test onboarding is a rehearsal: the sweep keeps drafting for it only this many days after it was made. */
+export const TEST_SWEEP_DAYS = 21;
 export interface SweepResult { reminders: number; fridays: number; waiting: number }
 
 const msg = (e: unknown) => (e instanceof Error ? e.message : "unknown error");
@@ -48,12 +50,14 @@ async function sweepOne(env: Env, o: Onboarding, now: Date, tz: string): Promise
   const db = env.DB;
   const out: SweepResult = { reminders: 0, fridays: 0, waiting: 0 };
   if (!o.welcomeSentAt) return out;
+  if (o.test && now.getTime() >= Date.parse(o.createdAt) + TEST_SWEEP_DAYS * DAY) return out;
   const items = await listItems(db, o.id);
   const stage = stageOf(o, items, now);
   if (stage === "complete") return out;
 
   // The contract's silence clause: noted once per stretch of silence (the line carries the date the client last wrote, so a new stretch is a new line).
-  if (stage === "waiting_on_client") {
+  // A rehearsal never writes the contract's clause on the lead.
+  if (stage === "waiting_on_client" && !o.test) {
     const last = (o.lastClientActivityAt ?? o.welcomeSentAt).slice(0, 10);
     if (await logActivityOnce(db, o.businessId, "onboarding_waiting", `no reply for ${SILENCE_DAYS} days (last heard from the client ${last}): the back-of-queue clause applies`)) out.waiting = 1;
   }

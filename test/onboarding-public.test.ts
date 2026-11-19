@@ -328,16 +328,38 @@ describe("item text", () => {
     expect(await rows(a.businessId, "onboarding_received")).toHaveLength(3);
   });
 
-  it("emptying the text puts the item back to waiting, and an accepted item keeps its status", async () => {
+  it("emptying the text puts the item back to waiting", async () => {
     const a = await seed();
     const about = await item(a.id, "about");
-    const faq = await item(a.id, "faq");
     await putText(a.token, about.id, "hello");
     expect((await putText(a.token, about.id, "   ")).status).toBe(200);
     expect(await item(a.id, "about")).toMatchObject({ textValue: "", status: "waiting" });
-    await setItemStatus(env.DB, faq.id, "accepted");
-    await putText(a.token, faq.id, "edited");
-    expect(await item(a.id, "faq")).toMatchObject({ textValue: "edited", status: "accepted" });
+  });
+
+  it("text on an accepted or not-needed item is a 409 that changes nothing; Ask again reopens it", async () => {
+    const a = await seed();
+    const about = await item(a.id, "about");
+    const faq = await item(a.id, "faq");
+    await putText(a.token, about.id, "first");
+    await setItemStatus(env.DB, about.id, "accepted");
+    await setItemStatus(env.DB, faq.id, "not_applicable");
+    const lastBefore = (await getOnboarding(env.DB, a.id))!.lastClientActivityAt;
+    const received = (await rows(a.businessId, "onboarding_received")).length;
+    for (const id of [about.id, faq.id]) {
+      const res = await putText(a.token, id, "SECRET-ISH TEXT");
+      expect(res.status).toBe(409);
+      const body = await res.text();
+      expect(JSON.parse(body)).toEqual({ error: "this item is already settled" });
+      expect(body).not.toContain("SECRET-ISH");
+    }
+    expect(await item(a.id, "about")).toMatchObject({ textValue: "first", status: "accepted" });
+    expect(await item(a.id, "faq")).toMatchObject({ textValue: null, status: "not_applicable" });
+    expect((await getOnboarding(env.DB, a.id))!.lastClientActivityAt).toBe(lastBefore);
+    expect(await rows(a.businessId, "onboarding_received")).toHaveLength(received);
+    // the owner's "Ask again" puts it back to waiting, and the client can write again
+    await setItemStatus(env.DB, about.id, "waiting");
+    expect((await putText(a.token, about.id, "second")).status).toBe(200);
+    expect(await item(a.id, "about")).toMatchObject({ textValue: "second", status: "received" });
   });
 
   it("an item id from another onboarding is a 404", async () => {
@@ -410,6 +432,20 @@ describe("client activity", () => {
     await saveAnswers(env.DB, c.id, FULL, new Date(Date.now() - 20 * DAY).toISOString());
     await submit(c.token);
     expect(await rows(c.businessId, "onboarding_resumed")).toHaveLength(1);
+  });
+
+  it("an answers write with nothing this form asks does not count as the client being here", async () => {
+    const a = await seed({ welcomeAgoDays: 20 });
+    const welcomeAt = (await getOnboarding(env.DB, a.id))!.welcomeSentAt;
+    for (const answers of [{}, { not_a_question: "hello", another: "x" }]) {
+      const res = await put(a.token, answers);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true });
+    }
+    expect(await rows(a.businessId, "onboarding_resumed")).toEqual([]);
+    expect((await getOnboarding(env.DB, a.id))!.lastClientActivityAt).toBe(welcomeAt);
+    expect((await (await get(a.token)).json<any>()).stage).toBe("waiting_on_client");
+    expect(await getAnswers(env.DB, a.id)).toEqual({});
   });
 
   it("a refused write does not count as the client being here", async () => {
