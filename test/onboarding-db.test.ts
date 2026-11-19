@@ -5,7 +5,7 @@ import { getBusiness } from "../src/worker/db/businesses";
 import { getDeal } from "../src/worker/db/deals";
 import {
   addCustomItem, addFile, attachNudgeApproval, closeOnboarding, createOnboarding, forgetNudge, getAnswers, getOnboarding, getOnboardingByToken, getOnboardingForDeal,
-  hasOnboarding, listFiles, listItems, listOpenOnboardings, markWelcomeSent, newToken, recordNudge, removeFile, saveAnswers, saveItemText, setItemStatus, setOwnerFields,
+  hasOnboarding, listFiles, listItems, listNudgeKeys, listOpenOnboardings, markWelcomeSent, newToken, recordNudge, removeFile, saveAnswers, saveItemText, setItemStatus, setOwnerFields,
   setRevoked, submitQuestionnaire, touchClient, type NewItem,
 } from "../src/worker/db/onboardings";
 import { proposal, seedDeal } from "./fixtures/documents";
@@ -224,6 +224,17 @@ describe("owner fields and lifecycle", () => {
 });
 
 describe("nudges", () => {
+  it("listNudgeKeys lists each claimed key with its approval id, or null", async () => {
+    const s = await seed();
+    expect(await listNudgeKeys(env.DB, s.onboarding.id)).toEqual([]);
+    await recordNudge(env.DB, s.onboarding.id, "reminder:2:x", T0);
+    await recordNudge(env.DB, s.onboarding.id, "reminder:1:x", T0);
+    await attachNudgeApproval(env.DB, s.onboarding.id, "reminder:2:x", "appr-1");
+    expect(await listNudgeKeys(env.DB, s.onboarding.id)).toEqual([{ key: "reminder:1:x", approvalId: null }, { key: "reminder:2:x", approvalId: "appr-1" }]);
+    const other = await seed();
+    expect(await listNudgeKeys(env.DB, other.onboarding.id)).toEqual([]);
+  });
+
   it("recordNudge is true once per key", async () => {
     const s = await seed();
     expect(await recordNudge(env.DB, s.onboarding.id, "questionnaire-3d", T0)).toBe(true);

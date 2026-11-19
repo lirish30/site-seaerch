@@ -4,7 +4,7 @@ import { describeNudge, ownerZone, recipientOf, type OnboardingNudgePayload } fr
 import { logActivityOnce } from "../db/activity";
 import { createApproval } from "../db/approvals";
 import {
-  attachNudgeApproval, forgetNudge, listItems, listOpenOnboardings, recordNudge, type Onboarding, type OnboardingItem,
+  attachNudgeApproval, forgetNudge, listItems, listNudgeKeys, listOpenOnboardings, recordNudge, type Onboarding, type OnboardingItem,
 } from "../db/onboardings";
 import { getSettings } from "../db/settings";
 import { clientBase } from "../documents/mail";
@@ -44,10 +44,6 @@ export async function sweepOnboardings(env: Env, now: Date): Promise<SweepResult
   return out;
 }
 
-async function recordedKeys(db: D1Database, id: string): Promise<Set<string>> {
-  return new Set((await db.prepare(`SELECT key FROM onboarding_nudges WHERE onboarding_id = ?`).bind(id).all<{ key: string }>()).results.map((r) => r.key));
-}
-
 async function sweepOne(env: Env, o: Onboarding, now: Date, tz: string): Promise<SweepResult> {
   const db = env.DB;
   const out: SweepResult = { reminders: 0, fridays: 0, waiting: 0 };
@@ -63,7 +59,7 @@ async function sweepOne(env: Env, o: Onboarding, now: Date, tz: string): Promise
   }
 
   const due = nudgesDue(o, items, now, tz);
-  const recorded = await recordedKeys(db, o.id);
+  const recorded = new Set((await listNudgeKeys(db, o.id)).map((k) => k.key));
   const reminders = due.filter((n) => n.kind === "reminder");
   const top = reminders.reduce<Nudge | null>((best, n) => (!best || (n.level ?? 0) > (best.level ?? 0) ? n : best), null);
   const wanted: Nudge[] = [];

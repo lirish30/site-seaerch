@@ -245,6 +245,12 @@ export async function attachNudgeApproval(db: D1Database, id: string, key: strin
   await db.prepare(`UPDATE onboarding_nudges SET approval_id = ? WHERE onboarding_id = ? AND key = ?`).bind(approvalId, id, key).run();
 }
 
+/** Every nudge key claimed for this onboarding, with the approval raised for it (null for a lower reminder level marked as handled, or an approval not yet linked). */
+export async function listNudgeKeys(db: D1Database, id: string): Promise<{ key: string; approvalId: string | null }[]> {
+  return (await db.prepare(`SELECT key, approval_id FROM onboarding_nudges WHERE onboarding_id = ? ORDER BY key`).bind(id).all<{ key: string; approval_id: string | null }>())
+    .results.map((r) => ({ key: r.key, approvalId: r.approval_id }));
+}
+
 /** Drops a claimed reminder (its approval could not be raised), so a later run tries again. */
 export async function forgetNudge(db: D1Database, id: string, key: string): Promise<void> {
   await db.prepare(`DELETE FROM onboarding_nudges WHERE onboarding_id = ? AND key = ?`).bind(id, key).run();

@@ -230,8 +230,13 @@ describe("what is never drafted", () => {
     expect(await sweep(FRI_LATE)).toEqual(NONE);
     for (const s of [complete, closed, revoked, unsent]) expect(await nudges(s.dealId)).toEqual([]);
     expect(await keys(revoked.id)).toEqual([]); // nothing claimed: restoring the link brings the reminder back
+    // Long past the 14 days of silence, so only the guards keep the silence note away.
+    // The revoked one is still open and silent, so it alone logs the silence (and still drafts nothing).
+    expect(await sweep(at(20 * DAY))).toEqual({ reminders: 0, fridays: 0, waiting: 1 });
+    expect(await activity(revoked.businessId, "onboarding_waiting")).toHaveLength(1);
     expect(await activity(complete.businessId, "onboarding_waiting")).toEqual([]);
     expect(await activity(unsent.businessId, "onboarding_waiting")).toEqual([]);
+    expect(await activity(closed.businessId, "onboarding_waiting")).toEqual([]);
   });
 
   it("a revoked link is noted once on the lead, and restoring it drafts the highest reminder due", async () => {
@@ -383,6 +388,67 @@ describe("the approval", () => {
     expect(await approve(env as Env, b.id)).toEqual({ ok: true });
     expect(mail.sent).toHaveLength(1);
     expect(await skipNotes(other.businessId)).toEqual(["reminder skipped: everything the client owed is in"]);
+  });
+
+  it("a newer reminder replaces older pending ones: approving the older sends nothing", async () => {
+    const mail = await readyToSend();
+    const s = await seed();
+    await sweep(at(2 * DAY)); // level 1
+    await sweep(at(3 * DAY + 6 * HOUR)); // still level 1 (recorded); nothing new
+    await sweep(at(5 * DAY)); // level 2 (a Saturday)
+    const [one, two] = await nudges(s.dealId);
+    expect([one.payload, two.payload]).toEqual([
+      { onboardingId: s.id, nudgeKey: `reminder:1:${iso(T0)}` }, { onboardingId: s.id, nudgeKey: `reminder:2:${iso(T0)}` }]);
+
+    expect(await approve(env as Env, one.id)).toEqual({ ok: true });
+    expect(mail.sent).toEqual([]);
+    expect(await skipNotes(s.businessId)).toEqual(["reminder skipped: a newer reminder replaces it"]);
+    expect((await nudges(s.dealId))[0].status).toBe("approved");
+
+    expect(await approve(env as Env, two.id)).toEqual({ ok: true });
+    expect(mail.sent).toHaveLength(1);
+    expect(mail.sent[0].subject).toBe("Your site is waiting on a few things");
+  });
+
+  it("a newer Friday update replaces older pending ones", async () => {
+    const mail = await readyToSend();
+    const s = await seed();
+    await touch(s.id, new Date("2026-11-05T22:00:00.000Z"));
+    await sweep(new Date("2026-11-06T17:00:00.000Z"));
+    await touch(s.id, new Date("2026-11-12T22:00:00.000Z"));
+    await sweep(new Date("2026-11-13T17:00:00.000Z"));
+    const [old, fresh] = await nudges(s.dealId);
+    expect([old.payload, fresh.payload]).toEqual([{ onboardingId: s.id, nudgeKey: "friday:2026-11-06" }, { onboardingId: s.id, nudgeKey: "friday:2026-11-13" }]);
+
+    expect(await approve(env as Env, old.id)).toEqual({ ok: true });
+    expect(mail.sent).toEqual([]);
+    expect(await skipNotes(s.businessId)).toEqual(["reminder skipped: a newer Friday update replaces it"]);
+    expect(await approve(env as Env, fresh.id)).toEqual({ ok: true });
+    expect(mail.sent).toHaveLength(1);
+  });
+
+  it("a level-4 reminder with only unapproved lower marks is still sent", async () => {
+    const mail = await readyToSend();
+    const s = await seed();
+    await sweep(at(10 * DAY)); // levels 1-3 marked with no approval, level 4 drafted
+    const [a] = await nudges(s.dealId);
+    expect(await approve(env as Env, a.id)).toEqual({ ok: true });
+    expect(mail.sent).toHaveLength(1);
+    expect(mail.sent[0].subject).toBe("Last reminder before your project moves back");
+    expect(await skipNotes(s.businessId)).toEqual([]);
+  });
+
+  it("a reminder from an earlier stretch of silence is not replaced by a later stretch's", async () => {
+    const mail = await readyToSend();
+    const s = await seed();
+    await sweep(at(2 * DAY)); // level 1 of the first stretch
+    await touch(s.id, at(2 * DAY + HOUR)); // the client wrote: that approval is stale for its own reason, and the new stretch has its own keys
+    await sweep(at(5 * DAY));
+    const [first, second] = await nudges(s.dealId);
+    expect(await approve(env as Env, second.id)).toEqual({ ok: true });
+    expect(mail.sent).toHaveLength(1);
+    expect(await approve(env as Env, first.id)).toEqual({ ok: true });
+    expect(await skipNotes(s.businessId)).toEqual(["reminder skipped: the client was in touch after it was drafted"]);
   });
 
   it("approving twice sends once", async () => {
