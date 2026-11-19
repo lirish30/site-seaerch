@@ -75,11 +75,12 @@ export const isNotesDirty = (form: NotesForm, saved: DiscoveryNotes | null, audi
 
 /**
  * Whether "Call done" may go ahead: the typed notes must be valid (else it stops, with the reason), and `save` says whether there is anything written
- * that has to be saved first (any box filled in, not only an answer) so marking the call done never leaves typed notes behind.
+ * that has to be saved first (any box filled in, not only an answer, or a platform that differs from what is stored: the prefill must not be lost when the call-done route stores blank notes) so marking the call done never leaves typed notes behind.
  */
-export function callDoneCheck(form: NotesForm, callHeldAt: string | null): { ok: true; save: boolean; notes: DiscoveryNotes } | { ok: false; error: string } {
+export function callDoneCheck(form: NotesForm, callHeldAt: string | null, saved: DiscoveryNotes | null = null): { ok: true; save: boolean; notes: DiscoveryNotes } | { ok: false; error: string } {
   const r = notesOf(form, callHeldAt);
   if (!r.ok) return r;
   const n = r.notes;
-  return { ok: true, save: n.answers.length > 0 || n.goals.length > 0 || n.currentState.length > 0 || n.avgJobValueCents !== null || n.missedJobsPerMonth !== null || n.decisionMakers !== "", notes: n };
+  return { ok: true, save: n.answers.length > 0 || n.goals.length > 0 || n.currentState.length > 0 || n.avgJobValueCents !== null || n.missedJobsPerMonth !== null || n.decisionMakers !== ""
+    || n.platform !== (saved?.platform ?? "other"), notes: n };
 }

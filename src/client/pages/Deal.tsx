@@ -47,7 +47,7 @@ export default function DealPage() {
     return () => { live = false; };
   }, [id]);
 
-  if (failed) return <div className="deal"><p className="error deal-body" role="alert">Couldn’t load this deal. <Link to="/pipeline">Back to the pipeline</Link></p></div>;
+  // Every hook is called above the early returns below: a render that skips one (the failed load) would throw "Rendered fewer hooks than expected".
   const dirty = !!deal && !!form && !!lead && isNotesDirty(form, deal.notes, lead);
   // Closing or reloading the page with typed notes that are not saved asks first (the same browser prompt the Settings pages use).
   useEffect(() => {
@@ -57,6 +57,7 @@ export default function DealPage() {
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty]);
 
+  if (failed) return <div className="deal"><p className="error deal-body" role="alert">Couldn’t load this deal. <Link to="/pipeline">Back to the pipeline</Link></p></div>;
   if (!deal || !tab || !form) return <div className="deal"><p className="muted deal-body">Loading…</p></div>;
 
   const actions = nextActions(deal);
@@ -114,7 +115,7 @@ function NotesTab({ deal, form, setForm, audit, dirty, onChange }: {
   async function run(fn: () => Promise<void>) { setBusy(true); try { await fn(); } finally { setBusy(false); } }
   /** Stops when the typed notes are not valid (the reason is shown), and saves what is typed first, so marking the call done never leaves notes behind. */
   const callDone = () => run(async () => {
-    const check = callDoneCheck(form, deal.notes?.callHeldAt ?? null);
+    const check = callDoneCheck(form, deal.notes?.callHeldAt ?? null, deal.notes);
     if (!check.ok) { setError(check.error); return; }
     if (check.save && !(await save())) return;
     try { onChange(await api.post<Deal>(`/deals/${deal.id}/call-done`)); setSaved(false); }

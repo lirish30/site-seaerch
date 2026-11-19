@@ -126,6 +126,11 @@ describe("callDoneCheck", () => {
     expect(callDoneCheck(written, null)).toMatchObject({ ok: true, save: true });
     expect(callDoneCheck(formOf(null), null)).toMatchObject({ ok: true, save: false });
     expect(callDoneCheck({ ...formOf(null), goals: ["More calls", "", ""] }, null)).toMatchObject({ ok: true, save: true }); // any typed box is kept, not only an answer
-    expect(callDoneCheck({ ...formOf(null), platform: "wordpress" }, null)).toMatchObject({ ok: true, save: false }); // the platform alone is not worth a save
+    // Deliberate change: a platform that differs from what is stored is saved too, so the prefilled WordPress is not replaced by blank notes saying "other".
+    expect(callDoneCheck({ ...formOf(null), platform: "wordpress" }, null, null)).toMatchObject({ ok: true, save: true });
+    expect(callDoneCheck(formOf(null), null, null)).toMatchObject({ ok: true, save: false }); // nothing typed and the default platform: nothing to save
+    const storedWp = { ...emptyNotes(), platform: "wordpress" as const };
+    expect(callDoneCheck(formOf(storedWp), null, storedWp)).toMatchObject({ ok: true, save: false }); // same as stored
+    expect(callDoneCheck({ ...formOf(storedWp), platform: "other" }, null, storedWp)).toMatchObject({ ok: true, save: true }); // changed from stored
   });
 });
