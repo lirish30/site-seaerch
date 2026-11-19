@@ -622,3 +622,11 @@ table.niche tr.leader { background:var(--positive-soft); box-shadow:inset 3px 0 
 
 /* Owner actions on a booked call (Cancel, No-show, Mark done). */
 .bk-actions { display:inline-flex; align-items:center; flex-wrap:wrap; gap:4px; } .bk-actions .error { flex-basis:100%; margin:0; font-size:12px; }
+.onb-text { white-space:pre-wrap; overflow-wrap:anywhere; margin:4px 0; }
+.onb-answers { margin:0; display:flex; flex-direction:column; gap:10px; }
+.onb-answers dt { font-size:13px; color:var(--text-2); }
+.onb-answers dd { margin:2px 0 0; }
+.onb-items, .onb-files { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px; }
+.onb-files { gap:2px; margin:4px 0; font-size:13px; }
+.onb-item { padding:10px 12px; border:1px solid var(--border, #d9e0e6); border-radius:10px; }
+.onb-item p { margin:4px 0; }

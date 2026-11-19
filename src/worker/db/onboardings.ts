@@ -74,6 +74,17 @@ export async function listItems(db: D1Database, id: string): Promise<OnboardingI
   return (await db.prepare(`SELECT * FROM onboarding_items WHERE onboarding_id = ? ORDER BY position, id`).bind(id).all<ItemRow>()).results.map(toItem);
 }
 
+export async function getItem(db: D1Database, id: string): Promise<OnboardingItem | null> {
+  const r = await db.prepare(`SELECT * FROM onboarding_items WHERE id = ?`).bind(id).first<ItemRow>();
+  return r ? toItem(r) : null;
+}
+
+/** One uploaded file by id (the owner's download). */
+export async function getFile(db: D1Database, id: string): Promise<OnboardingFile | null> {
+  const r = await db.prepare(`SELECT * FROM onboarding_files WHERE id = ?`).bind(id).first<FileRow>();
+  return r ? toFile(r) : null;
+}
+
 export async function listFiles(db: D1Database, itemId: string): Promise<OnboardingFile[]> {
   return (await db.prepare(`SELECT * FROM onboarding_files WHERE item_id = ? ORDER BY uploaded_at, id`).bind(itemId).all<FileRow>()).results.map(toFile);
 }

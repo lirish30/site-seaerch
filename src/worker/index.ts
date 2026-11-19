@@ -35,6 +35,7 @@ import { dealRoutes, leadDealRoutes } from "./routes/deals";
 import { deckRoutes } from "./routes/deck";
 import { bookingRoutes } from "./routes/bookings";
 import { documentRoutes } from "./routes/documents";
+import { onboardingRoutes } from "./routes/onboarding";
 import { stripeWebhookRoutes } from "./routes/stripeWebhook";
 import "./approvals/leadNote";
 import "./approvals/emailSend";
@@ -84,6 +85,7 @@ app.route("/api/deals", deckRoutes()); // /:id/deck.html, /:id/deck.pdf, /:id/de
 app.route("/api/leads", leadDealRoutes); // /:id/deal
 app.route("/api/bookings", bookingRoutes);
 app.route("/api", documentRoutes); // /deals/:id/proposal, /documents/:id/...
+app.route("/api", onboardingRoutes); // /deals/:id/onboarding..., /onboardings/:id/..., /onboarding-items/:id, /onboarding-files/:id
 // Mounted last at /api: /api/leads/:id/cro-audit(s), /api/cro-items/:id, /api/cro-audits/:id/... (all behind requireAuth).
 app.route("/api", croRoutes);
 // Also mounted at /api: /api/leads/:id/video and /api/video-audits/:id/... (behind requireAuth).
