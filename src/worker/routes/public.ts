@@ -8,6 +8,7 @@ import { publicReport } from "../db/reports";
 import { ensureDepositInvoice } from "../documents/deposit";
 import { SignFormSchema, proposalPage, signProposal, signedProposalFor } from "../documents/public";
 import { signedPdfResponse } from "../documents/signed";
+import { MAX_UPLOAD_BODY, acceptUpload, checkUploadTarget, readBodyCapped, removeClientFile } from "../onboarding/files";
 import { onboardingPage, saveClientAnswers, saveClientItemText, submitClientQuestionnaire, type WriteResult } from "../onboarding/public";
 import { serveMedia } from "../video/media";
 import { MAX_EVENT_BYTES, ViewEventSchema, recordEvent } from "../video/views";
@@ -200,6 +201,8 @@ publicRoutes.use("/o/:token", clientLimited);
 publicRoutes.use("/o/:token/answers", clientLimited);
 publicRoutes.use("/o/:token/submit", clientLimited);
 publicRoutes.use("/o/:token/items/:itemId/text", clientLimited);
+publicRoutes.use("/o/:token/items/:itemId/files", clientLimited);
+publicRoutes.use("/o/:token/files/:fileId", clientLimited);
 
 /** A write's answer: 200 with `ok`, the same 404 as every dead link, and for the rest a fixed message with, when there are any, the ids that are wrong. */
 const writeReply = (c: Context, r: WriteResult) => {
@@ -240,6 +243,33 @@ publicRoutes.put("/o/:token/items/:itemId/text", async (c) => {
   const parsed = ItemTextBody.safeParse(read.body);
   if (!parsed.success) return c.json({ error: "invalid body" }, 400);
   return writeReply(c, await saveClientItemText(c.env, token, c.req.param("itemId"), parsed.data.text, new Date()));
+});
+
+// A file for a checklist item: multipart, one `file` part. The link and the item are checked first, then the size from Content-Length, all before the body is
+// read; the body is read only up to the limit however long it claims to be. The file's name is never echoed (an error is fixed text).
+publicRoutes.post("/o/:token/items/:itemId/files", async (c) => {
+  const token = c.req.param("token");
+  if (!TOKEN.test(token)) return c.json(NOT_FOUND, 404);
+  if (Number(c.req.header("content-length")) > MAX_UPLOAD_BODY) return c.json({ error: "too large" }, 413);
+  const itemId = c.req.param("itemId");
+  const ready = await checkUploadTarget(c.env, token, itemId);
+  if (!ready.ok) return ready.status === 404 ? c.json(NOT_FOUND, 404) : c.json({ error: ready.error }, ready.status);
+  const type = c.req.header("content-type") ?? "";
+  if (!/^multipart\/form-data;/i.test(type)) return c.json({ error: "invalid body" }, 400);
+  const body = await readBodyCapped(c.req.raw, MAX_UPLOAD_BODY);
+  if (!body) return c.json({ error: "too large" }, 413);
+  let part: unknown;
+  try { part = (await new Response(body as BodyInit, { headers: { "content-type": type } }).formData()).get("file"); } catch { return c.json({ error: "invalid body" }, 400); }
+  if (!(part instanceof File)) return c.json({ error: "invalid body" }, 400);
+  const r = await acceptUpload(c.env, token, itemId, part, new Date());
+  if (r.ok) return c.json({ file: r.file }, 201);
+  return r.status === 404 ? c.json(NOT_FOUND, 404) : c.json({ error: r.error }, r.status);
+});
+
+publicRoutes.delete("/o/:token/files/:fileId", async (c) => {
+  const token = c.req.param("token");
+  if (!TOKEN.test(token)) return c.json(NOT_FOUND, 404);
+  return writeReply(c, await removeClientFile(c.env, token, c.req.param("fileId"), new Date()));
 });
 
 publicRoutes.all("*", (c) => c.json({ error: "not found" }, 404));
