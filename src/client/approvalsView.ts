@@ -23,14 +23,17 @@ export function groupApprovals(items: ApprovalItem[]): ApprovalGroup[] {
 
 /**
  * Whether a kind can be approved with "Approve all" on its group. A video is published only after the owner has watched it, one at a time, and a proposal
- * is sent only after he has read it (his approval is also his signature on it), so those groups have no bulk button; the individual Approve stays.
+ * is sent only after he has read it (his approval is also his signature on it), and an onboarding welcome asks him to add a video link first, so those groups
+ * have no bulk button; the individual Approve stays.
  */
-export const canBulkApprove = (kind: string): boolean => kind !== "video.publish" && kind !== "proposal.send";
+export const canBulkApprove = (kind: string): boolean => kind !== "video.publish" && kind !== "proposal.send" && kind !== "onboarding.welcome";
 
 /** Where to open the thing an approval is about, when the inbox can show a way in: a publish approval opens the lead's video editor, a proposal opens its deal. */
 export function approvalLink(a: Pick<ApprovalItem, "kind" | "record_type" | "record_id">): { to: string; label: string } | null {
   if (a.kind === "video.publish" && a.record_type === "lead" && a.record_id) return { to: `/leads/${encodeURIComponent(a.record_id)}/video`, label: "Watch and edit the video" };
   if (a.kind === "proposal.send" && a.record_type === "deal" && a.record_id) return { to: `/deals/${encodeURIComponent(a.record_id)}`, label: "Open the proposal" };
+  if (a.kind === "onboarding.welcome" && a.record_type === "deal" && a.record_id) return { to: `/deals/${encodeURIComponent(a.record_id)}`, label: "Open the onboarding" };
+  if (a.kind === "onboarding.nudge" && a.record_type === "deal" && a.record_id) return { to: `/deals/${encodeURIComponent(a.record_id)}`, label: "Open the onboarding" };
   return null;
 }
 

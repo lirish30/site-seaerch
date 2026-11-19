@@ -62,8 +62,17 @@ const isPublicReport = (path: string, method: string) => {
 const isPublicProposal = (path: string, method: string) =>
   (method === "GET" && (/^\/api\/public\/p\/[^/]+$/.test(path) || /^\/api\/public\/p\/[^/]+\/pdf$/.test(path))) || (method === "POST" && /^\/api\/public\/p\/[^/]+\/(sign|pay)$/.test(path));
 
+// A client's onboarding page (`GET /api/public/o/<token>`) and what the client writes to it: answers (`PUT .../answers`), the hand-in (`POST .../submit`), text for
+// a checklist item (`PUT .../items/<id>/text`), a file for one (`POST .../items/<id>/files`) and the removal of a file (`DELETE .../files/<id>`): one non-empty segment
+// each, those methods only.
+const isPublicOnboarding = (path: string, method: string) =>
+  (method === "GET" && /^\/api\/public\/o\/[^/]+$/.test(path)) ||
+  (method === "PUT" && /^\/api\/public\/o\/[^/]+\/(answers|items\/[^/]+\/text)$/.test(path)) ||
+  (method === "POST" && /^\/api\/public\/o\/[^/]+\/(submit|items\/[^/]+\/files)$/.test(path)) ||
+  (method === "DELETE" && /^\/api\/public\/o\/[^/]+\/files\/[^/]+$/.test(path));
+
 export const requireAuth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
-  if (PUBLIC.has(c.req.path) || isPublicReport(c.req.path, c.req.method) || isPublicProposal(c.req.path, c.req.method)) return next();
+  if (PUBLIC.has(c.req.path) || isPublicReport(c.req.path, c.req.method) || isPublicProposal(c.req.path, c.req.method) || isPublicOnboarding(c.req.path, c.req.method)) return next();
   const token = getCookie(c, "session");
   if (!token || !(await verifySession(c.env.SESSION_SECRET, token, Date.now()))) return c.json({ error: "unauthorized" }, 401);
   return next();

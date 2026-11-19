@@ -25,4 +25,13 @@ describe("activityView", () => {
     expect(describeActivity({ kind: "email_bounce", detail: null })).toMatchObject({ title: "Email bounced", tone: "critical" });
     for (const k of ["email_sent", "email_reply", "email_bounce"]) expect(filterOf(k)).toBe("emails");
   });
+
+  it("the onboarding kinds read as the onboarding", () => {
+    const titles = {
+      onboarding_started: "Onboarding started", onboarding_welcome: "Welcome sent", onboarding_submitted: "Questionnaire submitted",
+      onboarding_received: "Client sent materials", onboarding_waiting: "Waiting on the client", onboarding_resumed: "Client is back",
+    } as const;
+    for (const [kind, title] of Object.entries(titles)) expect(describeActivity({ kind: kind as keyof typeof titles, detail: null }).title, kind).toBe(title);
+    expect(describeActivity({ kind: "onboarding_waiting", detail: "10 days without a word" })).toMatchObject({ tone: "warning", detail: "10 days without a word" });
+  });
 });

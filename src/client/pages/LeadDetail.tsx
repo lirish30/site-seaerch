@@ -49,6 +49,8 @@ const ACTIVITY_LABEL: Record<string, string> = {
   score_flagged: "Score flagged", export: "Exported", draft: "Draft", cro_audit: "CRO audit", suppressed: "Suppressed", import: "Imported", bulk: "Bulk change",
   today_done: "Marked done in Today", snoozed: "Snoozed in Today", starred: "Starred", unstarred: "Unstarred", job_found: "New role spotted", deal_created: "Deal started", deal_moved: "Deal moved", booked: "Call booked", booking_cancelled: "Call cancelled", call_prep: "Call prep", call_recap: "Call recap", followup_booked: "Recommendation meeting booked",
   proposal_sent: "Proposal sent", proposal_viewed: "Proposal viewed", proposal_signed: "Proposal signed", proposal_void: "Proposal voided", deposit_paid: "Deposit paid",
+  onboarding_started: "Onboarding started", onboarding_welcome: "Welcome sent", onboarding_submitted: "Questionnaire submitted", onboarding_received: "Client sent materials",
+  onboarding_waiting: "Waiting on the client", onboarding_resumed: "Client is back",
 };
 
 const TABS = ["overview", "issues", "plan", "email", "activity"] as const;

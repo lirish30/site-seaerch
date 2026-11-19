@@ -2,8 +2,10 @@ import { chunks } from "./db/chunks";
 import { listTodayCandidates } from "./db/businesses";
 import { suppressedLeadIds } from "./db/suppression";
 import { openProposalsSentBefore } from "./db/documents";
+import { listOpenItems, listOpenOnboardings } from "./db/onboardings";
+import { silentDays, stageOf } from "./onboarding/schedule";
 
-export const TODAY_KINDS = ["follow_up_due", "draft_unsent", "stalled_deal", "starred_idle", "promising_quick_scan", "proposal_follow_up"] as const;
+export const TODAY_KINDS = ["follow_up_due", "draft_unsent", "stalled_deal", "starred_idle", "promising_quick_scan", "proposal_follow_up", "onboarding_attention"] as const;
 export type TodayKind = (typeof TODAY_KINDS)[number];
 export const isTodayKind = (s: string): s is TodayKind => (TODAY_KINDS as readonly string[]).includes(s);
 
@@ -15,7 +17,7 @@ export interface TodayItem {
 }
 
 const DAY = 86_400_000;
-export const DONE_HIDES_DAYS = 7, STALLED_DAYS = 14, DRAFT_UNSENT_DAYS = 2, STARRED_IDLE_DAYS = 7, PROPOSAL_FOLLOW_UP_DAYS = 3, MIN_QUICK_SCORE = 50, MAX_QUICK_ITEMS = 5, MAX_OVERDUE_BONUS = 30;
+export const DONE_HIDES_DAYS = 7, STALLED_DAYS = 14, DRAFT_UNSENT_DAYS = 2, STARRED_IDLE_DAYS = 7, PROPOSAL_FOLLOW_UP_DAYS = 3, WELCOME_WAITING_DAYS = 1, MIN_QUICK_SCORE = 50, MAX_QUICK_ITEMS = 5, MAX_OVERDUE_BONUS = 30;
 // Activity older than this can no longer affect a result (done 7d, stalled 14d, snooze at most 30d), except `export`, which has no age limit.
 const ACTIVITY_WINDOW_DAYS = 30;
 
@@ -72,6 +74,22 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
   const proposals = new Map<string, { sentAt: number; viewed: boolean }>();
   for (const p of await openProposalsSentBefore(db, new Date(t - PROPOSAL_FOLLOW_UP_DAYS * DAY).toISOString(), new Date(t).toISOString()))
     if (!proposals.has(p.businessId)) proposals.set(p.businessId, { sentAt: ms(p.sentAt), viewed: p.viewed });
+  // A client being onboarded: what needs the owner now. One reason per lead, the first that applies (items to review, then a welcome nobody has sent, then silence).
+  // Test onboardings are rehearsals and never show. Items to review count whatever the stage: all of them in is when they most need a look.
+  const onboarding = new Map<string, string>();
+  const openOnboardings = (await listOpenOnboardings(db)).filter((o) => !o.test);
+  if (openOnboardings.length) {
+    const itemsOf = await listOpenItems(db), nowDate = new Date(t), names = new Map(candidates.map((b) => [b.id, b.name]));
+    for (const o of openOnboardings) {
+      if (onboarding.has(o.businessId)) continue;
+      const items = itemsOf.get(o.id) ?? [], toReview = items.filter((i) => i.status === "received").length, created = ms(o.createdAt);
+      const reason = toReview ? `${plural(toReview, "item")} from ${names.get(o.businessId) ?? "the client"} to review`
+        : !o.welcomeSentAt && Number.isFinite(created) && t - created > WELCOME_WAITING_DAYS * DAY ? "Welcome email is waiting for you"
+        : stageOf(o, items, nowDate) === "waiting_on_client" ? `No reply for ${plural(silentDays(o, nowDate), "day")}: back of the queue`
+        : null;
+      if (reason) onboarding.set(o.businessId, reason);
+    }
+  }
   const activity = await recentActivity(db, candidates.map((b) => b.id), new Date(t - ACTIVITY_WINDOW_DAYS * DAY).toISOString());
 
   const lastContact = new Map<string, number>(), lastExport = new Map<string, number>();
@@ -116,6 +134,9 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
       const days = plural(Math.floor((t - proposal.sentAt) / DAY), "day");
       items.push(push("proposal_follow_up", b, `Proposal sent ${days} ago, ${proposal.viewed ? "opened, not signed" : "not opened"}`, null, 65));
     }
+    // A paying client's onboarding is the owner's own work (like a stalled deal), so it stays for a suppressed lead.
+    const attention = onboarding.get(b.id);
+    if (attention && !hidden(b.id, "onboarding_attention")) items.push(push("onboarding_attention", b, attention, null, 70));
     // The owner's own reminder about a lead they saved, not outreach, so (like a follow-up) it stays for a suppressed lead.
     if (b.starred_at && open(b.lead_status) && !hidden(b.id, "starred_idle")) {
       const starredAt = ms(b.starred_at), touched = lastContact.get(b.id) ?? -Infinity;

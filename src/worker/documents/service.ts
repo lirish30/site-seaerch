@@ -6,6 +6,7 @@ import { lastBookingFor } from "../db/bookings";
 import { logActivity } from "../db/activity";
 import { getBusiness } from "../db/businesses";
 import { getDeal, type Deal } from "../db/deals";
+import { getOnboardingForDeal } from "../db/onboardings";
 import {
   DocumentStateError, createDraft, listForDeal, markSent, nextDraftVersion, updateDraft, voidDocument, type Document,
 } from "../db/documents";
@@ -24,6 +25,10 @@ import { newClientToken } from "./token";
 export const COUNTERSIGN_TEXT = "Approved for sending";
 export const COUNTERSIGN_TEST_TEXT = "Test copy to the owner";
 const OPEN: Document["status"][] = ["sent", "viewed", "signed"];
+
+/** A test onboarding owns the deal's one onboarding slot for good, so a real proposal paid on that deal would leave the paying client with none. */
+export const TEST_ONBOARDING_PROBLEM = "This deal has a test onboarding, so a real proposal cannot be sent on it. Use a new test lead for rehearsals.";
+const hasTestOnboarding = async (db: D1Database, dealId: string) => !!(await getOnboardingForDeal(db, dealId))?.test;
 
 /** Marks the stored proposal approvals for these documents withdrawn: the owner approved what a draft said then, and it has changed or gone since. */
 export async function withdrawSendApprovals(db: D1Database, documentIds: string[], note: string): Promise<void> {
@@ -53,6 +58,7 @@ export async function draftProposal(
   const open = docs.find((d) => OPEN.includes(d.status) && !(d.test && d.status === "signed"));
   if (open) throw new DocumentStateError(open.status === "signed" ? "this deal's proposal is already signed" : `this deal has a ${open.status} proposal (version ${open.version}); void it first to make a new one`);
   const existing = docs.find((d) => d.status === "draft");
+  if (!o.test && (await hasTestOnboarding(db, dealId))) throw new DocumentStateError(TEST_ONBOARDING_PROBLEM);
 
   const [discovery, settings, audit, hourly] = await Promise.all([lastBookingFor(db, deal.businessId, "discovery"), getSettings(db), latestAudit(db, deal.businessId), getPackage(db, "hourly")]);
   if (!hourly) throw new ProposalError("The hourly rate is missing from the package catalog.");
@@ -95,6 +101,7 @@ const stageAllows = (d: Deal) => d.stage === "recommended" || d.stage === "propo
 export async function sendProblems(env: Env, doc: Document, o: { approvalId?: string } = {}): Promise<string[]> {
   const db = env.DB;
   const problems: string[] = [];
+  if (!doc.test && (await hasTestOnboarding(db, doc.dealId))) problems.push(TEST_ONBOARDING_PROBLEM);
   const settings = await getSettings(db);
   const gate = legalGate(parseDocumentsConfig(settings.documents_config));
   if (gate) problems.push(gate);
@@ -130,6 +137,7 @@ export const CLIENT_BASE_PROBLEM = "Set CLIENT_LINK_BASE (an https address for c
 
 /** Stamps a draft as sent: a fresh link token, the content frozen with its send and expiry days, its hash, and the owner's countersignature, in one step. */
 export async function sealProposal(env: Env, doc: Document, o: { now: Date; approvalId: string | null; test: boolean; settings: Settings }): Promise<Document> {
+  if (!doc.test && !o.test && (await hasTestOnboarding(env.DB, doc.dealId))) throw new DocumentStateError(TEST_ONBOARDING_PROBLEM);
   const config = parseDocumentsConfig(o.settings.documents_config);
   const frozen = freezeProposal(doc.content, o.now, config.expiryDays);
   const contentSha256 = await sha256Hex(canonicalJson(frozen));

@@ -11,6 +11,7 @@ import { expireOldHelperJobs } from "./helper/jobs";
 import { sendDueReminders } from "./booking/reminders";
 import { expireDue } from "./db/documents";
 import { activityStmt } from "./db/activity";
+import { sweepOnboardings } from "./onboarding/sweep";
 
 /** The cron strings in wrangler.jsonc. The daily one MUST stay first there: test/radar-info.test.ts reads the first entry. */
 export const DAILY_CRON = "17 13 * * *";
@@ -39,9 +40,10 @@ async function expireProposals(env: Env, now: Date): Promise<number> {
 }
 
 /**
- * Routes one Cron Trigger. The 15-minute cron only syncs mail and the 5-minute one only sends due booking reminders. Any other cron (the daily one) starts due radars, scans for due sequence steps, expires proposals past their date, gives
- * up on Claude tasks and Mac helper jobs nobody picked up in 14 days and re-queues CRO roadmaps that were never handed over. This is unattended work: it can only start
- * searches, create approvals and close queue tasks, never send, and it never throws.
+ * Routes one Cron Trigger. The 15-minute cron only syncs mail and the 5-minute one only sends due booking reminders. Any other cron (the daily one) does, in order:
+ * starts due radars, scans for due sequence steps, gives up on Claude tasks and Mac helper jobs nobody picked up in 14 days, expires proposals past their date,
+ * re-queues CRO roadmaps that were never handed over, and sweeps the open client onboardings (drafts the reminder or Friday update that is due, as an approval,
+ * and notes 14 days of silence). This is unattended work: it can only start searches, create approvals and close queue tasks, never send, and it never throws.
  */
 export async function runScheduled(env: Env, cron: string, now: Date): Promise<void> {
   if (cron === MAIL_SYNC_CRON) {
@@ -59,4 +61,5 @@ export async function runScheduled(env: Env, cron: string, now: Date): Promise<v
   await part("expire helper jobs", () => expireOldHelperJobs(env, now));
   await part("expire proposals", () => expireProposals(env, now));
   await part("cro heal", () => healCroHandovers(env));
+  await part("onboarding sweep", () => sweepOnboardings(env, now));
 }

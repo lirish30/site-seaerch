@@ -7,15 +7,17 @@ import UpcomingBooking from "../components/UpcomingBooking";
 import { callDoneCheck, canOfferTimes, formOf, isNotesDirty, nextActions, notesOf, optionSummary, priceDrift, type NotesForm } from "../dealView";
 import { dollars, formatPrice, parseDollars, type Package } from "../packagesView";
 import { formOf as proposalFormOf, isProposalDirty, type ProposalForm } from "../proposalView";
+import OnboardingTab from "./OnboardingTab";
 import ProposalTab, { type ProposalData } from "./ProposalTab";
 import { STAGE_LABEL } from "../pipelineView";
 import type { Document } from "../../worker/db/documents";
 import type { Deal } from "../../worker/db/deals";
+import type { OnboardingState } from "../../worker/onboarding/owner";
 import { DISCOVERY_QUESTIONS } from "../../worker/sales/discovery";
 import { hasNotes, LEAD_TYPE_GUIDE, monthlyAtStakeCents } from "../../worker/sales/notes";
 import type { Option } from "../../worker/sales/options";
 
-type Tab = "prep" | "notes" | "recap" | "deck" | "proposal";
+type Tab = "prep" | "notes" | "recap" | "deck" | "proposal" | "onboarding";
 const POLL_MS = 15_000;
 const errorText = (e: unknown, fallback: string) => (e instanceof Error ? e.message : fallback);
 
@@ -31,12 +33,15 @@ export default function DealPage() {
   const [proposal, setProposal] = useState<ProposalData | null>(null);
   const [pform, setPform] = useState<ProposalForm | null>(null);
   const [proposalFailed, setProposalFailed] = useState(false);
+  // The onboarding is loaded with the deal so the tab can be offered only when there is something to show (an onboarding, a won deal, or a signed proposal to test with).
+  const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
+  const [onboardingFailed, setOnboardingFailed] = useState(false);
   const [tab, setTab] = useState<Tab | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let live = true;
-    setDeal(null); setLead(null); setForm(null); setProposal(null); setPform(null); setProposalFailed(false); setTab(null); setFailed(false);
+    setDeal(null); setLead(null); setForm(null); setProposal(null); setPform(null); setProposalFailed(false); setOnboarding(null); setOnboardingFailed(false); setTab(null); setFailed(false);
     api.get<Deal>(`/deals/${id}`).then((d) => {
       if (!live) return;
       setDeal(d);
@@ -52,6 +57,7 @@ export default function DealPage() {
     }).catch(() => { if (live) setFailed(true); });
     api.get<Package[]>("/packages").then((c) => { if (live) setCatalog(c); }).catch(() => {});
     api.get<ProposalData>(`/deals/${id}/proposal`).then((p) => { if (live) setProposal(p); }).catch(() => { if (live) setProposalFailed(true); });
+    api.get<OnboardingState>(`/deals/${id}/onboarding`).then((x) => { if (live) setOnboarding(x); }).catch(() => { if (live) setOnboardingFailed(true); });
     return () => { live = false; };
   }, [id]);
 
@@ -64,6 +70,8 @@ export default function DealPage() {
     setProposal(next);
     if (fresh !== undefined && deal) setPform(proposalFormOf(fresh ?? next.current, { recommendedOptionId: deal.recommendedOptionId, contact: next.defaultContact }));
   }, [id, deal]);
+
+  const reloadOnboarding = useCallback(async () => { setOnboarding(await api.get<OnboardingState>(`/deals/${id}/onboarding`)); }, [id]);
 
   // Every hook is called above the early returns below: a render that skips one (the failed load) would throw "Rendered fewer hooks than expected".
   const dirty = !!deal && !!form && !!lead && isNotesDirty(form, deal.notes, lead);
@@ -82,6 +90,7 @@ export default function DealPage() {
 
   const actions = nextActions(deal);
   const TABS: [Tab, string][] = [["prep", "Prep"], ["notes", "Notes"], ["recap", "Recap"], ["deck", "Deck"], ["proposal", "Proposal"]];
+  if (onboarding && (onboarding.onboarding || deal.stage === "won" || onboarding.canStartTest)) TABS.push(["onboarding", "Onboarding"]);
   return (
     <div className="deal">
       <header className="page-header">
@@ -101,6 +110,7 @@ export default function DealPage() {
         <div className="seg-pills" role="group" aria-label="Deal sections">
           {TABS.map(([key, label]) => <button key={key} type="button" aria-pressed={tab === key} onClick={() => setTab(key)}>{label}</button>)}
         </div>
+        {onboardingFailed && <p className="error" role="alert">Couldn’t load the onboarding, so its tab is hidden. Reload the page to try again.</p>}
         {tab === "prep" && <CallPrepPanel leadId={deal.businessId} findings={lead?.findings ?? []} />}
         {tab === "notes" && <NotesTab deal={deal} form={form} setForm={setForm} audit={lead} dirty={dirty} onChange={setDeal} />}
         {tab === "recap" && <RecapTab deal={deal} catalog={catalog} onChange={setDeal} />}
@@ -108,6 +118,7 @@ export default function DealPage() {
         {tab === "proposal" && (pform
           ? <ProposalTab deal={deal} catalog={catalog} data={proposal} form={pform} setForm={setPform} dirty={proposalDirty} onReload={reloadProposal} />
           : proposalFailed ? <p className="error" role="alert">Couldn’t load the proposal. Reload the page to try again.</p> : <p className="muted">Loading…</p>)}
+        {tab === "onboarding" && <OnboardingTab dealId={deal.id} data={onboarding} onReload={reloadOnboarding} />}
       </div>
     </div>
   );
