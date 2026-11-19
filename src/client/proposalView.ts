@@ -4,18 +4,19 @@ import type { InvoiceRow } from "../worker/db/invoices";
 import { DEFAULT_ASSUMPTIONS, DEFAULT_OUT_OF_SCOPE, type ProposalEdits } from "../worker/documents/proposal";
 import { dollars } from "./packagesView";
 
-type StepDoc = Pick<Document, "status" | "sentAt" | "firstViewedAt" | "signedAt" | "paidAt" | "voidReason" | "expiresAt">;
+type StepDoc = Pick<Document, "status" | "sentAt" | "firstViewedAt" | "signedAt" | "paidAt" | "voidReason" | "expiresAt" | "createdAt">;
 export interface ProposalStep { label: string; at: string | null; done: boolean }
 
 /**
  * The life of a proposal as a short list: drafted, sent, viewed, signed, deposit paid. Each step is done once it has a time (a draft is always drafted).
- * A void or expired document keeps the steps that happened and ends in one line (why it was voided, or when it expired) instead of the steps that never will.
+ * `views` is how many times the client opened it: the Viewed step says so ("Viewed 3 times", at the first time). A void or expired document keeps the steps
+ * that happened and ends in one line (why it was voided, or when it expired) instead of the steps that never will.
  */
-export function proposalSteps(doc: StepDoc): ProposalStep[] {
+export function proposalSteps(doc: StepDoc, views = 0): ProposalStep[] {
   const steps: ProposalStep[] = [
-    { label: "Drafted", at: null, done: true },
+    { label: "Drafted", at: doc.createdAt, done: true },
     { label: "Sent", at: doc.sentAt, done: !!doc.sentAt },
-    { label: "Viewed", at: doc.firstViewedAt, done: !!doc.firstViewedAt },
+    { label: views > 0 ? `Viewed ${views} ${views === 1 ? "time" : "times"}` : "Viewed", at: doc.firstViewedAt, done: !!doc.firstViewedAt },
     { label: "Signed", at: doc.signedAt, done: !!doc.signedAt },
     { label: "Deposit paid", at: doc.paidAt, done: !!doc.paidAt },
   ];

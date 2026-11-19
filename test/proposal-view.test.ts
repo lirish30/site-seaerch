@@ -17,8 +17,15 @@ describe("proposalSteps", () => {
   it("each step carries its time and is done once it has one", () => {
     const steps = proposalSteps(doc({ status: "viewed", sentAt: "2026-12-01T17:00:00.000Z", firstViewedAt: "2026-12-02T09:00:00.000Z", expiresAt: "2026-12-31T17:00:00.000Z" }));
     expect(steps.map((s) => [s.label, s.at, s.done])).toEqual([
-      ["Drafted", null, true], ["Sent", "2026-12-01T17:00:00.000Z", true], ["Viewed", "2026-12-02T09:00:00.000Z", true], ["Signed", null, false], ["Deposit paid", null, false],
+      ["Drafted", "2026-12-01T00:00:00.000Z", true], ["Sent", "2026-12-01T17:00:00.000Z", true], ["Viewed", "2026-12-02T09:00:00.000Z", true], ["Signed", null, false], ["Deposit paid", null, false],
     ]);
+  });
+  it("the Viewed step carries the view count", () => {
+    const viewed = doc({ status: "viewed", sentAt: "2026-12-01T17:00:00.000Z", firstViewedAt: "2026-12-02T09:00:00.000Z" });
+    expect(proposalSteps(viewed, 1)[2]).toEqual({ label: "Viewed 1 time", at: "2026-12-02T09:00:00.000Z", done: true });
+    expect(proposalSteps(viewed, 3)[2].label).toBe("Viewed 3 times");
+    expect(proposalSteps(viewed)[2].label).toBe("Viewed");
+    expect(proposalSteps(doc(), 0)[2]).toMatchObject({ label: "Viewed", done: false });
   });
   it("proposalSteps shows void in place of the later steps", () => {
     const steps = proposalSteps(doc({ status: "void", voidReason: "wrong option", sentAt: "2026-12-01T17:00:00.000Z" }));

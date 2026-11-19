@@ -261,7 +261,7 @@ describe("expireDue", () => {
     await voidDocument(env.DB, voidDue.doc.id, "x");
     const draft = await draftFor();
 
-    expect(await expireDue(env.DB, now)).toBe(2);
+    expect((await expireDue(env.DB, now)).map((d) => d.id).sort()).toEqual([sentDue.doc.id, viewedDue.doc.id].sort());
     const status = async (id: string) => (await getDocument(env.DB, id))!.status;
     expect(await status(sentDue.doc.id)).toBe("expired");
     expect(await status(viewedDue.doc.id)).toBe("expired");
@@ -271,8 +271,8 @@ describe("expireDue", () => {
     expect(await status(signedDue.doc.id)).toBe("signed");
     expect(await status(voidDue.doc.id)).toBe("void");
     expect(await status(draft.doc.id)).toBe("draft");
-    expect(await expireDue(env.DB, now)).toBe(0);
-    expect(await expireDue(env.DB, "2026-12-05T00:00:00.001Z")).toBe(1);
+    expect(await expireDue(env.DB, now)).toEqual([]);
+    expect((await expireDue(env.DB, "2026-12-05T00:00:00.001Z")).map((d) => d.id)).toEqual([sentAtNow.doc.id]);
     expect(await status(sentAtNow.doc.id)).toBe("expired");
   });
 });

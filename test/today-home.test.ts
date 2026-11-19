@@ -25,6 +25,8 @@ describe("Home rows", () => {
     expect(filterPills([]).map((p) => p.count)).toEqual([0, 0, 0, 0, 0]);
     expect(filterItems(items, "follow_up_due")).toHaveLength(2);
     expect(filterItems(items, "all")).toHaveLength(5);
+    // The Proposals pill, like Saved, shows only once there is a proposal to chase.
+    expect(filterPills([...items, item("proposal_follow_up")]).map((p) => `${p.label} ${p.count}`)).toEqual(["All 6", "Follow-ups 2", "Drafts 1", "Deals 1", "Proposals 1", "Scans 1"]);
   });
   it("badges a follow-up as N days late (red) or due today (amber), and nothing else", () => {
     const now = at(9);

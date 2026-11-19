@@ -209,10 +209,29 @@ export async function voidDocument(db: D1Database, id: string, reason: string): 
   return doc;
 }
 
-/** Marks every sent or viewed document whose time has run out (`expires_at` before `now`: at the exact instant it is still open) as expired; the count is how many. */
-export async function expireDue(db: D1Database, now: string): Promise<number> {
-  const res = await db.prepare(`UPDATE documents SET status = 'expired', updated_at = ? WHERE status IN ('sent', 'viewed') AND expires_at < ?`).bind(now, now).run();
-  return res.meta.changes ?? 0;
+/**
+ * Marks every sent or viewed document whose time has run out (`expires_at` before `now`: at the exact instant it is still open) as expired and returns
+ * exactly those documents, so a caller can log each once: a document already expired is not matched again.
+ */
+export async function expireDue(db: D1Database, now: string): Promise<Document[]> {
+  const res = await db.prepare(`UPDATE documents SET status = 'expired', updated_at = ? WHERE status IN ('sent', 'viewed') AND expires_at < ? RETURNING *`).bind(now, now).all<Row>();
+  return res.results.map(toDocument);
+}
+
+/** A sent or viewed document of a deal still at `proposal_sent`, for the Today follow-up. */
+export interface OpenProposal { businessId: string; sentAt: string; viewed: boolean; }
+
+/**
+ * The real (not test) proposals out for signature that were sent at or before `sentBefore`: the deal is at `proposal_sent` and the document is sent or
+ * viewed, so a signed, void or expired one, or a deal that moved on (won, lost), is not here. Oldest first.
+ */
+export async function openProposalsSentBefore(db: D1Database, sentBefore: string): Promise<OpenProposal[]> {
+  const rows = (await db.prepare(
+    `SELECT doc.business_id, doc.sent_at, doc.status FROM documents doc JOIN deals d ON d.id = doc.deal_id
+     WHERE d.stage = 'proposal_sent' AND doc.status IN ('sent', 'viewed') AND doc.test = 0 AND doc.sent_at IS NOT NULL AND doc.sent_at <= ?
+     ORDER BY doc.sent_at, doc.id`,
+  ).bind(sentBefore).all<{ business_id: string; sent_at: string; status: string }>()).results;
+  return rows.map((r) => ({ businessId: r.business_id, sentAt: r.sent_at, viewed: r.status === "viewed" }));
 }
 
 /** Stores where the signed PDF is and its hash, or why it could not be made. */

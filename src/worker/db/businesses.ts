@@ -129,6 +129,7 @@ export async function listTodayCandidates(db: D1Database, nowIso: string, minQui
       OR (lead_status IN ('contacted','replied') AND deal_value IS NOT NULL)
       OR (starred_at IS NOT NULL AND ${open})
       OR (scan_stage = 'quick' AND ${open} AND ${latestScore} >= ?)
+      OR EXISTS (SELECT 1 FROM deals dl JOIN documents doc ON doc.deal_id = dl.id WHERE dl.business_id = businesses.id AND dl.stage = 'proposal_sent' AND doc.status IN ('sent','viewed'))
     ) ORDER BY created_at, id`;
   const res = (await db.prepare(sql).bind(nowIso, minQuickScore).all<BusinessRow & { latest_draft_at: string | null; latest_score: number | null }>()).results;
   return res.map((r) => ({ ...fromBusinessRow(r), latest_draft_at: r.latest_draft_at ?? null, latest_score: r.latest_score ?? null }));

@@ -13,6 +13,8 @@ export interface ProposalData {
   current: Document | null;
   /** The current document's deposit invoice, once it has one. */
   invoice: InvoiceRow | null;
+  /** How many times the client opened the current document. */
+  views: number;
   history: Document[]; legalGate: string | null; clientBase: string | null; defaultContact: { name: string; email: string } | null;
 }
 
@@ -161,7 +163,7 @@ export default function ProposalTab({ deal, catalog, data, form, setForm, dirty,
           <iframe title="Proposal preview" className="proposal-frame" sandbox="" src={`/api/documents/${current.id}/preview.html?v=${encodeURIComponent(current.updatedAt)}`} />
           <h3>Status: {STATUS[current.status]}{current.test ? " (test copy)" : ""}, version {current.version}</h3>
           <ol className="proposal-steps">
-            {proposalSteps(current).map((s) => <li key={s.label} className={s.done ? "done" : ""}>{s.done ? "Done" : "Waiting"}: {s.label}{s.at ? ` (${when(s.at)})` : ""}</li>)}
+            {proposalSteps(current, data.views).map((s) => <li key={s.label} className={s.done ? "done" : ""}>{s.done ? "Done" : "Waiting"}: {s.label}{s.at ? ` (${when(s.at)})` : ""}</li>)}
           </ol>
           {deposit && (
             <div className="cp-actions" role="status">

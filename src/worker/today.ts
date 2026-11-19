@@ -1,8 +1,9 @@
 import { chunks } from "./db/chunks";
 import { listTodayCandidates } from "./db/businesses";
 import { suppressedLeadIds } from "./db/suppression";
+import { openProposalsSentBefore } from "./db/documents";
 
-export const TODAY_KINDS = ["follow_up_due", "draft_unsent", "stalled_deal", "starred_idle", "promising_quick_scan"] as const;
+export const TODAY_KINDS = ["follow_up_due", "draft_unsent", "stalled_deal", "starred_idle", "promising_quick_scan", "proposal_follow_up"] as const;
 export type TodayKind = (typeof TODAY_KINDS)[number];
 export const isTodayKind = (s: string): s is TodayKind => (TODAY_KINDS as readonly string[]).includes(s);
 
@@ -14,7 +15,7 @@ export interface TodayItem {
 }
 
 const DAY = 86_400_000;
-export const DONE_HIDES_DAYS = 7, STALLED_DAYS = 14, DRAFT_UNSENT_DAYS = 2, STARRED_IDLE_DAYS = 7, MIN_QUICK_SCORE = 50, MAX_QUICK_ITEMS = 5, MAX_OVERDUE_BONUS = 30;
+export const DONE_HIDES_DAYS = 7, STALLED_DAYS = 14, DRAFT_UNSENT_DAYS = 2, STARRED_IDLE_DAYS = 7, PROPOSAL_FOLLOW_UP_DAYS = 3, MIN_QUICK_SCORE = 50, MAX_QUICK_ITEMS = 5, MAX_OVERDUE_BONUS = 30;
 // Activity older than this can no longer affect a result (done 7d, stalled 14d, snooze at most 30d), except `export`, which has no age limit.
 const ACTIVITY_WINDOW_DAYS = 30;
 
@@ -67,6 +68,10 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
   // hidden only from draft_unsent and promising_quick_scan, which lead toward outreach or spend. (Departs from "suppressed leads never
   // appear" in the original plan; archived leads are already left out of the candidates for every kind.)
   const suppressed = await suppressedLeadIds(db, candidates);
+  // A proposal waiting on a signature for 3 days. The first row per lead (the oldest) speaks for it, as Today holds one item per lead and kind.
+  const proposals = new Map<string, { sentAt: number; viewed: boolean }>();
+  for (const p of await openProposalsSentBefore(db, new Date(t - PROPOSAL_FOLLOW_UP_DAYS * DAY).toISOString()))
+    if (!proposals.has(p.businessId)) proposals.set(p.businessId, { sentAt: ms(p.sentAt), viewed: p.viewed });
   const activity = await recentActivity(db, candidates.map((b) => b.id), new Date(t - ACTIVITY_WINDOW_DAYS * DAY).toISOString());
 
   const lastContact = new Map<string, number>(), lastExport = new Map<string, number>();
@@ -104,6 +109,13 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
     if ((b.lead_status === "contacted" || b.lead_status === "replied") && b.deal_value !== null && !hidden(b.id, "stalled_deal")
       && (lastContact.get(b.id) ?? -Infinity) <= t - STALLED_DAYS * DAY)
       items.push(push("stalled_deal", b, `${money(b.deal_value)} deal (${b.lead_status}) with no activity in ${STALLED_DAYS} days`, null, 70));
+    // Chasing a signature is the owner's own deal work (like a stalled deal), so it stays for a suppressed lead. The proposal query already left out
+    // signed, void and expired documents and deals that are no longer at proposal_sent (lost or won).
+    const proposal = proposals.get(b.id);
+    if (proposal && Number.isFinite(proposal.sentAt) && !hidden(b.id, "proposal_follow_up")) {
+      const days = plural(Math.floor((t - proposal.sentAt) / DAY), "day");
+      items.push(push("proposal_follow_up", b, `Proposal sent ${days} ago, ${proposal.viewed ? "opened, not signed" : "not opened"}`, null, 65));
+    }
     // The owner's own reminder about a lead they saved, not outreach, so (like a follow-up) it stays for a suppressed lead.
     if (b.starred_at && open(b.lead_status) && !hidden(b.id, "starred_idle")) {
       const starredAt = ms(b.starred_at), touched = lastContact.get(b.id) ?? -Infinity;

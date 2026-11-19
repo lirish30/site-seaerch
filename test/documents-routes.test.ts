@@ -2,11 +2,11 @@ import { SELF, env } from "cloudflare:test";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { listActivity } from "../src/worker/db/activity";
 import { getDeal } from "../src/worker/db/deals";
-import { getDocument, listForDeal } from "../src/worker/db/documents";
+import { getDocument, listForDeal, recordView } from "../src/worker/db/documents";
 import { setMailDeps } from "../src/worker/mail/deps";
 import { saveSettings } from "../src/worker/db/settings";
 import { PROPOSAL_CSP } from "../src/worker/documents/render";
-import { OWNER_EMAIL, readyToSend, seedProposalDeal } from "./fixtures/documents";
+import { OWNER_EMAIL, readyToSend, seedProposalDeal, sendDraft } from "./fixtures/documents";
 
 let cookie = "";
 beforeAll(async () => {
@@ -40,9 +40,21 @@ describe("/api/deals/:id/proposal", () => {
     const got = await (await call("GET", `/api/deals/${s.dealId}/proposal`)).json<any>();
     expect(got.current.id).toBe(doc.id);
     expect(got.history.map((d: any) => d.id)).toEqual([doc.id]);
+    expect(got.views).toBe(0);
     await saveSettings(env.DB, { documents_config: "{}" });
     expect((await (await call("GET", `/api/deals/${s.dealId}/proposal`)).json<any>()).legalGate).toMatch(/Oregon lawyer/);
     expect((await call("GET", "/api/deals/nope/proposal")).status).toBe(404);
+  });
+
+  it("counts the times the client opened the current proposal", async () => {
+    const s = await seedProposalDeal();
+    const { doc } = await draft(s);
+    await sendDraft(doc.id, doc.content);
+    await recordView(env.DB, doc.id, { now: "2026-12-02T09:00:00.000Z", userAgent: null });
+    await recordView(env.DB, doc.id, { now: "2026-12-02T11:00:00.000Z", userAgent: null });
+    const got = await (await call("GET", `/api/deals/${s.dealId}/proposal`)).json<any>();
+    expect(got.current.status).toBe("viewed");
+    expect(got.views).toBe(2);
   });
 
   it("makes a draft, and a second draft request replaces the draft", async () => {

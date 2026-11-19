@@ -5,7 +5,7 @@ import { createSendApproval } from "../approvals/proposalSend";
 import { logActivity } from "../db/activity";
 import { lastBookingFor } from "../db/bookings";
 import { getDeal } from "../db/deals";
-import { DocumentStateError, getDocument, listForDeal, signaturesFor, type Document } from "../db/documents";
+import { DocumentStateError, countViews, getDocument, listForDeal, signaturesFor, type Document } from "../db/documents";
 import { getInvoiceForDocument } from "../db/invoices";
 import { getSettings } from "../db/settings";
 import { legalGate, parseDocumentsConfig } from "../documents/config";
@@ -57,6 +57,8 @@ documentRoutes.get("/deals/:id/proposal", async (c) => {
     current, history,
     // The current document's deposit invoice, once it has one (the Deal tab shows its state, and a retry when there is none).
     invoice: current ? await getInvoiceForDocument(c.env.DB, current.id) : null,
+    // How many times the client opened the current proposal (the "Viewed" line on the timeline).
+    views: current ? await countViews(c.env.DB, current.id) : 0,
     legalGate: legalGate(parseDocumentsConfig(settings.documents_config)), clientBase: clientBase(c.env),
     // Who the proposal goes to when the form leaves the contact blank: the person who booked the discovery call.
     defaultContact: booking ? { name: booking.contactName, email: booking.contactEmail } : null,

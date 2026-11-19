@@ -52,7 +52,7 @@ describe("proposalPage", () => {
     expect(voided).toEqual({ state: "closed", clientName: "Ace Plumbing", contactEmail: "logan@siteline.test" });
 
     const b = await sent({ clientName: "Zed Heating" });
-    expect(await expireDue(env.DB, "2027-01-01T00:00:00.000Z")).toBe(1);
+    expect(await expireDue(env.DB, "2027-01-01T00:00:00.000Z")).toHaveLength(1);
     expect(await view(b.token)).toEqual({ state: "closed", clientName: "Zed Heating", contactEmail: "logan@siteline.test" });
     expect(await countViews(env.DB, a.doc.id)).toBe(0); // a closed page records nothing
     expect(await countViews(env.DB, b.doc.id)).toBe(0);

@@ -60,7 +60,8 @@ export function describeActivity(a: Pick<Activity, "kind" | "detail">): Activity
     case "proposal_sent": return { icon: "send", tone: "info", title: "Proposal sent", detail: d, bubble: false };
     case "proposal_viewed": return { icon: "eye", tone: "positive", title: "Proposal viewed", detail: d, bubble: false };
     case "proposal_signed": return { icon: "check", tone: "positive", title: "Proposal signed", detail: d, bubble: false };
-    case "proposal_void": return { icon: "ban", tone: "warning", title: "Proposal voided", detail: d, bubble: false };
+    // The daily sweep writes "<reference> v<n>: expired"; an owner's void writes the reason after the colon.
+    case "proposal_void": return { icon: "ban", tone: "warning", title: d?.endsWith(": expired") ? "Proposal expired" : "Proposal voided", detail: d, bubble: false };
     case "deposit_paid": return { icon: "tag", tone: "positive", title: "Deposit paid", detail: d, bubble: false };
     case "snoozed": return { icon: "clock", tone: "neutral", title: "Snoozed", detail: d, bubble: false };
     default: return { icon: "info", tone: "neutral", title: upperFirst(a.kind.replace(/_/g, " ")), detail: d, bubble: false };
