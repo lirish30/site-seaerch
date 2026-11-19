@@ -164,6 +164,63 @@ describe("deck routes", () => {
   });
 });
 
+describe("a frozen deck's inclusions", () => {
+  it("do not change when a package's inclusions are edited, until the deck is frozen again", async () => {
+    const { deal } = await seedDeck();
+    const first = await (await call("GET", `/api/deals/${deal.id}/deck.html`)).text();
+    expect(first).toContain("Weekly updates");
+    await savePackage(env.DB, "care", { includes: ["BRAND-NEW-INCLUSION only after a refreeze"] });
+    await savePackage(env.DB, "care", { summary: "A new summary" });
+    const second = await (await call("GET", `/api/deals/${deal.id}/deck.html`)).text();
+    expect(second).toBe(first);
+    expect(second).not.toContain("BRAND-NEW-INCLUSION");
+    // The PDF is the same story.
+    const { app, calls } = fakePdf();
+    expect((await get(app, `/${deal.id}/deck.pdf`)).status).toBe(200);
+    expect(calls[0].html).toContain("Weekly updates");
+    expect(calls[0].html).not.toContain("BRAND-NEW-INCLUSION");
+    expect((await call("POST", `/api/deals/${deal.id}/deck/freeze`)).status).toBe(200);
+    const after = await (await call("GET", `/api/deals/${deal.id}/deck.html`)).text();
+    expect(after).toContain("BRAND-NEW-INCLUSION only after a refreeze");
+    expect(after).not.toContain("Weekly updates");
+  });
+
+  it("a snapshot entry whose package version is missing is shown without inclusions, not an error", async () => {
+    const { deal } = await seedDeck();
+    const snap = (await getDeal(env.DB, deal.id))!.priceSnapshot.map((s) => (s.key === "care" ? { ...s, version: 999 } : s));
+    await env.DB.prepare(`UPDATE deals SET price_snapshot = ? WHERE id = ?`).bind(JSON.stringify(snap), deal.id).run();
+    const res = await call("GET", `/api/deals/${deal.id}/deck.html`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("$129/mo"); // the frozen price still shows
+    expect(html).not.toContain("Weekly updates"); // Care's inclusions are skipped
+    expect(html).toContain("Fixed scope"); // another package's inclusions are unaffected
+  });
+
+  it("a deal with no snapshot reads inclusions from the current catalog", async () => {
+    const { deal } = await seedDeck();
+    await env.DB.prepare(`UPDATE deals SET price_snapshot = '[]' WHERE id = ?`).bind(deal.id).run();
+    const html = await (await call("GET", `/api/deals/${deal.id}/deck.html`)).text();
+    expect(html).toContain("$129/mo");
+  });
+});
+
+describe("a failed PDF", () => {
+  it("returns 502 with a short error and leaves the deck unfrozen; a good PDF freezes it", async () => {
+    const { deal } = await seedDeck();
+    const boom = deckRoutes({ pdf: async () => { throw new Error("browser exploded: secret internals"); } });
+    const res = await get(boom, `/${deal.id}/deck.pdf`);
+    expect(res.status).toBe(502);
+    const body = await res.text();
+    expect(body).toContain("could not make the PDF");
+    expect(body).not.toContain("secret internals");
+    expect((await getDeal(env.DB, deal.id))!.deckFrozenAt).toBeNull();
+    const { app } = fakePdf();
+    expect((await get(app, `/${deal.id}/deck.pdf`)).status).toBe(200);
+    expect((await getDeal(env.DB, deal.id))!.deckFrozenAt).not.toBeNull();
+  });
+});
+
 describe("a draft deck", () => {
   it("editing the options clears the freeze, and the next view freezes the newly snapshotted prices", async () => {
     const { deal } = await seedDeck();

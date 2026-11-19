@@ -5,12 +5,12 @@ import { lastBookingFor } from "../db/bookings";
 import { getBusiness } from "../db/businesses";
 import { logActivity } from "../db/activity";
 import { freezeDeckOn, getDeal, stampDeckFrozen, type Deal } from "../db/deals";
-import { listCurrentPackages, snapshotOf } from "../db/packages";
+import { getPackage, listCurrentPackages, snapshotOf } from "../db/packages";
 import { getSettings } from "../db/settings";
 import { latestVideoFor } from "../db/videoAudits";
 import { listWorkSamples } from "../db/workSamples";
 import { offerOf } from "../queue/callRecap";
-import { buildDeck, planProblems, problemsOf, scorecardOf, type DeckInput } from "../sales/deck";
+import { buildDeck, planProblems, problemsOf, scorecardOf, type DeckInput, type DeckPackage } from "../sales/deck";
 import { renderDeckHtml } from "../sales/deckHtml";
 import { emptyNotes } from "../sales/notes";
 import { htmlToPdf } from "../render/render";
@@ -44,13 +44,25 @@ export function deckFileName(name: string, now: Date): string {
   return `${clean} - Recommendation - ${now.toISOString().slice(0, 10)}.pdf`;
 }
 
+/**
+ * The packages the deck reads inclusions from. A deal with a snapshot gets the exact versions it froze (so editing a package later changes nothing in the
+ * deck); a snapshot entry whose version row is missing is kept without inclusions (never an error). A deal with no snapshot gets the current catalog.
+ */
+async function catalogFor(db: D1Database, deal: Deal): Promise<DeckPackage[]> {
+  if (deal.priceSnapshot.length === 0) return (await listCurrentPackages(db)).map((p) => ({ ...snapshotOf(p), includes: p.includes, summary: p.summary }));
+  return Promise.all(deal.priceSnapshot.map(async (s): Promise<DeckPackage> => {
+    const p = await getPackage(db, s.key, s.version).catch(() => null);
+    return p ? { ...s, includes: p.includes, summary: p.summary } : { ...s };
+  }));
+}
+
 /** Everything the deck is built from, read now. Only a deal with its recap and options has one. */
 async function loadInput(env: Env, deal: Deal, now: Date): Promise<DeckInput | null> {
   if (!deal.recap || !deal.options) return null;
   const business = await getBusiness(env.DB, deal.businessId);
   if (!business) return null;
-  const [audit, video, settings, samples, packages, discovery] = await Promise.all([
-    latestAudit(env.DB, deal.businessId), latestVideoFor(env.DB, deal.businessId), getSettings(env.DB), listWorkSamples(env.DB), listCurrentPackages(env.DB),
+  const [audit, video, settings, samples, catalog, discovery] = await Promise.all([
+    latestAudit(env.DB, deal.businessId), latestVideoFor(env.DB, deal.businessId), getSettings(env.DB), listWorkSamples(env.DB), catalogFor(env.DB, deal),
     lastBookingFor(env.DB, deal.businessId, "discovery"),
   ]);
   const plan = video?.plan ?? null;
@@ -65,7 +77,7 @@ async function loadInput(env: Env, deal: Deal, now: Date): Promise<DeckInput | n
     // Work samples carry a link and a result line, not a picture.
     samples: samples.map((s) => ({ name: s.title, blurb: s.result_line, imageDataUri: null })),
     settings: { your_name: settings.your_name, bio: settings.bio, contact_email: settings.contact_email, role_title: settings.role_title },
-    catalog: packages.map((p) => ({ ...snapshotOf(p), includes: p.includes, summary: p.summary })),
+    catalog,
   };
 }
 
@@ -81,19 +93,20 @@ export function deckRoutes(deps: { pdf?: (binding: Fetcher, html: string) => Pro
     "content-security-policy": "default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'self'",
   };
 
-  /** The deck as the deal stands. The first view freezes the prices: `deckFrozenAt` is stamped and the stored snapshot is what the slides show. */
+  /** The deck as the deal stands, from the stored snapshot. It does not freeze: the caller stamps `deckFrozenAt` once the deck has actually been delivered. */
   async function render(env: Env, id: string, print: boolean, now: Date) {
     const deal = await getDeal(env.DB, id);
     if (!deal) return { status: 404 as const, error: "not found" };
     const input = await loadInput(env, deal, now);
     if (!input) return { status: 409 as const, error: NEED_RECAP.error };
-    if (!deal.deckFrozenAt) await stampDeckFrozen(env.DB, deal.id, now);
     const html = renderDeckHtml(buildDeck(input), { title: `${input.business.name} - Recommendation`, print });
     return { status: 200 as const, html, deal, name: input.business.name };
   }
 
   app.get("/:id/deck.html", async (c) => {
-    const r = await render(c.env, c.req.param("id"), false, new Date());
+    const now = new Date();
+    const r = await render(c.env, c.req.param("id"), false, now);
+    if (r.status === 200 && !r.deal.deckFrozenAt) await stampDeckFrozen(c.env.DB, r.deal.id, now);
     return r.status === 200 ? c.html(r.html, 200, headers) : c.json({ error: r.error }, r.status);
   });
 
@@ -102,7 +115,14 @@ export function deckRoutes(deps: { pdf?: (binding: Fetcher, html: string) => Pro
     const now = new Date();
     const r = await render(c.env, c.req.param("id"), true, now);
     if (r.status !== 200) return c.json({ error: r.error }, r.status);
-    const bytes = await pdf(c.env.BROWSER, r.html);
+    let bytes: Uint8Array;
+    try { bytes = await pdf(c.env.BROWSER, r.html); }
+    catch (e) {
+      console.error("deck pdf failed", e instanceof Error ? e.message : "unknown error");
+      return c.json({ error: "could not make the PDF, please try again" }, 502);
+    }
+    // Frozen only once the PDF exists: a failed render leaves the deck a draft.
+    if (!r.deal.deckFrozenAt) await stampDeckFrozen(c.env.DB, r.deal.id, now);
     await logActivity(c.env.DB, r.deal.businessId, "export", "Downloaded recommendation deck PDF");
     return new Response(new Uint8Array(bytes), { headers: { "content-type": "application/pdf", "content-disposition": `attachment; filename="${deckFileName(r.name, now)}"` } });
   });
