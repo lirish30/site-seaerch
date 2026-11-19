@@ -52,7 +52,7 @@ function Payment({ payment }: { payment: PublicPayment }) {
   );
 }
 
-function Signed({ page }: { page: OpenProposal }) {
+function Signed({ page, token }: { page: OpenProposal; token: string }) {
   const at = page.signed ? new Date(page.signed.at) : null;
   const when = at && !Number.isNaN(at.getTime()) ? at.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" }) : "";
   return (
@@ -61,6 +61,7 @@ function Signed({ page }: { page: OpenProposal }) {
       <div>
         <h2>You signed this proposal</h2>
         <p>{page.signed ? `Signed by ${page.signed.name}${when ? ` on ${when}` : ""}.` : "Signed."} The signed document is below.</p>
+        <p><a href={`/api/public/p/${token}/pdf`} download>Download the signed PDF</a></p>
       </div>
     </section>
   );
@@ -151,7 +152,7 @@ export default function Proposal() {
           {!signed && page.expiresAt && <span className="rp-expiry pp-expiry">{formatExpiry(page.expiresAt, new Date())}</span>}
         </header>
         <article className="rp-card">
-          {signed && <Signed page={page} />}
+          {signed && token && <Signed page={page} token={token} />}
           {signed && <Payment payment={page.payment} />}
           <iframe className="pp-frame" title={`Proposal for ${page.clientName}`} sandbox="" srcDoc={page.html} referrerPolicy="no-referrer" />
           {!signed && (

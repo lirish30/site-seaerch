@@ -8,6 +8,7 @@ import type { Env } from "../env";
 import { legalGate, parseDocumentsConfig } from "./config";
 import { CONSENT_LABEL, ESIGN_DISCLOSURE, ESIGN_VERSION, authorityLabel } from "./consent";
 import { renderProposalHtml } from "./render";
+import { ensureSignedPdf, sendSignedCopy } from "./signed";
 import { isClientToken } from "./token";
 
 /** Stored with a signature: what a hostile client sends is cut to this, never refused. */
@@ -106,8 +107,29 @@ export async function proposalPage(env: Env, token: string, o: { now: Date; user
   return doc ? pageFor(env, doc, o.now, { userAgent: o.userAgent }) : null;
 }
 
-/** Runs after a signature is stored: the signed PDF, the signed copy by mail, the deposit invoice. Never throws: nothing here may undo a signature. */
-export async function afterSign(_env: Env, _doc: Document): Promise<void> {}
+/**
+ * What runs once after a new signature, in this order. Each step is guarded on its own, so one that fails never stops the next. Nothing here is the only
+ * way to get what it makes: the PDF is also made when it is first asked for (`ensureSignedPdf`), and the signed copy is best-effort, once. A new step is
+ * one more line.
+ */
+const AFTER_SIGN_STEPS: { name: string; run: (env: Env, doc: Document) => Promise<unknown> }[] = [
+  { name: "signed pdf", run: async (env, doc) => { const r = await ensureSignedPdf(env, doc.id); if (!r.ok) console.error("proposal: no signed PDF yet", r.status); } },
+  { name: "signed copy", run: sendSignedCopy },
+];
+
+/** Runs after a signature is stored: the signed PDF, the signed copy by mail (and later the deposit invoice). Never throws: nothing here may undo a signature. */
+export async function afterSign(env: Env, doc: Document): Promise<void> {
+  for (const step of AFTER_SIGN_STEPS) {
+    try { await step.run(env, doc); }
+    catch (e) { console.error(`proposal: after-sign step "${step.name}" failed`, e instanceof Error ? e.message : "unknown error"); }
+  }
+}
+
+/** The signed document behind a link, for the PDF download: null for anything that is not signed, exactly as for a link that is not live. */
+export async function signedProposalFor(env: Env, token: string): Promise<Document | null> {
+  const doc = await find(env, token);
+  return doc?.status === "signed" ? doc : null;
+}
 
 export type SignResult = { ok: true; page: PublicProposal } | { ok: false; status: 400 | 404 | 409; error: string };
 

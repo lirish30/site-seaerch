@@ -50,3 +50,29 @@ export function renderProposalMail(c: ProposalContent, link: string, s: Settings
   ].join("\n\n");
   return { subject: `Your proposal from ${provider}`, body };
 }
+
+/**
+ * The mail that gives the signer their copy: the same words for every client. The only text a person wrote that reaches it is the business name, on one
+ * line and capped. The link is the client's own page, which serves the signed PDF; without one the mail says to reply for it.
+ */
+export function renderSignedCopyMail(c: ProposalContent, link: string | null, s: Settings): ProposalMail {
+  const h = c.header;
+  const provider = oneLine(h.providerBusiness) || oneLine(h.providerName) || "us";
+  const sender = parseSignature(s.signature_json) || s.signature.trim() ? "" : oneLine(s.your_name);
+  const body = [
+    "Hi,",
+    `Thank you for signing the proposal for ${oneLine(h.clientName).slice(0, BUSINESS_MAX)}. Your signed copy, with its record of the signature, is here:`,
+    link ?? "Reply to this email and I will send it to you.",
+    "Keep it for your records. Reply to this email if you have a question.",
+    ["Thanks,", sender].filter(Boolean).join("\n"),
+  ].join("\n\n");
+  return { subject: `Your signed proposal from ${provider}`, body };
+}
+
+/** The short note to the owner that a proposal was signed. Nothing the signer typed is in it. */
+export function renderSignedNotice(c: ProposalContent): ProposalMail {
+  const h = c.header;
+  const name = oneLine(h.clientName).slice(0, BUSINESS_MAX);
+  const ref = oneLine(h.reference);
+  return { subject: `${name} signed ${ref}`, body: `${name} signed proposal ${ref}, version ${h.version}.\n\nThe signed PDF is on the deal.` };
+}

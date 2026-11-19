@@ -1,8 +1,13 @@
 import { env } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import worker from "../src/worker/index";
 import { createDraft, getDocument, signaturesFor } from "../src/worker/db/documents";
-import { proposal, seedDeal, sendDraft } from "./fixtures/documents";
+import { setPdfRendererForTests } from "../src/worker/documents/signed";
+import { proposal, seedDeal, sendDraft, stubPdfRenderer } from "./fixtures/documents";
+
+// Signing makes the PDF, which needs a browser: these tests are about the signature.
+beforeEach(stubPdfRenderer);
+afterEach(() => setPdfRendererForTests(null));
 
 const ctx = { waitUntil() {}, passThroughOnException() {} } as unknown as ExecutionContext;
 const FAR = "2099-01-01T00:00:00.000Z";

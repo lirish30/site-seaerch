@@ -5,7 +5,8 @@ import type { Env } from "../env";
 import { z } from "zod";
 import { BookingFormSchema, bookingPage, cancelByToken, createVisitorBooking } from "../booking/create";
 import { publicReport } from "../db/reports";
-import { SignFormSchema, proposalPage, signProposal } from "../documents/public";
+import { SignFormSchema, proposalPage, signProposal, signedProposalFor } from "../documents/public";
+import { signedPdfResponse } from "../documents/signed";
 import { serveMedia } from "../video/media";
 import { MAX_EVENT_BYTES, ViewEventSchema, recordEvent } from "../video/views";
 
@@ -146,6 +147,7 @@ publicRoutes.post("/report/:token/book/cancel", async (c) => {
 // and the browser string are stored as typed and are only ever shown escaped.
 publicRoutes.use("/p/:token", clientLimited);
 publicRoutes.use("/p/:token/sign", clientLimited);
+publicRoutes.use("/p/:token/pdf", clientLimited);
 
 publicRoutes.get("/p/:token", async (c) => {
   const token = c.req.param("token");
@@ -164,6 +166,15 @@ publicRoutes.post("/p/:token/sign", async (c) => {
   if (!parsed.success) return c.json({ error: "invalid body", fields: Object.keys(z.flattenError(parsed.error).fieldErrors) }, 400);
   const r = await signProposal(c.env, token, parsed.data, { now: new Date(), ip: c.req.header("cf-connecting-ip") ?? null, userAgent: c.req.header("user-agent") ?? null });
   return r.ok ? c.json(r.page) : c.json({ error: r.error }, r.status);
+});
+
+// The signed PDF: only a signed document has one, and every other state (and every link that is not live) is the same 404. It is made on first request if
+// signing did not make it.
+publicRoutes.get("/p/:token/pdf", async (c) => {
+  const token = c.req.param("token");
+  if (!TOKEN.test(token)) return c.json(NOT_FOUND, 404);
+  const doc = await signedProposalFor(c.env, token);
+  return doc ? signedPdfResponse(c.env, doc) : c.json(NOT_FOUND, 404);
 });
 
 publicRoutes.all("*", (c) => c.json({ error: "not found" }, 404));

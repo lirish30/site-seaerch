@@ -1,12 +1,17 @@
 import { env } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { countViews, createDraft, expireDue, getDocument, signaturesFor, voidDocument } from "../src/worker/db/documents";
 import { listActivity } from "../src/worker/db/activity";
 import { saveSettings } from "../src/worker/db/settings";
 import { CONSENT_LABEL, ESIGN_DISCLOSURE, ESIGN_VERSION, authorityLabel } from "../src/worker/documents/consent";
 import { afterSign, SignFormSchema, proposalPage, signProposal, type PublicProposal } from "../src/worker/documents/public";
 import type { ProposalContent } from "../src/worker/documents/proposal";
-import { REVIEWED_CONFIG, proposal, seedDeal, sendDraft } from "./fixtures/documents";
+import { setPdfRendererForTests } from "../src/worker/documents/signed";
+import { REVIEWED_CONFIG, proposal, seedDeal, sendDraft, stubPdfRenderer } from "./fixtures/documents";
+
+// Signing makes the PDF, which needs a browser: these tests are about the signature.
+beforeEach(stubPdfRenderer);
+afterEach(() => setPdfRendererForTests(null));
 
 const NOW = new Date("2026-12-02T09:00:00.000Z");
 const MIN = 60_000;

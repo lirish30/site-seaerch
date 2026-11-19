@@ -9,6 +9,7 @@ import type { OutboundMessage } from "../../src/worker/mail/types";
 import { offerOf } from "../../src/worker/queue/callRecap";
 import type { Option } from "../../src/worker/sales/options";
 import { sha256Hex, canonicalJson } from "../../src/worker/documents/hash";
+import { setPdfRendererForTests } from "../../src/worker/documents/signed";
 import { newClientToken } from "../../src/worker/documents/token";
 import { markSent, type SignatureRecord } from "../../src/worker/db/documents";
 import type { ProposalContent } from "../../src/worker/documents/proposal";
@@ -101,4 +102,9 @@ export async function readyToSend(o: { reviewed?: boolean; mailbox?: boolean } =
   const mail = { sent: [] as OutboundMessage[], failures: [] as Error[] };
   setMailDeps({ smtp: async (_mb, _pw, msg) => { const f = mail.failures.shift(); if (f) throw f; mail.sent.push(msg); }, now: () => new Date(SENT_AT) });
   return mail;
+}
+
+/** A stand-in for the browser, for a test that signs a proposal (signing makes the PDF): real rendering needs the Browser Rendering binding. Undo with `setPdfRendererForTests(null)`. */
+export function stubPdfRenderer() {
+  setPdfRendererForTests(async () => new Uint8Array([37, 80, 68, 70, 45, 49, 46, 55]));
 }

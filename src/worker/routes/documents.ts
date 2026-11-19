@@ -11,6 +11,7 @@ import { legalGate, parseDocumentsConfig } from "../documents/config";
 import { clientBase } from "../documents/mail";
 import { ProposalError } from "../documents/proposal";
 import { PROPOSAL_CSP, renderProposalHtml } from "../documents/render";
+import { signedPdfResponse } from "../documents/signed";
 import { draftProposal, editDraft, sendProblems, sendTest, voidProposal } from "../documents/service";
 
 const invalid = (error: z.ZodError) => ({ error: "invalid body", fields: z.flattenError(error).fieldErrors });
@@ -79,6 +80,12 @@ documentRoutes.get("/documents/:id/preview.html", async (c) => {
     draftBanner: doc.status === "draft" || legalGate(parseDocumentsConfig(settings.documents_config)) !== null,
   });
   return new Response(html, { headers: { "content-type": "text/html; charset=utf-8", "content-security-policy": PROPOSAL_CSP, "cache-control": "no-store" } });
+});
+
+/** The owner's copy of the signed PDF (made now if signing did not make it). A document that is not signed has none: 409. */
+documentRoutes.get("/documents/:id/pdf", async (c) => {
+  const doc = await getDocument(c.env.DB, c.req.param("id"));
+  return doc ? signedPdfResponse(c.env, doc) : c.json({ error: "not found" }, 404);
 });
 
 /** Puts the draft up for the owner's approval (which is his countersignature). Nothing is mailed until he approves it. */
