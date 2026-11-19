@@ -159,6 +159,9 @@ npm install -g hyperframes@0.9.69        # then "hyperframes": "hyperframes" in 
 cd ~/.siteline-helper && npm install hyperframes@0.9.69      # and set "hyperframes": "<that folder>/node_modules/.bin/hyperframes"
 ```
 
-It also needs Google Chrome (or `hyperframes browser`), ffmpeg, and internet on a render: the page loads GSAP from a CDN and the first render fetches a font.
+It also needs Google Chrome (or `hyperframes browser`), ffmpeg, and **internet on every render**: the page loads GSAP from jsdelivr (pinned to an exact
+version and checked with a Subresource Integrity hash, so a changed file is refused; GSAP is not bundled). The page itself uses system fonts only and asks
+no font service for anything, but HyperFrames' own compiler maps every font family to a web font (Inter) and downloads it from Google Fonts the first time
+(then it reads `~/.cache/hyperframes/fonts`), so the very first render on a Mac needs Google Fonts reachable too.
 The helper switches HyperFrames' own usage reporting off for every render. If a newer HyperFrames changes a flag, the command line is written in one place:
 `hyperframesArgs` in `src/render/render.ts`. `doctor` shows the installed version.

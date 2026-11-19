@@ -54,9 +54,15 @@ prints `0.9.69` (the helper's `doctor` uses it). `hyperframes check <dir>` lints
 
 ## Things to know
 
-- **Network at render time.** The page loads GSAP from jsdelivr, and HyperFrames fetched the Inter font from Google Fonts on its first run (then cached in
-  `~/.cache/hyperframes/fonts`). A Mac with no internet cannot render until both are local. Not tested offline. If that matters: `npm i gsap@3.15.0` somewhere and
-  point the `<script>` at the local file in `composition.ts` (and keep the project's `assets/` folder).
+- **Network at render time (updated after review).** A render needs internet for **one script**: GSAP, loaded from jsdelivr, pinned to `gsap@3.15.0` with
+  `integrity="sha384-..."` and `crossorigin="anonymous"` (`GSAP_URL` / `GSAP_SRI` in `composition.ts`, with the commands to regenerate the hash). GSAP is deliberately not
+  vendored (licence). **HyperFrames honours the integrity attribute**: with the hash edited, the render fails at once with `Subresource integrity mismatch for
+  https://cdn.jsdelivr.net/...` and writes no file; with the right hash it renders normally. A jsdelivr outage therefore fails the render (and the video), and the
+  error text says so.
+- **Fonts.** The page names system fonts only (`-apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif`) and contains no font URL, `@import`, `@font-face` or `<link>`
+  (a test checks). But HyperFrames' compiler maps *every* family it sees (tried `system-ui`, `-apple-system`, `Helvetica Neue`, `Arial`, `sans-serif`, `Menlo`) to a Google
+  web font (Inter, or JetBrains Mono for Menlo), downloads it itself the first time and keeps it in `~/.cache/hyperframes/fonts` (CSS and woff2 are read from the disk cache
+  afterwards: a second render wrote no files there). So the first render on a Mac also needs Google Fonts reachable; later ones should not. Not tested with the network off.
 - **Chrome.** It used the system Google Chrome (`doctor` shows it). A Mac without Chrome would need `hyperframes browser` to fetch one.
 - **Install for the helper.** `hyperframes` must be a runnable file named in the helper's config (`"hyperframes": "/path/to/hyperframes"`). Either
   `npm install -g hyperframes@0.9.69` (the default `hyperframes` then works) or `npm install hyperframes@0.9.69` in `~/.siteline-helper` and set the path to

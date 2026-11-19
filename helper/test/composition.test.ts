@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { END_CARD_MS, GAP_MS, MARKUP_AT_MS, buildComposition, type RenderPlan } from "../src/render/composition.ts";
+import { END_CARD_MS, GAP_MS, GSAP_SRI, GSAP_URL, MARKUP_AT_MS, buildComposition, calloutBox, type RenderPlan } from "../src/render/composition.ts";
 
 const brand = { name: "Logan Irish", business: "Siteline" };
 const cta = "Book a free call: hellositeline.com/book";
@@ -144,5 +144,87 @@ describe("buildComposition", () => {
     const r = buildComposition({ plan: { shots: [], segments: [] }, durationsMs: {}, brand, ctaText: cta });
     expect(r.sceneStartsMs).toEqual([]);
     expect(r.totalMs).toBe(END_CARD_MS);
+  });
+});
+
+describe("the page's one network dependency", () => {
+  it("the GSAP script is pinned and carries its integrity hash and crossorigin", () => {
+    const h = html();
+    const tag = h.match(/<script [^>]*src="[^"]*gsap[^"]*"[^>]*>/)![0];
+    expect(tag).toContain(`src="${GSAP_URL}"`);
+    expect(GSAP_URL).toMatch(/gsap@\d+\.\d+\.\d+\/dist\/gsap\.min\.js$/); // an exact version, never a range or "latest"
+    expect(tag).toContain(`integrity="${GSAP_SRI}"`);
+    expect(GSAP_SRI).toMatch(/^sha384-[A-Za-z0-9+/]{64}$/);
+    expect(tag).toContain('crossorigin="anonymous"');
+  });
+
+  it("the page asks no font service for anything and names only system fonts", () => {
+    const h = html();
+    expect(h).not.toMatch(/fonts\.googleapis\.com|fonts\.gstatic\.com/);
+    expect(h).not.toMatch(/@import|@font-face|<link /);
+    expect(h).toMatch(/font-family:-apple-system/);
+    // the only absolute URL anywhere in the page is the pinned script
+    expect([...h.matchAll(/https?:\/\/[^"'\s)]+/g)].map((m) => m[0])).toEqual([GSAP_URL]);
+  });
+});
+
+describe("calloutBox", () => {
+  const W = 1280, H = 2400;
+  /** The box's left and right sides in the picture, from what calloutBox says. */
+  const span = (b: ReturnType<typeof calloutBox>): [number, number] => (b.anchor === "left" ? [b.edge, b.edge + b.width] : [W - b.edge - b.width, W - b.edge]);
+  const inside = (b: ReturnType<typeof calloutBox>) => { const [l, r] = span(b); expect(l).toBeGreaterThanOrEqual(0); expect(r).toBeLessThanOrEqual(W + 1e-6); expect(b.top).toBeGreaterThanOrEqual(0); };
+  const text = (n: number) => "x".repeat(n);
+
+  it("a short callout keeps its anchor", () => {
+    const left = calloutBox({ x: 0.2, y: 0.3, text: "No padlock" }, W, H, 30);
+    expect(left).toMatchObject({ anchor: "left", edge: 0.2 * W, wraps: false });
+    const right = calloutBox({ x: 0.9, y: 0.3, text: "No padlock" }, W, H, 30);
+    expect(right).toMatchObject({ anchor: "right", edge: W - 0.9 * W, wraps: false });
+    inside(left); inside(right);
+  });
+
+  it("a long callout near the right edge stays inside the image", () => {
+    for (const x of [0.6, 0.8, 0.95, 1]) {
+      const b = calloutBox({ x, y: 0.5, text: text(40) }, W, H, 30);
+      inside(b);
+    }
+    // 40 characters need about 700 px; at x 0.6 there is room to the left, so it flips rather than wraps
+    const b = calloutBox({ x: 0.6, y: 0.5, text: text(40) }, W, H, 30);
+    expect(b.wraps).toBe(false);
+  });
+
+  it("a long callout near the left edge stays inside the image", () => {
+    for (const x of [0, 0.05, 0.3, 0.5]) inside(calloutBox({ x, y: 0.5, text: text(45) }, W, H, 30));
+    // x 0.5 with 45 characters (about 800 px) fits neither side as one line of this width, so it is moved in, not cut
+    const edge = calloutBox({ x: 0.05, y: 0.5, text: text(45) }, W, H, 30);
+    expect(edge.anchor).toBe("left");
+  });
+
+  it("a 60-character callout at x 0.5 fits", () => {
+    const b = calloutBox({ x: 0.5, y: 0.5, text: text(60) }, W, H, 30);
+    inside(b);
+    expect(b.wraps).toBe(true);
+    expect(b.width).toBeLessThanOrEqual(0.7 * W);
+    // nothing is shortened: the page carries all 60 characters, wrapping inside a max-width
+    const p = plan();
+    p.segments[0].markups = [{ type: "callout", x: 0.5, y: 0.5, text: text(60) }];
+    const h = html(build(p));
+    const tag = h.match(/<div[^>]*data-markup="callout"[^>]*>[^<]*<\/div>/)![0];
+    expect(tag).toContain(text(60));
+    expect(tag).toMatch(/max-width:\s*\d+/);
+    expect(tag).toContain("white-space:normal");
+  });
+
+  it("a callout near the bottom is lifted so it does not run off the picture", () => {
+    const b = calloutBox({ x: 0.5, y: 1, text: text(60) }, W, 600, 30);
+    expect(b.top).toBeLessThan(600);
+    expect(b.top).toBeGreaterThanOrEqual(0);
+  });
+
+  it("scales with the zoom: the same words need a wider box when the camera is further out", () => {
+    const near = calloutBox({ x: 0.5, y: 0.5, text: text(30) }, W, H, 30);
+    const far = calloutBox({ x: 0.5, y: 0.5, text: text(30) }, W, H, 100);
+    expect(far.width).toBeGreaterThan(near.width);
+    inside(far);
   });
 });

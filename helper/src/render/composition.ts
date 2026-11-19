@@ -23,6 +23,15 @@ const FADE_MS = 250;
 const STROKE_PX = 6;
 const CALLOUT_PX = 30;
 const BLUR_PX = 14;
+/**
+ * The one script the page loads from the network: GSAP, pinned to an exact version and checked by Subresource Integrity, so a changed or tampered file is
+ * refused by the browser rather than run. To change the version: fetch the new file once (`curl -sSL <url> -o gsap.min.js`), then
+ * `echo "sha384-$(openssl dgst -sha384 -binary gsap.min.js | openssl base64 -A)"` and put both here (the test checks the page carries them). GSAP is not vendored.
+ */
+export const GSAP_URL = "https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js";
+export const GSAP_SRI = "sha384-XmJ9SoHtVOHoQUcKvFAzVXwdkKo1Ie3bhmSoIAkcdsHGaIrVJIkmozyq0FJeb/Ly";
+/** System fonts only: a render asks no web font service for anything. */
+const FONT_STACK = `-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif`;
 const RED = "#ff3b30";
 const BACKGROUND = "#0b0f19";
 
@@ -77,6 +86,54 @@ function focusRect(f: RenderSegment["focus"], w: number, h: number): Rect | null
   return fw < 0.02 || fh < 0.02 ? null : { x: x * w, y: y * h, w: fw * w, h: fh * h };
 }
 
+/** Average width of a character of the callout font (semibold sans) as a fraction of its size: deliberately on the wide side, so an estimate errs towards wrapping. */
+const CHAR_EM = 0.55;
+/** A callout that cannot fit on one line wraps inside this share of the picture's width. */
+const WRAP_SHARE = 0.7;
+
+export interface CalloutBox {
+  /** Which side `edge` is measured from. */
+  anchor: "left" | "right";
+  /** Distance in picture pixels from that side of the picture to the box. */
+  edge: number;
+  top: number;
+  /** The box's estimated width; when `wraps` it is the widest the box may be. */
+  width: number;
+  wraps: boolean;
+}
+
+/**
+ * Where a callout goes so that all of it stays inside the picture. The width is estimated from the number of characters (`CHAR_EM` of the font size each,
+ * plus the padding). It is anchored on the side its x suggests (left of x 0.55, right of it beyond), and on the other side when that is the only one with room.
+ * When it fits on neither side as one line it wraps inside 70% of the picture's width and is slid in until it fits. Nothing is shortened. The vertical
+ * position is kept inside the picture the same way, by the estimated number of lines.
+ */
+export function calloutBox(m: { x: number; y: number; text: string }, imageW: number, imageH: number, fontPx: number): CalloutBox {
+  const padX = fontPx * 0.55, padY = fontPx * 0.3, border = fontPx * 0.08;
+  const chrome = 2 * (padX + border);
+  const lineW = Array.from(m.text).length * fontPx * CHAR_EM;
+  const oneLine = lineW + chrome;
+  const px = c01(m.x) * imageW, py = c01(m.y) * imageH;
+  const prefer: "left" | "right" = c01(m.x) > 0.55 ? "right" : "left";
+  const fits = (a: "left" | "right", w: number) => (a === "left" ? px + w <= imageW : px - w >= 0);
+
+  let anchor: "left" | "right" = prefer;
+  let width = oneLine;
+  let wraps = false;
+  let edge: number;
+  if (fits(prefer, oneLine)) edge = prefer === "left" ? px : imageW - px;
+  else if (fits(prefer === "left" ? "right" : "left", oneLine)) { anchor = prefer === "left" ? "right" : "left"; edge = anchor === "left" ? px : imageW - px; }
+  else {
+    width = Math.min(oneLine, imageW * WRAP_SHARE);
+    wraps = width < oneLine;
+    anchor = "left";
+    edge = Math.min(Math.max(0, px), imageW - width); // slid in from the left until its right side is inside too
+  }
+  const lines = wraps ? Math.max(1, Math.ceil(lineW / Math.max(1, width - chrome))) : 1;
+  const height = lines * fontPx * 1.2 + 2 * (padY + border);
+  return { anchor, edge, top: Math.min(Math.max(0, py), Math.max(0, imageH - height)), width, wraps };
+}
+
 interface Piece { html: string; at?: number }
 
 /** One markup as HTML inside the picture's own coordinate space. `at` is when it appears, in ms from the start of its scene (none: it is there from the first frame). */
@@ -114,11 +171,10 @@ function markupPiece(m: Markup, id: string, atMs: number, abs: number, shot: Ren
       };
     }
     case "callout": {
-      const px = c01(m.x) * W, py = c01(m.y) * H;
       const fs = CALLOUT_PX / endScale;
-      // A callout near the right edge grows leftwards, so its words are not cut off by the edge of the picture.
-      const anchor = c01(m.x) > 0.55 ? `right:${n(W - px)}px` : `left:${n(px)}px`;
-      return { at: atMs, html: `<div class="mk callout" id="${id}" ${stamp} style="${anchor};top:${n(py)}px;font-size:${n(fs)}px;padding:${n(fs * 0.3)}px ${n(fs * 0.55)}px;border-radius:${n(fs * 0.4)}px;border-width:${n(fs * 0.08)}px;opacity:0">${esc(m.text)}</div>` };
+      const b = calloutBox(m, W, H, fs);
+      const wrap = b.wraps ? `max-width:${n(b.width)}px;white-space:normal` : "white-space:nowrap";
+      return { at: atMs, html: `<div class="mk callout" id="${id}" ${stamp} style="${b.anchor}:${n(b.edge)}px;top:${n(b.top)}px;${wrap};font-size:${n(fs)}px;padding:${n(fs * 0.3)}px ${n(fs * 0.55)}px;border-radius:${n(fs * 0.4)}px;border-width:${n(fs * 0.08)}px;opacity:0">${esc(m.text)}</div>` };
     }
   }
 }
@@ -198,11 +254,11 @@ export function buildComposition(input: CompositionInput): Composition {
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=${FRAME_W}, height=${FRAME_H}" />
-<script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js"></script>
+<script src="${GSAP_URL}" integrity="${GSAP_SRI}" crossorigin="anonymous"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:${FRAME_W}px;height:${FRAME_H}px;overflow:hidden;background:${BACKGROUND}}
-#root{position:relative;width:${FRAME_W}px;height:${FRAME_H}px;overflow:hidden;font-family:Inter,"Helvetica Neue",Arial,sans-serif}
+#root{position:relative;width:${FRAME_W}px;height:${FRAME_H}px;overflow:hidden;font-family:${FONT_STACK}}
 .scene{position:absolute;left:0;top:0;width:${FRAME_W}px;height:${FRAME_H}px;overflow:hidden;background:${BACKGROUND}}
 .world{position:absolute;left:0;top:0;transform-origin:0 0;overflow:hidden}
 .world>img{position:absolute;left:0;top:0;display:block;max-width:none}
@@ -210,7 +266,7 @@ html,body{width:${FRAME_W}px;height:${FRAME_H}px;overflow:hidden;background:${BA
 .ring{border-style:solid;border-color:${RED};border-radius:50%}
 .blur{overflow:hidden}
 .blur img{position:absolute;display:block;max-width:none}
-.callout{background:#111827;color:#fff;border-style:solid;border-color:${RED};font-weight:600;line-height:1.2;white-space:nowrap}
+.callout{background:#111827;color:#fff;border-style:solid;border-color:${RED};font-weight:600;line-height:1.2}
 .card{display:flex;align-items:center;justify-content:center;text-align:center;color:#fff}
 .card-in{display:flex;flex-direction:column;align-items:center;gap:18px}
 .card-name{font-size:64px;font-weight:700;letter-spacing:-0.02em}
