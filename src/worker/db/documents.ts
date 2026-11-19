@@ -196,9 +196,9 @@ export async function voidDocument(db: D1Database, id: string, reason: string): 
   return doc;
 }
 
-/** Marks every sent or viewed document whose time has run out as expired; the count is how many. */
+/** Marks every sent or viewed document whose time has run out (`expires_at` before `now`: at the exact instant it is still open) as expired; the count is how many. */
 export async function expireDue(db: D1Database, now: string): Promise<number> {
-  const res = await db.prepare(`UPDATE documents SET status = 'expired', updated_at = ? WHERE status IN ('sent', 'viewed') AND expires_at <= ?`).bind(now, now).run();
+  const res = await db.prepare(`UPDATE documents SET status = 'expired', updated_at = ? WHERE status IN ('sent', 'viewed') AND expires_at < ?`).bind(now, now).run();
   return res.meta.changes ?? 0;
 }
 

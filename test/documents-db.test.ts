@@ -223,25 +223,31 @@ describe("voidDocument", () => {
 
 describe("expireDue", () => {
   it("expireDue expires only sent and viewed documents past expiresAt", async () => {
+    const now = "2026-12-05T00:00:00.000Z", before = "2026-12-04T23:59:59.999Z";
     const sentLate = await openDoc({ expiresAt: "2026-12-10T00:00:00.000Z" });
-    const sentDue = await openDoc({ expiresAt: "2026-12-05T00:00:00.000Z" });
-    const viewedDue = await openDoc({ expiresAt: "2026-12-05T00:00:00.000Z" });
+    const sentAtNow = await openDoc({ expiresAt: now });
+    const sentDue = await openDoc({ expiresAt: before });
+    const viewedDue = await openDoc({ expiresAt: before });
     await recordView(env.DB, viewedDue.doc.id, { now: NOW, userAgent: null });
-    const signedDue = await openDoc({ expiresAt: "2026-12-05T00:00:00.000Z" });
+    const signedDue = await openDoc({ expiresAt: before });
     await signDocument(env.DB, signedDue.doc.id, clientSig(signedDue.hash), NOW);
-    const voidDue = await openDoc({ expiresAt: "2026-12-05T00:00:00.000Z" });
+    const voidDue = await openDoc({ expiresAt: before });
     await voidDocument(env.DB, voidDue.doc.id, "x");
     const draft = await draftFor();
 
-    expect(await expireDue(env.DB, "2026-12-05T00:00:00.000Z")).toBe(2);
+    expect(await expireDue(env.DB, now)).toBe(2);
     const status = async (id: string) => (await getDocument(env.DB, id))!.status;
     expect(await status(sentDue.doc.id)).toBe("expired");
     expect(await status(viewedDue.doc.id)).toBe("expired");
+    // A document expiring exactly at `now` is still open; the next tick expires it.
+    expect(await status(sentAtNow.doc.id)).toBe("sent");
     expect(await status(sentLate.doc.id)).toBe("sent");
     expect(await status(signedDue.doc.id)).toBe("signed");
     expect(await status(voidDue.doc.id)).toBe("void");
     expect(await status(draft.doc.id)).toBe("draft");
-    expect(await expireDue(env.DB, "2026-12-05T00:00:00.000Z")).toBe(0);
+    expect(await expireDue(env.DB, now)).toBe(0);
+    expect(await expireDue(env.DB, "2026-12-05T00:00:00.001Z")).toBe(1);
+    expect(await status(sentAtNow.doc.id)).toBe("expired");
   });
 });
 
