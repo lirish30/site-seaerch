@@ -27,6 +27,8 @@ describe("Home rows", () => {
     expect(filterItems(items, "all")).toHaveLength(5);
     // The Proposals pill, like Saved, shows only once there is a proposal to chase.
     expect(filterPills([...items, item("proposal_follow_up")]).map((p) => `${p.label} ${p.count}`)).toEqual(["All 6", "Follow-ups 2", "Drafts 1", "Deals 1", "Proposals 1", "Scans 1"]);
+    // The Onboarding pill follows the same rule, and sits after Proposals.
+    expect(filterPills([...items, item("proposal_follow_up"), item("onboarding_attention")]).map((p) => `${p.label} ${p.count}`)).toEqual(["All 7", "Follow-ups 2", "Drafts 1", "Deals 1", "Proposals 1", "Onboarding 1", "Scans 1"]);
   });
   it("badges a follow-up as N days late (red) or due today (amber), and nothing else", () => {
     const now = at(9);

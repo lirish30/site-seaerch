@@ -74,6 +74,20 @@ export async function listItems(db: D1Database, id: string): Promise<OnboardingI
   return (await db.prepare(`SELECT * FROM onboarding_items WHERE onboarding_id = ? ORDER BY position, id`).bind(id).all<ItemRow>()).results.map(toItem);
 }
 
+/** The items of every open onboarding, in one query, keyed by onboarding id (each list in checklist order). For a view that reads them all at once. */
+export async function listOpenItems(db: D1Database): Promise<Map<string, OnboardingItem[]>> {
+  const rows = (await db.prepare(
+    `SELECT i.* FROM onboarding_items i JOIN onboardings o ON o.id = i.onboarding_id WHERE o.closed_at IS NULL ORDER BY i.onboarding_id, i.position, i.id`,
+  ).all<ItemRow>()).results;
+  const out = new Map<string, OnboardingItem[]>();
+  for (const r of rows) {
+    const list = out.get(r.onboarding_id) ?? [];
+    list.push(toItem(r));
+    out.set(r.onboarding_id, list);
+  }
+  return out;
+}
+
 export async function getItem(db: D1Database, id: string): Promise<OnboardingItem | null> {
   const r = await db.prepare(`SELECT * FROM onboarding_items WHERE id = ?`).bind(id).first<ItemRow>();
   return r ? toItem(r) : null;
