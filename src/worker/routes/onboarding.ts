@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../env";
-import { CLIENT_BASE_PROBLEM, createWelcomeApproval } from "../approvals/onboardingWelcome";
+import { CLIENT_BASE_PROBLEM, createWelcomeApproval, refreshWelcomePreview } from "../approvals/onboardingWelcome";
 import { logActivityOnce } from "../db/activity";
 import { getDeal } from "../db/deals";
 import {
@@ -97,7 +97,10 @@ onboardingRoutes.patch("/onboardings/:id", async (c) => {
   const o = await getOnboarding(c.env.DB, c.req.param("id"));
   if (!o) return c.json(NOT_FOUND, 404);
   if (o.closedAt) return c.json(CLOSED, 409);
-  return c.json({ onboarding: ownerOnboarding(await setOwnerFields(c.env.DB, o.id, parsed.data)) });
+  const saved = await setOwnerFields(c.env.DB, o.id, parsed.data);
+  // A welcome still waiting for approval shows the new video link.
+  if (parsed.data.welcomeVideoUrl !== undefined) await refreshWelcomePreview(c.env, saved);
+  return c.json({ onboarding: ownerOnboarding(saved) });
 });
 
 const withFiles = async (db: D1Database, i: OnboardingItem): Promise<OwnerItem> => ({ ...i, files: i.kind === "files" ? (await listFiles(db, i.id)).map(ownerFile) : [] });
@@ -172,6 +175,8 @@ onboardingRoutes.post("/onboardings/:id/link/new", async (c) => {
   // Without a client base the new link could not be shown, and the old one would be gone for nothing.
   if (!clientBase(c.env)) return c.json({ error: CLIENT_BASE_PROBLEM }, 409);
   const fresh = await newToken(c.env.DB, o.id);
+  // A welcome still waiting for approval carries the link: it must show the new one.
+  await refreshWelcomePreview(c.env, fresh);
   return c.json({ link: onboardingLink(clientBase(c.env) ?? undefined, fresh.token), onboarding: ownerOnboarding(fresh) });
 });
 

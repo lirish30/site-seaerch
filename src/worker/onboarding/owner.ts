@@ -30,7 +30,7 @@ export interface OnboardingState {
   silentDays: number;
   /** A real onboarding can be started now (a signed, paid, non-test proposal and none started yet). */
   canStart: boolean;
-  /** A test onboarding can be started now (a signed proposal of any kind and none started yet). */
+  /** A test onboarding can be started now (a signed test copy, no real proposal on the deal, and none started yet). */
   canStartTest: boolean;
 }
 
@@ -49,6 +49,14 @@ export async function signedDocument(db: D1Database, dealId: string, real: boole
   return docs.find((d) => d.status === "signed" && (!real || !d.test)) ?? null;
 }
 
+/** Why a test onboarding cannot be made on a deal that has a real proposal (a test one would block the real onboarding for good). */
+export const REAL_PROPOSAL_PROBLEM = "This deal has a real proposal. Rehearse on a test lead instead.";
+
+/** Whether the deal has a proposal that is not a test copy and has not been voided (a draft, sent, signed or expired one). */
+export async function hasRealProposal(db: D1Database, dealId: string): Promise<boolean> {
+  return (await listForDeal(db, dealId)).some((d) => !d.test && d.status !== "void");
+}
+
 /** The welcome approval that is the newest for this onboarding, whatever state it is in. */
 export async function welcomeApprovalFor(db: D1Database, onboardingId: string): Promise<{ id: string; status: string } | null> {
   return await db.prepare(
@@ -64,8 +72,8 @@ const EMPTY: Omit<OnboardingState, "canStart" | "canStartTest"> = {
 export async function onboardingState(env: Env, dealId: string, now: Date): Promise<OnboardingState> {
   const o = await getOnboardingForDeal(env.DB, dealId);
   if (!o) {
-    const signed = await signedDocument(env.DB, dealId, false);
     const real = (await signedDocument(env.DB, dealId, true))?.paidAt ?? null;
+    const signed = (await hasRealProposal(env.DB, dealId)) ? null : await signedDocument(env.DB, dealId, false);
     return { ...EMPTY, canStart: !!real, canStartTest: !!signed };
   }
   const [items, answers, approval] = await Promise.all([listItems(env.DB, o.id), getAnswers(env.DB, o.id), welcomeApprovalFor(env.DB, o.id)]);
@@ -85,8 +93,9 @@ export async function realStartProblem(env: Env, dealId: string): Promise<{ doc:
   return startableDoc(env, doc);
 }
 
-/** The same checks for a test start, which takes any signed proposal. */
+/** The same checks for a test start, which takes a signed test copy and only on a deal with no real proposal (one onboarding per deal: a test one would block the real one). */
 export async function testStartProblem(env: Env, dealId: string): Promise<{ doc: Document } | { problem: string }> {
+  if (await hasRealProposal(env.DB, dealId)) return { problem: REAL_PROPOSAL_PROBLEM };
   const doc = await signedDocument(env.DB, dealId, false);
   return doc ? startableDoc(env, doc) : { problem: "There is no signed proposal for this deal yet, so there is nothing to start an onboarding from." };
 }

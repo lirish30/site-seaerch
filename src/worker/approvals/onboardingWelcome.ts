@@ -34,18 +34,12 @@ async function build(env: Env, o: Onboarding) {
   return { doc, settings, link, h, to, subject: o.test ? `[Test] ${mail.subject}` : mail.subject, body: mail.body };
 }
 
-/**
- * Puts the welcome mail up for approval: who it goes to, the subject, the words and the video link (if one is set). One waiting approval per onboarding:
- * a second call returns the first. Nothing is mailed until Logan approves.
- */
-export async function createWelcomeApproval(env: Env, o: Onboarding): Promise<Approval> {
-  const db = env.DB;
-  const waiting = () => db.prepare(
-    `SELECT * FROM approvals WHERE kind = 'onboarding.welcome' AND status = 'pending' AND json_extract(payload, '$.onboardingId') = ? ORDER BY created_at, id`,
-  ).bind(o.id).all<Parameters<typeof toApproval>[0]>().then((r) => r.results.map(toApproval));
-  const first = (await waiting())[0];
-  if (first) return first;
+const waiting = (db: D1Database, onboardingId: string) => db.prepare(
+  `SELECT * FROM approvals WHERE kind = 'onboarding.welcome' AND status = 'pending' AND json_extract(payload, '$.onboardingId') = ? ORDER BY created_at, id`,
+).bind(onboardingId).all<Parameters<typeof toApproval>[0]>().then((r) => r.results.map(toApproval));
 
+/** The approval's title and preview, from the onboarding as it is now: who it goes to, the subject, the words and the video link (if one is set). */
+async function describe(env: Env, o: Onboarding): Promise<{ title: string; preview: string }> {
   const w = await build(env, o);
   const who = o.test
     ? `${w.settings.your_name.trim() || "You"} <${w.to}> (a test: nothing goes to ${w.h.contactEmail.trim() || "the client"})`
@@ -54,17 +48,45 @@ export async function createWelcomeApproval(env: Env, o: Onboarding): Promise<Ap
     `To: ${who}`, `Subject: ${w.subject}`, "", w.body, "",
     `Welcome video: ${o.welcomeVideoUrl ?? "none yet (add the link on the onboarding page before you approve, or the mail goes without one)"}`,
   ].join("\n");
+  return { title: `Send the onboarding welcome to ${w.h.clientName}`, preview };
+}
+
+/**
+ * Puts the welcome mail up for approval: who it goes to, the subject, the words and the video link (if one is set). One waiting approval per onboarding:
+ * a second call returns the first. Nothing is mailed until Logan approves.
+ */
+export async function createWelcomeApproval(env: Env, o: Onboarding): Promise<Approval> {
+  const db = env.DB;
+  const first = (await waiting(db, o.id))[0];
+  if (first) return first;
+
+  const d = await describe(env, o);
   const a = await createApproval(db, {
-    kind: "onboarding.welcome", title: `Send the onboarding welcome to ${w.h.clientName}`, preview, payload: { onboardingId: o.id } satisfies OnboardingWelcomePayload,
+    kind: "onboarding.welcome", title: d.title, preview: d.preview, payload: { onboardingId: o.id } satisfies OnboardingWelcomePayload,
     record_type: "deal", record_id: o.dealId, drafted_by: "logan",
   });
   // Two callers at once: the earliest approval stands, the other is dropped.
-  const winner = (await waiting())[0];
+  const winner = (await waiting(db, o.id))[0];
   if (winner && winner.id !== a.id) {
     await db.prepare(`DELETE FROM approvals WHERE id = ? AND status = 'pending'`).bind(a.id).run();
     return winner;
   }
   return a;
+}
+
+/**
+ * Rewrites the preview of the welcome that is waiting (the video link or the client's link changed since it was made), the same way it was first built.
+ * The mail itself is always built when it is sent; this keeps what Logan reads before approving true. Never throws: a preview that cannot be rebuilt stays as it was.
+ */
+export async function refreshWelcomePreview(env: Env, o: Onboarding): Promise<void> {
+  try {
+    const pending = (await waiting(env.DB, o.id))[0];
+    if (!pending) return;
+    const { preview } = await describe(env, o);
+    await env.DB.prepare(`UPDATE approvals SET preview = ? WHERE id = ? AND status = 'pending'`).bind(preview, pending.id).run();
+  } catch (e) {
+    console.error("onboarding: could not refresh the welcome preview", e instanceof Error ? e.message : "unknown error");
+  }
 }
 
 /** True when this onboarding has a welcome approval in any state (waiting, approved or rejected). */

@@ -44,7 +44,7 @@ export default function OnboardingTab({ dealId, data, onReload }: { dealId: stri
           {data.canStart && <button type="button" className="btn" disabled={busy} onClick={() => act(() => api.post(`/deals/${dealId}/onboarding/start`))}>Start the onboarding</button>}
           {data.canStartTest && <button type="button" className="btn-ghost-sm" disabled={busy} onClick={() => act(() => api.post(`/deals/${dealId}/onboarding/test`))}>Start a test onboarding</button>}
         </div>
-        {data.canStartTest && <p className="muted small">A test onboarding sends its welcome to your own address only, never to the client. A deal has one onboarding, so a test one stays.</p>}
+        {data.canStartTest && <p className="muted small">A test onboarding sends its welcome to your own address only, never to the client. It can only be made on a deal that has a signed test proposal and no real one, and it stays on its deal: a deal has one onboarding, so a test one cannot be replaced by a real one.</p>}
       </section>
     );
   }

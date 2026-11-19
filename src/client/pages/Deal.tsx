@@ -35,12 +35,13 @@ export default function DealPage() {
   const [proposalFailed, setProposalFailed] = useState(false);
   // The onboarding is loaded with the deal so the tab can be offered only when there is something to show (an onboarding, a won deal, or a signed proposal to test with).
   const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
+  const [onboardingFailed, setOnboardingFailed] = useState(false);
   const [tab, setTab] = useState<Tab | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let live = true;
-    setDeal(null); setLead(null); setForm(null); setProposal(null); setPform(null); setProposalFailed(false); setOnboarding(null); setTab(null); setFailed(false);
+    setDeal(null); setLead(null); setForm(null); setProposal(null); setPform(null); setProposalFailed(false); setOnboarding(null); setOnboardingFailed(false); setTab(null); setFailed(false);
     api.get<Deal>(`/deals/${id}`).then((d) => {
       if (!live) return;
       setDeal(d);
@@ -56,7 +57,7 @@ export default function DealPage() {
     }).catch(() => { if (live) setFailed(true); });
     api.get<Package[]>("/packages").then((c) => { if (live) setCatalog(c); }).catch(() => {});
     api.get<ProposalData>(`/deals/${id}/proposal`).then((p) => { if (live) setProposal(p); }).catch(() => { if (live) setProposalFailed(true); });
-    api.get<OnboardingState>(`/deals/${id}/onboarding`).then((x) => { if (live) setOnboarding(x); }).catch(() => {});
+    api.get<OnboardingState>(`/deals/${id}/onboarding`).then((x) => { if (live) setOnboarding(x); }).catch(() => { if (live) setOnboardingFailed(true); });
     return () => { live = false; };
   }, [id]);
 
@@ -109,6 +110,7 @@ export default function DealPage() {
         <div className="seg-pills" role="group" aria-label="Deal sections">
           {TABS.map(([key, label]) => <button key={key} type="button" aria-pressed={tab === key} onClick={() => setTab(key)}>{label}</button>)}
         </div>
+        {onboardingFailed && <p className="error" role="alert">Couldn’t load the onboarding, so its tab is hidden. Reload the page to try again.</p>}
         {tab === "prep" && <CallPrepPanel leadId={deal.businessId} findings={lead?.findings ?? []} />}
         {tab === "notes" && <NotesTab deal={deal} form={form} setForm={setForm} audit={lead} dirty={dirty} onChange={setDeal} />}
         {tab === "recap" && <RecapTab deal={deal} catalog={catalog} onChange={setDeal} />}

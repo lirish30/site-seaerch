@@ -56,16 +56,24 @@ async function seed(o: { welcomeSent?: boolean; test?: boolean } = {}) {
 const item = async (id: string, key: string) => (await listItems(env.DB, id)).find((i) => i.key === key)!;
 
 const pkg = (key: ProposalContent["packages"][number]["key"], name: string): ProposalContent["packages"][number] => ({ key, version: 1, name, priceLine: "$1,000", includes: [] });
+/** A proposal on a deal: a draft, one that was sent and not signed, or a signed one (paid or not); a test copy or a real one. */
+async function proposalOn(dealId: string, businessId: string, o: { state?: "draft" | "sent" | "signed"; paid?: boolean; test?: boolean; contactEmail?: string } = {}) {
+  const base = proposal();
+  const content: ProposalContent = { ...base, packages: [pkg("starter_site", "Starter Site"), pkg("care", "Care")], header: { ...base.header, contactEmail: o.contactEmail ?? base.header.contactEmail } };
+  const draft = await createDraft(env.DB, { dealId, businessId, optionId: "b", content, test: o.test });
+  const state = o.state ?? "signed";
+  if (state === "draft") return (await getDocument(env.DB, draft.id))!;
+  const { doc, hash } = await sendDraft(draft.id, content, { expiresAt: FAR });
+  if (state === "signed") {
+    expect(await signDocument(env.DB, doc.id, clientSig(hash), "2026-12-02T09:00:00.000Z")).toBe("signed");
+    if (o.paid) await setPaid(env.DB, doc.id, "2026-12-03T09:00:00.000Z");
+  }
+  return (await getDocument(env.DB, doc.id))!;
+}
 /** A deal with a signed proposal (and no onboarding yet): paid, not paid, or a test copy. */
 async function signedDeal(o: { paid?: boolean; test?: boolean; contactEmail?: string } = {}) {
   const s = await seedDeal();
-  const base = proposal();
-  const content: ProposalContent = { ...base, packages: [pkg("starter_site", "Starter Site"), pkg("care", "Care")], header: { ...base.header, contactEmail: o.contactEmail ?? base.header.contactEmail } };
-  const draft = await createDraft(env.DB, { dealId: s.dealId, businessId: s.businessId, optionId: "b", content, test: o.test });
-  const { doc, hash } = await sendDraft(draft.id, content, { expiresAt: FAR });
-  expect(await signDocument(env.DB, doc.id, clientSig(hash), "2026-12-02T09:00:00.000Z")).toBe("signed");
-  if (o.paid) await setPaid(env.DB, doc.id, "2026-12-03T09:00:00.000Z");
-  return { ...s, doc: (await getDocument(env.DB, doc.id))! };
+  return { ...s, doc: await proposalOn(s.dealId, s.businessId, o) };
 }
 
 describe("owner onboarding routes", () => {
@@ -90,13 +98,20 @@ describe("owner onboarding routes", () => {
       expect((await owner("GET", "/deals/nope/onboarding")).status).toBe(404);
     });
 
-    it("says whether a real or a test onboarding can be started", async () => {
+    it("says whether a real or a test onboarding can be started: a test one only where there is no real proposal", async () => {
+      const flags = async (dealId: string) => (await (await owner("GET", `/deals/${dealId}/onboarding`)).json<any>());
       const unpaid = await signedDeal();
-      expect(await (await owner("GET", `/deals/${unpaid.dealId}/onboarding`)).json()).toMatchObject({ onboarding: null, canStart: false, canStartTest: true });
+      expect(await flags(unpaid.dealId)).toMatchObject({ onboarding: null, canStart: false, canStartTest: false });
       const paid = await signedDeal({ paid: true });
-      expect(await (await owner("GET", `/deals/${paid.dealId}/onboarding`)).json()).toMatchObject({ canStart: true, canStartTest: true });
+      expect(await flags(paid.dealId)).toMatchObject({ canStart: true, canStartTest: false });
       const test = await signedDeal({ paid: true, test: true });
-      expect(await (await owner("GET", `/deals/${test.dealId}/onboarding`)).json()).toMatchObject({ canStart: false, canStartTest: true });
+      expect(await flags(test.dealId)).toMatchObject({ canStart: false, canStartTest: true });
+      const realDraft = await seedDeal();
+      await proposalOn(realDraft.dealId, realDraft.businessId, { state: "draft" });
+      expect(await flags(realDraft.dealId)).toMatchObject({ canStartTest: false });
+      const testUnsigned = await seedDeal();
+      await proposalOn(testUnsigned.dealId, testUnsigned.businessId, { test: true, state: "sent" });
+      expect(await flags(testUnsigned.dealId)).toMatchObject({ canStart: false, canStartTest: false });
     });
 
     it("returns the state: stage, items with their files, answers, questions, the link, the welcome approval and the silence", async () => {
@@ -134,27 +149,59 @@ describe("owner onboarding routes", () => {
   });
 
   describe("starting", () => {
-    it("test start is 409 with no signed document", async () => {
-      const s = await seedDeal();
-      const none = await owner("POST", `/deals/${s.dealId}/onboarding/test`);
-      expect(none.status).toBe(409);
-      expect((await none.json<any>()).error).toMatch(/signed/);
-      expect(await getOnboardingForDeal(env.DB, s.dealId)).toBeNull();
-      const draftOnly = await seed();
-      expect((await owner("POST", `/deals/${draftOnly.dealId}/onboarding/test`)).status).toBe(409); // one already exists
+    it("an unsigned proposal starts nothing, by either route", async () => {
+      const none = await seedDeal();
+      for (const route of ["test", "start"]) {
+        const res = await owner("POST", `/deals/${none.dealId}/onboarding/${route}`);
+        expect(res.status, route).toBe(409);
+        expect((await res.json<any>()).error, route).toMatch(/no signed proposal/);
+      }
+      // A draft or a sent proposal that nobody has signed: a test copy for the test route, a real one for the real route.
+      for (const state of ["draft", "sent"] as const) {
+        const t = await seedDeal();
+        await proposalOn(t.dealId, t.businessId, { state, test: true });
+        const rt = await owner("POST", `/deals/${t.dealId}/onboarding/test`);
+        expect(rt.status, `test ${state}`).toBe(409);
+        expect((await rt.json<any>()).error).toMatch(/no signed proposal/);
+        const r = await seedDeal();
+        await proposalOn(r.dealId, r.businessId, { state });
+        const rr = await owner("POST", `/deals/${r.dealId}/onboarding/start`);
+        expect(rr.status, `real ${state}`).toBe(409);
+        expect((await rr.json<any>()).error).toMatch(/no signed proposal/);
+        for (const d of [t, r]) expect(await getOnboardingForDeal(env.DB, d.dealId)).toBeNull();
+      }
+      const existing = await seed();
+      expect((await owner("POST", `/deals/${existing.dealId}/onboarding/test`)).status).toBe(409); // one already exists
       expect((await owner("POST", "/deals/nope/onboarding/test")).status).toBe(404);
     });
 
-    it("a test start makes a test onboarding and a welcome for the owner only", async () => {
+    it("a test start is refused on a deal with a real proposal, so it can never block the real onboarding", async () => {
       await readyToSend();
-      const s = await signedDeal();
-      const res = await owner("POST", `/deals/${s.dealId}/onboarding/test`);
-      expect(res.status).toBe(201);
-      const body = await res.json<any>();
-      expect(body.onboarding).toMatchObject({ test: true, dealId: s.dealId, documentId: s.doc.id });
-      expect(body.welcomeApproval.status).toBe("pending");
-      expect(body.items.length).toBeGreaterThan(0);
+      const REAL = "This deal has a real proposal. Rehearse on a test lead instead.";
+      // A deal holds one working proposal, so the real one is the only one there: a draft, a sent one, a signed one, a paid one.
+      const cases: Parameters<typeof proposalOn>[2][] = [{ state: "draft" }, { state: "sent" }, { state: "signed" }, { state: "signed", paid: true }];
+      for (const c of cases) {
+        const s = await seedDeal();
+        await proposalOn(s.dealId, s.businessId, c);
+        const res = await owner("POST", `/deals/${s.dealId}/onboarding/test`);
+        expect(res.status, JSON.stringify(c)).toBe(409);
+        expect(await res.json()).toEqual({ error: REAL });
+        expect(await getOnboardingForDeal(env.DB, s.dealId)).toBeNull();
+        expect((await (await owner("GET", `/deals/${s.dealId}/onboarding`)).json<any>()).canStartTest).toBe(false);
+      }
+      // A real proposal that expired is still a real proposal: the test copy made after it does not make the deal a rehearsal.
+      const expired = await seedDeal();
+      const old = await proposalOn(expired.dealId, expired.businessId, { state: "sent" });
+      await env.DB.prepare(`UPDATE documents SET status = 'expired' WHERE id = ?`).bind(old.id).run();
+      await proposalOn(expired.dealId, expired.businessId, { test: true });
+      expect((await owner("POST", `/deals/${expired.dealId}/onboarding/test`)).status).toBe(409);
+      // Once the real proposal is voided the deal is a rehearsal again.
+      const s = await seedDeal();
+      const real = await proposalOn(s.dealId, s.businessId, { state: "sent" });
       expect((await owner("POST", `/deals/${s.dealId}/onboarding/test`)).status).toBe(409);
+      await owner("POST", `/documents/${real.id}/void`, { reason: "rehearsing" });
+      await proposalOn(s.dealId, s.businessId, { test: true });
+      expect((await owner("POST", `/deals/${s.dealId}/onboarding/test`)).status).toBe(201);
     });
 
     it("a real start needs a signed, paid, non-test proposal", async () => {
@@ -503,6 +550,60 @@ describe("owner onboarding routes", () => {
       expect((await (await owner("POST", `/onboardings/${s.id}/close`)).json<any>()).onboarding.closedAt).toBe(closedAt);
       const note = (await listActivity(env.DB, s.businessId)).filter((a) => a.kind === "note" && /onboarding closed/.test(a.detail ?? ""));
       expect(note).toHaveLength(1);
+    });
+  });
+
+  describe("a welcome waiting for approval", () => {
+    const previewOf = async (id: string) => (await env.DB.prepare(`SELECT preview, status, title FROM approvals WHERE id = ?`).bind(id).first<{ preview: string; status: string; title: string }>())!;
+
+    it("shows the new video link after a change and the new client link after a new link", async () => {
+      await readyToSend();
+      const s = await seed({ welcomeSent: false });
+      const a = await createWelcomeApproval(env, (await getOnboarding(env.DB, s.id))!);
+      const before = await previewOf(a.id);
+      expect(before.preview).toContain("Welcome video: none yet");
+      expect(before.preview).toContain(`${BASE}/o/${s.token}`);
+
+      expect((await owner("PATCH", `/onboardings/${s.id}`, { welcomeVideoUrl: "https://youtu.be/abc" })).status).toBe(200);
+      const withVideo = await previewOf(a.id);
+      expect(withVideo.preview).toContain("Welcome video: https://youtu.be/abc");
+      expect(withVideo.preview).not.toContain("none yet");
+      expect(withVideo.preview).toContain(`${BASE}/o/${s.token}`);
+      expect(withVideo.title).toBe(before.title);
+      expect(withVideo.status).toBe("pending");
+
+      // Clearing it puts the "none yet" line back; the kickoff alone leaves the preview as it is.
+      await owner("PATCH", `/onboardings/${s.id}`, { welcomeVideoUrl: null });
+      expect((await previewOf(a.id)).preview).toBe(before.preview);
+
+      await owner("PATCH", `/onboardings/${s.id}`, { welcomeVideoUrl: "https://youtu.be/abc" });
+      const fresh = await (await owner("POST", `/onboardings/${s.id}/link/new`)).json<any>();
+      const after = await previewOf(a.id);
+      expect(after.preview).toContain(fresh.link);
+      expect(after.preview).not.toContain(s.token);
+      expect(after.preview).toContain("Welcome video: https://youtu.be/abc");
+    });
+
+    it("a welcome that was already decided is left as it was", async () => {
+      await readyToSend();
+      const s = await seed({ welcomeSent: false });
+      const a = await createWelcomeApproval(env, (await getOnboarding(env.DB, s.id))!);
+      await env.DB.prepare(`UPDATE approvals SET status = 'rejected' WHERE id = ?`).bind(a.id).run();
+      const before = await previewOf(a.id);
+      await owner("PATCH", `/onboardings/${s.id}`, { welcomeVideoUrl: "https://youtu.be/abc" });
+      await owner("POST", `/onboardings/${s.id}/link/new`);
+      expect(await previewOf(a.id)).toEqual(before);
+    });
+
+    it("a preview that cannot be rebuilt does not fail the change", async () => {
+      await readyToSend();
+      const s = await seed({ welcomeSent: false });
+      const a = await createWelcomeApproval(env, (await getOnboarding(env.DB, s.id))!);
+      const before = await previewOf(a.id);
+      const res = await ownerWith({ CLIENT_LINK_BASE: undefined }, "PATCH", `/onboardings/${s.id}`, { welcomeVideoUrl: "https://youtu.be/abc" });
+      expect(res.status).toBe(200);
+      expect((await getOnboarding(env.DB, s.id))!.welcomeVideoUrl).toBe("https://youtu.be/abc");
+      expect(await previewOf(a.id)).toEqual(before);
     });
   });
 });

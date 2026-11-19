@@ -11,7 +11,7 @@ export default function LinkPanel({ o, link, act }: { o: OwnerOnboarding; link: 
   async function copy(url: string) {
     try { await navigator.clipboard.writeText(url); setCopied(true); setCopyFailed(false); setTimeout(() => setCopied(false), 2000); } catch { setCopyFailed(true); }
   }
-  const revoke = () => { if (window.confirm("Turn the client's link off? Their page stops opening until you make a new link.")) return act(() => api.post(`/onboardings/${o.id}/link/revoke`), "The link is off."); };
+  const revoke = () => { if (window.confirm("Turn the client's link off? Their page stops opening until you make a new link. If the welcome email has not been approved yet, approving it will fail until you make a new link.")) return act(() => api.post(`/onboardings/${o.id}/link/revoke`), "The link is off."); };
   const fresh = () => { if (window.confirm("Make a new link? The old one stops working for good, so send the new one to the client.")) return act(() => api.post(`/onboardings/${o.id}/link/new`), "New link made."); };
   const close = () => { if (window.confirm("Close this onboarding? The client's page becomes read-only and they can send nothing more.")) return act(() => api.post(`/onboardings/${o.id}/close`), "Closed."); };
 

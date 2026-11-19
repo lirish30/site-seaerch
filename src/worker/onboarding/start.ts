@@ -30,9 +30,12 @@ export async function startOnboarding(env: Env, doc: Document, o: { test?: boole
     const keys = doc.content.packages.map((p) => p.key);
     const kind = onboardingKindOf(keys);
     // A test copy is a test whatever the caller says: it must never mail the contact on the document.
+    const test = !!(o.test || doc.test);
     const { onboarding } = await createOnboarding(env.DB, {
-      businessId: doc.businessId, dealId: doc.dealId, documentId: doc.id, kind, test: !!(o.test || doc.test), items: itemsFor(keys),
+      businessId: doc.businessId, dealId: doc.dealId, documentId: doc.id, kind, test, items: itemsFor(keys),
     });
+    // A deal has one onboarding. If a test one got there first, a real start has not happened: say so rather than report the test row as the client's.
+    if (!test && onboarding.test) return await note(env, doc, "a test onboarding already exists on this deal; the real one was not started");
     await logActivityOnce(env.DB, doc.businessId, "onboarding_started", `${doc.content.header.reference} v${doc.version}: ${onboarding.kind} onboarding started${onboarding.test ? " (test)" : ""}`);
     if (!onboarding.welcomeSentAt && !(await hasWelcomeApproval(env.DB, onboarding.id))) await createWelcomeApproval(env, onboarding);
     return onboarding;

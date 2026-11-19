@@ -6,7 +6,7 @@ import { getBusiness } from "../src/worker/db/businesses";
 import { getDeal } from "../src/worker/db/deals";
 import { createDraft, getDocument, signDocument } from "../src/worker/db/documents";
 import { insertInvoice, type InvoiceRow } from "../src/worker/db/invoices";
-import { getOnboarding, getOnboardingForDeal, hasOnboarding, listItems } from "../src/worker/db/onboardings";
+import { createOnboarding, getOnboarding, getOnboardingForDeal, hasOnboarding, listItems } from "../src/worker/db/onboardings";
 import { onInvoicePaid } from "../src/worker/documents/deposit";
 import type { Env } from "../src/worker/env";
 import type { ProposalContent } from "../src/worker/documents/proposal";
@@ -90,6 +90,23 @@ describe("starting onboarding at payment", () => {
     expect(await approve(env, (await welcomes(s.dealId))[0].id)).toEqual({ ok: true });
     await pay(s);
     expect(await welcomes(s.dealId)).toHaveLength(1);
+  });
+
+  it("a test onboarding already on the deal is never reported as the real one", async () => {
+    await readyToSend();
+    const s = await seed();
+    // A test row got there first (made by hand here: the owner's route no longer allows it on a deal with a real proposal).
+    const { onboarding: test } = await createOnboarding(env.DB, { businessId: s.businessId, dealId: s.dealId, documentId: s.doc.id, kind: "build", test: true, items: [] });
+
+    expect(await startOnboarding(env, s.doc)).toBeNull();
+    await pay(s); // the payment path says the same, once, and still completes
+    await pay(s);
+    const notes = (await skipNotes(s.businessId)).filter((n) => /test onboarding already exists/.test(n));
+    expect(notes).toEqual(["onboarding not started: a test onboarding already exists on this deal; the real one was not started"]);
+    expect(await activity(s.businessId, "onboarding_started")).toEqual([]);
+    expect(await welcomes(s.dealId)).toEqual([]);
+    expect((await getOnboardingForDeal(env.DB, s.dealId))!.id).toBe(test.id);
+    expect((await getDocument(env.DB, s.doc.id))!.paidAt).toBeTruthy();
   });
 
   it("a test document starts no onboarding from payment", async () => {
