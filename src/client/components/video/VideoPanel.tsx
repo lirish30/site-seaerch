@@ -3,9 +3,10 @@ import { Link, useNavigate } from "react-router-dom";
 import { api, ApiError } from "../../api";
 import { pollDelay } from "../../poll";
 import { canCancel, isOpen, videoStateLine } from "../../videoView";
+import { watchedLine } from "../../videoViewsView";
 import InlineError from "../InlineError";
 
-interface Latest { video: { id: string; status: string; error: string | null } | null; helperOnline?: boolean }
+interface Latest { video: { id: string; status: string; error: string | null } | null; helperOnline?: boolean; watched?: { maxPct: number; lastAt: string } | null }
 const WATCHING = new Set(["capturing", "scripting", "producing"]);
 
 /**
@@ -58,6 +59,7 @@ export default function VideoPanel({ leadId, canStart, whyNot }: { leadId: strin
   return (
     <div className="vd-panel">
       {v && (line ? <p className="prop-note" role="status">{line}</p> : <p className="prop-note" role="status">The script is ready for your edits.</p>)}
+      {data.watched && <p className="prop-note" role="status">{watchedLine(data.watched, new Date())}</p>}
       {!v && <p className="prop-note">A short narrated screen recording of what is wrong with their site.</p>}
       <div className="btn-row nowrap">
         {v && (open || v.status === "published") && <Link className="btn" to={`/leads/${leadId}/video`}>{v.status === "review" ? "Edit the script" : "Open the video"}</Link>}

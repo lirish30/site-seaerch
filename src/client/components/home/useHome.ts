@@ -14,6 +14,8 @@ export interface Part<T> { data: T | null; error: string }
 const empty = <T,>(): Part<T> => ({ data: null, error: "" });
 const msg = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
 
+/** One row of GET /video-audits/watched. */
+export interface WatchedLead { businessId: string; name: string; maxPct: number; lastAt: string }
 export interface LeadFacts { score: number | null; contactedAt: string | null }
 export interface Money { name: string; limit: number; usage: UsageRow[] }
 /** GET /api/spend: this month against the single cap, plus the fixed monthly costs. */
@@ -34,6 +36,7 @@ export function useHome() {
   const [spend, setSpend] = useState<Part<Spend>>(empty);
   const [queue, setQueue] = useState<Part<QueueStatus>>(empty);
   const [helper, setHelper] = useState<Part<HelperStatus>>(empty);
+  const [watched, setWatched] = useState<Part<WatchedLead[]>>(empty);
   const [approvalErrs, setApprovalErrs] = useState<Readonly<Record<string, string>>>({});
   const [pending, setPending] = useState(0);
   const [reloads, setReloads] = useState(0);
@@ -54,7 +57,7 @@ export function useHome() {
     };
     // A reload keeps what is on screen until the new data arrives; only the error is cleared.
     const keep = <T,>(set: (f: (p: Part<T>) => Part<T>) => void) => set((p) => ({ ...p, error: "" }));
-    keep(setItems); keep(setSummary); keep(setLeads); keep(setMoney); keep(setApprovals); keep(setSpend); keep(setQueue); keep(setHelper);
+    keep(setItems); keep(setSummary); keep(setLeads); keep(setMoney); keep(setApprovals); keep(setSpend); keep(setQueue); keep(setHelper); keep(setWatched);
     run(() => api.get<{ items: TodayItem[] }>("/today"), (r) => setItems({ data: r.items, error: "" }), (m) => setItems((p) => ({ ...p, error: m })), "Couldn't load your list.");
     run(() => api.get<TodaySummary>("/today/summary"), (r) => setSummary({ data: r, error: "" }), (m) => setSummary((p) => ({ ...p, error: m })), "Couldn't load your numbers.");
     run(() => api.get<LeadRow[]>("/leads?limit=500"), (rows) => setLeads({
@@ -68,6 +71,8 @@ export function useHome() {
     run(() => api.get<Spend>("/spend"), (r) => setSpend({ data: r, error: "" }), (m) => setSpend((p) => ({ ...p, error: m })), "Couldn't load the spend level.");
     run(() => api.get<QueueStatus>("/queue"), (r) => setQueue({ data: r, error: "" }), (m) => setQueue((p) => ({ ...p, error: m })), "Couldn't load the Claude queue.");
     run(() => api.get<HelperStatus>("/helper/status"), (r) => setHelper({ data: r, error: "" }), (m) => setHelper((p) => ({ ...p, error: m })), "Couldn't load the Mac helper's state.");
+    run(() => api.get<{ watched: WatchedLead[] }>("/video-audits/watched"), (r) => setWatched({ data: r.watched, error: "" }),
+      (m) => setWatched((p) => ({ ...p, error: m })), "Couldn't load who watched your videos.");
     return () => { cancelled = true; };
   }, [reloads]);
 
@@ -150,5 +155,5 @@ export function useHome() {
     ids.forEach((id) => mark(id, false));
   }, []);
 
-  return { approvals, spend, queue, helper, approvalErrs, approveOne, rejectOne, approveAll, items, summary, leads, money, loading: pending > 0, reload, act, fullScan, errs, busy, scans };
+  return { approvals, spend, queue, helper, watched, approvalErrs, approveOne, rejectOne, approveAll, items, summary, leads, money, loading: pending > 0, reload, act, fullScan, errs, busy, scans };
 }

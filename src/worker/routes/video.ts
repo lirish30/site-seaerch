@@ -13,6 +13,7 @@ import { getSettings } from "../db/settings";
 import { reject } from "../approvals/decide";
 import { mediaFor, serveObject } from "../video/media";
 import { startProduction, voiceBlockers } from "../video/production";
+import { watchedFor, watchedLeads } from "../video/views";
 
 export const videoRoutes = new Hono<{ Bindings: Env }>();
 
@@ -54,6 +55,9 @@ videoRoutes.post("/leads/:id/video", async (c) => {
   return c.json({ videoId: video.id }, 202);
 });
 
+/** Leads who watched their video at least halfway in the last week and have not replied: the Home card. Registered before `/video-audits/:id` so it is not read as an id. */
+videoRoutes.get("/video-audits/watched", async (c) => c.json({ watched: await watchedLeads(c.env.DB, new Date()) }));
+
 videoRoutes.get("/video-audits/:id", async (c) => {
   const video = await getVideoAudit(c.env.DB, c.req.param("id"));
   if (!video) return c.json({ error: "not found" }, 404);
@@ -75,9 +79,10 @@ videoRoutes.get("/leads/:id/video", async (c) => {
   const id = c.req.param("id");
   if (!(await getBusiness(c.env.DB, id))) return c.json({ error: "not found" }, 404);
   const v = await latestVideoFor(c.env.DB, id);
-  if (!v) return c.json({ video: null });
+  const watched = await watchedFor(c.env.DB, id);
+  if (!v) return c.json({ video: null, watched });
   const { plan: _plan, ...video } = v;
-  return c.json({ video, helperOnline: (await helperStatus(c.env.DB, new Date())).online });
+  return c.json({ video, helperOnline: (await helperStatus(c.env.DB, new Date())).online, watched });
 });
 
 videoRoutes.get("/video-audits/:id/shots/:shotId/preview", async (c) => {

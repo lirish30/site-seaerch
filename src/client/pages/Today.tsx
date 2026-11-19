@@ -9,6 +9,7 @@ import PipelineCard from "../components/home/PipelineCard";
 import QueueCard from "../components/home/QueueCard";
 import SpendCard from "../components/home/SpendCard";
 import UpNext from "../components/home/UpNext";
+import WatchedCard from "../components/home/WatchedCard";
 import { useHome } from "../components/home/useHome";
 import { dayLine, greeting } from "../todayHome";
 
@@ -46,6 +47,7 @@ export default function Today() {
             onReject={(a, n) => void h.rejectOne(a, n)} onApproveAll={(g) => void h.approveAll(g)} onRetry={h.reload} />
           <QueueCard queue={h.queue} onRetry={h.reload} />
           <HelperCard helper={h.helper} onRetry={h.reload} />
+          <WatchedCard watched={h.watched} onRetry={h.reload} />
           <UpNext items={h.items} leads={h.leads} summary={h.summary} busy={h.busy} scans={h.scans} errs={h.errs}
             onDone={(i) => void h.act(i, "done")} onSnooze={(i, d) => void h.act(i, "snooze", d)} onFullScan={(i) => void h.fullScan(i)} onRetry={h.reload} />
           </div>

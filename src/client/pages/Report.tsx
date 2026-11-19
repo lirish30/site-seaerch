@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import Icon, { LogoMark } from "../components/Icon";
+import { sendEvent } from "../beacon";
+import { crossedMarks, percentPlayed } from "../videoViewsView";
 import {
   basedOnText, bookingLabel, emailLabel, expiryText, groupFindings, hasSender, isHttpsLogo, isReportToken, senderInitials, senderLine, senderTitle, summaryText, videoNote, mediaUrl,
   type ReportData,
@@ -12,6 +14,34 @@ function SenderLogo({ url }: { url: string }) {
   useEffect(() => setBroken(false), [url]);
   if (isHttpsLogo(url) && !broken) return <img className="rp-logo" src={url} alt="" referrerPolicy="no-referrer" onError={() => setBroken(true)} />;
   return <span className="rp-logo" aria-hidden="true"><LogoMark size={28} /></span>;
+}
+
+/**
+ * The player, and what the viewer does with it, reported to the sender: `open` once the page has painted, `play` when it starts (and again when it is
+ * started over after the end), `progress` at 25, 50, 75 and 90 percent (each once), and `end`. Only a page that has a video gets here, so a page without
+ * one sends nothing, and nothing is sent until the viewer's own browser runs this.
+ */
+function ReportVideo({ token }: { token: string }) {
+  const playing = useRef(false);
+  const reported = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    const id = requestAnimationFrame(() => sendEvent(token, { type: "open" }));
+    return () => cancelAnimationFrame(id);
+  }, [token]);
+  return (
+    <video controls preload="metadata" playsInline poster={mediaUrl(token, "poster.jpg")} className="rp-player"
+      onPlay={() => { if (!playing.current) { playing.current = true; sendEvent(token, { type: "play" }); } }}
+      onTimeUpdate={(ev) => {
+        const marks = crossedMarks(percentPlayed(ev.currentTarget.currentTime, ev.currentTarget.duration), reported.current);
+        if (!marks.length) return;
+        marks.forEach((m) => reported.current.add(m));
+        sendEvent(token, { type: "progress", pct: marks[marks.length - 1] }); // a jump forward reports the deepest mark it passed
+      }}
+      onEnded={() => { playing.current = false; sendEvent(token, { type: "end" }); }}>
+      <source src={mediaUrl(token, "video.mp4")} type="video/mp4" />
+      Your browser can't play this video.
+    </video>
+  );
 }
 
 /** Full-page notice for the states that have no report to show (link gone, load failed). */
@@ -113,10 +143,7 @@ export default function Report() {
 
           {r.video && token && (
             <section className="rp-video" aria-label="Video walkthrough">
-              <video controls preload="metadata" playsInline poster={mediaUrl(token, "poster.jpg")} className="rp-player">
-                <source src={mediaUrl(token, "video.mp4")} type="video/mp4" />
-                Your browser can't play this video.
-              </video>
+              <ReportVideo token={token} />
               {note && <p className="rp-video-note">{note}</p>}
               {booking && <a className="btn primary rp-book" href={r.bookingUrl} target="_blank" rel="noopener noreferrer"><Icon name="calendar" size={16} />{booking}</a>}
             </section>

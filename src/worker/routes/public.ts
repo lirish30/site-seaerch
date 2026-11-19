@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Env } from "../env";
 import { publicReport } from "../db/reports";
 import { serveMedia } from "../video/media";
+import { MAX_EVENT_BYTES, ViewEventSchema, recordEvent } from "../video/views";
 
 // Unauthenticated surface: keep it tiny. Every response (including 404s) is non-indexable and, apart from the video files below, non-cacheable.
 export const publicRoutes = new Hono<{ Bindings: Env; Variables: { media?: boolean } }>();
@@ -30,6 +31,37 @@ publicRoutes.get("/report/:token/media/:name", async (c) => {
   const res = await serveMedia(c.env, c.req.param("token"), c.req.param("name"), c.req.header("range") ?? null);
   if (res.status === 200 || res.status === 206) c.set("media", true);
   return res;
+});
+
+/** The body's text, or null when it is more than `max` bytes. The stream is cut off at the limit, so a long body is never held. */
+async function readCapped(req: Request, max: number): Promise<string | null> {
+  if (!req.body) return "";
+  if (Number(req.headers.get("content-length")) > max) return null;
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) { await reader.cancel().catch(() => {}); return null; }
+    chunks.push(value);
+  }
+  return new TextDecoder().decode(await new Blob(chunks as BlobPart[]).arrayBuffer());
+}
+
+// The report page's watch beacon (open, play, progress, end). It always answers 204 with nothing in it: an unknown link, an unpublished video, a bad
+// body and a failed write are all the same to the caller, so it learns nothing about which links exist. Pages that are only fetched never send it.
+publicRoutes.post("/report/:token/events", async (c) => {
+  const token = c.req.param("token");
+  if (TOKEN.test(token)) {
+    try {
+      const text = await readCapped(c.req.raw, MAX_EVENT_BYTES);
+      const body = text ? ViewEventSchema.safeParse(JSON.parse(text)) : null;
+      if (body?.success) await recordEvent(c.env, token, body.data, new Date());
+    } catch { /* not JSON, or the write failed: still nothing to say */ }
+  }
+  return c.body(null, 204);
 });
 
 publicRoutes.all("*", (c) => c.json({ error: "not found" }, 404));
