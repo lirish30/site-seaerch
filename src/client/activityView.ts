@@ -57,6 +57,11 @@ export function describeActivity(a: Pick<Activity, "kind" | "detail">): Activity
     case "call_prep": return { icon: "sparkles", tone: d?.includes("did not") ? "warning" : "signal", title: d ?? "Call prep", detail: null, bubble: false };
     case "call_recap": return { icon: "sparkles", tone: d?.includes("did not") ? "warning" : "signal", title: d ?? "Call recap", detail: null, bubble: false };
     case "followup_booked": return { icon: "calendar", tone: "positive", title: "Recommendation meeting booked", detail: d, bubble: false };
+    case "proposal_sent": return { icon: "send", tone: "info", title: "Proposal sent", detail: d, bubble: false };
+    case "proposal_viewed": return { icon: "eye", tone: "positive", title: "Proposal viewed", detail: d, bubble: false };
+    case "proposal_signed": return { icon: "check", tone: "positive", title: "Proposal signed", detail: d, bubble: false };
+    case "proposal_void": return { icon: "ban", tone: "warning", title: "Proposal voided", detail: d, bubble: false };
+    case "deposit_paid": return { icon: "tag", tone: "positive", title: "Deposit paid", detail: d, bubble: false };
     case "snoozed": return { icon: "clock", tone: "neutral", title: "Snoozed", detail: d, bubble: false };
     default: return { icon: "info", tone: "neutral", title: upperFirst(a.kind.replace(/_/g, " ")), detail: d, bubble: false };
   }

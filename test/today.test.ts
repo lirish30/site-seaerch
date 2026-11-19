@@ -152,6 +152,13 @@ describe("stalled_deal", () => {
     for (const kind of ["deal_created", "deal_moved", "call_prep", "call_recap", "followup_booked"] as const) await act(id, kind, ago(1), "x");
     expect(await of("stalled_deal")).toHaveLength(1);
   });
+  it("the proposal's own events are not contact with the prospect (a view, a signature, a void, the deposit), but sending it is", async () => {
+    const id = await lead("Proposal quiet", { status: "contacted", dealValue: 700 });
+    for (const kind of ["proposal_viewed", "proposal_signed", "proposal_void", "deposit_paid"] as const) await act(id, kind, ago(1), "x");
+    expect(await of("stalled_deal")).toHaveLength(1);
+    await act(id, "proposal_sent", ago(1), "x");
+    expect(await of("stalled_deal")).toEqual([]);
+  });
   it("a prospect watching the video is engagement, so video_watch does un-stall a deal", async () => {
     const id = await lead("Watched", { status: "contacted", dealValue: 700 });
     await act(id, "video_watch", ago(1), "Watched the video audit");
