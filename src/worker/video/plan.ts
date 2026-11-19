@@ -157,13 +157,16 @@ export const lineStale = (seg: Segment): boolean => !seg.audio || seg.audio.text
 
 /**
  * Everything standing between a plan and its approval, in words the editor can show: lines with no words, callouts with no text (a draft is
- * allowed while editing), lines that must be recorded and have no current recording, the script's structure (one hook, three problems, one offer, one cta), then what `checkPlanAgainst` finds. Empty means go.
+ * allowed while editing), lines with fewer or more words than a line may have, lines that must be recorded and have no current recording, the script's structure (one hook, three problems, one offer, one cta), then what `checkPlanAgainst` finds. Empty means go.
  */
 export function approvalBlockers(plan: VideoPlan, findingCodes: string[]): string[] {
   const blockers: string[] = [];
   plan.segments.forEach((s, i) => {
     const n = i + 1;
-    if (wordCount(s.text) === 0) blockers.push(`Line ${n} has no words.`);
+    const words = wordCount(s.text);
+    if (words === 0) blockers.push(`Line ${n} has no words.`);
+    // The same limits the draft schema holds Claude's script to: an edited line must not slip past them.
+    else if (words < LINE_WORDS.min || words > LINE_WORDS.max) blockers.push(`Line ${n} has ${words} ${words === 1 ? "word" : "words"}; each line needs ${LINE_WORDS.min} to ${LINE_WORDS.max} words.`);
     if (s.markups.some((m) => m.type === "callout" && m.text.trim() === "")) blockers.push(`Line ${n} has a callout with no text. Type its words or delete it.`);
     if (plan.narration === "recorded" && (lineStale(s) || s.audio?.source !== "recorded")) blockers.push(`Line ${n} needs a recording.`);
   });

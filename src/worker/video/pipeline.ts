@@ -3,7 +3,7 @@ import type { StepLike } from "../pipeline/lead";
 import { getBusiness } from "../db/businesses";
 import { getSettings } from "../db/settings";
 import { recordUsage } from "../db/usage";
-import { getVideoAudit, savePlan, setVideoStatus } from "../db/videoAudits";
+import { getVideoAudit, moveVideoStatus, savePlan } from "../db/videoAudits";
 import { PRICES } from "../cost";
 import { defaultNarration, requestVideoScript } from "../queue/videoScript";
 import { captureShots, type BrowserLike } from "./capture";
@@ -27,7 +27,8 @@ export async function runVideoAudit(env: Env, step: StepLike, p: VideoParams, de
   const url = withScheme(business.website_url.trim());
 
   await step.do("capture", async () => {
-    await setVideoStatus(env.DB, video.id, "capturing", { error: null });
+    // Guarded: a retry of this step after the video was cancelled must not bring it back to life.
+    if (!(await moveVideoStatus(env.DB, video.id, ["capturing"], "capturing", { error: null }))) return [];
     const shots = await captureShots(env, video.id, url, deps);
     await recordUsage(env.DB, "browser", 2, PRICES.browserPerRender * 2);
     await savePlan(env.DB, video.id, { shots, segments: [], narration: defaultNarration(await getSettings(env.DB)), version: 0 });
@@ -36,9 +37,10 @@ export async function runVideoAudit(env: Env, step: StepLike, p: VideoParams, de
 
   await step.do("enqueue-script", async () => {
     // The status moves first: a script result is only accepted while the video is `scripting`. A repeat of this step finds it moved and queues nothing new (the task is deduplicated).
+    // Moved in one guarded statement, so a cancel that lands now is not undone.
+    const moved = await moveVideoStatus(env.DB, video.id, ["capturing"], "scripting");
     const now = await getVideoAudit(env.DB, video.id);
-    if (now?.status === "capturing") await setVideoStatus(env.DB, video.id, "scripting");
-    if (now && (now.status === "capturing" || now.status === "scripting")) await requestVideoScript(env.DB, video.id, now.steering_note);
+    if (now && (moved || now.status === "scripting")) await requestVideoScript(env.DB, video.id, now.steering_note);
     return true;
   });
 }
@@ -50,7 +52,7 @@ export async function runVideoWithErrorHandling(env: Env, step: StepLike, p: Vid
     const message = String((e as Error)?.message ?? e).slice(0, 500);
     await step.do("record-error", async () => {
       const v = await getVideoAudit(env.DB, p.videoId);
-      if (v && (v.status === "capturing" || v.status === "scripting")) await setVideoStatus(env.DB, v.id, "failed", { error: message });
+      if (v && (v.status === "capturing" || v.status === "scripting")) await moveVideoStatus(env.DB, v.id, ["capturing", "scripting"], "failed", { error: message });
       return true;
     });
   }

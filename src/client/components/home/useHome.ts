@@ -5,7 +5,7 @@ import { fullScanErrorText } from "../../promising";
 import { actionErrorText, actionPath, withoutItem } from "../../todayView";
 import type { TodaySummary, UsageRow } from "../../todayHome";
 import type { LeadRow, TodayItem } from "../../types";
-import { APPROVE_BATCH, type ApprovalItem, type SpendLevel } from "../../approvalsView";
+import { APPROVE_BATCH, canBulkApprove, type ApprovalItem, type SpendLevel } from "../../approvalsView";
 import type { QueueStatus } from "../../queueView";
 import type { HelperStatus } from "../../helperView";
 
@@ -139,7 +139,7 @@ export function useHome() {
 
   /** Approve every item in a group (20 at a time, the API's limit). Failures stay in the list with their own message. */
   const approveAll = useCallback(async (group: ApprovalItem[]) => {
-    const ids = group.map((a) => a.id);
+    const ids = group.filter((a) => canBulkApprove(a.kind)).map((a) => a.id); // a video is never published in a batch
     ids.forEach((id) => { mark(id, true); setApprovalErr(id, null); });
     try {
       for (let i = 0; i < ids.length; i += APPROVE_BATCH) {

@@ -1,6 +1,6 @@
 import type { Env } from "../env";
 import { getSettings } from "../db/settings";
-import { getVideoAudit, moveVideoStatus, setVideoStatus } from "../db/videoAudits";
+import { getVideoAudit, moveVideoStatus } from "../db/videoAudits";
 import { enqueueHelperJob } from "../helper/jobs";
 import { VOICE_SEGMENT_KIND, type VoiceEngine } from "../helper/kinds";
 import type { Settings } from "../types";
@@ -32,6 +32,7 @@ export const voiceBlockers = (plan: Pick<VideoPlan, "narration">, s: Pick<Settin
  * current words (one `voice.segment` job per line, keyed by video, line and words, so a second call queues nothing new). A line with a recording
  * of its current words is left as it is. When there is no voice work to wait for, the render is queued straight away.
  * Returns whether this call started it: a video that is not in review (already started, cancelled, moved on) is left alone, so a double approve starts it once.
+ * A video that turns out to have lines to voice and no voice to do it goes back to review with PICK_A_VOICE as its error, and this returns false.
  */
 export async function startProduction(env: Env, videoId: string): Promise<boolean> {
   const settings = await getSettings(env.DB);
@@ -44,8 +45,9 @@ export async function startProduction(env: Env, videoId: string): Promise<boolea
   if (!plan) return true;
   const stale = plan.segments.filter(lineStale);
   if (stale.length && !voice) {
-    await setVideoStatus(env.DB, videoId, "failed", { error: PICK_A_VOICE });
-    return true;
+    // Not a failed video: its plan and recordings are fine, it only needs a voice. Back to review, saying so.
+    await moveVideoStatus(env.DB, videoId, ["producing"], "review", { error: PICK_A_VOICE });
+    return false;
   }
   for (const s of stale) {
     await enqueueHelperJob(env.DB, VOICE_SEGMENT_KIND, { videoId, segmentId: s.id, engine: voice!.engine, text: s.text, refKey: voice!.refKey }, { videoId, dedupeKey: `${videoId}:${s.id}:${hashText(s.text)}` });

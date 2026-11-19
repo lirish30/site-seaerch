@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { pollDelay } from "../poll";
 import type { Segment, VideoPlan } from "../../worker/video/plan";
-import { approveBlockers, canCancel, canReopen, editorMode, hasPlayer, isWatching, mergeSaved, publishState, replaceSegment, scriptSummary, videoStateLine, type VideoResponse } from "../videoView";
+import { approveBlockers, canCancel, canReopen, canUnpublish, editorMode, hasPlayer, isWatching, lastAttemptNotice, mergeSaved, publishState, replaceSegment, scriptSummary, videoStateLine, type VideoResponse } from "../videoView";
 import Icon from "../components/Icon";
 import { Badge } from "../components/Score";
 import ShotCanvas from "../components/video/ShotCanvas";
@@ -122,6 +122,10 @@ export default function VideoEditor() {
     if (!window.confirm("Claude will write a new script in your next queue session and it will replace this one, including your edits. Continue?")) return;
     void act("regen", async () => { await commit(); await api.post(`/video-audits/${videoId}/regenerate-script`, note.trim() ? { steeringNote: note.trim() } : {}); }, () => load(false));
   };
+  const unpublish = () => {
+    if (!window.confirm("Unpublish this video? It goes off the report page right away, and an email that already went out will show a broken picture. You can make another video afterwards.")) return;
+    void act("unpublish", () => api.post(`/video-audits/${videoId}/unpublish`), () => load(false));
+  };
   const writeMyself = () => act("keep", () => api.post(`/video-audits/${videoId}/keep-script`), () => load(false));
   const cancel = () => {
     if (!window.confirm("Cancel this video? It can't be made or published afterwards. You can start another from the lead.")) return;
@@ -145,6 +149,7 @@ export default function VideoEditor() {
   );
   if (!data) return <div className="page-body">{error ? <p className="error" role="alert">{error}</p> : <p>Loading…</p>}</div>;
 
+  const attempt = lastAttemptNotice(data.video.status, data.video.error);
   const waitingForNewScript = data.video.status === "scripting" && mode !== "state";
   const shown = blockers ?? live;
   return (
@@ -159,12 +164,14 @@ export default function VideoEditor() {
           {mode !== "state" && summary && <span className={`vd-summary${summary.inWindow ? "" : " off"}`} title="The video should run 80 to 130 seconds">{summary.words} words · about {summary.seconds} seconds{summary.inWindow ? "" : " (outside 80 to 130)"}</span>}
           <span className="vd-save" aria-live="polite">{save === "saving" ? "Saving…" : save === "saved" ? "Saved" : save === "failed" ? "Not saved" : ""}</span>
           {canCancel(data.video.status) && <button type="button" className="btn" onClick={cancel} disabled={!!busy}>Cancel video</button>}
+          {canUnpublish(data.video.status) && <button type="button" className="btn" onClick={unpublish} disabled={!!busy}>{busy === "unpublish" ? "Unpublishing…" : "Unpublish"}</button>}
           {editable && <button type="button" className="btn primary" onClick={() => void approve()} disabled={!!busy || shown.length > 0 || save === "saving"} aria-describedby="vd-blockers">{busy === "approve" ? "Approving…" : "Approve and make the video"}</button>}
         </div>
       </header>
 
       <div className="page-body vd-body">
         {error && <p className="error" role="alert">{error}</p>}
+        {attempt && <div className="notice" role="status"><span><Icon name="alert" size={14} /> {attempt}</span></div>}
         {waitingForNewScript && (
           <div className="notice" role="status">
             <span><Icon name="clock" size={14} /> Claude is writing a new script. It arrives in your next queue session and will replace this one.</span>

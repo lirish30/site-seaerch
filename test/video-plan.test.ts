@@ -170,6 +170,19 @@ describe("script structure", () => {
     expect(planStructureProblems(g.map((s) => (s.id === "d" ? { ...s, findingCode: "slow_mobile" } : s))).join(" ")).toMatch(/distinct findingCodes/);
   });
 
+  it("approvalBlockers blocks a line under 5 words or over 60 words, as the draft schema does", () => {
+    const w = (n: number) => Array.from({ length: n }, () => "word").join(" ");
+    const codes = ["slow_mobile", "no_contact_form", "stale_copyright"];
+    const withText = (i: number, text: string) => plan(good().map((s, j) => (j === i ? { ...s, text } : s)));
+    const short = approvalBlockers(withText(1, "Too short"), codes);
+    expect(short.join(" ")).toMatch(/Line 2 has 2 words; each line needs 5 to 60 words/);
+    expect(approvalBlockers(withText(1, "one"), codes).join(" ")).toMatch(/Line 2 has 1 word; each line needs 5 to 60 words/);
+    expect(approvalBlockers(withText(1, w(61)), codes).join(" ")).toMatch(/Line 2 has 61 words/);
+    expect(approvalBlockers(withText(1, w(5)), codes).filter((b) => /words; each line/.test(b))).toEqual([]);
+    expect(approvalBlockers(withText(1, w(60)), codes).filter((b) => /words; each line/.test(b))).toEqual([]);
+    expect(approvalBlockers(withText(1, ""), codes).filter((b) => /words; each line/.test(b))).toEqual([]); // that one is "has no words"
+  });
+
   it("approvalBlockers lists a saved plan whose structure was edited away, and a good plan has none of them", () => {
     const codes = ["slow_mobile", "no_contact_form", "stale_copyright"];
     const withTwoHooks = good().map((s) => (s.id === "e" ? { ...s, role: "hook" as const } : s));

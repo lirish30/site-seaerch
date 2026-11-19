@@ -3,7 +3,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
 import { buildBundle } from "../src/worker/queue/bundle";
 import { completeTask, expireOldTasks, finishClaudeTask, getTask } from "../src/worker/queue/db";
 import { getTaskKind } from "../src/worker/queue/registry";
-import { VIDEO_SCRIPT_KIND, VIDEO_SCRIPT_FAILED, buildScriptInstructions, defaultNarration, requestVideoScript } from "../src/worker/queue/videoScript";
+import { VIDEO_SCRIPT_KIND, VIDEO_SCRIPT_FAILED, VIDEO_SCRIPT_KEPT, buildScriptInstructions, defaultNarration, requestVideoScript } from "../src/worker/queue/videoScript";
 import { insertAudit } from "../src/worker/db/audits";
 import { createVideoAudit, getVideoAudit, savePlan, setVideoStatus } from "../src/worker/db/videoAudits";
 import { saveSettings, getSettings } from "../src/worker/db/settings";
@@ -179,6 +179,31 @@ describe("the video workflow", () => {
     expect(JSON.parse(rows[0].payload)).toEqual({ videoId: v.id, steeringNote: null });
   });
 
+  it("a workflow step that runs after the video was cancelled leaves it cancelled and captures nothing", async () => {
+    const b = await seedBusiness();
+    const audit = await insertTestAudit(b.id);
+    const v = (await createVideoAudit(env.DB, { businessId: b.id, auditId: audit.id }))!;
+    let launches = 0;
+    const browser = fakeBrowser();
+    // The owner cancels after the workflow read the video as capturing and before its capture step wrote anything.
+    const cancelling: StepLike = { do: async (n, fn) => { if (n === "capture") await setVideoStatus(env.DB, v.id, "cancelled"); return fn(); }, sleep: async () => {} };
+    await runVideoAudit(env, cancelling, { videoId: v.id }, { browser: { newPage: async () => { launches++; return browser.newPage(); }, close: async () => {} } });
+    expect((await getVideoAudit(env.DB, v.id))!.status).toBe("cancelled");
+    expect(launches).toBe(0);
+    expect((await env.DB.prepare(`SELECT 1 FROM claude_tasks WHERE kind = ?`).bind(VIDEO_SCRIPT_KIND).all()).results).toHaveLength(0);
+  });
+
+  it("a capture that finishes after the video was cancelled leaves it cancelled and queues no script", async () => {
+    const b = await seedBusiness();
+    const audit = await insertTestAudit(b.id);
+    const v = (await createVideoAudit(env.DB, { businessId: b.id, auditId: audit.id }))!;
+    const inner = fakeBrowser();
+    const slow: BrowserLike = { newPage: async () => { await setVideoStatus(env.DB, v.id, "cancelled"); return inner.newPage(); }, close: async () => {} };
+    await runVideoAudit(env, step, { videoId: v.id }, { browser: slow });
+    expect((await getVideoAudit(env.DB, v.id))!.status).toBe("cancelled");
+    expect((await env.DB.prepare(`SELECT 1 FROM claude_tasks WHERE kind = ?`).bind(VIDEO_SCRIPT_KIND).all()).results).toHaveLength(0);
+  });
+
   it("a capture failure sets the video failed with the error text and queues nothing", async () => {
     const b = await seedBusiness();
     const audit = await insertTestAudit(b.id);
@@ -338,6 +363,40 @@ describe("a script that never comes", () => {
     await claimById(taskId);
     await finishClaudeTask(env, taskId, "failed", "gave up");
     expect(await getVideoAudit(env.DB, v.id)).toMatchObject({ status: "failed", error: VIDEO_SCRIPT_FAILED });
+  });
+
+  describe("a new script that never comes, for a video that already has a reviewed plan", () => {
+    /** A video in review with a plan (edited by the owner), sent to scripting by "regenerate script". */
+    async function regenerating() {
+      const t = await scripting();
+      const segments = goodDraft().segments.map((s) => ({ ...s, text: `${s.text} edited` }));
+      await savePlan(env.DB, t.v.id, { shots: t.shots, segments: segments as any, narration: "recorded", version: 0 });
+      return { ...t, segments };
+    }
+
+    it("an expired script task puts the video back in review with the current script and says so", async () => {
+      const { v, segments } = await regenerating();
+      expect(await expireOldTasks(env, new Date(Date.now() + 15 * 86_400_000))).toBe(1);
+      const after = (await getVideoAudit(env.DB, v.id))!;
+      expect(after).toMatchObject({ status: "review", error: VIDEO_SCRIPT_KEPT });
+      expect(after.plan!.segments.map((s) => s.text)).toEqual(segments.map((s) => s.text));
+      expect(VIDEO_SCRIPT_KEPT).toBe("Claude didn't write a new script. Your current script is still here.");
+    });
+
+    it("a failed script task puts the video back in review with the current script", async () => {
+      const { v, taskId, segments } = await regenerating();
+      await claimById(taskId);
+      await finishClaudeTask(env, taskId, "failed", "gave up");
+      const after = (await getVideoAudit(env.DB, v.id))!;
+      expect(after).toMatchObject({ status: "review", error: VIDEO_SCRIPT_KEPT });
+      expect(after.plan!.segments).toHaveLength(segments.length);
+    });
+
+    it("a video with no script yet still fails", async () => {
+      const { v } = await scripting();
+      await expireOldTasks(env, new Date(Date.now() + 15 * 86_400_000));
+      expect(await getVideoAudit(env.DB, v.id)).toMatchObject({ status: "failed", error: VIDEO_SCRIPT_FAILED });
+    });
   });
 
   it("an expiry leaves a video that has moved on alone", async () => {

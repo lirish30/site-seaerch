@@ -35,7 +35,7 @@ export async function serveObject(raw: R2Bucket, key: string, contentType: strin
   const head = await raw.head(key);
   if (!head) return notFound();
   const size = head.size;
-  const base = { "content-type": contentType, "accept-ranges": "bytes" };
+  const base = { "content-type": contentType, "accept-ranges": "bytes", "x-content-type-options": "nosniff" };
   const r = parseRange(range, size);
   if (r === "unsatisfiable") return new Response(null, { status: 416, headers: { ...base, "content-range": `bytes */${size}` } });
   if (r === null) {

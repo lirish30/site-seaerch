@@ -150,8 +150,24 @@ export async function setArchived(db: D1Database, id: string, archived: boolean)
   return (await getBusiness(db, id))!;
 }
 
-/** Permanently removes a lead and everything recorded about it. Raw crawl files in R2 are left to expire. */
-export async function deleteBusiness(db: D1Database, id: string) {
+/** Deletes every object under a prefix, a page of the listing at a time. */
+async function deleteByPrefix(raw: R2Bucket, prefix: string): Promise<void> {
+  let cursor: string | undefined;
+  do {
+    const page = await raw.list({ prefix, cursor });
+    const keys = page.objects.map((o) => o.key);
+    for (let i = 0; i < keys.length; i += 1000) await raw.delete(keys.slice(i, i + 1000)); // R2 takes at most 1000 keys per delete
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+}
+
+/**
+ * Permanently removes a lead and everything recorded about it. Raw crawl files in R2 are left to expire. With `raw`, the lead's video files
+ * (`video/<videoId>/**`: screenshots of the prospect's site, the owner's own recordings, the audio and the renders) are deleted too, best effort and only
+ * after the database delete has succeeded: a storage problem is logged and never undoes it.
+ */
+export async function deleteBusiness(db: D1Database, id: string, raw?: R2Bucket) {
+  const videoIds = raw ? (await db.prepare(`SELECT id FROM video_audits WHERE business_id = ?`).bind(id).all<{ id: string }>()).results.map((r) => r.id) : [];
   await db.batch([
     db.prepare(`DELETE FROM cro_items WHERE cro_audit_id IN (SELECT id FROM cro_audits WHERE business_id = ?)`).bind(id),
     // Viewing data is keyed by report token: it goes before the audit_reports rows that say whose it is.
@@ -160,6 +176,7 @@ export async function deleteBusiness(db: D1Database, id: string) {
       db.prepare(`DELETE FROM ${t} WHERE business_id = ?`).bind(id)),
     db.prepare(`DELETE FROM businesses WHERE id = ?`).bind(id),
   ]);
+  if (raw) for (const videoId of videoIds) await deleteByPrefix(raw, `video/${videoId}/`).catch((e) => console.error("could not delete the video files of", videoId, e));
 }
 
 export async function updateLead(db: D1Database, id: string, u: {

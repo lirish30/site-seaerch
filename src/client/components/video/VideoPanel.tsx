@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, ApiError } from "../../api";
 import { pollDelay } from "../../poll";
-import { canCancel, isOpen, videoStateLine } from "../../videoView";
+import { canCancel, canUnpublish, isOpen, lastAttemptNotice, videoStateLine } from "../../videoView";
 import { watchedLine } from "../../videoViewsView";
 import InlineError from "../InlineError";
 
@@ -52,13 +52,23 @@ export default function VideoPanel({ leadId, canStart, whyNot }: { leadId: strin
     finally { if (alive.current) setBusy(""); }
   }
 
+  async function unpublish() {
+    if (!data?.video || !window.confirm("Unpublish this video? It goes off the report page right away, and an email that already went out will show a broken picture. You can make another video afterwards.")) return;
+    setBusy("unpublish"); setError("");
+    try { await api.post(`/video-audits/${data.video.id}/unpublish`); await load(); }
+    catch (e) { setError(e instanceof ApiError ? e.message : "Couldn't unpublish the video."); await load().catch(() => {}); }
+    finally { if (alive.current) setBusy(""); }
+  }
+
   if (!data) return error ? <InlineError message={error} /> : <p className="muted small">Loading…</p>;
   const v = data.video;
   const line = v ? videoStateLine({ status: v.status, jobs: [], helperOnline: !!data.helperOnline, error: v.error }) : "";
   const open = !!v && isOpen(v.status);
+  const attempt = v ? lastAttemptNotice(v.status, v.error) : "";
   return (
     <div className="vd-panel">
       {v && (line ? <p className="prop-note" role="status">{line}</p> : <p className="prop-note" role="status">The script is ready for your edits.</p>)}
+      {attempt && <p className="prop-note" role="status">{attempt}</p>}
       {data.watched && <p className="prop-note" role="status">{watchedLine(data.watched, new Date())}</p>}
       {!v && <p className="prop-note">A short narrated screen recording of what is wrong with their site.</p>}
       <div className="btn-row nowrap">
@@ -69,6 +79,7 @@ export default function VideoPanel({ leadId, canStart, whyNot }: { leadId: strin
           </button>
         )}
         {v && canCancel(v.status) && <button type="button" className="btn" onClick={() => void cancel()} disabled={!!busy}>Cancel video</button>}
+        {v && canUnpublish(v.status) && <button type="button" className="btn" onClick={() => void unpublish()} disabled={!!busy}>{busy === "unpublish" ? "Unpublishing…" : "Unpublish"}</button>}
       </div>
       {!canStart && (!v || !open) && <p className="prop-note">{whyNot}</p>}
       <InlineError message={error} />

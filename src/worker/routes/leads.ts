@@ -291,7 +291,7 @@ leadRoutes.post("/:id/suppress", async (c) => {
 leadRoutes.delete("/:id", async (c) => {
   const id = c.req.param("id");
   if (!(await getBusiness(c.env.DB, id))) return c.json({ error: "not found" }, 404);
-  await deleteBusiness(c.env.DB, id);
+  await deleteBusiness(c.env.DB, id, c.env.RAW);
   await cancelTasksFor(c.env.DB, "lead", id); // Claude work still queued for this lead (an AI review, say) is closed, so nobody does it
   return c.json({ ok: true });
 });

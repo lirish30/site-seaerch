@@ -75,6 +75,18 @@ export async function publishedVideoForToken(db: D1Database, token: string, now 
   return r ? publishedVideoForAudit(db, r.audit_id) : null;
 }
 
+/**
+ * The lead and audit a report link is live for: not revoked, not expired, its audit still the lead's own. Decided exactly as `publicReport` and
+ * `publishedVideoForToken` decide a link is live. Null for anything else.
+ */
+export async function liveReportTarget(db: D1Database, token: string, now = new Date()): Promise<{ businessId: string; auditId: string } | null> {
+  const r = await db.prepare(
+    `SELECT r.business_id AS business_id, r.audit_id AS audit_id FROM audit_reports r JOIN audits a ON a.id = r.audit_id AND a.business_id = r.business_id JOIN businesses b ON b.id = r.business_id
+     WHERE r.token = ? AND r.revoked = 0 AND r.expires_at > ?`,
+  ).bind(token, now.toISOString()).first<{ business_id: string; audit_id: string }>();
+  return r ? { businessId: r.business_id, auditId: r.audit_id } : null;
+}
+
 /** The ONLY shape exposed publicly. Fields are copied one by one so nothing else can leak in by accident. */
 export async function publicReport(db: D1Database, token: string, now = new Date()): Promise<PublicReport | null> {
   const r = await db.prepare(

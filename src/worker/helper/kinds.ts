@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Env } from "../env";
-import { getVideoAudit, setSegmentAudio, setVideoStatus } from "../db/videoAudits";
+import { getVideoAudit, moveVideoStatus, setSegmentAudio } from "../db/videoAudits";
 import { ShotSchema, SegmentSchema, hashText } from "../video/plan";
 import { allVoiced, productionDeps } from "../video/production";
 import { applyRender } from "../video/renderJob";
@@ -62,10 +62,13 @@ export type VoiceSegmentResult = z.infer<typeof VoiceSegmentResult>;
 /** Where a line's cloned audio goes. The words are in the name, so a take of old words can never pass for the line's current ones. */
 export const voiceSegmentKey = (p: Pick<VoiceSegmentPayload, "videoId" | "segmentId" | "text">): string => `video/${p.videoId}/audio/${p.segmentId}-${hashText(p.text)}.wav`;
 
-/** A video that cannot be made any further: it fails with the reason, unless it has moved on meanwhile, and its other helper jobs are closed. */
+/**
+ * A video that cannot be made right now (a voice engine is not installed, `hyperframes` is not on the helper's PATH, the Mac was off): it goes back to
+ * `review` with the reason in `error`, unless it has moved on meanwhile (the move is compare-and-set), and its other helper jobs are closed. The plan
+ * and the audio already made are kept, so approving again queues only what is missing: a closed job is not "open", so its dedupe key is free.
+ */
 export async function failProducing(env: Env, videoId: string, why: string): Promise<void> {
-  const v = await getVideoAudit(env.DB, videoId);
-  if (v?.status === "producing") await setVideoStatus(env.DB, videoId, "failed", { error: why });
+  await moveVideoStatus(env.DB, videoId, ["producing"], "review", { error: why });
   await cancelHelperJobsFor(env.DB, videoId);
 }
 
@@ -99,7 +102,7 @@ const voiceSegment: HelperKindDef<VoiceSegmentPayload, VoiceSegmentResult> = {
   },
 
   async onFail(env, p, error) { await failProducing(env, p.videoId, `The voice for a line could not be made: ${error}`); },
-  async onExpire(env, p) { await failProducing(env, p.videoId, "Your Mac helper didn't pick up the voice work in time. Start the video again when it is running."); },
+  async onExpire(env, p) { await failProducing(env, p.videoId, "Your Mac helper didn't pick up the voice work in time. Approve the video again when it is running."); },
 };
 registerHelperKind(voiceSegment);
 
@@ -164,6 +167,6 @@ const render: HelperKindDef<RenderPayload, RenderResult> = {
   outputs: (p) => { const k = renderKeys(p.videoId, p.planVersion); return [k.mp4, k.gif, k.jpg]; },
   apply: (env, p, r) => applyRender(env, p, r),
   async onFail(env, p, error) { await failProducing(env, p.videoId, `The video could not be rendered: ${error}`); },
-  async onExpire(env, p) { await failProducing(env, p.videoId, "Your Mac helper didn't pick up the render in time. Start the video again when it is running."); },
+  async onExpire(env, p) { await failProducing(env, p.videoId, "Your Mac helper didn't pick up the render in time. Approve the video again when it is running."); },
 };
 registerHelperKind(render);

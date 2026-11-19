@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   addMarkup, approveBlockers, canCancel, editorMode, isWatching, lineVoice, mergeSaved, moveMarkup, moveArrowEnd, removeMarkup, replaceMarkup, resizeMarkup, scriptSummary, setSegmentShot, setSegmentText,
-  shotLabel, videoStateLine, publishState, canReopen, hasPlayer,
+  shotLabel, videoStateLine, publishState, canReopen, hasPlayer, canUnpublish, lastAttemptNotice,
 } from "../src/client/videoView";
 import { MAX_MARKUPS, hashText, type Markup, type Segment, type VideoPlan } from "../src/worker/video/plan";
 
@@ -265,5 +265,24 @@ describe("publish approval in the editor", () => {
     expect(hasPlayer({ status: "published", video_key: "k" })).toBe(true);
     expect(hasPlayer({ status: "rendered", video_key: null })).toBe(false);
     expect(hasPlayer({ status: "review", video_key: "k" })).toBe(false);
+  });
+});
+
+describe("unpublishing", () => {
+  it("offers Unpublish only for a published video", () => {
+    expect(canUnpublish("published")).toBe(true);
+    for (const s of ["capturing", "scripting", "review", "producing", "rendered", "failed", "cancelled"]) expect(canUnpublish(s), s).toBe(false);
+  });
+});
+
+describe("lastAttemptNotice", () => {
+  it("names the helper's error while the video is back in review", () => {
+    expect(lastAttemptNotice("review", "hyperframes is not installed")).toBe("The last attempt failed: hyperframes is not installed");
+  });
+  it("says nothing without an error, or in any other status", () => {
+    expect(lastAttemptNotice("review", null)).toBe("");
+    expect(lastAttemptNotice("review", "")).toBe("");
+    expect(lastAttemptNotice("review", undefined)).toBe("");
+    for (const s of ["capturing", "scripting", "producing", "rendered", "published", "failed", "cancelled"]) expect(lastAttemptNotice(s, "boom"), s).toBe("");
   });
 });

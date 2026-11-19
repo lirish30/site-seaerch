@@ -4,7 +4,7 @@ import { getAudit, latestAudit } from "../db/audits";
 import { getBusiness } from "../db/businesses";
 import { getSettings } from "../db/settings";
 import { leadSuppression } from "../db/suppression";
-import { getVideoAudit, savePlan, setVideoStatus, type VideoAudit } from "../db/videoAudits";
+import { getVideoAudit, moveVideoStatus, savePlan, setVideoStatus, type VideoAudit } from "../db/videoAudits";
 import { TONES } from "../drafter/prompt";
 import type { Audit, Business, Settings } from "../types";
 import { DraftPlanSchema, GAP_MS, LINE_WORDS, MAX_CALLOUT_CHARS, MAX_MARKUPS, PROBLEM_COUNT, SCRIPT_MS, WORDS_PER_MINUTE, checkPlanAgainst, type Shot, type VideoPlan } from "../video/plan";
@@ -14,6 +14,8 @@ import { enqueueTask } from "./db";
 /** The task kind this file handles: Claude writes the narration script and the first markups for a video audit. */
 export const VIDEO_SCRIPT_KIND = "video.script";
 export const VIDEO_SCRIPT_FAILED = "Claude didn't write the script. Try again.";
+/** Said when a new script never came for a video that already has one: the owner keeps the script they had. */
+export const VIDEO_SCRIPT_KEPT = "Claude didn't write a new script. Your current script is still here.";
 
 export const VideoScriptPayload = z.object({ videoId: z.string().min(1), steeringNote: z.string().nullable().optional() });
 export type VideoScriptPayload = z.infer<typeof VideoScriptPayload>;
@@ -114,10 +116,16 @@ async function loadTarget(db: D1Database, videoId: string): Promise<{ stale: str
   return { video, plan: video.plan, audit, business };
 }
 
-/** Nobody wrote the script: the video can never get one, so it fails (unless it has moved on meanwhile) and the user can start another. */
+/**
+ * Nobody wrote the script. A video that already has one (it came from "regenerate script", and the owner may have edited the plan) goes back to
+ * review with that plan and a note saying so; a video that never had a script can never get one, so it fails and the user can start another.
+ * Either way only while it is still `scripting`: a video that has moved on is left alone.
+ */
 async function failIfScripting(db: D1Database, videoId: string): Promise<void> {
   const v = await getVideoAudit(db, videoId);
-  if (v?.status === "scripting") await setVideoStatus(db, videoId, "failed", { error: VIDEO_SCRIPT_FAILED });
+  if (v?.status !== "scripting") return;
+  if (v.plan?.segments.length) await moveVideoStatus(db, videoId, ["scripting"], "review", { error: VIDEO_SCRIPT_KEPT });
+  else await moveVideoStatus(db, videoId, ["scripting"], "failed", { error: VIDEO_SCRIPT_FAILED });
 }
 
 const videoScript: TaskKindDef<VideoScriptPayload, z.infer<typeof DraftPlanSchema>> = {

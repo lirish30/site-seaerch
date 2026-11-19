@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import Icon from "../Icon";
-import { approvalLink, approvalsLine, draftedByLabel, groupApprovals, parsePayloadText, whenLabel, type ApprovalItem } from "../../approvalsView";
+import { approvalLink, approvalsLine, canBulkApprove, draftedByLabel, groupApprovals, parsePayloadText, whenLabel, type ApprovalItem } from "../../approvalsView";
 import type { Part } from "./useHome";
 
 type Mode = "edit" | "reject";
@@ -35,7 +35,7 @@ export default function ApprovalsCard({ approvals, errs, busy, onApprove, onReje
             <div className="hm-appr-group" key={g.kind}>
               <div className="hm-appr-ghead">
                 <h3>{g.label} <span>{g.items.length}</span></h3>
-                <button type="button" className="btn sm" disabled={groupBusy} onClick={() => onApproveAll(g.items)}>Approve all {g.items.length}</button>
+                {canBulkApprove(g.kind) && <button type="button" className="btn sm" disabled={groupBusy} onClick={() => onApproveAll(g.items)}>Approve all {g.items.length}</button>}
               </div>
               <ul className="hm-appr-list">
                 {g.items.map((a) => (

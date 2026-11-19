@@ -12,6 +12,8 @@ import { errorText } from "./redact";
 import { checkConflict } from "../conflict";
 import { getEnrollment } from "../db/enrollments";
 import { advanceAfterSend } from "../sequence/advance";
+import { liveReportTarget } from "../db/reports";
+import { publishedVideoForAudit } from "../db/videoAudits";
 import { isLive } from "../sequence/types";
 import { dailyLimit, sentInLast24h, warmupUnlockDate } from "./limits";
 import type { Mailbox, MailboxKey } from "./types";
@@ -85,6 +87,31 @@ export function linkProblem(c: Pick<ComposedEmail, "text" | "html">, mailbox: Ma
     }
   }
   return null;
+}
+
+/** Said when a video email's link no longer leads to a live video for this lead. */
+export const HERO_NOT_LIVE = "the video link is no longer live: make a new one";
+
+/** The report token in a hero's two links (`/r/<token>` and `/api/public/report/<token>/media/...`), or null when either does not have one. Both must name the same one. */
+function heroToken(hero: { src: string; href: string }): string | null {
+  try {
+    const href = /^\/r\/([A-Za-z0-9_-]{43})$/.exec(new URL(hero.href).pathname)?.[1];
+    const src = /^\/api\/public\/report\/([A-Za-z0-9_-]{43})\//.exec(new URL(hero.src).pathname)?.[1];
+    return href && href === src ? href : null;
+  } catch { return null; }
+}
+
+/**
+ * Why a video email's hero may not go out, or null when it may: its report link must be live (not revoked, not expired) and belong to THIS lead, and the
+ * audit it is for must have a published video. The approval was made some time ago: the link may have been revoked, or the video unpublished, since.
+ * A hero put in by anyone else (it is not the app's to trust) is held to the same rule.
+ */
+export async function heroProblem(db: D1Database, p: Pick<SendInput, "businessId" | "heroImage">, now: Date): Promise<string | null> {
+  if (!p.heroImage) return null;
+  const token = p.businessId ? heroToken(p.heroImage) : null;
+  const target = token ? await liveReportTarget(db, token, now) : null;
+  if (!target || target.businessId !== p.businessId) return HERO_NOT_LIVE;
+  return (await publishedVideoForAudit(db, target.auditId)) ? null : HERO_NOT_LIVE;
 }
 
 /**
@@ -164,7 +191,7 @@ export async function sendEmail(env: Env, p: SendInput, opts: { approvalId: stri
   }
   const composed = composeOutbound(settings, p, real);
   if (real) {
-    const problem = linkProblem(composed, p.mailbox, env.OUTREACH_LINK_BASE, p.heroImage);
+    const problem = linkProblem(composed, p.mailbox, env.OUTREACH_LINK_BASE, p.heroImage) ?? (await heroProblem(db, p, now));
     if (problem) throw new Error(problem);
     if (p.mailbox === "outreach" && !(await isReplyToInbound(db, p))) await assertWithinLimit(db, mb, now);
   }

@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 import { createVideoAudit, getVideoAudit, latestVideoFor, publishedVideoForAudit, savePlan, setVideoStatus } from "../src/worker/db/videoAudits";
 import type { VideoPlan } from "../src/worker/video/plan";
 import { seedBusiness } from "./fixtures/cro";
+import { deleteBusiness, getBusiness } from "../src/worker/db/businesses";
 
 const plan = (): VideoPlan => ({
   shots: [{ id: "s1", viewport: "desktop", scrollY: 0, width: 1440, height: 900, fullKey: "k/full.png", previewKey: "k/p.jpg" }],
@@ -70,5 +71,51 @@ describe("video audits db", () => {
     expect((await latestVideoFor(env.DB, b.id))!.id).toBe(newer.id);
     expect(await publishedVideoForAudit(env.DB, "aud-8")).toBeNull();
     expect((await publishedVideoForAudit(env.DB, "aud-7"))!.id).toBe(old.id);
+  });
+});
+
+describe("deleting a lead removes its video files", () => {
+  const put = (key: string) => env.RAW.put(key, new Uint8Array([1, 2, 3]));
+  const keysUnder = async (prefix: string) => (await env.RAW.list({ prefix })).objects.map((o) => o.key);
+
+  it("deletes everything under video/<id>/ for each of the lead's videos, and nothing of anyone else's", async () => {
+    const b = await seedBusiness();
+    const other = await seedBusiness();
+    const v1 = (await createVideoAudit(env.DB, { businessId: b.id, auditId: "aud-del-1" }))!;
+    const v2 = (await createVideoAudit(env.DB, { businessId: b.id, auditId: "aud-del-2" }))!;
+    const keep = (await createVideoAudit(env.DB, { businessId: other.id, auditId: "aud-del-3" }))!;
+    for (const v of [v1, v2, keep]) for (const k of ["shots/d1.jpg", "shots/d1.preview.jpg", "recordings/s1-aaaa.webm", "audio/s1-bbbb.wav", "out/v1.mp4"]) await put(`video/${v.id}/${k}`);
+    await put(`video/${v1.id}x/shots/neighbour.jpg`); // a prefix of another id's name must not be swept up
+    await deleteBusiness(env.DB, b.id, env.RAW);
+    expect(await getBusiness(env.DB, b.id)).toBeNull();
+    expect(await keysUnder(`video/${v1.id}/`)).toEqual([]);
+    expect(await keysUnder(`video/${v2.id}/`)).toEqual([]);
+    expect(await keysUnder(`video/${keep.id}/`)).toHaveLength(5);
+    expect(await keysUnder(`video/${v1.id}x/`)).toHaveLength(1);
+  });
+
+  it("deletes a video with more files than one listing page holds", async () => {
+    const b = await seedBusiness();
+    const v = (await createVideoAudit(env.DB, { businessId: b.id, auditId: "aud-del-4" }))!;
+    const small = { list: (o: R2ListOptions) => env.RAW.list({ ...o, limit: 3 }), delete: (k: string | string[]) => env.RAW.delete(k) } as unknown as R2Bucket;
+    for (let i = 0; i < 8; i++) await put(`video/${v.id}/shots/s${i}.jpg`);
+    await deleteBusiness(env.DB, b.id, small);
+    expect(await keysUnder(`video/${v.id}/`)).toEqual([]);
+  });
+
+  it("still deletes the lead when the storage cannot be cleaned", async () => {
+    const b = await seedBusiness();
+    await createVideoAudit(env.DB, { businessId: b.id, auditId: "aud-del-5" });
+    const broken = { list: async () => { throw new Error("r2 down"); }, delete: async () => { throw new Error("r2 down"); } } as unknown as R2Bucket;
+    await expect(deleteBusiness(env.DB, b.id, broken)).resolves.toBeUndefined();
+    expect(await getBusiness(env.DB, b.id)).toBeNull();
+  });
+
+  it("without a bucket only the database rows go", async () => {
+    const b = await seedBusiness();
+    const v = (await createVideoAudit(env.DB, { businessId: b.id, auditId: "aud-del-6" }))!;
+    await put(`video/${v.id}/shots/d1.jpg`);
+    await deleteBusiness(env.DB, b.id);
+    expect(await keysUnder(`video/${v.id}/`)).toHaveLength(1);
   });
 });

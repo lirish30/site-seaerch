@@ -21,6 +21,12 @@ export function groupApprovals(items: ApprovalItem[]): ApprovalGroup[] {
   return [...groups.values()];
 }
 
+/**
+ * Whether a kind can be approved with "Approve all" on its group. A video is published only after the owner has watched it, one at a time, so its
+ * group has no bulk button; the individual Approve stays.
+ */
+export const canBulkApprove = (kind: string): boolean => kind !== "video.publish";
+
 /** Where to open the thing an approval is about, when the inbox can show a way in: a publish approval opens the lead's video editor. */
 export function approvalLink(a: Pick<ApprovalItem, "kind" | "record_type" | "record_id">): { to: string; label: string } | null {
   if (a.kind === "video.publish" && a.record_type === "lead" && a.record_id) return { to: `/leads/${encodeURIComponent(a.record_id)}/video`, label: "Watch and edit the video" };

@@ -8,7 +8,7 @@ import { VOICE_SEGMENT_KIND } from "../src/worker/helper/kinds";
 import { createVideoAudit, getVideoAudit, savePlan, setVideoStatus } from "../src/worker/db/videoAudits";
 import { listAgentActions } from "../src/worker/db/agentActions";
 import { hashText, type Segment, type VideoPlan } from "../src/worker/video/plan";
-import { productionDeps, startProduction } from "../src/worker/video/production";
+import { PICK_A_VOICE, productionDeps, startProduction } from "../src/worker/video/production";
 import { helperKindLog, registerHelperTestKinds, resetHelperKindLog, unregisterHelperTestKinds } from "./helper-kinds";
 
 const NOW = new Date("2026-11-18T18:00:00.000Z");
@@ -318,15 +318,51 @@ describe("producing a video", () => {
     expect((r as { error: string }).error).toMatch(/upload/);
   });
 
-  it("a voice job that fails ends the video and closes its other jobs", async () => {
-    const lines = [seg("s1", "First line here"), seg("s2", "Second line here")];
+  it("a voice job that fails sends the video back to review with the reason, keeps the plan and the finished audio, and closes its other jobs", async () => {
+    const done = seg("s3", "Already voiced line", { audio: cloned("s3", "Already voiced line") });
+    const lines = [seg("s1", "First line here"), seg("s2", "Second line here"), done];
     const id = await inReview(lines);
     await startProduction(env, id);
     const job = (await claimHelperJob(env.DB, devA, NOW))!;
     await failHelperJob(env, job.id, devA, "the engine is not installed");
     const v = (await getVideoAudit(env.DB, id))!;
-    expect(v.status).toBe("failed");
+    expect(v.status).toBe("review");
     expect(v.error).toMatch(/the engine is not installed/);
-    expect((await jobs()).filter((j) => j.status === "pending")).toHaveLength(0);
+    expect(v.plan!.segments.map((s) => s.id)).toEqual(["s1", "s2", "s3"]);
+    expect(v.plan!.segments[2].audio).toEqual(done.audio);
+    expect((await jobs()).filter((j) => j.status === "pending" || j.status === "claimed")).toHaveLength(0);
+  });
+
+  it("approving again after a failed voice job queues the voice again", async () => {
+    const lines = [seg("s1", "First line here"), seg("s2", "Second line here")];
+    const id = await inReview(lines);
+    await startProduction(env, id);
+    const job = (await claimHelperJob(env.DB, devA, NOW))!;
+    await failHelperJob(env, job.id, devA, "the engine is not installed");
+    expect((await getVideoAudit(env.DB, id))!.status).toBe("review");
+    expect(await startProduction(env, id)).toBe(true);
+    const after = (await getVideoAudit(env.DB, id))!;
+    expect(after).toMatchObject({ status: "producing", error: null });
+    expect((await jobs()).filter((j) => j.status === "pending").map((j) => JSON.parse(j.payload).segmentId).sort()).toEqual(["s1", "s2"]);
+  });
+
+  it("a voice job nobody picked up sends the video back to review with a reason the owner can act on", async () => {
+    const id = await inReview([seg("s1", "First line here")]);
+    await startProduction(env, id);
+    await expireOldHelperJobs(env, new Date(Date.now() + 30 * DAY));
+    const v = (await getVideoAudit(env.DB, id))!;
+    expect(v.status).toBe("review");
+    expect(v.error).toMatch(/helper/i);
+    expect(v.plan!.segments).toHaveLength(1);
+  });
+
+  it("no cloned voice set up: the video goes back to review with the pick-a-voice reason instead of failing", async () => {
+    const id = await inReview([seg("s1", "Spoken by me", { audio: recorded("s1", "Spoken by me") }), seg("s2", "No take of this line yet")], "recorded");
+    await env.DB.prepare(`UPDATE settings SET voice_engine = NULL, voice_ref_key = NULL WHERE id = 1`).run();
+    expect(await startProduction(env, id)).toBe(false);
+    const v = (await getVideoAudit(env.DB, id))!;
+    expect(v).toMatchObject({ status: "review", error: PICK_A_VOICE });
+    expect(v.plan!.segments[0].audio).toBeDefined();
+    expect(await jobs()).toHaveLength(0);
   });
 });

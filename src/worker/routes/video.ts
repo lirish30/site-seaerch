@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { getAudit, latestAudit } from "../db/audits";
 import { getBusiness } from "../db/businesses";
+import { logActivity } from "../db/activity";
 import { createVideoAudit, getVideoAudit, latestVideoFor, moveVideoStatus, savePlan, setVideoStatus, type VideoAudit } from "../db/videoAudits";
 import { cancelTasksFor } from "../queue/db";
 import { cancelHelperJobsFor, helperJobsForVideo, helperStatus } from "../helper/jobs";
@@ -229,7 +230,11 @@ videoRoutes.post("/video-audits/:id/approve", async (c) => {
   const audit = await getAudit(c.env.DB, video.audit_id);
   const blockers = [...approvalBlockers(video.plan, audit?.findings.map((f) => f.code) ?? []), ...voiceBlockers(video.plan, await getSettings(c.env.DB))];
   if (blockers.length) return c.json({ error: "The video can't be approved yet", blockers }, 409);
-  if (!(await startProduction(c.env, video.id))) return c.json({ error: "Only a video in review can be approved" }, 409);
+  if (!(await startProduction(c.env, video.id))) {
+    // Usually it moved on (started, cancelled). One case is worth saying: it was sent back to review because there is no voice to make its lines with.
+    const now = await getVideoAudit(c.env.DB, video.id);
+    return c.json({ error: now?.status === "review" && now.error ? now.error : "Only a video in review can be approved" }, 409);
+  }
   return c.json({ ok: true }, 202);
 });
 
@@ -242,7 +247,7 @@ videoRoutes.post("/video-audits/:id/keep-script", async (c) => {
   const video = await getVideoAudit(c.env.DB, id);
   if (!video) return c.json({ error: "not found" }, 404);
   if (video.status !== "scripting" || !video.plan?.segments.length) return c.json({ error: "There is no new script to drop" }, 409);
-  if (!(await moveVideoStatus(c.env.DB, id, ["scripting"], "review"))) return c.json({ error: "There is no new script to drop" }, 409);
+  if (!(await moveVideoStatus(c.env.DB, id, ["scripting"], "review", { error: null }))) return c.json({ error: "There is no new script to drop" }, 409);
   await cancelTasksFor(c.env.DB, "video", id);
   return c.json({ ok: true });
 });
@@ -265,9 +270,30 @@ videoRoutes.post("/video-audits/:id/reopen", async (c) => {
 /** Stops a video that is not finished with: it can no longer be made or published, and its audit is free for a new one. */
 videoRoutes.post("/video-audits/:id/cancel", async (c) => {
   const id = c.req.param("id");
+  const video = await getVideoAudit(c.env.DB, id);
+  if (!video) return c.json({ error: "not found" }, 404);
   const moved = await moveVideoStatus(c.env.DB, id, ["capturing", "scripting", "review", "producing", "rendered"], "cancelled");
-  if (moved) { await cancelTasksFor(c.env.DB, "video", id); await cancelHelperJobsFor(c.env.DB, id); return c.json({ ok: true }); }
-  return (await getVideoAudit(c.env.DB, id)) ? c.json({ error: "This video is already finished" }, 409) : c.json({ error: "not found" }, 404);
+  if (!moved) return c.json({ error: "This video is already finished" }, 409);
+  await cancelTasksFor(c.env.DB, "video", id);
+  await cancelHelperJobsFor(c.env.DB, id);
+  // A publish approval still waiting would otherwise stay in the inbox for a video that can no longer be published.
+  if (video.publish_approval_id) await reject(c.env.DB, video.publish_approval_id, "Video cancelled");
+  return c.json({ ok: true });
+});
+
+/**
+ * Takes a published video offline: `published -> cancelled` in one guarded statement, which frees the audit's one open-video slot for a new video. The
+ * public media route needs `published`, so the files stop being served at once and the report page stops showing the video. `published_at` is kept
+ * (only the status moves). Logged on the lead's timeline. Any publish approval still pending for it is rejected.
+ */
+videoRoutes.post("/video-audits/:id/unpublish", async (c) => {
+  const id = c.req.param("id");
+  const video = await getVideoAudit(c.env.DB, id);
+  if (!video) return c.json({ error: "not found" }, 404);
+  if (!(await moveVideoStatus(c.env.DB, id, ["published"], "cancelled"))) return c.json({ error: "Only a published video can be unpublished" }, 409);
+  if (video.publish_approval_id) await reject(c.env.DB, video.publish_approval_id, "Video unpublished");
+  await logActivity(c.env.DB, video.business_id, "note", "Unpublished the video audit");
+  return c.json({ ok: true });
 });
 
 videoRoutes.post("/video-audits/:id/regenerate-script", async (c) => {
@@ -278,11 +304,12 @@ videoRoutes.post("/video-audits/:id/regenerate-script", async (c) => {
   if (video.status !== "review") return c.json({ error: "A new script can only be written while the video is in review" }, 409);
   const note = body.data.steeringNote === undefined ? video.steering_note : body.data.steeringNote || null;
   // The plan stays as it is: the editor keeps showing it until the new script is applied. The status moves first, because a script is only accepted while the video is `scripting`.
-  await setVideoStatus(c.env.DB, video.id, "scripting", { steering_note: note });
+  // One guarded statement: an approve that lands first has moved the video on (it is `producing`), and it must not be pulled back to scripting.
+  if (!(await moveVideoStatus(c.env.DB, video.id, ["review"], "scripting", { steering_note: note, error: null }))) return c.json({ error: "A new script can only be written while the video is in review" }, 409);
   try {
     await requestVideoScript(c.env.DB, video.id, note);
   } catch (e) {
-    await setVideoStatus(c.env.DB, video.id, "review");
+    await moveVideoStatus(c.env.DB, video.id, ["scripting"], "review");
     throw e;
   }
   return c.json({ ok: true }, 202);

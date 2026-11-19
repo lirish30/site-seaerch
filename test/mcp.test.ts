@@ -137,6 +137,17 @@ describe("mcp", () => {
       expect(await countFor(sup.id) + await countFor(won.id)).toBe(0);
     });
 
+    it("mcp cannot propose an email with a hero image", async () => {
+      const b = await lead("Hero Plumbing", "https://hero-plumbing.test");
+      await knownAs(b.id, "owner@hero-plumbing.test");
+      const hero = { src: "https://go.hellositeline.test/api/public/report/tok/media/preview.gif", href: "https://go.hellositeline.test/r/tok", alt: "Video audit for Hero Plumbing" };
+      const j = await propose(b.id, "owner@hero-plumbing.test", { heroImage: hero });
+      expect(j.result.isError).toBe(true);
+      expect(j.result.content[0].text).toMatch(/heroImage/);
+      expect(await countFor(b.id)).toBe(0);
+      expect((await listAgentActions(env.DB, { limit: 500 })).some((a) => a.tool === "propose_approval" && /refused email\.send with a hero image/.test(a.summary))).toBe(true);
+    });
+
     it("refuses a payload the send handler would not accept", async () => {
       const b = await lead("Odd Plumbing", "https://odd-plumbing.test");
       const j = await propose(b.id, "not-an-email");

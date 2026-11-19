@@ -34,6 +34,14 @@ describe("public media", () => {
     expect((await media(token, "..%2Fvideo.mp4")).status).toBe(404);
   });
 
+  it("public media is served with nosniff, in full and by range", async () => {
+    const { v, token } = await renderedVideo();
+    await publish(v.id);
+    for (const headers of [{} as Record<string, string>, { range: "bytes=0-9" }]) {
+      for (const n of ["video.mp4", "poster.jpg", "preview.gif"]) expect((await media(token, n, headers)).headers.get("x-content-type-options"), n).toBe("nosniff");
+    }
+  });
+
   it("token for another audit does not serve this video", async () => {
     const { v, b } = await renderedVideo();
     await publish(v.id);

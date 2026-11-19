@@ -7,6 +7,9 @@ import { createDevice } from "../src/worker/helper/auth";
 import "../src/worker/helper/kinds";
 import { hashText, type Segment, type Shot, type VideoPlan } from "../src/worker/video/plan";
 import { seedBusiness } from "./fixtures/cro";
+import { renderedVideo } from "./fixtures/video";
+import { createPublishApproval } from "../src/worker/approvals/videoPublish";
+import { listActivity } from "../src/worker/db/activity";
 
 let cookie = "";
 const api = (path: string, init: RequestInit = {}) =>
@@ -259,6 +262,17 @@ describe("approve", () => {
     expect((await r2.json<any>()).blockers.join(" ")).toMatch(/seconds/);
   });
 
+  it("a one-word line blocks approval with a clear message", async () => {
+    const lines = SEGMENTS();
+    lines[2].text = "Hi"; // the rest keeps the script inside the length window
+    lines[1].text = words(60);
+    const { v } = await reviewing({ narration: "clone", segments: lines });
+    const r = await post(`/api/video-audits/${v.id}/approve`);
+    expect(r.status).toBe(409);
+    expect((await r.json<any>()).blockers.join(" ")).toMatch(/Line 3 has 1 word; each line needs 5 to 60 words/);
+    expect((await getVideoAudit(env.DB, v.id))!.status).toBe("review");
+  });
+
   it("is refused outside review and for an unknown video", async () => {
     const { v } = await reviewing({ narration: "clone", status: "scripting" });
     expect((await post(`/api/video-audits/${v.id}/approve`)).status).toBe(409);
@@ -319,6 +333,73 @@ describe("cancel", () => {
   });
 });
 
+describe("cancel and the publish approval", () => {
+  it("cancelling a rendered video rejects the publish approval that was waiting", async () => {
+    const { v } = await renderedVideo();
+    await createPublishApproval(env, v.id);
+    const approvalId = (await getVideoAudit(env.DB, v.id))!.publish_approval_id!;
+    expect((await post(`/api/video-audits/${v.id}/cancel`)).status).toBe(200);
+    expect(await env.DB.prepare(`SELECT status FROM approvals WHERE id = ?`).bind(approvalId).first()).toMatchObject({ status: "rejected" });
+  });
+});
+
+describe("unpublish", () => {
+  async function published() {
+    const t = await renderedVideo();
+    await createPublishApproval(env, t.v.id);
+    await setVideoStatus(env.DB, t.v.id, "published");
+    return { ...t, v: (await getVideoAudit(env.DB, t.v.id))! };
+  }
+  const publicMedia = (token: string) => SELF.fetch(`https://x/api/public/report/${token}/media/video.mp4`);
+
+  it("unpublish takes the video offline and frees the audit", async () => {
+    const { b, audit, v } = await published();
+    expect(await createVideoAudit(env.DB, { businessId: b.id, auditId: audit.id })).toBeNull(); // the published video holds the audit's slot
+    const r = await post(`/api/video-audits/${v.id}/unpublish`);
+    expect(r.status).toBe(200);
+    const after = (await getVideoAudit(env.DB, v.id))!;
+    expect(after.status).toBe("cancelled");
+    expect(after.published_at).toBe(v.published_at); // kept: only the status moves
+    expect(await listActivity(env.DB, b.id)).toContainEqual(expect.objectContaining({ kind: "note", detail: "Unpublished the video audit" }));
+  });
+
+  it("unpublish a video that is not published is refused", async () => {
+    const { v: rendered } = await renderedVideo();
+    expect((await post(`/api/video-audits/${rendered.id}/unpublish`)).status).toBe(409);
+    expect((await getVideoAudit(env.DB, rendered.id))!.status).toBe("rendered");
+    for (const status of ["review", "producing", "failed", "cancelled"] as const) {
+      const t = await reviewing({ status });
+      expect((await post(`/api/video-audits/${t.v.id}/unpublish`)).status, status).toBe(409);
+      expect((await getVideoAudit(env.DB, t.v.id))!.status).toBe(status);
+    }
+    expect((await post(`/api/video-audits/nope/unpublish`)).status).toBe(404);
+    // a refused unpublish writes nothing to the timeline
+    expect((await listActivity(env.DB, rendered.business_id)).some((a) => a.detail === "Unpublished the video audit")).toBe(false);
+  });
+
+  it("unpublish twice is refused the second time and logs once", async () => {
+    const { v, b } = await published();
+    expect((await post(`/api/video-audits/${v.id}/unpublish`)).status).toBe(200);
+    expect((await post(`/api/video-audits/${v.id}/unpublish`)).status).toBe(409);
+    expect((await listActivity(env.DB, b.id)).filter((a) => a.detail === "Unpublished the video audit")).toHaveLength(1);
+  });
+
+  it("the public media route 404s after unpublish", async () => {
+    const { v, token } = await published();
+    expect((await publicMedia(token)).status).toBe(200);
+    expect((await post(`/api/video-audits/${v.id}/unpublish`)).status).toBe(200);
+    expect((await publicMedia(token)).status).toBe(404);
+    expect((await SELF.fetch(`https://x/api/public/report/${token}`)).status).toBe(200); // the report page itself stays
+    expect((await (await SELF.fetch(`https://x/api/public/report/${token}`)).json<any>()).video).toBeNull();
+  });
+
+  it("a new video can be made after unpublish", async () => {
+    const { b, audit, v } = await published();
+    await post(`/api/video-audits/${v.id}/unpublish`);
+    expect(await createVideoAudit(env.DB, { businessId: b.id, auditId: audit.id })).not.toBeNull();
+  });
+});
+
 describe("write it myself", () => {
   it("drops the queued script and goes back to editing the current plan", async () => {
     const { v } = await reviewing();
@@ -344,6 +425,32 @@ describe("write it myself", () => {
     await post(`/api/video-audits/${v.id}/regenerate-script`);
     expect((await post(`/api/video-audits/${v.id}/cancel`)).status).toBe(200);
     expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM claude_tasks WHERE status IN ('pending','claimed')`).first<{ n: number }>())!.n).toBe(0);
+  });
+});
+
+describe("regenerate racing the rest of the pipeline", () => {
+  it("regenerate while the video is being made is refused and leaves it producing", async () => {
+    const { v } = await reviewing({ narration: "clone", status: "producing" });
+    const r = await post(`/api/video-audits/${v.id}/regenerate-script`);
+    expect(r.status).toBe(409);
+    expect((await getVideoAudit(env.DB, v.id))!.status).toBe("producing");
+    expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM claude_tasks`).first<{ n: number }>())!.n).toBe(0);
+  });
+
+  it("regenerate that loses the race to an approve does not move the video back to scripting", async () => {
+    const { v } = await reviewing({ narration: "clone" });
+    const [a, g] = await Promise.all([post(`/api/video-audits/${v.id}/approve`), post(`/api/video-audits/${v.id}/regenerate-script`)]);
+    const status = (await getVideoAudit(env.DB, v.id))!.status;
+    // Exactly one of them won: either it is producing (approve won, regenerate refused) or scripting (regenerate won, approve refused).
+    if (status === "producing") { expect(a.status).toBe(202); expect(g.status).toBe(409); }
+    else { expect(status).toBe("scripting"); expect(g.status).toBe(202); expect(a.status).toBe(409); }
+  });
+
+  it("asking for a new script clears an old failure note", async () => {
+    const { v } = await reviewing();
+    await setVideoStatus(env.DB, v.id, "review", { error: "The last attempt left a note" });
+    await post(`/api/video-audits/${v.id}/regenerate-script`);
+    expect((await getVideoAudit(env.DB, v.id))!.error).toBeNull();
   });
 });
 

@@ -179,5 +179,15 @@ export function publishState(status: string, approval: { status: string } | null
 /** A rendered video that was not published can go back to review to be changed and rendered again. */
 export const canReopen = (status: string): boolean => status === "rendered";
 
+/** A published video can be taken offline: the report page stops showing it and its audit is free for a new one. */
+export const canUnpublish = (status: string): boolean => status === "published";
+
+/**
+ * What the editor and the lead panel say when a video is back in review because the last attempt to make it (or to write a new script for it) did not
+ * work: a calm note, never a blocker. Empty when there is nothing to say.
+ */
+export const lastAttemptNotice = (status: string, error: string | null | undefined): string =>
+  status === "review" && error ? `The last attempt failed: ${error}` : "";
+
 /** Whether there is a made video to play: rendered or published, with its file stored. */
 export const hasPlayer = (v: { status: string; video_key: string | null }): boolean => (v.status === "rendered" || v.status === "published") && !!v.video_key;

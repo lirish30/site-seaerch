@@ -227,15 +227,27 @@ describe("the render job", () => {
     expect(await approvals()).toHaveLength(0);
   });
 
-  it("a failed render sets failed with the helper's error", async () => {
+  it("a failed render sends the video back to review with the helper's error, keeping the plan and the audio", async () => {
     const { v } = await video({ voiced: true });
     await enqueueRender(env, v.id);
     const job = await claimRender();
     expect(await failHelperJob(env, job.id, devA, "hyperframes exited with code 1: Chrome not found")).toBe(true);
     const after = (await getVideoAudit(env.DB, v.id))!;
-    expect(after.status).toBe("failed");
+    expect(after.status).toBe("review");
     expect(after.error).toContain("Chrome not found");
+    expect(after.plan).toEqual(v.plan);
+    expect(after.plan!.segments.every((s) => !!s.audio)).toBe(true);
     expect(await approvals()).toHaveLength(0);
+  });
+
+  it("approving again after a failed render queues the render again", async () => {
+    const { v } = await video({ voiced: true });
+    await enqueueRender(env, v.id);
+    const job = await claimRender();
+    await failHelperJob(env, job.id, devA, "hyperframes is not installed");
+    expect(await startProduction(env, v.id)).toBe(true);
+    expect((await getVideoAudit(env.DB, v.id))).toMatchObject({ status: "producing", error: null });
+    expect((await renderJobs(v.id)).filter((j) => j.status === "pending")).toHaveLength(1);
   });
 
   it("a failed render does not touch a video that moved on", async () => {
@@ -247,13 +259,14 @@ describe("the render job", () => {
     expect((await getVideoAudit(env.DB, v.id))!.status).toBe("cancelled");
   });
 
-  it("a render nobody picked up fails the video with a reason the owner can act on", async () => {
+  it("a render nobody picked up sends the video back to review with a reason the owner can act on", async () => {
     const { v } = await video({ voiced: true });
     await enqueueRender(env, v.id);
     await expireOldHelperJobs(env, new Date(Date.now() + 30 * 86_400_000));
     const after = (await getVideoAudit(env.DB, v.id))!;
-    expect(after.status).toBe("failed");
+    expect(after.status).toBe("review");
     expect(after.error).toMatch(/helper/i);
+    expect(after.plan).toEqual(v.plan);
   });
 });
 
