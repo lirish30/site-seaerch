@@ -11,6 +11,7 @@ const FIELD_ERRORS: Record<string, string> = {
   resume_url: "Resume link must be a web address, like https://yoursite.com/resume.pdf",
   booking_url: "Booking link must be an https:// address, like https://cal.com/you",
   booking_config: "Check the booking hours and budget choices: every block needs an end after its start, and the lowest budget choice can't be under the minimum engagement.",
+  documents_config: "Check the document settings: name who reviewed the clauses, keep the late fee between 0% and 10%, and the proposal expiry between 7 and 90 days.",
   monthly_spend_limit_usd: "Enter a monthly spend limit between 0 and 10000.",
 };
 

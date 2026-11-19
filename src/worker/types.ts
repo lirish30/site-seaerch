@@ -200,6 +200,8 @@ export interface Settings {
   ai_voice_note: number;
   /** JSON of a BookingConfig (availability windows, notice, buffer, budget options), or "{}" for the defaults. */
   booking_config: string;
+  /** JSON of a DocumentsConfig (legal-review record, late fee, proposal expiry), or "{}" for the defaults. */
+  documents_config: string;
 }
 export type TonePreset = "friendly_local" | "consultative" | "direct" | "formal";
 export type EmailLength = "short" | "medium" | "long";

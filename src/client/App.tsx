@@ -35,6 +35,7 @@ import VoiceTest from "./pages/settings/VoiceTest";
 import Scores from "./pages/settings/Scores";
 import Packages from "./pages/settings/Packages";
 import Booking from "./pages/settings/Booking";
+import Documents from "./pages/settings/Documents";
 import Shell from "./components/Shell";
 
 // Every page draws its own header and `.page-body` inside the panel.
@@ -80,6 +81,7 @@ export default function App() {
             <Route path="/settings/scores" element={<Scores />} />
             <Route path="/settings/packages" element={<Packages />} />
             <Route path="/settings/booking" element={<Booking />} />
+            <Route path="/settings/documents" element={<Documents />} />
           </Routes>
         </Shell>
       } />
