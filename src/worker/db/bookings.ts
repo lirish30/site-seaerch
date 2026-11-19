@@ -48,7 +48,7 @@ export async function getBooking(db: D1Database, id: string): Promise<Booking | 
  * Two intervals overlap when each starts before the other ends, so back to back is fine.
  */
 export async function insertBookingIfFree(
-  db: D1Database, b: Omit<Booking, "id" | "status" | "createdAt" | "cancelledAt" | "cancelToken" | "calendarEventId" | "meetUrl">,
+  db: D1Database, b: Omit<Booking, "id" | "status" | "createdAt" | "cancelledAt" | "cancelToken" | "calendarEventId" | "meetUrl"> & { /** Tests only: the creation time to record; the clock when left out. */ createdAt?: string },
 ): Promise<Booking | null> {
   const id = crypto.randomUUID(), start = iso(b.startAt), end = iso(b.endAt);
   try {
@@ -57,7 +57,7 @@ export async function insertBookingIfFree(
        SELECT ?,?,?,?, 'confirmed', ?,?,?,?,?,?,?,?,?
        WHERE NOT EXISTS (SELECT 1 FROM bookings WHERE status = 'confirmed' AND start_at < ? AND end_at > ?)`,
     ).bind(id, b.businessId, b.dealId, b.kind, start, end, b.contactName, b.contactEmail, b.contactPhone, b.answers ? JSON.stringify(b.answers) : null,
-      newCancelToken(), b.source, new Date().toISOString(), end, start).run();
+      newCancelToken(), b.source, b.createdAt ? iso(b.createdAt) : new Date().toISOString(), end, start).run();
     if ((res.meta.changes ?? 0) !== 1) return null;
   } catch (e) {
     if (isDuplicateKey(e)) return null; // one confirmed discovery call per lead

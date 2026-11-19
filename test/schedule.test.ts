@@ -88,7 +88,7 @@ describe("runScheduled", () => {
     const start = new Date(NOW.getTime() + 60 * 60_000);
     const { b } = await seedLead("Reminder Co");
     await insertBookingIfFree(env.DB, { businessId: b.id, dealId: null, kind: "discovery", startAt: start.toISOString(), endAt: new Date(start.getTime() + 20 * 60_000).toISOString(),
-      contactName: "Pat", contactEmail: "pat@acme.test", contactPhone: null, answers: null, source: "visitor" });
+      contactName: "Pat", contactEmail: "pat@acme.test", contactPhone: null, answers: null, source: "visitor", createdAt: new Date(NOW.getTime() - 86_400_000).toISOString() });
     await saveMailbox(env.DB, "main", { enabled: 1, smtp_host: "smtp.main.test", smtp_port: 465, imap_host: "imap.main.test", imap_port: 993, username: "l@main.test", from_email: "l@main.test", from_name: "L" });
     const out: string[] = [];
     let synced = 0;

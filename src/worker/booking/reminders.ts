@@ -15,16 +15,18 @@ const MIN = 60_000;
 
 /**
  * Which reminders are due at `now`: for a confirmed booking, the ones where `start - offset <= now < start - offset + window` that are not in `sent`.
- * A booking made inside a window gets that reminder at once, and one made after a window has passed never gets it.
+ * A reminder is only due if the booking already existed when its window opened (`createdAt <= start - offset`): one made 50 minutes out gets no "1 hour"
+ * reminder, and one made 7 minutes out gets none at all, because the mail would say a time that is not true. `createdAt` is the stored time, not `now`.
  */
 export function dueReminders(bookings: Booking[], sent: { bookingId: string; offsetMin: number }[], now: Date): { bookingId: string; offsetMin: ReminderOffset }[] {
   const done = new Set(sent.map((s) => `${s.bookingId}:${s.offsetMin}`));
   const out: { bookingId: string; offsetMin: ReminderOffset }[] = [];
   for (const b of bookings) {
     if (b.status !== "confirmed") continue;
-    const start = Date.parse(b.startAt);
+    const start = Date.parse(b.startAt), made = Date.parse(b.createdAt);
     for (const offsetMin of REMINDER_OFFSETS) {
       const from = start - offsetMin * MIN;
+      if (made > from) continue; // booked after this reminder's moment: it would say a time that is not true
       if (now.getTime() >= from && now.getTime() < from + REMINDER_WINDOW_MIN[offsetMin] * MIN && !done.has(`${b.id}:${offsetMin}`)) out.push({ bookingId: b.id, offsetMin });
     }
   }

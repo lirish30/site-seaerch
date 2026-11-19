@@ -46,8 +46,31 @@ describe("dueReminders", () => {
   it("a booking made 30 minutes before the call gets only the 10-minute reminder", () => {
     // Every 5-minute tick from the moment it was made to the start, with what was already sent carried forward.
     const sent: { bookingId: string; offsetMin: number }[] = [];
-    for (let m = 30; m >= 0; m -= 5) for (const d of dueReminders([fake()], sent, at(m))) sent.push(d);
+    for (let m = 30; m >= 0; m -= 5) for (const d of dueReminders([fake({ createdAt: iso(at(30)) })], sent, at(m))) sent.push(d);
     expect(sent).toEqual([{ bookingId: "b1", offsetMin: 10 }]);
+  });
+
+  it("a booking made 55 minutes out gets no 60-minute reminder but does get the 10-minute one", () => {
+    const b = [fake({ createdAt: iso(at(55)) })];
+    expect(dueReminders(b, [], at(55))).toEqual([]); // inside the 60-minute window, but it did not exist when that window opened
+    expect(dueReminders(b, [], at(50))).toEqual([]);
+    expect(dueReminders(b, [], at(10))).toEqual([{ bookingId: "b1", offsetMin: 10 }]);
+  });
+
+  it("a booking made 7 minutes out gets no reminders at all", () => {
+    const b = [fake({ createdAt: iso(at(7)) })];
+    for (let m = 1500; m >= 0; m--) expect(dueReminders(b, [], at(m))).toEqual([]);
+  });
+
+  it("a booking made 25 hours out gets all three over a full-day sweep", () => {
+    const b = [fake({ createdAt: iso(at(25 * 60)) })];
+    const sent: { bookingId: string; offsetMin: number }[] = [];
+    for (let m = 1500; m >= 0; m -= 5) for (const d of dueReminders(b, sent, at(m))) sent.push(d);
+    expect(sent.map((d) => d.offsetMin)).toEqual([1440, 60, 10]);
+  });
+
+  it("a booking made exactly when a window opens still gets that reminder", () => {
+    expect(dueReminders([fake({ createdAt: iso(at(60)) })], [], at(60))).toEqual([{ bookingId: "b1", offsetMin: 60 }]);
   });
 
   it("a sent reminder is not due again, and the others still are", () => {
@@ -76,6 +99,7 @@ async function seedBooking(start = START) {
   const row = (await insertBookingIfFree(env.DB, {
     businessId: b.id, dealId: null, kind: "discovery", startAt: iso(start), endAt: iso(new Date(start.getTime() + 20 * MIN)),
     contactName: "Pat Jones", contactEmail: "pat@acme.test", contactPhone: null, answers: null, source: "visitor",
+    createdAt: iso(new Date(start.getTime() - 3 * 86_400_000)), // booked well ahead; the real clock must not decide whether a reminder is due
   }))!;
   await setBookingEvent(env.DB, row.id, row.id.replace(/-/g, ""), "https://meet.google.com/abc-defg-hij");
   return { b, booking: row };
@@ -128,6 +152,15 @@ describe("sendDueReminders", () => {
     // Past the window, nothing is sent late.
     await env.DB.prepare(`DELETE FROM booking_reminders`).run();
     expect(await sendDueReminders(env, at(40))).toEqual({ sent: 0, skipped: 0 });
+  });
+
+  it("a booking made after the 60-minute window opened gets no 60-minute reminder, and no mail goes out for it", async () => {
+    const { b } = await seedLead("Late Co");
+    await insertBookingIfFree(env.DB, { businessId: b.id, dealId: null, kind: "discovery", startAt: iso(START), endAt: iso(at(-20)), contactName: "Pat", contactEmail: "pat@acme.test", contactPhone: null,
+      answers: null, source: "visitor", createdAt: iso(at(55)) });
+    expect(await sendDueReminders(env, at(55))).toEqual({ sent: 0, skipped: 0 });
+    expect(await sendDueReminders(env, at(10))).toEqual({ sent: 1, skipped: 0 });
+    expect(sent.map((s) => s.subject)).toEqual(["Your call is in 10 minutes"]);
   });
 
   it("a cancelled booking gets no reminder", async () => {
