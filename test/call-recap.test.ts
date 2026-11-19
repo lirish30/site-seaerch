@@ -152,6 +152,57 @@ describe("call.recap kind", () => {
     expect((await getDeal(env.DB, deal.id))!.recap).toBeNull();
   });
 
+  it("a price in an option's label or tagline is refused, whatever the owner said", async () => {
+    const { deal } = await seedRecapDeal(); // the notes say "$400 a job": still not a price for a label
+    const task = await queued(deal.id);
+    const withB = (extra: Record<string, unknown>) => good({ options: [opt("a", "Fix it", ["quick_fix"]), { ...opt("b", "Fix it and keep it running", ["quick_fix", "care"], true), ...extra }, opt("c", "Everything", ["quick_fix", "care", "local_seo"])] });
+    for (const [field, extra] of [["label", { label: "Fix it for $797" }], ["label", { label: "Only $ 400" }], ["tagline", { tagline: "Starts at 797 dollars" }], ["tagline", { tagline: "USD 129 a month" }], ["tagline", { tagline: "Just $400, your number" }]] as const) {
+      const r = await completeTask(env, task.id, withB(extra));
+      expect(r.ok, JSON.stringify(extra)).toBe(false);
+      expect((r as { error: string }).error).toContain(`option B ${field}`);
+    }
+    expect((await getDeal(env.DB, deal.id))!.recap).toBeNull();
+  });
+
+  it("a price in the recommendation, even the owner's own number, is refused: it is said before any price is shown", async () => {
+    const { deal } = await seedRecapDeal();
+    const task = await queued(deal.id);
+    for (const recommendation of ["Fix it first; a $400 job pays for it.", "Start with the fix: 797 dollars.", "Fix it, USD 797."]) {
+      const r = await completeTask(env, task.id, good({ recommendation }));
+      expect(r.ok, recommendation).toBe(false);
+    }
+    expect((await getDeal(env.DB, deal.id))!.recap).toBeNull();
+  });
+
+  it("a price in the playback, goals or where they are now is refused unless the owner gave that number in the notes", async () => {
+    const { deal } = await seedRecapDeal(); // answers: "About $400 a job"; avg job value 40000 cents; 5 missed jobs
+    const task = await queued(deal.id);
+    const bad: [string, Record<string, unknown>][] = [
+      ["playback", { playback: "You said a site fix should cost $250. A job is $400." }],
+      ["playback", { playback: "Our Quick Fix is 797 dollars and a job is $400." }],
+      ["goals", { goals: ["Get 20 calls a month for $1,000"] }],
+      ["currentState", { currentState: ["Pays USD 99 a month for hosting"] }],
+    ];
+    for (const [field, over] of bad) {
+      const r = await completeTask(env, task.id, good(over));
+      expect(r.ok, field).toBe(false);
+      expect((r as { error: string }).error, field).toContain(`${field}: it has a price`);
+    }
+    expect((await getDeal(env.DB, deal.id))!.recap).toBeNull();
+    // The owner's own figure, in any of the ways it was given (typed in an answer, or the average job value), is fine in their own words.
+    const ok = await completeTask(env, task.id, good({
+      playback: "A job is worth $400 to you and you miss about 5 a month.", goals: ["Win back the $400 jobs you miss"], currentState: ["Each missed call costs you 400 dollars"],
+    }));
+    expect(ok).toEqual({ ok: true });
+    expect((await getDeal(env.DB, deal.id))!.recap!.playback).toContain("$400");
+  });
+
+  it("the owner's average job value counts even when no answer repeats it", async () => {
+    const { deal } = await seedRecapDeal({ notes: { ...NOTES, answers: [{ n: 1, text: "water heaters pay best" }], avgJobValueCents: 450050 } });
+    const task = await queued(deal.id);
+    expect((await completeTask(env, task.id, good({ playback: "A job is worth $4,500.50 to you." }))).ok).toBe(true);
+  });
+
   it("a result outside the schema is refused (long sentence, no goals, four states, two options, a bad lead type)", async () => {
     const { deal } = await seedRecapDeal();
     const task = await queued(deal.id);

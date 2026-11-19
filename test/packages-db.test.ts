@@ -1,5 +1,6 @@
 import { env } from "cloudflare:test";
 import { describe, it, expect } from "vitest";
+import { CURRENCY, refuseCurrency } from "../src/worker/sales/currency";
 import { PackageInputError, getPackage, listCurrentPackages, savePackage, snapshotOf } from "../src/worker/db/packages";
 
 describe("package catalog", () => {
@@ -25,6 +26,17 @@ describe("package catalog", () => {
     expect(by.hourly).toMatchObject({ kind: "hourly", priceCents: 12500, altPriceCents: 9500 });
     expect(by.quick_fix.includes.length).toBeGreaterThan(0);
     expect(by.care.includes.join(" ")).toMatch(/weekly updates/i);
+  });
+
+  it("no seeded summary or inclusion carries a price: prices come from the price columns only", async () => {
+    const rows = (await env.DB.prepare(`SELECT key, summary, includes FROM packages WHERE version = 1`).all<{ key: string; summary: string; includes: string }>()).results;
+    expect(rows).toHaveLength(12);
+    for (const r of rows) {
+      const texts = [r.summary, ...(JSON.parse(r.includes) as string[])];
+      expect(refuseCurrency(texts, new Set()), r.key).toBeNull();
+      for (const t of texts) expect(t, `${r.key}: ${t}`).not.toMatch(CURRENCY);
+    }
+    expect(rows.find((r) => r.key === "care")!.summary).toBe("Keeps the site updated, backed up and watched.");
   });
 
   it("savePackage inserts version 2 and listCurrentPackages returns it", async () => {

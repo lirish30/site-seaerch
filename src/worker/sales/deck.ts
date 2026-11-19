@@ -120,7 +120,9 @@ const pricedItems = (ctx: Ctx, o: Option): DeckOptionItem[] => o.items.flatMap((
 const totalsOf = (ctx: Ctx, o: Option) => {
   const priced = o.items.flatMap((i) => (ctx.price(i.key) ? [i] : []));
   const t = optionTotals({ ...o, items: priced }, priced.map((i) => asPackage(ctx.price(i.key)!)));
-  return { upfront: t.upfrontCents > 0 ? dollars(t.upfrontCents) : null, monthly: t.monthlyCents > 0 ? `${dollars(t.monthlyCents)}/mo` : null };
+  // A "from" price in the option makes the sum a "from" figure too: the line items say "from $3,997", so the total must not read as a fixed price.
+  const from = priced.some((i) => ctx.price(i.key)?.fromPrice) ? "from " : "";
+  return { upfront: t.upfrontCents > 0 ? `${from}${dollars(t.upfrontCents)}` : null, monthly: t.monthlyCents > 0 ? `${dollars(t.monthlyCents)}/mo` : null };
 };
 const optionBlock = (ctx: Ctx, o: Option, recommended: boolean, extra: { includes?: string[] } = {}): DeckBlock => ({
   type: "option", id: o.id, label: o.label, tagline: o.tagline, recommended, items: pricedItems(ctx, o), ...totalsOf(ctx, o), ...extra,
@@ -446,9 +448,12 @@ export function problemsOf(plan: PlanForDeck | null, findings: Pick<Finding, "co
 
 /**
  * The scorecard rows the audit can answer. A row the audit could not measure is left out (never guessed): the Google Business Profile is not audited, and a
- * platform nobody detected has no "platform + updates" row. Mobile speed shows the PageSpeed mobile score itself.
+ * platform nobody detected has no "platform + updates" row. Mobile speed shows the PageSpeed mobile score itself. A partial audit, or a site that could
+ * not be reached, gives no scorecard at all (the slide is dropped): a check that did not run is never a pass.
  */
-export function scorecardOf(a: Pick<Audit, "findings" | "pagespeed_mobile" | "https" | "broken_link_count" | "platform">): DeckInput["scorecard"] {
+export function scorecardOf(a: Pick<Audit, "findings" | "pagespeed_mobile" | "https" | "broken_link_count" | "platform" | "partial" | "site_status">): DeckInput["scorecard"] {
+  // A partial audit, or one where the site could not be read, measured too little: a row with no finding would say "pass" for something nobody checked.
+  if (a.partial || a.site_status !== "ok") return [];
   const has = (...codes: string[]) => a.findings.some((f) => codes.includes(f.code));
   const rows: DeckInput["scorecard"] = [];
   rows.push({ label: "Phone test", result: has("no_click_to_call", "no_phone_visible", "no_contact_path") ? "flag" : "pass" });

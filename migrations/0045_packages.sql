@@ -33,7 +33,7 @@ INSERT INTO packages (id, key, version, name, kind, price_cents, setup_cents, te
    'The site, hosting and Care for one monthly price.',
    '["The site","Hosting","Care","Early exit owes the remaining term","Month 25 converts to Care automatically unless the client picks a refresh"]', 0, 1, '2026-11-18T00:00:00.000Z'),
   ('pkg_care_1', 'care', 1, 'Care', 'monthly', 12900, 0, NULL, NULL, 0,
-   'Keeps the site updated, backed up and watched. Also sold at $1,290 a year.',
+   'Keeps the site updated, backed up and watched.',
    '["Hosting included","Weekly updates","Backups","Uptime monitoring","Security","Monthly report","1 hour of edits a month (no rollover)"]', 1, 1, '2026-11-18T00:00:00.000Z'),
   ('pkg_care_plus_1', 'care_plus', 1, 'Care Plus', 'monthly', 24900, 0, NULL, NULL, 0,
    'Care with daily backups, staging and more edit time.',

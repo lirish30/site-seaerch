@@ -9,8 +9,9 @@ import { getBusiness } from "../db/businesses";
 import { getDeal, saveRecapStmt, type Deal, type DealOffer } from "../db/deals";
 import { listCurrentPackages, PACKAGE_KEYS, snapshotOf, type Package } from "../db/packages";
 import { getSettings } from "../db/settings";
+import { figureOf, figuresIn, refuseCurrencyIn } from "../sales/currency";
 import { DISCOVERY_QUESTIONS } from "../sales/discovery";
-import { hasNotes, LEAD_TYPE_GUIDE, LEAD_TYPES, type LeadType } from "../sales/notes";
+import { hasNotes, LEAD_TYPE_GUIDE, LEAD_TYPES, type DiscoveryNotes, type LeadType } from "../sales/notes";
 import { optionTotals, validateOptions, type Option } from "../sales/options";
 import { enqueueTask } from "./db";
 import { TaskRefused, registerTaskKind, type QueuePart, type TaskKindDef } from "./registry";
@@ -83,7 +84,7 @@ How to write
 - Write in Logan's plain voice: short sentences, everyday words, no hype and no jargon.
 - Use the owner's words. Where Logan's notes quote them, say it the way they said it.
 - Invent no numbers. Use only a number the owner gave, as it appears in the notes. Make no promise about rankings, traffic or results.
-- The options choose packages. They carry no prices: the app adds each package's price from the catalog. Never write a dollar sign or a price in the recommendation sentence.
+- The options choose packages. They carry no prices: the app adds each package's price from the catalog. Never write a dollar sign or a price in the recommendation sentence, an option's label or tagline. Anywhere else, repeat a dollar figure only if the owner gave it, exactly as it appears in the notes; never one of ours.
 
 What to send back
 - playback: two or three sentences that play back what you heard, in the owner's words, at most 600 characters.
@@ -124,6 +125,14 @@ async function loadDeal(db: D1Database, dealId: string): Promise<Target> {
 async function didNotRun(env: Env, p: CallRecapPayload): Promise<void> {
   const deal = await getDeal(env.DB, p.dealId);
   if (deal) await logActivity(env.DB, deal.businessId, "call_recap", "Call recap did not run");
+}
+
+/** The figures the owner gave, as digits: what is typed in the notes and the two numbers Logan filled in. The only amounts the owner's own words may repeat. */
+function ownerFigures(n: DiscoveryNotes): Set<string> {
+  const out = figuresIn([...n.answers.map((a) => a.text), ...n.goals, ...n.currentState, n.decisionMakers]);
+  if (n.avgJobValueCents !== null) out.add(figureOf(String(n.avgJobValueCents / 100)));
+  if (n.missedJobsPerMonth !== null) out.add(String(n.missedJobsPerMonth));
+  return out;
 }
 
 const dollarsOf = (cents: number | null) => (cents === null ? "not given" : `$${(cents / 100).toLocaleString("en-US", { maximumFractionDigits: 2 })}`);
@@ -193,6 +202,12 @@ const callRecap: TaskKindDef<CallRecapPayload, CallRecapResult> = {
     const t = await loadDeal(env.DB, p.dealId);
     if ("stale" in t) return { stale: t.stale };
     if (r.recommendation.includes("$")) throw new TaskRefused("The recommendation sentence has a dollar sign. Say what Logan would do and why without a price: prices are added from the catalog.");
+    // The deck is shown to the prospect and prices come only from the catalog. Names and taglines never carry an amount; the owner's own words
+    // (playback, goals, where they are now) may repeat a number the owner gave, as it appears in the notes, and nothing else.
+    const none = new Set<string>(), owner = ownerFigures(t.deal.notes!);
+    const priced = refuseCurrencyIn({ recommendation: r.recommendation, ...Object.fromEntries(r.options.flatMap((o) => [[`option ${o.id.toUpperCase()} label`, o.label], [`option ${o.id.toUpperCase()} tagline`, o.tagline]])) }, none)
+      ?? refuseCurrencyIn({ playback: r.playback, goals: r.goals, currentState: r.currentState }, owner);
+    if (priced) throw new TaskRefused(`${priced}. Never write a price: prices are added from the catalog. Only a number the owner gave in the notes may be repeated, and only in the playback, goals and where they are now.`);
     const catalog = await listCurrentPackages(env.DB);
     const problems = optionProblems(r.options, { platform: t.deal.notes!.platform, catalog });
     if (problems.length) throw new TaskRefused(`These options cannot be used:\n${problems.map((x) => `- ${x}`).join("\n")}`);

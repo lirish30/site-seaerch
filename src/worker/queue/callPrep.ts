@@ -10,6 +10,7 @@ import { latestCroAudit } from "../db/cro";
 import { getDeal, saveCallPrepStmt, type Deal } from "../db/deals";
 import { listCurrentPackages, PACKAGE_KEYS } from "../db/packages";
 import { getSettings } from "../db/settings";
+import { refuseCurrencyIn } from "../sales/currency";
 import { BASE_PUSHBACKS, DISCOVERY_QUESTIONS, DISCOVERY_STRUCTURE, mergePrices } from "../sales/discovery";
 import { enqueueTask } from "./db";
 import { TaskRefused, registerTaskKind, type QueuePart, type TaskKindDef } from "./registry";
@@ -40,8 +41,6 @@ export const requestCallPrep = (db: D1Database, dealId: string): Promise<{ taskI
 
 const isClosed = (d: Deal) => d.stage === "won" || d.stage === "lost";
 const cap = (s: string | null | undefined, n: number) => (s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
-/** A dollar amount: Claude writes a price as a merge field, never as a figure. */
-const CURRENCY = /\$\s?\d/;
 
 const INSTRUCTIONS = `You are preparing Logan Irish for a 20-minute discovery call with the owner of a local business. Logan is a one-person web freelancer. The call is for listening: he is not presenting or selling yet.
 
@@ -161,8 +160,16 @@ const callPrep: TaskKindDef<CallPrepPayload, CallPrepResult> = {
     const codes = new Set(audit?.findings.map((f) => f.code) ?? []);
     const unknown = r.flags.find((f) => !codes.has(f.findingCode as never));
     if (unknown) throw new TaskRefused(`The flag for "${unknown.findingCode}" cites a finding that is not in this lead's latest audit. Use only these codes: ${[...codes].join(", ")}.`);
-    const priced = r.pushbacks.find((x) => CURRENCY.test(x.answer));
-    if (priced) throw new TaskRefused(`The pushback for "${priced.objection}" has a dollar amount. Never write a price: use a merge field such as {{quick_fix}} or {{care}}.`);
+    // The prep is read on Logan's screen, but it is built from the same text the deck is, and prices come only from the catalog: no free text carries an
+    // amount (there are no notes yet, so there is no number of the owner's to repeat). A price is a merge field.
+    const priced = refuseCurrencyIn({
+      opener: r.opener,
+      ...Object.fromEntries(r.flags.flatMap((f, i) => [[`flag ${i + 1} talkingPoint`, f.talkingPoint], [`flag ${i + 1} askThis`, f.askThis]])),
+      ...Object.fromEntries(r.questionNotes.map((q) => [`note for question ${q.n}`, q.tailored])),
+      watchFor: r.watchFor,
+      ...Object.fromEntries(r.pushbacks.flatMap((x, i) => [[`pushback ${i + 1} objection`, x.objection], [`pushback ${i + 1} answer`, x.answer]])),
+    }, new Set());
+    if (priced) throw new TaskRefused(`${priced}. Never write a price or any dollar figure: use a merge field such as {{quick_fix}} or {{care}}.`);
     const catalog = await listCurrentPackages(env.DB);
     for (const x of r.pushbacks) {
       try { mergePrices(x.answer, catalog); }

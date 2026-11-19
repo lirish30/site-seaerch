@@ -171,6 +171,27 @@ describe("call.prep kind", () => {
     expect((await getDeal(env.DB, deal.id))!.callPrep).toBeNull();
   });
 
+  it("a price in any other free text is refused too, naming the field (no notes exist yet, so no figure is the owner's)", async () => {
+    const { deal } = await seedDeal();
+    const task = await queued(deal.id);
+    const bad: [string, Record<string, unknown>][] = [
+      ["opener", { opener: "Thanks, Pat. A site like yours runs about $3,000." }],
+      ["flag 1 talkingPoint", { flags: [{ findingCode: "no_https", talkingPoint: "Fixing it is 500 dollars.", askThis: "Has anyone mentioned it?" }] }],
+      ["flag 1 askThis", { flags: [{ findingCode: "no_https", talkingPoint: "Not secure.", askThis: "Would $500 be a problem?" }] }],
+      ["note for question 4", { questionNotes: [{ n: 4, tailored: "Ask what a $400 repair means to them." }] }],
+      ["watchFor", { watchFor: ["Balks at USD 800"] }],
+      ["pushback 2 objection", { pushbacks: [{ objection: "a", answer: "ok" }, { objection: "Too much at $797", answer: "ok" }, { objection: "c", answer: "ok" }] }],
+    ];
+    for (const [field, over] of bad) {
+      const r = await completeTask(env, task.id, good(over));
+      expect(r.ok, field).toBe(false);
+      expect((r as { error: string }).error, field).toContain(field);
+    }
+    expect((await getDeal(env.DB, deal.id))!.callPrep).toBeNull();
+    // Merge fields are how a price is written, and plain numbers are fine.
+    expect(await completeTask(env, task.id, good({ opener: "Twenty minutes, 5 calls to make, Quick Fix is {{quick_fix}}." }))).toEqual({ ok: true });
+  });
+
   it("a pushback with an unknown merge field is refused", async () => {
     const { deal } = await seedDeal();
     const task = await queued(deal.id);

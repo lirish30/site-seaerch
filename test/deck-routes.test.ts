@@ -6,7 +6,7 @@ import { getDeal, saveRecapStmt, stampDeckFrozen } from "../src/worker/db/deals"
 import { listCurrentPackages, savePackage } from "../src/worker/db/packages";
 import { createVideoAudit, savePlan } from "../src/worker/db/videoAudits";
 import { offerOf, type CallRecap } from "../src/worker/queue/callRecap";
-import { MAX_DECK_IMAGE_BYTES, deckFileName, deckRoutes } from "../src/worker/routes/deck";
+import { MAX_DECK_IMAGE_BYTES, deckContentDisposition, deckFileName, deckRoutes } from "../src/worker/routes/deck";
 import type { Option } from "../src/worker/sales/options";
 import type { VideoPlan } from "../src/worker/video/plan";
 import { seedRecapDeal } from "./fixtures/deal";
@@ -109,7 +109,7 @@ describe("deck routes", () => {
     expect(calls[0].html).not.toContain("<script");
     expect((calls[0].html.match(/<section class="slide/g) ?? []).length).toBeGreaterThanOrEqual(10);
     const disposition = res.headers.get("content-disposition")!;
-    expect(disposition).toMatch(/^attachment; filename="Ace Plumbing Best - Recommendation - \d{4}-\d{2}-\d{2}\.pdf"$/);
+    expect(disposition).toMatch(/^attachment; filename="Ace Plumbing Best - Recommendation - \d{4}-\d{2}-\d{2}\.pdf"; filename\*=UTF-8''Ace%20Plumbing%20Best%20-%20Recommendation%20-%20\d{4}-\d{2}-\d{2}\.pdf$/);
     expect((await getDeal(env.DB, deal.id))!.deckFrozenAt).not.toBeNull();
     expect((await listActivity(env.DB, b.id)).some((a) => a.kind === "export")).toBe(true);
   });
@@ -124,6 +124,22 @@ describe("deck routes", () => {
   it("deckFileName is safe and dated", () => {
     expect(deckFileName("Ace / Plumbing\r\n\"Co\"", new Date("2026-11-18T20:00:00Z"))).toBe("Ace Plumbing Co - Recommendation - 2026-11-18.pdf");
     expect(deckFileName("///", new Date("2026-11-18T20:00:00Z"))).toBe("Website - Recommendation - 2026-11-18.pdf");
+  });
+
+  it("the download header folds the plain filename to ASCII and carries the real name in filename*", () => {
+    const now = new Date("2026-11-18T20:00:00Z");
+    expect(deckContentDisposition("Łódź Plumbing", now)).toBe(`attachment; filename="Lodz Plumbing - Recommendation - 2026-11-18.pdf"; filename*=UTF-8''%C5%81%C3%B3d%C5%BA%20Plumbing%20-%20Recommendation%20-%202026-11-18.pdf`);
+    // A name with no Latin letters at all falls back to "Website" for the plain filename, and the real name is still sent.
+    expect(deckContentDisposition("東京配管", now)).toBe(`attachment; filename="Website - Recommendation - 2026-11-18.pdf"; filename*=UTF-8''%E6%9D%B1%E4%BA%AC%E9%85%8D%E7%AE%A1%20-%20Recommendation%20-%202026-11-18.pdf`);
+    // The header value is plain ASCII, so building a Response with it cannot throw.
+    for (const n of ["Łódź Plumbing", "東京配管", "Café O'Brien (Ünïcode) *", "Ace / Plumbing\r\n\"Co\""]) {
+      const h = deckContentDisposition(n, now);
+      expect(h).toMatch(/^[\x20-\x7e]+$/);
+      expect(() => new Response("", { headers: { "content-disposition": h } })).not.toThrow();
+    }
+    expect(deckContentDisposition("Café O'Brien (Ünïcode) *", now)).toContain(`filename="Cafe O Brien Unicode - Recommendation - 2026-11-18.pdf"`);
+    // Apostrophes, parentheses and asterisks are percent-encoded in filename*, which RFC 8187 does not allow raw.
+    expect(deckContentDisposition("O'Brien (Co) *", now).split("UTF-8''")[1]).not.toMatch(/['()*]/);
   });
 
   it("screenshots come from R2 as data URIs, and one over 400 KB is skipped, not a failure", async () => {

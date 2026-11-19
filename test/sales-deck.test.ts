@@ -130,6 +130,13 @@ describe("buildDeck: the options and the prices", () => {
     expect(o[1].items.map((i) => [i.name, i.price])).toEqual([["Quick Fix", "$797"], ["Care", "$129/mo"]]);
   });
 
+  it("an option holding a from-priced package says so in its up-front total, as the line item does", () => {
+    const d = deal({ priceSnapshot: [QUICK, CARE, STARTER], options: [OPTIONS[0], opt("b", "New site and care", ["starter_site", "care"], true), opt("c", "Everything", ["starter_site", "quick_fix", "care"])] });
+    const blocks = buildDeck(input("wp_few_broken", { deal: d })).find((x) => x.key === "options")!.blocks.filter((x) => x.type === "option") as Extract<DeckSlide["blocks"][number], { type: "option" }>[];
+    expect(blocks[1].items.map((i) => i.price)).toEqual(["from $3,997", "$129/mo"]);
+    expect(blocks.map((x) => [x.upfront, x.monthly])).toEqual([["$797", null], ["from $3,997", "$129/mo"], ["from $4,794", "$129/mo"]]);
+  });
+
   it("a setup discount is shown and comes off the up-front total", () => {
     const d = deal({ options: [OPTIONS[0], { ...OPTIONS[1], items: [{ key: "quick_fix", setupDiscountCents: 10000 }, { key: "care" }] }, OPTIONS[2]] });
     const b = (buildDeck(input("wp_few_broken", { deal: d })).find((s) => s.key === "options")!.blocks.filter((x) => x.type === "option")[1]) as Extract<DeckSlide["blocks"][number], { type: "option" }>;
@@ -241,11 +248,18 @@ describe("problemsOf and scorecardOf", () => {
   });
 
   it("the scorecard has only what the audit measured", () => {
-    const rows = scorecardOf({ findings: [{ code: "no_click_to_call" } as any], pagespeed_mobile: 61.6, https: true, broken_link_count: 0, platform: null });
+    const rows = scorecardOf({ findings: [{ code: "no_click_to_call" } as any], pagespeed_mobile: 61.6, https: true, broken_link_count: 0, platform: null, partial: false, site_status: "ok" });
     expect(rows).toEqual([
       { label: "Phone test", result: "flag" }, { label: "Mobile speed", result: "62" }, { label: "Security (https)", result: "pass" },
       { label: "Freshness", result: "pass" }, { label: "Search basics", result: "pass" }, { label: "Broken links", result: "pass" },
     ]);
-    expect(scorecardOf({ findings: [], pagespeed_mobile: null, https: null, broken_link_count: null, platform: "wix" }).map((r) => r.label)).toEqual(["Phone test", "Freshness", "Platform + updates", "Search basics"]);
+    expect(scorecardOf({ findings: [], pagespeed_mobile: null, https: null, broken_link_count: null, platform: "wix", partial: false, site_status: "ok" }).map((r) => r.label)).toEqual(["Phone test", "Freshness", "Platform + updates", "Search basics"]);
+  });
+
+  it("a partial audit, or a site that could not be read, gives no scorecard: an unmeasured check is never a pass", () => {
+    const base = { findings: [] as any[], pagespeed_mobile: 61, https: true, broken_link_count: 0, platform: null };
+    expect(scorecardOf({ ...base, partial: true, site_status: "ok" })).toEqual([]);
+    for (const site_status of ["unreachable", "no_website", "parked", "blocked"] as const) expect(scorecardOf({ ...base, partial: false, site_status }), site_status).toEqual([]);
+    expect(scorecardOf({ ...base, partial: false, site_status: "ok" }).length).toBeGreaterThan(0);
   });
 });
