@@ -149,12 +149,13 @@ describe("invoice.paid for a deposit", () => {
 
   it("a failure part-way is finished by the retry of the same event, and the deal moves once", async () => {
     const s = await seed();
-    // The lead cannot be written: the deal has not moved yet, so the retry still finds it at proposal_sent.
+    // The lead cannot be written: the deal moves first, so the retry finds it won by this payment (the marker is there) and finishes the lead.
     await env.DB.exec(`CREATE TRIGGER fail_won BEFORE UPDATE OF lead_status ON businesses WHEN NEW.lead_status = 'won' BEGIN SELECT RAISE(ABORT, 'disk full'); END`);
     const evt = paid(s);
     try { expect(await deliver(evt)).toBe(500); }
     finally { await env.DB.exec(`DROP TRIGGER fail_won`); }
-    expect(await getDeal(env.DB, s.dealId)).toMatchObject({ stage: "proposal_sent" });
+    expect(await getDeal(env.DB, s.dealId)).toMatchObject({ stage: "won" });
+    expect((await getBusiness(env.DB, s.businessId))!.lead_status).not.toBe("won");
     expect((await getDocument(env.DB, s.doc.id))!.paidAt).toBeNull(); // not marked paid until all of it is done
 
     expect(await deliver(evt)).toBe(200);
@@ -168,13 +169,33 @@ describe("invoice.paid for a deposit", () => {
 
   it("the deal being lost between the read and the move is a note, not an error", async () => {
     const s = await seed();
-    // The owner marks the deal lost the instant the lead is written, which is the last write before the move.
-    await env.DB.exec(`CREATE TRIGGER lose_deal AFTER UPDATE OF lead_status ON businesses WHEN NEW.lead_status = 'won' BEGIN UPDATE deals SET stage = 'lost', lost_reason = 'raced', closed_at = '2026-12-03T00:00:00.000Z' WHERE id = '${s.dealId}'; END`);
+    // The owner marks the deal lost the instant the deal_moved marker is written, which is the last write before the move.
+    await env.DB.exec(`CREATE TRIGGER lose_deal AFTER INSERT ON activity WHEN NEW.kind = 'deal_moved' BEGIN UPDATE deals SET stage = 'lost', lost_reason = 'raced', closed_at = '2026-12-03T00:00:00.000Z' WHERE id = '${s.dealId}'; END`);
     try { expect(await deliver(paid(s))).toBe(200); }
     finally { await env.DB.exec(`DROP TRIGGER lose_deal`); }
     expect(await getDeal(env.DB, s.dealId)).toMatchObject({ stage: "lost" });
+    expect((await getBusiness(env.DB, s.businessId))!.lead_status).not.toBe("won"); // never "lead won, deal lost"
     expect((await activity(s.businessId, "note")).filter((n) => /check it/.test(n))).toEqual(["deposit paid but the deal is lost: check it"]);
     expect((await getDocument(env.DB, s.doc.id))!.paidAt).not.toBeNull();
+  });
+
+  it("a deal still at an earlier stage is won by a paid, signed real proposal", async () => {
+    for (const stage of ["recommended", "discovery_done"] as const) {
+      const s = await seed({ stage });
+      expect(await deliver(paid(s))).toBe(200);
+      expect(await getDeal(env.DB, s.dealId), stage).toMatchObject({ stage: "won", closedAt: expect.any(String) });
+      expect((await getBusiness(env.DB, s.businessId))!.lead_status, stage).toBe("won");
+      expect(await activity(s.businessId, "deal_moved"), stage).toEqual([`${stage} -> won (deposit paid, SL-ABCDEF v1)`]);
+      expect((await activity(s.businessId, "note")).filter((n) => /check it/.test(n)), stage).toEqual([]);
+    }
+  });
+
+  it("a second run of the same payment adds no note and no second marker", async () => {
+    const s = await seed({ stage: "recommended" });
+    expect(await deliver(paid(s))).toBe(200);
+    expect(await deliver(paid(s))).toBe(200); // a different event id for the same invoice
+    expect(await activity(s.businessId, "deal_moved")).toHaveLength(1);
+    expect((await activity(s.businessId, "note")).filter((n) => /check it/.test(n))).toEqual([]);
   });
 
   it("after won the lead is blocked by the conflict gate as an existing client", async () => {

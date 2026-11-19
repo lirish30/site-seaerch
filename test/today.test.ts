@@ -498,7 +498,7 @@ describe("proposal_follow_up", () => {
     const v = await proposalLead("Voided", 5);
     await voidDocument(env.DB, v.doc.id, "wrong option");
     await proposalLead("Expired", 5, { expiresAt: ago(1) });
-    expect((await of("proposal_follow_up")).map((i) => i.businessName)).toEqual(["Expired"]); // not yet swept, so still open
+    expect(await of("proposal_follow_up")).toEqual([]); // past its expiry but not yet swept: still not shown
     await expireDue(env.DB, NOW.toISOString());
     expect(await of("proposal_follow_up")).toEqual([]);
   });

@@ -1,4 +1,4 @@
-import { hasActivity, logActivity, logActivityOnce } from "../db/activity";
+import { logActivity, logActivityOnce } from "../db/activity";
 import { getBusiness, updateLead } from "../db/businesses";
 import { DealMoveError, getDeal, moveDeal } from "../db/deals";
 import { getDocument, setPaid, type Document } from "../db/documents";
@@ -160,35 +160,42 @@ export async function ensureDepositInvoice(env: Env, docId: string, deps: { fetc
 const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 
 /**
- * The deal side of a deposit that has been paid, for a real (not test) proposal. A deal at `proposal_sent` is won: outreach stops and the lead becomes won
- * first, the deal moves last, so a run that fails part-way is finished by the next one. A deal that has gone another way is left alone and noted.
+ * The deal side of a deposit that has been paid, for a real (not test) proposal. A signed and paid real proposal is the strongest sign the deal is won, so a
+ * deal at ANY open stage is won: outreach stops, the `deal_moved` marker is written, the deal moves, and only then does the lead become won (so "lead won,
+ * deal lost" cannot arise). The marker goes first so a second run of the same payment, seeing the deal already won, can tell it was this payment and is not
+ * a deal won some other way; the lead step is repeated by every run until it holds. A deal that is lost, or won by something else, is left alone and noted.
  */
 async function winDeal(env: Env, doc: Document): Promise<void> {
-  const deal = await getDeal(env.DB, doc.dealId);
+  const db = env.DB;
+  const deal = await getDeal(db, doc.dealId);
   if (!deal) return;
-  const moved = `proposal_sent -> won (deposit paid, ${doc.content.header.reference} v${doc.version})`;
-  const check = (stage: string) => logActivityOnce(env.DB, doc.businessId, "note", `deposit paid but the deal is ${stage}: check it`);
-  if (deal.stage !== "proposal_sent") {
-    // Won by this very payment (an earlier run, or the webhook and the page at once) is done; anything else is for the owner to look at.
-    if (deal.stage === "won" && (await hasActivity(env.DB, doc.businessId, "deal_moved", moved))) return;
-    await check(deal.stage);
+  const tail = ` -> won (deposit paid, ${doc.content.header.reference} v${doc.version})`;
+  const check = (stage: string) => logActivityOnce(db, doc.businessId, "note", `deposit paid but the deal is ${stage}: check it`);
+  const marked = async () => !!(await db.prepare(`SELECT 1 AS x FROM activity WHERE business_id = ? AND kind = 'deal_moved' AND instr(detail, ?) > 0 LIMIT 1`).bind(doc.businessId, tail).first());
+  const leadWon = async () => {
+    const lead = await getBusiness(db, doc.businessId);
+    if (lead && lead.lead_status !== "won") {
+      await updateLead(db, doc.businessId, { leadStatus: "won" });
+      await logActivity(db, doc.businessId, "status", `${lead.lead_status} → won`);
+    }
+  };
+
+  if (deal.stage === "lost") { await check("lost"); return; }
+  if (deal.stage === "won") {
+    // Won by this very payment (an earlier run, or the webhook and the page at once) is finished here; anything else is for the owner to look at.
+    if (await marked()) await leadWon(); else await check("won");
     return;
   }
-  await stopOutreach(env.DB, { businessId: doc.businessId, reason: "manual" });
-  const lead = await getBusiness(env.DB, doc.businessId);
-  if (lead && lead.lead_status !== "won") {
-    await updateLead(env.DB, doc.businessId, { leadStatus: "won" });
-    await logActivity(env.DB, doc.businessId, "status", `${lead.lead_status} → won`);
-  }
-  try { await moveDeal(env.DB, deal.id, "won"); }
+  await stopOutreach(db, { businessId: doc.businessId, reason: "manual" });
+  await logActivityOnce(db, doc.businessId, "deal_moved", `${deal.stage}${tail}`);
+  try { await moveDeal(db, deal.id, "won"); }
   catch (e) {
     if (!(e instanceof DealMoveError)) throw e;
-    // It moved between our read and our write: by a parallel run of this very payment (nothing to add) or by the owner (lost).
-    const now = await getDeal(env.DB, deal.id);
-    if (now && now.stage !== "won") await check(now.stage);
-    return;
+    // It moved between our read and our write: by a parallel run of this very payment (the lead step below is then still ours to finish) or by the owner (lost).
+    const now = await getDeal(db, deal.id);
+    if (now && now.stage !== "won") { await check(now.stage); return; }
   }
-  await logActivityOnce(env.DB, doc.businessId, "deal_moved", moved);
+  await leadWon();
 }
 
 /**

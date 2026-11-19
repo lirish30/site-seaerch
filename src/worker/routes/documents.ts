@@ -8,7 +8,7 @@ import { getDeal } from "../db/deals";
 import { DocumentStateError, countViews, getDocument, listForDeal, signaturesFor, type Document } from "../db/documents";
 import { getInvoiceForDocument } from "../db/invoices";
 import { getSettings } from "../db/settings";
-import { legalGate, parseDocumentsConfig } from "../documents/config";
+import { legalGate, parseDocumentsConfig, showDraftBanner } from "../documents/config";
 import { ensureDepositInvoice } from "../documents/deposit";
 import { clientBase } from "../documents/mail";
 import { ProposalError } from "../documents/proposal";
@@ -89,7 +89,7 @@ documentRoutes.get("/documents/:id/preview.html", async (c) => {
   const [signatures, settings] = await Promise.all([signaturesFor(c.env.DB, doc.id), getSettings(c.env.DB)]);
   const html = renderProposalHtml(doc.content, {
     mode: "screen", status: doc.status, contentSha256: doc.contentSha256, signatures, auditPage: doc.status === "signed",
-    draftBanner: doc.status === "draft" || legalGate(parseDocumentsConfig(settings.documents_config)) !== null,
+    draftBanner: showDraftBanner(doc, legalGate(parseDocumentsConfig(settings.documents_config))),
   });
   return new Response(html, { headers: { "content-type": "text/html; charset=utf-8", "content-security-policy": PROPOSAL_CSP, "cache-control": "no-store" } });
 });

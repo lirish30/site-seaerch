@@ -70,7 +70,7 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
   const suppressed = await suppressedLeadIds(db, candidates);
   // A proposal waiting on a signature for 3 days. The first row per lead (the oldest) speaks for it, as Today holds one item per lead and kind.
   const proposals = new Map<string, { sentAt: number; viewed: boolean }>();
-  for (const p of await openProposalsSentBefore(db, new Date(t - PROPOSAL_FOLLOW_UP_DAYS * DAY).toISOString()))
+  for (const p of await openProposalsSentBefore(db, new Date(t - PROPOSAL_FOLLOW_UP_DAYS * DAY).toISOString(), new Date(t).toISOString()))
     if (!proposals.has(p.businessId)) proposals.set(p.businessId, { sentAt: ms(p.sentAt), viewed: p.viewed });
   const activity = await recentActivity(db, candidates.map((b) => b.id), new Date(t - ACTIVITY_WINDOW_DAYS * DAY).toISOString());
 

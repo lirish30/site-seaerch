@@ -84,7 +84,7 @@ function signatureBlock(c: ProposalContent, o: ProposalRenderOptions): string {
 
 function auditPage(c: ProposalContent, o: ProposalRenderOptions): string {
   const rows = o.signatures.length ? o.signatures.map((s) => `<div class="audit-sig"><h3>${s.role === "client" ? "Client" : "Provider"}: ${esc(s.signerName)}</h3>
-<table class="kv"><tr><th>Email</th><td>${esc(s.signerEmail)}</td></tr><tr><th>Signed at</th><td>${instant(s.signedAt)}</td></tr>
+<table class="kv"><tr><th>${s.role === "client" ? "Email the link was sent to" : "Email"}</th><td>${esc(s.signerEmail)}</td></tr><tr><th>Signed at</th><td>${instant(s.signedAt)}</td></tr>
 <tr><th>IP address</th><td>${s.ip ? esc(s.ip) : "not recorded"}</td></tr>
 <tr><th>User agent</th><td>${s.userAgent ? esc(s.userAgent.slice(0, USER_AGENT_MAX)) : "not recorded"}</td></tr>
 <tr><th>Consent version</th><td>${esc(String(s.consentVersion))}</td></tr>

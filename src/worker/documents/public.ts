@@ -5,7 +5,7 @@ import { getDeal } from "../db/deals";
 import { getByToken, getDocument, recordView, signaturesFor, signDocument, type Document } from "../db/documents";
 import { getSettings } from "../db/settings";
 import type { Env } from "../env";
-import { legalGate, parseDocumentsConfig } from "./config";
+import { legalGate, parseDocumentsConfig, showDraftBanner } from "./config";
 import { CONSENT_LABEL, ESIGN_DISCLOSURE, ESIGN_VERSION, authorityLabel } from "./consent";
 import { ensureDepositInvoice, paymentFor, type PublicPayment } from "./deposit";
 import { renderProposalHtml } from "./render";
@@ -15,6 +15,7 @@ import { isClientToken } from "./token";
 /** Stored with a signature: what a hostile client sends is cut to this, never refused. */
 const USER_AGENT_MAX = 300;
 const IP_MAX = 64;
+const NAME_LOG_MAX = 60;
 
 export type { PublicPayment };
 
@@ -74,22 +75,33 @@ function isClosed(doc: Document, now: Date): boolean {
   return false;
 }
 
+/** A sent or viewed proposal whose deal is lost, won (by something else) or gone is no longer one to sign: the owner moved on. A signed document is a record and is not asked. */
+async function dealIsClosed(env: Env, doc: Document): Promise<boolean> {
+  if (doc.status !== "sent" && doc.status !== "viewed") return false;
+  const deal = await getDeal(env.DB, doc.dealId);
+  return !deal || deal.stage === "lost" || deal.stage === "won";
+}
+
 /** The page for a document. Only an open document records the view (`view`): a signed, void or expired one is not a prospect reading it. */
 async function pageFor(env: Env, doc: Document, now: Date, view: { userAgent: string | null } | null): Promise<PublicProposal> {
   const [settings, signatures] = await Promise.all([getSettings(env.DB), signaturesFor(env.DB, doc.id)]);
   const clientName = doc.content.header.clientName;
   const contactEmail = settings.contact_email.trim() || doc.content.header.providerEmail;
-  if (isClosed(doc, now)) return { state: "closed", clientName, contactEmail };
+  if (isClosed(doc, now) || (await dealIsClosed(env, doc))) return { state: "closed", clientName, contactEmail };
 
   if (view && (doc.status === "sent" || doc.status === "viewed")) {
     // Counting a visit must never stop the client reading their proposal.
-    try { await recordView(env.DB, doc.id, { now: now.toISOString(), userAgent: capped(view.userAgent, USER_AGENT_MAX) }); }
+    try {
+      const first = await recordView(env.DB, doc.id, { now: now.toISOString(), userAgent: capped(view.userAgent, USER_AGENT_MAX) });
+      // The timeline shows when the client first opened it (never for the owner's own test copy).
+      if (first && !doc.test) await logActivity(env.DB, doc.businessId, "proposal_viewed", `Opened by the client (version ${doc.version})`);
+    }
     catch (e) { console.error("proposal: could not record a view", e instanceof Error ? e.message : "unknown error"); }
   }
   const mine = signatures.find((s) => s.role === "client");
   const html = renderProposalHtml(doc.content, {
     mode: "screen", status: doc.status, contentSha256: doc.contentSha256, signatures, auditPage: false,
-    draftBanner: doc.test || legalGate(parseDocumentsConfig(settings.documents_config)) !== null,
+    draftBanner: showDraftBanner(doc, legalGate(parseDocumentsConfig(settings.documents_config))),
   });
   return {
     state: doc.status === "signed" ? "signed" : "open", html, contentSha256: doc.contentSha256 ?? "", expiresAt: doc.expiresAt, clientName,
@@ -150,22 +162,43 @@ export async function signProposal(
   if (isClosed(doc, o.now)) return CLOSED;
   if (f.sha256 !== doc.contentSha256) return { ok: false, status: 409, error: "this proposal changed, reload" };
 
+  let stored = doc.status === "signed";
   if (doc.status !== "signed") {
+    if (await dealIsClosed(env, doc)) return CLOSED;
     const at = o.now.toISOString();
     const outcome = await signDocument(env.DB, doc.id, {
       signerName: f.name, signerEmail: doc.content.header.contactEmail, signedAt: at, ip: capped(o.ip, IP_MAX), userAgent: capped(o.userAgent, USER_AGENT_MAX),
       consentText: consentTextFor(doc.content.header.clientName), consentVersion: ESIGN_VERSION, contentSha256: f.sha256,
     }, at);
     if (outcome === "not_open") return CLOSED;
+    stored = true;
     if (outcome === "signed") {
-      // The signature is the record: a failed log line or a failed follow-up never takes it back.
-      try { await logActivity(env.DB, doc.businessId, "proposal_signed", `Signed by ${f.name} (version ${doc.version})`); }
+      // The signature is the record: a failed log line, a failed read or a failed follow-up never takes it back. The name is cut for the timeline (the
+      // signature row keeps it whole): what a stranger typed does not run to any length in the owner's feed.
+      try { await logActivity(env.DB, doc.businessId, "proposal_signed", `Signed by ${f.name.slice(0, NAME_LOG_MAX)} (version ${doc.version})`); }
       catch (e) { console.error("proposal: could not log the signature", e instanceof Error ? e.message : "unknown error"); }
-      const signed = await getDocument(env.DB, doc.id);
-      try { if (signed) await afterSign(env, signed); }
-      catch (e) { console.error("proposal: after-sign step failed", e instanceof Error ? e.message : "unknown error"); }
+      try {
+        const signed = await getDocument(env.DB, doc.id);
+        if (signed) await afterSign(env, signed);
+      } catch (e) { console.error("proposal: after-sign step failed", e instanceof Error ? e.message : "unknown error"); }
     }
   }
-  const now = await getDocument(env.DB, doc.id);
-  return now ? { ok: true, page: await pageFor(env, now, o.now, null) } : { ok: false, status: 404, error: "not found" };
+  try {
+    const now = await getDocument(env.DB, doc.id);
+    return now ? { ok: true, page: await pageFor(env, now, o.now, null) } : { ok: false, status: 404, error: "not found" };
+  } catch (e) {
+    // The signature is stored: a read that fails now must not turn that into an error the client would answer by signing again.
+    if (!stored) throw e;
+    console.error("proposal: could not build the page after signing", e instanceof Error ? e.message : "unknown error");
+    return { ok: true, page: signedFallback(doc, f.name, o.now) };
+  }
+}
+
+/** What the client sees when the signature is stored but the page could not be rebuilt: that it is signed. Reloading shows the paper. */
+function signedFallback(doc: Document, name: string, now: Date): OpenProposal {
+  return {
+    state: "signed", html: "", contentSha256: doc.contentSha256 ?? "", expiresAt: doc.expiresAt, clientName: doc.content.header.clientName,
+    disclosure: ESIGN_DISCLOSURE, consentLabel: CONSENT_LABEL, authorityLabel: authorityLabel(doc.content.header.clientName),
+    signed: { name, at: now.toISOString() }, payment: { state: "unavailable" }, contactEmail: doc.content.header.providerEmail,
+  };
 }

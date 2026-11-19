@@ -177,7 +177,7 @@ export default function ProposalTab({ deal, catalog, data, form, setForm, dirty,
               <button type="button" className="btn-ghost-sm" onClick={() => copyLink(link)}>{copied ? "Copied" : "Copy link"}</button>
             </div>
           )}
-          {(current.status === "draft" || current.status === "sent" || current.status === "viewed") && (
+          {(current.status === "draft" || current.status === "sent" || current.status === "viewed" || (current.status === "signed" && current.test)) && (
             <div className="cp-actions">
               <input aria-label="Why you are voiding it" placeholder="Why void it?" maxLength={300} value={reason} onChange={(e) => setReason(e.target.value)} />
               <button type="button" className="btn-ghost-sm" disabled={busy} onClick={voidIt}>Void and start a new version</button>

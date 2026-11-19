@@ -70,9 +70,10 @@ export function renderSignedCopyMail(c: ProposalContent, link: string | null, s:
 }
 
 /** The short note to the owner that a proposal was signed. Nothing the signer typed is in it. */
-export function renderSignedNotice(c: ProposalContent): ProposalMail {
+export function renderSignedNotice(c: ProposalContent, o: { test?: boolean } = {}): ProposalMail {
   const h = c.header;
   const name = oneLine(h.clientName).slice(0, BUSINESS_MAX);
   const ref = oneLine(h.reference);
+  if (o.test) return { subject: `[Test] ${name} signed ${ref}`, body: `A TEST copy of proposal ${ref}, version ${h.version}, was signed. Nothing was sent to ${name}.\n\nVoid it on the deal before you make the version to send.` };
   return { subject: `${name} signed ${ref}`, body: `${name} signed proposal ${ref}, version ${h.version}.\n\nThe signed PDF is on the deal.` };
 }

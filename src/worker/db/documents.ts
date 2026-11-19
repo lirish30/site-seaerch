@@ -97,6 +97,7 @@ export async function nextDraftVersion(db: D1Database, dealId: string): Promise<
 /**
  * A new draft for the deal. It replaces the deal's existing draft (a draft is only ever edited or rebuilt) and takes that draft's version number, or
  * one more than the highest the deal has had when there is none (`nextDraftVersion`). A deal with a sent, viewed or signed document refuses: void it first.
+ * A signed TEST copy does not block (it is the owner's own rehearsal and is voided or left in the history).
  */
 export async function createDraft(db: D1Database, o: { dealId: string; businessId: string; optionId: OptionId; content: ProposalContent; test?: boolean }): Promise<Document> {
   const id = crypto.randomUUID();
@@ -108,7 +109,7 @@ export async function createDraft(db: D1Database, o: { dealId: string; businessI
     db.prepare(
       `INSERT INTO documents (id, deal_id, business_id, version, status, test, option_id, content, created_at, updated_at)
        SELECT ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?
-       WHERE NOT EXISTS (SELECT 1 FROM documents WHERE deal_id = ? AND status IN ('sent', 'viewed', 'signed'))`,
+       WHERE NOT EXISTS (SELECT 1 FROM documents WHERE deal_id = ? AND (status IN ('sent', 'viewed') OR (status = 'signed' AND test = 0)))`,
     ).bind(id, o.dealId, o.businessId, version, o.test ? 1 : 0, o.optionId, JSON.stringify(o.content), now, now, o.dealId),
   ]);
   if ((res[1].meta.changes ?? 0) !== 1) throw new DocumentStateError("this deal already has a sent or signed proposal; void it first");
@@ -160,12 +161,12 @@ export async function markSent(db: D1Database, id: string, o: {
 }
 
 /**
- * Records that the client opened the link: one row, and not again within ten minutes of the last one. The first view moves `sent` to `viewed`.
- * A draft has no link, so it records nothing.
+ * Records that the client opened the link: one row, and not again within ten minutes of the last one. The first view moves `sent` to `viewed` and
+ * answers true; every other call answers false. A draft has no link, so it records nothing.
  */
-export async function recordView(db: D1Database, id: string, o: { now: string; userAgent: string | null }): Promise<void> {
+export async function recordView(db: D1Database, id: string, o: { now: string; userAgent: string | null }): Promise<boolean> {
   const since = new Date(Date.parse(o.now) - VIEW_GAP_MS).toISOString();
-  await db.batch([
+  const res = await db.batch([
     db.prepare(
       `INSERT INTO document_views (id, document_id, viewed_at, user_agent)
        SELECT ?, ?, ?, ?
@@ -174,6 +175,7 @@ export async function recordView(db: D1Database, id: string, o: { now: string; u
     ).bind(crypto.randomUUID(), id, o.now, o.userAgent, id, id, since),
     db.prepare(`UPDATE documents SET status = 'viewed', first_viewed_at = ?, updated_at = ? WHERE id = ? AND status = 'sent'`).bind(o.now, o.now, id),
   ]);
+  return (res[1].meta.changes ?? 0) === 1; // true only for the visit that moved sent to viewed
 }
 
 /**
@@ -199,9 +201,12 @@ export async function signDocument(db: D1Database, id: string, sig: SignatureInp
   return doc?.status === "signed" ? "already_signed" : "not_open";
 }
 
-/** Voids a draft, sent or viewed document with the reason. A signed (or expired) one refuses; a void one is returned as it is. */
+/**
+ * Voids a draft, sent or viewed document with the reason. A signed (or expired) real one refuses; a void one is returned as it is. A TEST copy can be
+ * voided in any state (the owner may sign his own rehearsal): its signature rows are never touched.
+ */
 export async function voidDocument(db: D1Database, id: string, reason: string): Promise<Document> {
-  const res = await db.prepare(`UPDATE documents SET status = 'void', void_reason = ?, updated_at = ? WHERE id = ? AND status IN ('draft', 'sent', 'viewed')`)
+  const res = await db.prepare(`UPDATE documents SET status = 'void', void_reason = ?, updated_at = ? WHERE id = ? AND (status IN ('draft', 'sent', 'viewed') OR (test = 1 AND status != 'void'))`)
     .bind(reason, new Date().toISOString(), id).run();
   const doc = await getDocument(db, id);
   if (!doc) throw new DocumentStateError("document not found");
@@ -223,21 +228,22 @@ export interface OpenProposal { businessId: string; sentAt: string; viewed: bool
 
 /**
  * The real (not test) proposals out for signature that were sent at or before `sentBefore`: the deal is at `proposal_sent` and the document is sent or
- * viewed, so a signed, void or expired one, or a deal that moved on (won, lost), is not here. Oldest first.
+ * viewed and not past its expiry (an expired-but-unswept one is not here), so a signed, void or expired one, or a deal that moved on (won, lost), is not here. Oldest first.
  */
-export async function openProposalsSentBefore(db: D1Database, sentBefore: string): Promise<OpenProposal[]> {
+export async function openProposalsSentBefore(db: D1Database, sentBefore: string, now: string = new Date().toISOString()): Promise<OpenProposal[]> {
   const rows = (await db.prepare(
     `SELECT doc.business_id, doc.sent_at, doc.status FROM documents doc JOIN deals d ON d.id = doc.deal_id
-     WHERE d.stage = 'proposal_sent' AND doc.status IN ('sent', 'viewed') AND doc.test = 0 AND doc.sent_at IS NOT NULL AND doc.sent_at <= ?
+     WHERE d.stage = 'proposal_sent' AND doc.status IN ('sent', 'viewed') AND doc.test = 0 AND doc.sent_at IS NOT NULL AND doc.sent_at <= ? AND doc.expires_at >= ?
      ORDER BY doc.sent_at, doc.id`,
-  ).bind(sentBefore).all<{ business_id: string; sent_at: string; status: string }>()).results;
+  ).bind(sentBefore, now).all<{ business_id: string; sent_at: string; status: string }>()).results;
   return rows.map((r) => ({ businessId: r.business_id, sentAt: r.sent_at, viewed: r.status === "viewed" }));
 }
 
 /** Stores where the signed PDF is and its hash, or why it could not be made. */
 export async function setPdf(db: D1Database, id: string, o: { key: string; sha256: string } | { error: string }): Promise<void> {
   const now = new Date().toISOString();
-  if ("error" in o) await db.prepare(`UPDATE documents SET pdf_error = ?, updated_at = ? WHERE id = ?`).bind(o.error, now, id).run();
+  // A failure is only noted while there is no file: a concurrent success must not leave an error beside its key.
+  if ("error" in o) await db.prepare(`UPDATE documents SET pdf_error = ?, updated_at = ? WHERE id = ? AND pdf_key IS NULL`).bind(o.error, now, id).run();
   else await db.prepare(`UPDATE documents SET pdf_key = ?, pdf_sha256 = ?, pdf_error = NULL, updated_at = ? WHERE id = ?`).bind(o.key, o.sha256, now, id).run();
 }
 

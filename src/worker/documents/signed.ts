@@ -7,6 +7,7 @@ import { mainMailboxProblem } from "../booking/mail";
 import { sendEmail } from "../mail/send";
 import { htmlToPdf } from "../render/render";
 import { attachmentHeader, safeFileName } from "../routes/deck";
+import { showDraftBanner } from "./config";
 import { sha256Hex } from "./hash";
 import { clientBase, clientLink, renderSignedCopyMail, renderSignedNotice, type ProposalMail } from "./mail";
 import { renderProposalHtml } from "./render";
@@ -42,7 +43,7 @@ export async function ensureSignedPdf(env: Env, docId: string, deps: { pdf?: typ
   const key = signedPdfKey(doc.id);
   try {
     const signatures = await signaturesFor(env.DB, doc.id);
-    const html = renderProposalHtml(doc.content, { mode: "pdf", status: doc.status, contentSha256: doc.contentSha256, signatures, auditPage: true, draftBanner: doc.test });
+    const html = renderProposalHtml(doc.content, { mode: "pdf", status: doc.status, contentSha256: doc.contentSha256, signatures, auditPage: true, draftBanner: showDraftBanner(doc, null) });
     let bytes = await (deps.pdf ?? rendererForTests ?? htmlToPdf)(env.BROWSER, html, { format: "letter" });
     if (bytes.byteLength === 0) throw new Error("the renderer returned an empty file");
     const stored = await env.RAW.put(key, bytes, { httpMetadata: { contentType: "application/pdf" }, onlyIf: { etagDoesNotMatch: "*" } });
@@ -103,10 +104,11 @@ async function attempt(env: Env, businessId: string, what: string, send: () => P
  * The signed copy: a fixed-template mail from `main` to the signer with the client's link (the page serves the PDF), and a short notice to the owner's
  * contact address. It is the one decided unapproved send to a prospect, so the conflict gate runs on the signer's address first (at signing the lead is
  * not yet a client; payment comes later). Each of the two is its own attempt, so one that cannot go (no mailbox, a do-not-contact address, an SMTP error)
- * never stops the other. It never throws: a failure is a `note` on the lead and a Worker log line, and the signature stands.
+ * never stops the other. A test copy mails only the owner (the signer address on it is the real prospect's). It never throws: a failure is a `note` on the lead and a Worker log line, and the signature stands.
  */
 export async function sendSignedCopy(env: Env, doc: Document): Promise<void> {
-  await attempt(env, doc.businessId, "signed copy", async () => {
+  // A test copy goes to the address on the proposal, which is the real prospect's: never mail it. Only the owner's notice (marked as a test) goes.
+  if (!doc.test) await attempt(env, doc.businessId, "signed copy", async () => {
     const signer = (await signaturesFor(env.DB, doc.id)).find((s) => s.role === "client");
     if (!signer) throw new Error("the document has no client signature");
     const problem = await mainMailboxProblem(env);
@@ -121,6 +123,6 @@ export async function sendSignedCopy(env: Env, doc: Document): Promise<void> {
     if (!to) return;
     const problem = await mainMailboxProblem(env);
     if (problem) throw new Error(problem);
-    await sendFromMain(env, doc.businessId, to, renderSignedNotice(doc.content));
+    await sendFromMain(env, doc.businessId, to, renderSignedNotice(doc.content, { test: doc.test }));
   });
 }

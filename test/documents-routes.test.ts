@@ -121,6 +121,7 @@ describe("/api/documents/:id", () => {
   it("preview carries the CSP and the draft banner", async () => {
     const s = await seedProposalDeal();
     const { doc } = await draft(s, { contact: { name: "<script>alert(1)</script>", email: "pat@acme.test" } });
+    await saveSettings(env.DB, { documents_config: "{}" }); // the lawyer's review is not recorded, so a document that is not signed is a draft
     const res = await call("GET", `/api/documents/${doc.id}/preview.html`);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");

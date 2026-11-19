@@ -7,6 +7,10 @@
 /p
   X-Robots-Tag: noindex, nofollow
   Referrer-Policy: no-referrer
+  X-Frame-Options: DENY
+  Content-Security-Policy: frame-ancestors 'none'
 /p/*
   X-Robots-Tag: noindex, nofollow
   Referrer-Policy: no-referrer
+  X-Frame-Options: DENY
+  Content-Security-Policy: frame-ancestors 'none'

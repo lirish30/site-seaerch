@@ -11,7 +11,7 @@ const text = (c: ClauseCtx, id: ClauseId) => clausesFor(c).find((x) => x.id === 
 
 describe("clause library", () => {
   it("every clause named in spec 11 is present for a build option", () => {
-    expect(CLAUSE_LIBRARY_VERSION).toBe(1);
+    expect(CLAUSE_LIBRARY_VERSION).toBe(2);
     expect(ids(ctx({ keys: ["starter_site"] }))).toEqual([
       "scope_exclusions", "change_orders", "revisions", "content_delays", "payment_terms", "late_fee", "work_pause", "kill_fee",
       "ownership", "warranty", "termination", "client_content", "ai_content", "accessibility", "site_credit", "no_ranking",
@@ -94,6 +94,10 @@ describe("clause library", () => {
     expect(t).toMatch(/deposit/i); expect(t).toMatch(/before (any )?work (starts|begins)/i);
     expect(t).toMatch(/finished/i); expect(t).toMatch(/not (at|on) launch/i);
     expect(t).toMatch(/schedule/i);
+    // The final payment is not deferred by a later launch, and ownership follows payment: no sentence reads as "the site is promised regardless of payment".
+    expect(t).not.toMatch(/hold a finished site back/i);
+    expect(t).toMatch(/later launch date does not postpone/i);
+    expect(t).toMatch(/ownership and publication follow full payment/i);
   });
 
   it("names the parties, and ownership transfers on full payment", () => {

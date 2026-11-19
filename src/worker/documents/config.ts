@@ -32,6 +32,12 @@ export function parseDocumentsConfig(raw: string): DocumentsConfig {
   } catch { return DEFAULT_DOCUMENTS_CONFIG; }
 }
 
+/**
+ * Whether a rendering of this document carries the "draft, not reviewed" banner: always on a test copy, and on any document that is not yet signed while the
+ * lawyer's review is not recorded (`gate` is `legalGate`'s answer). A signed real document never has it: it is the record, whatever the settings say now.
+ */
+export const showDraftBanner = (doc: { test: boolean; status: string }, gate: string | null): boolean => doc.test || (doc.status !== "signed" && gate !== null);
+
 /** Why a real send (to a client, not a test) is refused, or null when it may go. The clauses need an Oregon lawyer's review first (spec §11). */
 export function legalGate(c: DocumentsConfig): string | null {
   return c.legalReviewedAt && c.legalReviewer.trim() ? null : "Have an Oregon lawyer review the clauses, then record it in Settings > Documents before sending a proposal to a client.";

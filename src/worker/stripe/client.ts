@@ -35,6 +35,9 @@ export class StripeError extends Error {
   constructor(message: string, readonly status: number) { super(message); this.name = "StripeError"; }
 }
 
+/** Longest a call to Stripe may take (the whole call, body included). */
+const TIMEOUT_MS = 15_000;
+
 const cap = (s: string, key: string): string => (key ? s.split(key).join("[key]") : s).slice(0, MAX_MESSAGE);
 
 async function call<T>(f: Fetch, key: string, method: "GET" | "POST", path: string, form?: Record<string, unknown>, idempotencyKey?: string): Promise<T> {
@@ -47,8 +50,11 @@ async function call<T>(f: Fetch, key: string, method: "GET" | "POST", path: stri
     body = encodeForm(form ?? {});
   }
   let res: Response;
-  try { res = await f(`${API}${path}`, { method, headers, body }); }
-  catch { throw new StripeError("could not reach Stripe", 0); } // the cause is dropped: it is not ours to relay
+  try { res = await f(`${API}${path}`, { method, headers, body, signal: AbortSignal.timeout(TIMEOUT_MS) }); }
+  catch (e) {
+    // The cause is dropped: it is not ours to relay. A request that ran out of time says so (the signing response waits for this call).
+    throw new StripeError(e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError") ? "Stripe did not respond" : "could not reach Stripe", 0);
+  }
   const json = await res.json<any>().catch(() => null);
   if (!res.ok) {
     const msg = json?.error?.message;

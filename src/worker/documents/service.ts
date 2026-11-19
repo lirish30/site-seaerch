@@ -3,6 +3,7 @@ import { mainMailboxProblem } from "../booking/mail";
 import { checkConflict } from "../conflict";
 import { latestAudit } from "../db/audits";
 import { lastBookingFor } from "../db/bookings";
+import { logActivity } from "../db/activity";
 import { getBusiness } from "../db/businesses";
 import { getDeal, type Deal } from "../db/deals";
 import {
@@ -48,7 +49,8 @@ export async function draftProposal(
   const business = await getBusiness(db, deal.businessId);
   if (!business) throw new ProposalError("This deal's lead was not found.");
   const docs = await listForDeal(db, dealId);
-  const open = docs.find((d) => OPEN.includes(d.status));
+  // A signed test copy (the owner signed his own rehearsal) does not block a real proposal.
+  const open = docs.find((d) => OPEN.includes(d.status) && !(d.test && d.status === "signed"));
   if (open) throw new DocumentStateError(open.status === "signed" ? "this deal's proposal is already signed" : `this deal has a ${open.status} proposal (version ${open.version}); void it first to make a new one`);
   const existing = docs.find((d) => d.status === "draft");
 
@@ -170,6 +172,22 @@ export async function sendTest(env: Env, doc: Document, now = new Date()): Promi
   // No lead and no approval: it is a message to the owner, not outreach.
   await sendEmail(env, { mailbox: "main", to, subject: `[Test] ${m.subject}`, body: m.body, includeFooter: false }, { approvalId: null, skipLimits: true });
   return sealed;
+}
+
+/**
+ * Voids every sent or viewed proposal of a deal (a deal marked lost has no live link to sign or pay) and logs each once. A document that cannot be voided
+ * is logged and left: signing and the page refuse a lost deal on their own. A signed one is a record and stays. Returns how many were voided.
+ */
+export async function voidOpenProposals(db: D1Database, dealId: string, reason: string): Promise<number> {
+  let n = 0;
+  for (const d of (await listForDeal(db, dealId)).filter((x) => x.status === "sent" || x.status === "viewed")) {
+    try {
+      await voidProposal(db, d, reason);
+      await logActivity(db, d.businessId, "proposal_void", `${d.content.header.reference} v${d.version}: ${reason}`);
+      n++;
+    } catch (e) { console.error("proposal: could not void a proposal of a lost deal", e instanceof Error ? e.message : "unknown error"); }
+  }
+  return n;
 }
 
 /** Voids a document with the reason and withdraws any approval still waiting to send it. A void one is returned as it is. */

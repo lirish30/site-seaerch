@@ -32,7 +32,7 @@ export interface Env {
   MAILBOX_MAIN_PASSWORD?: string;
   /** Base URL for tracked outreach links (e.g. https://go.hellositeline.com). */
   OUTREACH_LINK_BASE?: string;
-  /** Base URL for a client's proposal link (https only, e.g. https://clients.hellositeline.com). Never the cold-email host and never workers.dev. */
+  /** Base URL for a client's proposal link (https only, e.g. https://clients.sitelineweb.com). Never the cold-email host and never workers.dev. */
   CLIENT_LINK_BASE?: string;
   /** Stripe secret or restricted key (Worker secret, never in D1 or a log). sk_test_/rk_test_ is test mode. */
   STRIPE_SECRET_KEY?: string;
