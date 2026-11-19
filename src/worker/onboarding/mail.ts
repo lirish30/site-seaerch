@@ -91,7 +91,10 @@ export function renderReminder(level: 1 | 2 | 3 | 4, c: MailCtx, link: string, s
   }
 }
 
-/** The Friday summary: what has come in, what is still open, and whether the questionnaire is done. */
+/**
+ * The Friday summary: what has come in, what is still open, and whether the questionnaire is done.
+ * TODO(plan-7): the "done this week / next up" half of the Friday update needs the build tracker Plan 7 adds; until then this is the client-side half only.
+ */
 export function renderFriday(c: FridayCtx, link: string, s: Settings): OnboardingMail {
   const list = (labels: string[]) => {
     const shown = labels.map((l) => line(l, LABEL_MAX, link)).filter(Boolean);
