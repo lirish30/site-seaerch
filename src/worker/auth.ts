@@ -48,9 +48,13 @@ export async function loginThrottled(c: Context<{ Bindings: Env }>) {
 // Only the login entry points are public: everything else under /api/passkey needs a session.
 const PUBLIC = new Set(["/api/health", "/api/login", "/api/google/callback", "/api/passkey/login/options", "/api/passkey/login/verify"]);
 
-// The only unauthenticated data route: a single non-empty token segment under this prefix, nothing else.
+// The only unauthenticated data routes: the report under this prefix (a single non-empty token segment) and its video files (`<token>/media/<name>`; the route itself accepts three names), nothing else.
 const PUBLIC_REPORT_PREFIX = "/api/public/report/";
-const isPublicReport = (path: string) => path.startsWith(PUBLIC_REPORT_PREFIX) && path.length > PUBLIC_REPORT_PREFIX.length && !path.includes("/", PUBLIC_REPORT_PREFIX.length);
+const isPublicReport = (path: string) => {
+  if (!path.startsWith(PUBLIC_REPORT_PREFIX) || path.length === PUBLIC_REPORT_PREFIX.length) return false;
+  const rest = path.slice(PUBLIC_REPORT_PREFIX.length);
+  return !rest.includes("/") || /^[^/]+\/media\/[^/]+$/.test(rest);
+};
 
 export const requireAuth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   if (PUBLIC.has(c.req.path) || isPublicReport(c.req.path)) return next();

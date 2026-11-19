@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { Settings } from "../types";
 
 /**
  * The video plan: which screenshots (shots) the video uses and the narrated lines (segments) that play over them.
@@ -63,6 +64,10 @@ export const VideoPlanSchema = z.object({
   version: z.number().int().nonnegative(),
 });
 export type VideoPlan = z.infer<typeof VideoPlanSchema>;
+
+/** Whether the page says the voice is AI: the owner has the note on and at least one line is spoken by the cloned voice. */
+export const aiVoiceNote = (settings: Pick<Settings, "ai_voice_note">, plan: Pick<VideoPlan, "segments"> | null): boolean =>
+  settings.ai_voice_note === 1 && !!plan?.segments.some((s) => s.audio?.source === "clone");
 
 export const SCRIPT_MS = { min: 80_000, max: 130_000 } as const;
 export const WORDS_PER_MINUTE = 150;

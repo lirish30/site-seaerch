@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { pollDelay } from "../poll";
 import type { Segment, VideoPlan } from "../../worker/video/plan";
-import { approveBlockers, canCancel, editorMode, isWatching, mergeSaved, replaceSegment, scriptSummary, videoStateLine, type VideoResponse } from "../videoView";
+import { approveBlockers, canCancel, canReopen, editorMode, hasPlayer, isWatching, mergeSaved, publishState, replaceSegment, scriptSummary, videoStateLine, type VideoResponse } from "../videoView";
 import Icon from "../components/Icon";
 import { Badge } from "../components/Score";
 import ShotCanvas from "../components/video/ShotCanvas";
@@ -128,6 +128,13 @@ export default function VideoEditor() {
     void act("cancel", () => api.post(`/video-audits/${videoId}/cancel`), () => nav(`/leads/${leadId}`));
   };
 
+  // The made video: watch it, then publish it (the same approval the inbox shows), reject it, or take it back to review to change and render again.
+  const publishApproval = data?.publishApproval ?? null;
+  const pstate = data ? publishState(data.video.status, publishApproval) : "none";
+  const publishVideo = () => act("publish", () => api.post(`/approvals/${encodeURIComponent(publishApproval!.id)}/approve`), () => load(false));
+  const rejectVideo = () => act("reject", () => api.post(`/approvals/${encodeURIComponent(publishApproval!.id)}/reject`), () => load(false));
+  const reopen = () => act("reopen", () => api.post(`/video-audits/${videoId}/reopen`), () => load(false));
+
   const back = <Link to={`/leads/${leadId}`} className="vd-back"><Icon name="chevron-left" size={14} />{data?.business?.name ?? "Lead"}</Link>;
 
   if (none) return (
@@ -163,6 +170,20 @@ export default function VideoEditor() {
             <span><Icon name="clock" size={14} /> Claude is writing a new script. It arrives in your next queue session and will replace this one.</span>
             <button type="button" className="btn sm" onClick={() => void writeMyself()} disabled={!!busy}>Write it myself</button>
           </div>
+        )}
+        {hasPlayer(data.video) && (
+          <section className="vd-player" aria-label="Made video">
+            <video controls preload="metadata" playsInline className="vd-video"
+              src={`/api/video-audits/${data.video.id}/media/video.mp4`} poster={`/api/video-audits/${data.video.id}/media/poster.jpg`}>
+              Your browser can't play this video.
+            </video>
+            <div className="vd-player-acts">
+              {pstate === "waiting" && <button type="button" className="btn primary" onClick={() => void publishVideo()} disabled={!!busy}>{busy === "publish" ? "Publishing…" : "Approve and publish"}</button>}
+              {pstate === "waiting" && <button type="button" className="btn" onClick={() => void rejectVideo()} disabled={!!busy}>Reject</button>}
+              {canReopen(data.video.status) && <button type="button" className={`btn${pstate === "rejected" ? " primary" : ""}`} onClick={() => void reopen()} disabled={!!busy}>{busy === "reopen" ? "Reopening…" : "Edit and re-render"}</button>}
+            </div>
+            {pstate === "rejected" && <p className="vd-note" role="status">You rejected this video{publishApproval?.decision_note ? `: ${publishApproval.decision_note}` : ""}. Edit it and render it again to try once more.</p>}
+          </section>
         )}
         {mode === "state" && !stateLine && <div className="card"><p>There is no script to edit yet.</p></div>}
 

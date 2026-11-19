@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   addMarkup, approveBlockers, canCancel, editorMode, isWatching, lineVoice, mergeSaved, moveMarkup, moveArrowEnd, removeMarkup, replaceMarkup, resizeMarkup, scriptSummary, setSegmentShot, setSegmentText,
-  shotLabel, videoStateLine,
+  shotLabel, videoStateLine, publishState, canReopen, hasPlayer,
 } from "../src/client/videoView";
 import { MAX_MARKUPS, hashText, type Markup, type Segment, type VideoPlan } from "../src/worker/video/plan";
 
@@ -242,5 +242,28 @@ describe("editorMode", () => {
   it("keeps polling while the video moves on its own, and stops on failure", () => {
     for (const s of ["capturing", "scripting", "producing"]) expect(isWatching(s), s).toBe(true);
     for (const s of ["review", "rendered", "published", "failed", "cancelled"]) expect(isWatching(s), s).toBe(false);
+  });
+});
+
+describe("publish approval in the editor", () => {
+  it("reads the approval as waiting, rejected or none", () => {
+    expect(publishState("rendered", { status: "pending" })).toBe("waiting");
+    expect(publishState("rendered", { status: "rejected" })).toBe("rejected");
+    expect(publishState("rendered", { status: "approved" })).toBe("waiting"); // being published right now
+    expect(publishState("rendered", null)).toBe("none");
+    expect(publishState("review", { status: "rejected" })).toBe("none"); // only a rendered video has a publish decision to show
+    expect(publishState("published", { status: "approved" })).toBe("none");
+  });
+
+  it("offers Edit and re-render only for a rendered video", () => {
+    expect(canReopen("rendered")).toBe(true);
+    for (const s of ["capturing", "scripting", "review", "producing", "published", "failed", "cancelled"]) expect(canReopen(s), s).toBe(false);
+  });
+
+  it("names the rendered video's player files", () => {
+    expect(hasPlayer({ status: "rendered", video_key: "k" })).toBe(true);
+    expect(hasPlayer({ status: "published", video_key: "k" })).toBe(true);
+    expect(hasPlayer({ status: "rendered", video_key: null })).toBe(false);
+    expect(hasPlayer({ status: "review", video_key: "k" })).toBe(false);
   });
 });

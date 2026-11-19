@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupFindings, summaryText, isHttpsLogo, isReportToken, shareState, senderInitials, emailLabel, senderLine, hasSender, senderTitle, expiryText, basedOnText, longDate } from "../src/client/reportView";
+import { groupFindings, summaryText, isHttpsLogo, isReportToken, shareState, senderInitials, emailLabel, senderLine, hasSender, senderTitle, expiryText, basedOnText, longDate, videoNote, bookingLabel } from "../src/client/reportView";
 
 const f = (severity: "high" | "medium" | "low", evidence: string) => ({ severity, evidence });
 
@@ -64,5 +64,13 @@ describe("reportView", () => {
     expect(expiryText("garbage")).toBe("Private link");
     expect(basedOnText({ website: "acme.com", auditedAt: "2026-10-13T15:00:00.000Z" })).toBe("Based on an automated check of acme.com on October 13, 2026.");
     expect(basedOnText({ website: "", auditedAt: "2026-10-13T15:00:00.000Z" })).toBe("Based on an automated check on October 13, 2026.");
+  });
+  it("words the video note and the booking button", () => {
+    expect(videoNote({ aiVoiceNote: true })).toBe("Narrated with an AI version of my voice.");
+    expect(videoNote({ aiVoiceNote: false })).toBe("");
+    expect(bookingLabel("https://cal.example.com/me")).toBe("Book a 20-minute call");
+    expect(bookingLabel("http://cal.example.com/me")).toBe("");
+    expect(bookingLabel("javascript:alert(1)")).toBe("");
+    expect(bookingLabel("")).toBe("");
   });
 });

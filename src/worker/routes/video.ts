@@ -10,6 +10,8 @@ import "../helper/kinds"; // a helper job is only valid for a registered kind
 import { requestVideoScript } from "../queue/videoScript";
 import { MAX_MARKUPS, SegmentSchema, approvalBlockers, checkPlanRefs, hashText, type Segment, type VideoPlan } from "../video/plan";
 import { getSettings } from "../db/settings";
+import { reject } from "../approvals/decide";
+import { mediaFor, serveObject } from "../video/media";
 import { startProduction, voiceBlockers } from "../video/production";
 
 export const videoRoutes = new Hono<{ Bindings: Env }>();
@@ -56,11 +58,14 @@ videoRoutes.get("/video-audits/:id", async (c) => {
   const video = await getVideoAudit(c.env.DB, c.req.param("id"));
   if (!video) return c.json({ error: "not found" }, 404);
   // `jobs` are the Mac helper's jobs for this video. `helperOnline` is whether the Mac helper has checked in lately; the client words the state line itself from both.
-  const [audit, business, jobs, helper] = await Promise.all([
+  const [audit, business, jobs, helper, approval] = await Promise.all([
     getAudit(c.env.DB, video.audit_id), getBusiness(c.env.DB, video.business_id), helperJobsForVideo(c.env.DB, video.id), helperStatus(c.env.DB, new Date()),
+    video.publish_approval_id
+      ? c.env.DB.prepare(`SELECT id, status, decision_note FROM approvals WHERE id = ?`).bind(video.publish_approval_id).first<{ id: string; status: string; decision_note: string | null }>()
+      : null,
   ]);
   return c.json({
-    video, plan: video.plan, jobs, helperOnline: helper.online, state: stateLine(video),
+    video, plan: video.plan, jobs, helperOnline: helper.online, state: stateLine(video), publishApproval: approval ?? null,
     findingCodes: audit?.findings.map((f) => f.code) ?? [], business: business ? { id: business.id, name: business.name } : null,
   });
 });
@@ -81,6 +86,17 @@ videoRoutes.get("/video-audits/:id/shots/:shotId/preview", async (c) => {
   const obj = shot ? await c.env.RAW.get(shot.previewKey) : null;
   if (!obj) return c.json({ error: "not found" }, 404);
   return new Response(obj.body, { headers: { "content-type": "image/jpeg", "cache-control": "private, max-age=3600" } });
+});
+
+/** The owner watching a rendered (or published) video, before or after it goes live: the same files the report page serves, behind the login. */
+videoRoutes.get("/video-audits/:id/media/:name", async (c) => {
+  const video = await getVideoAudit(c.env.DB, c.req.param("id"));
+  const file = video && (video.status === "rendered" || video.status === "published") ? mediaFor(video, c.req.param("name")) : null;
+  if (!file) return c.json({ error: "not found" }, 404);
+  const res = await serveObject(c.env.RAW, file.key, file.type, c.req.header("range") ?? null);
+  // A re-render replaces the files, so the owner's copy is checked each time.
+  if (res.status === 200 || res.status === 206) res.headers.set("cache-control", "private, no-cache");
+  return res;
 });
 
 const MAX_LINES = 20;
@@ -217,6 +233,21 @@ videoRoutes.post("/video-audits/:id/keep-script", async (c) => {
   if (video.status !== "scripting" || !video.plan?.segments.length) return c.json({ error: "There is no new script to drop" }, 409);
   if (!(await moveVideoStatus(c.env.DB, id, ["scripting"], "review"))) return c.json({ error: "There is no new script to drop" }, 409);
   await cancelTasksFor(c.env.DB, "video", id);
+  return c.json({ ok: true });
+});
+
+/**
+ * "Edit and re-render": takes a rendered video that was not published back to review, so its script and markups can be changed. The plan's version is bumped
+ * (so an editor holding the old plan is told), the Mac's open jobs for it are closed, and a publish approval still waiting is withdrawn.
+ */
+videoRoutes.post("/video-audits/:id/reopen", async (c) => {
+  const id = c.req.param("id");
+  const video = await getVideoAudit(c.env.DB, id);
+  if (!video) return c.json({ error: "not found" }, 404);
+  if (!(await moveVideoStatus(c.env.DB, id, ["rendered"], "review", { error: null, publish_approval_id: null }))) return c.json({ error: "Only a rendered video can be edited and re-rendered" }, 409);
+  if (video.publish_approval_id) await reject(c.env.DB, video.publish_approval_id, "Reopened for editing");
+  if (video.plan) await savePlan(c.env.DB, id, video.plan);
+  await cancelHelperJobsFor(c.env.DB, id);
   return c.json({ ok: true });
 });
 

@@ -10,6 +10,9 @@
 .vd-save { min-width:56px; font-size:12px; color:var(--text-3); }
 .vd-body { display:flex; flex-direction:column; gap:16px; }
 
+.vd-player { display:flex; flex-direction:column; gap:10px; max-width:720px; }
+.vd-video { display:block; width:100%; aspect-ratio:16/9; border-radius:var(--radius-md); background:#000; object-fit:contain; }
+.vd-player-acts { display:flex; flex-wrap:wrap; gap:10px; }
 .vd-split { display:grid; grid-template-columns:minmax(300px, 420px) minmax(0, 1fr); gap:20px; align-items:start; }
 @media (max-width: 900px) { .vd-split { grid-template-columns:1fr; } }
 .vd-left { display:flex; flex-direction:column; gap:12px; }

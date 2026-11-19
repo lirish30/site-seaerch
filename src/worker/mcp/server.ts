@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Env } from "../env";
 import "../approvals/leadNote"; // registers the built-in kinds for this entry path too
 import "../approvals/emailSend";
+import "../approvals/videoPublish";
 import { buildEmailSendApproval, mailboxFromEmail, type EmailSendPayload } from "../approvals/emailSend";
 import { getSettings } from "../db/settings";
 import { createApproval, listApprovals, UnknownKindError } from "../db/approvals";

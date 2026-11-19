@@ -21,6 +21,12 @@ export function groupApprovals(items: ApprovalItem[]): ApprovalGroup[] {
   return [...groups.values()];
 }
 
+/** Where to open the thing an approval is about, when the inbox can show a way in: a publish approval opens the lead's video editor. */
+export function approvalLink(a: Pick<ApprovalItem, "kind" | "record_type" | "record_id">): { to: string; label: string } | null {
+  if (a.kind === "video.publish" && a.record_type === "lead" && a.record_id) return { to: `/leads/${encodeURIComponent(a.record_id)}/video`, label: "Watch and edit the video" };
+  return null;
+}
+
 export const approvalsLine = (n: number): string =>
   n === 0 ? "Nothing waiting for you." : n === 1 ? "1 thing waiting for your OK." : `${n} things waiting for your OK.`;
 

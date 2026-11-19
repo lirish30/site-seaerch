@@ -58,7 +58,8 @@ describe("auth routes", () => {
 
   it.each(["/api/leads", "/api/settings", "/api/searches", "/api/publicx", "/api/public/", "/api/public", "/api/public/other/x",
     "/api/public/report", "/api/public/report/", "/api/public/report/abc/def", "/api/public/report/%2e%2e/leads",
-    `/api/public/report/${"A".repeat(43)}/x`])("%s stays protected without a cookie", async (p) => {
+    `/api/public/report/${"A".repeat(43)}/x`, `/api/public/report/${"A".repeat(43)}/media`,
+    `/api/public/report/${"A".repeat(43)}/media/video.mp4/x`, "/api/public/report//media/video.mp4"])("%s stays protected without a cookie", async (p) => {
     expect((await SELF.fetch(`https://x${p}`)).status).toBe(401);
   });
 
@@ -72,5 +73,9 @@ describe("auth routes", () => {
     const r = await SELF.fetch(`https://x/api/public/report/${"abcDEF123_-".padEnd(43, "x")}`);
     expect(r.status).toBe(404);
     expect(await r.json()).toEqual({ error: "not found" });
+  });
+
+  it("the three video files need no cookie (404 for an unknown token, not 401)", async () => {
+    for (const n of ["video.mp4", "poster.jpg", "preview.gif"]) expect((await SELF.fetch(`https://x/api/public/report/${"abcDEF123_-".padEnd(43, "x")}/media/${n}`)).status).toBe(404);
   });
 });

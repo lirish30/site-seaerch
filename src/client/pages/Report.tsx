@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import Icon, { LogoMark } from "../components/Icon";
 import {
-  basedOnText, emailLabel, expiryText, groupFindings, hasSender, isHttpsLogo, isReportToken, senderInitials, senderLine, senderTitle, summaryText,
+  basedOnText, bookingLabel, emailLabel, expiryText, groupFindings, hasSender, isHttpsLogo, isReportToken, senderInitials, senderLine, senderTitle, summaryText, videoNote, mediaUrl,
   type ReportData,
 } from "../reportView";
 
@@ -92,6 +92,8 @@ export default function Report() {
   );
 
   const groups = groupFindings(r.findings);
+  const note = r.video ? videoNote(r.video) : "";
+  const booking = r.video && r.bookingUrl ? bookingLabel(r.bookingUrl) : "";
   const { sender } = r;
   const title = senderTitle(sender);
   return (
@@ -108,6 +110,17 @@ export default function Report() {
             <h1>Quick website check for {r.businessName}</h1>
             <p className="rp-based">{basedOnText(r)}</p>
           </div>
+
+          {r.video && token && (
+            <section className="rp-video" aria-label="Video walkthrough">
+              <video controls preload="metadata" playsInline poster={mediaUrl(token, "poster.jpg")} className="rp-player">
+                <source src={mediaUrl(token, "video.mp4")} type="video/mp4" />
+                Your browser can't play this video.
+              </video>
+              {note && <p className="rp-video-note">{note}</p>}
+              {booking && <a className="btn primary rp-book" href={r.bookingUrl} target="_blank" rel="noopener noreferrer"><Icon name="calendar" size={16} />{booking}</a>}
+            </section>
+          )}
 
           <div className="rp-summary">
             {groups.length ? <>

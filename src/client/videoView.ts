@@ -133,7 +133,9 @@ export const expectedSeconds = (text: string): number => Math.round(planDuration
 
 /** What GET /api/video-audits/:id returns, as the editor uses it. */
 export interface VideoResponse {
-  video: { id: string; business_id: string; status: string; error: string | null; steering_note: string | null; updated_at: string };
+  video: { id: string; business_id: string; status: string; error: string | null; steering_note: string | null; updated_at: string; video_key: string | null; duration_ms: number | null };
+  /** The approval to publish this video, as the server last saw it. */
+  publishApproval: { id: string; status: string; decision_note: string | null } | null;
   plan: VideoPlan | null;
   jobs: { kind: string; status: string }[];
   helperOnline: boolean;
@@ -167,3 +169,15 @@ export function mergeSaved(local: VideoPlan, saved: VideoPlan): VideoPlan {
     }),
   };
 }
+
+/** What the editor shows for a rendered video's publish approval: "waiting" (approve it in the inbox, or here), "rejected" (edit and re-render), or "none". */
+export function publishState(status: string, approval: { status: string } | null): "waiting" | "rejected" | "none" {
+  if (status !== "rendered" || !approval) return "none";
+  return approval.status === "rejected" ? "rejected" : "waiting";
+}
+
+/** A rendered video that was not published can go back to review to be changed and rendered again. */
+export const canReopen = (status: string): boolean => status === "rendered";
+
+/** Whether there is a made video to play: rendered or published, with its file stored. */
+export const hasPlayer = (v: { status: string; video_key: string | null }): boolean => (v.status === "rendered" || v.status === "published") && !!v.video_key;

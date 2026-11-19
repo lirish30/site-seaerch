@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import Icon from "../Icon";
-import { approvalsLine, draftedByLabel, groupApprovals, parsePayloadText, whenLabel, type ApprovalItem } from "../../approvalsView";
+import { approvalLink, approvalsLine, draftedByLabel, groupApprovals, parsePayloadText, whenLabel, type ApprovalItem } from "../../approvalsView";
 import type { Part } from "./useHome";
 
 type Mode = "edit" | "reject";
@@ -59,6 +60,7 @@ function ApprovalRow({ item, error, busy, onApprove, onReject }: {
   const [text, setText] = useState("");
   const [note, setNote] = useState("");
   const [parseErr, setParseErr] = useState("");
+  const link = approvalLink(item);
 
   const openEdit = () => { setText(JSON.stringify(item.payload ?? null, null, 2)); setParseErr(""); setMode("edit"); };
   const submitEdit = () => {
@@ -72,6 +74,7 @@ function ApprovalRow({ item, error, busy, onApprove, onReject }: {
       <div className="hm-main">
         <p className="hm-name">{item.title}</p>
         <p className="hm-reason">{item.preview}</p>
+        {link && <p className="hm-appr-meta"><Link to={link.to}>{link.label}</Link></p>}
         <p className="hm-appr-meta">{draftedByLabel(item.drafted_by)} · {whenLabel(item.created_at)}</p>
         {(error || parseErr) && <p className="hm-err">{error || parseErr}</p>}
         {mode === "edit" && (

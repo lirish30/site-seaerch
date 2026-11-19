@@ -32,6 +32,7 @@ import { helperRoutes } from "./routes/helper";
 import { helperAdminRoutes } from "./routes/helperAdmin";
 import "./approvals/leadNote";
 import "./approvals/emailSend";
+import "./approvals/videoPublish";
 import { mcpRoute } from "./mcp/route";
 import { runScheduled } from "./schedule";
 
