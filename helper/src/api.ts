@@ -33,13 +33,49 @@ export interface JobApi {
   fail(jobId: string, error: string): Promise<void>;
 }
 
+/**
+ * Whether trying the same request again could help: a network failure (fetch threw, or a body broke off mid-transfer), a 5xx or a 429. A revoked
+ * token and every other 4xx (403, 404, 413, 422 ...) will answer the same way next time, so they are not worth repeating.
+ */
+export function isTransient(e: unknown): boolean {
+  if (e instanceof TokenRevoked) return false;
+  if (e instanceof ApiError) return e.status >= 500 || e.status === 429;
+  return true;
+}
+
+export const RETRY_TRIES = 3;
+
+/** Runs `fn` up to `tries` times, pausing `backoffMs(attempt)` between tries, but only while the failure is transient. The last error is thrown. */
+export async function retryTransient<T>(
+  fn: () => Promise<T>,
+  o: { sleep: (ms: number) => Promise<void>; backoffMs?: (attempt: number) => number; tries?: number; onRetry?: (e: unknown, attempt: number) => void },
+): Promise<T> {
+  const tries = o.tries ?? RETRY_TRIES;
+  for (let attempt = 1; ; attempt++) {
+    try { return await fn(); }
+    catch (e) {
+      if (attempt >= tries || !isTransient(e)) throw e;
+      o.onRetry?.(e, attempt);
+      await o.sleep((o.backoffMs ?? ((n) => n * 1000))(attempt));
+    }
+  }
+}
+
+export interface ClientOptions { sleep?: (ms: number) => Promise<void>; backoffMs?: (attempt: number) => number }
+
 const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
 
 export class ApiClient implements JobApi {
   private readonly cfg: Pick<Config, "apiBase" | "token">;
   private readonly fetchImpl: typeof fetch;
 
-  constructor(cfg: Pick<Config, "apiBase" | "token">, fetchImpl: typeof fetch = fetch) { this.cfg = cfg; this.fetchImpl = fetchImpl; }
+  private readonly retry: Required<ClientOptions>;
+
+  /** `opts` is for tests: how a retry pauses. Downloads and uploads are tried up to three times on transient errors; the other calls once (the loop retries `complete`). */
+  constructor(cfg: Pick<Config, "apiBase" | "token">, fetchImpl: typeof fetch = fetch, opts: ClientOptions = {}) {
+    this.cfg = cfg; this.fetchImpl = fetchImpl;
+    this.retry = { sleep: opts.sleep ?? ((ms) => new Promise<void>((r) => setTimeout(r, ms))), backoffMs: opts.backoffMs ?? ((n) => n * 1000) };
+  }
 
   /** One request. A 401 is `TokenRevoked`; any other non-2xx is an `ApiError` carrying the server's reason. The token is only ever in the header. */
   private async send(path: string, init: RequestInit = {}): Promise<Response> {
@@ -71,10 +107,13 @@ export class ApiClient implements JobApi {
     return { id: job.id, kind: job.kind, attempts: typeof job.attempts === "number" ? job.attempts : 1, payload: job.payload, inputs: job.inputs, outputs: job.outputs };
   }
 
+  /** Safe to repeat: a GET that rewrites the same file. */
   async download(jobId: string, key: string, toPath: string): Promise<void> {
-    const res = await this.send(`/jobs/${encodeURIComponent(jobId)}/input?key=${encodeURIComponent(key)}`);
-    if (!res.body) throw new Error(`the server sent no data for ${key}`);
-    await pipeline(Readable.fromWeb(res.body as import("node:stream/web").ReadableStream), createWriteStream(toPath));
+    await retryTransient(async () => {
+      const res = await this.send(`/jobs/${encodeURIComponent(jobId)}/input?key=${encodeURIComponent(key)}`);
+      if (!res.body) throw new Error(`the server sent no data for ${key}`);
+      await pipeline(Readable.fromWeb(res.body as import("node:stream/web").ReadableStream), createWriteStream(toPath));
+    }, this.retry);
   }
 
   async upload(jobId: string, key: string, fromPath: string, contentType: string): Promise<void> {
@@ -82,7 +121,8 @@ export class ApiClient implements JobApi {
     if (size > MAX_UPLOAD_BYTES) throw new ApiError(413, `An upload may be at most ${MAX_UPLOAD_BYTES / 1024 / 1024} MB; this file is ${(size / 1024 / 1024).toFixed(1)} MB`);
     // Read whole: a Buffer body carries its own length, which the server streams straight into storage. Even a long render is well under 80 MB.
     const body = await readFile(fromPath);
-    await this.send(`/jobs/${encodeURIComponent(jobId)}/output?key=${encodeURIComponent(key)}`, { method: "PUT", headers: { "content-type": contentType }, body });
+    // Safe to repeat: a PUT of the same bytes to the same key replaces itself.
+    await retryTransient(() => this.send(`/jobs/${encodeURIComponent(jobId)}/output?key=${encodeURIComponent(key)}`, { method: "PUT", headers: { "content-type": contentType }, body }), this.retry);
   }
 
   async complete(jobId: string, result: unknown): Promise<void> {

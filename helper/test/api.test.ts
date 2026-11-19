@@ -8,7 +8,7 @@ const TOKEN = "hlp_" + "t".repeat(43);
 interface Seen { url: string; method: string; headers: Record<string, string>; body: unknown }
 
 /** A fetch that records each request and answers with the next scripted response. */
-function fake(...responses: Response[]) {
+function fake(...responses: (Response | Error)[]) {
   const seen: Seen[] = [];
   const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
     const headers = Object.fromEntries(new Headers(init?.headers).entries());
@@ -17,9 +17,12 @@ function fake(...responses: Response[]) {
     seen.push({ url: String(input), method: init?.method ?? "GET", headers, body });
     const r = responses.shift();
     if (!r) throw new Error("no more scripted responses");
+    if (r instanceof Error) throw r;
     return r;
   }) as typeof fetch;
-  return { seen, client: new ApiClient({ apiBase: "https://agency.example.com", token: TOKEN }, fetchImpl) };
+  const slept: number[] = [];
+  const client = new ApiClient({ apiBase: "https://agency.example.com", token: TOKEN }, fetchImpl, { sleep: async (ms) => { slept.push(ms); }, backoffMs: (n) => n });
+  return { seen, slept, client };
 }
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
@@ -132,5 +135,72 @@ describe("ApiClient", () => {
   it("the helper version matches package.json", () => {
     const pkg = JSON.parse(readFileSync(join(import.meta.dirname, "..", "package.json"), "utf8"));
     expect(HELPER_VERSION).toBe(pkg.version);
+  });
+
+  describe("retries", () => {
+    it("download retries a network blip and succeeds", async () => {
+      const f = fake(new TypeError("fetch failed"), new Response(new Uint8Array([9, 8]), { status: 200 }));
+      const to = join(dir, "ref.m4a");
+      await f.client.download("j", "k", to);
+      expect(f.seen.length).toBe(2);
+      expect(f.slept).toEqual([1]);
+      expect([...readFileSync(to)]).toEqual([9, 8]);
+    });
+
+    it("upload retries a 503 then succeeds", async () => {
+      const f = fake(json({ error: "busy" }, 503), json({ ok: true, bytes: 5 }));
+      const file = join(dir, "o.wav"); writeFileSync(file, "RIFF!");
+      await f.client.upload("j", "k", file, "audio/wav");
+      expect(f.seen.length).toBe(2);
+      expect(String(f.seen[1].body)).toBe("RIFF!");
+    });
+
+    it("upload retries a 429 too", async () => {
+      const f = fake(json({ error: "slow down" }, 429), json({ ok: true }));
+      const file = join(dir, "o.wav"); writeFileSync(file, "x");
+      await f.client.upload("j", "k", file, "audio/wav");
+      expect(f.seen.length).toBe(2);
+    });
+
+    it("upload does not retry a 413", async () => {
+      const f = fake(json({ error: "An upload may be at most 80 MB" }, 413), json({ ok: true }));
+      const file = join(dir, "big.mp4"); writeFileSync(file, "x");
+      await expect(f.client.upload("j", "k", file, "video/mp4")).rejects.toMatchObject({ status: 413 });
+      expect(f.seen.length).toBe(1);
+      expect(f.slept).toEqual([]);
+    });
+
+    it("download does not retry a 403 or 404", async () => {
+      for (const status of [403, 404]) {
+        const f = fake(json({ error: "no" }, status), new Response("late", { status: 200 }));
+        await expect(f.client.download("j", "k", join(dir, "o"))).rejects.toMatchObject({ status });
+        expect(f.seen.length).toBe(1);
+      }
+    });
+
+    it("a 401 on download is not retried", async () => {
+      const f = fake(new Response("{}", { status: 401 }), new Response("late", { status: 200 }));
+      await expect(f.client.download("j", "k", join(dir, "o"))).rejects.toBeInstanceOf(TokenRevoked);
+      expect(f.seen.length).toBe(1);
+      expect(f.slept).toEqual([]);
+    });
+
+    it("a 401 on upload is not retried", async () => {
+      const f = fake(new Response("{}", { status: 401 }));
+      const file = join(dir, "o.wav"); writeFileSync(file, "x");
+      await expect(f.client.upload("j", "k", file, "audio/wav")).rejects.toBeInstanceOf(TokenRevoked);
+      expect(f.seen.length).toBe(1);
+    });
+
+    it("gives up after 3 attempts with the last error", async () => {
+      const f = fake(new TypeError("fetch failed 1"), json({ error: "busy 2" }, 503), json({ error: "busy 3" }, 502), json({ ok: true }));
+      const file = join(dir, "o.wav"); writeFileSync(file, "x");
+      const e = await f.client.upload("j", "k", file, "audio/wav").then(() => null, (x: unknown) => x);
+      expect(e).toBeInstanceOf(ApiError);
+      expect((e as ApiError).status).toBe(502);
+      expect((e as Error).message).toBe("busy 3");
+      expect(f.seen.length).toBe(3);
+      expect(f.slept).toEqual([1, 2]);
+    });
   });
 });

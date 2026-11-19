@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { ApiError, TokenRevoked, type ClaimedJob, type JobApi } from "./api.ts";
+import { ApiError, TokenRevoked, retryTransient, type ClaimedJob, type JobApi } from "./api.ts";
 import type { Config } from "./config.ts";
 
 export type { JobApi } from "./api.ts";
@@ -21,7 +21,6 @@ export interface LoopDeps {
   signal?: AbortSignal;
 }
 
-const COMPLETE_TRIES = 3;
 const MAX_BACKOFF_MS = 60_000;
 
 /** The error's words, in one line and short enough for the server to keep, and never empty. */
@@ -32,16 +31,14 @@ export function reasonOf(e: unknown): string {
 
 /** Sends a result, trying again when the network or the server hiccups. A result the server will not take (422) is thrown for the caller to report; one it already has (409, 403, 404) is not an error. */
 async function completeWithRetry(job: ClaimedJob, result: unknown, d: LoopDeps, log: (m: string) => void): Promise<void> {
-  for (let attempt = 1; ; attempt++) {
-    try { await d.api.complete(job.id, result); return; }
-    catch (e) {
-      if (e instanceof TokenRevoked) throw e;
-      if (e instanceof ApiError && [403, 404, 409].includes(e.status)) { log(`job ${job.id}: the server did not take the result (${e.message}); leaving it`); return; }
-      if (e instanceof ApiError && e.status >= 400 && e.status < 500 && e.status !== 429) throw e;
-      if (attempt >= COMPLETE_TRIES) throw e;
-      log(`job ${job.id}: could not send the result (${reasonOf(e)}); trying again`);
-      await d.sleep(attempt * 2000);
-    }
+  try {
+    await retryTransient(() => d.api.complete(job.id, result), {
+      sleep: d.sleep, backoffMs: (n) => n * 2000,
+      onRetry: (e) => log(`job ${job.id}: could not send the result (${reasonOf(e)}); trying again`),
+    });
+  } catch (e) {
+    if (e instanceof ApiError && [403, 404, 409].includes(e.status)) { log(`job ${job.id}: the server did not take the result (${e.message}); leaving it`); return; }
+    throw e;
   }
 }
 
