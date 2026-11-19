@@ -32,6 +32,7 @@ import Helper from "./pages/settings/Helper";
 import VoiceTest from "./pages/settings/VoiceTest";
 import Scores from "./pages/settings/Scores";
 import Packages from "./pages/settings/Packages";
+import Booking from "./pages/settings/Booking";
 import Shell from "./components/Shell";
 
 // Every page draws its own header and `.page-body` inside the panel.
@@ -74,6 +75,7 @@ export default function App() {
             <Route path="/settings/voice-test" element={<VoiceTest />} />
             <Route path="/settings/scores" element={<Scores />} />
             <Route path="/settings/packages" element={<Packages />} />
+            <Route path="/settings/booking" element={<Booking />} />
           </Routes>
         </Shell>
       } />

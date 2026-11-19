@@ -10,6 +10,7 @@ const FIELD_ERRORS: Record<string, string> = {
   signature_json: "A link or image in your signature isn't a valid address. Links need http(s):// and the image must be https://.",
   resume_url: "Resume link must be a web address, like https://yoursite.com/resume.pdf",
   booking_url: "Booking link must be an https:// address, like https://cal.com/you",
+  booking_config: "Check the booking hours and budget choices: every block needs an end after its start, and the lowest budget choice can't be under the minimum engagement.",
   monthly_spend_limit_usd: "Enter a monthly spend limit between 0 and 10000.",
 };
 

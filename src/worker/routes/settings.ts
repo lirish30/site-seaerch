@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { getSettings, saveSettings } from "../db/settings";
 import { monthlySpend, monthUsage } from "../db/usage";
+import { BookingConfigSchema, DEFAULT_CONFIG } from "../booking/config";
 import { parseSignature, renderSignatureHtml, renderSignatureText, safeImageUrl, safeUrl } from "../email/signature";
 
 // The logo is embedded in a public page, so only a plain https URL (or none) is accepted.
@@ -27,6 +28,17 @@ const signatureJson = z.string().max(6000).transform((v, ctx) => {
   return sig ? JSON.stringify(sig) : "";
 });
 
+// The availability document is stored as JSON text but checked as a BookingConfig, so a bad window or budget option never reaches the booking page.
+const bookingConfig = z.string().max(8000).transform((v, ctx) => {
+  if (!v.trim()) return "{}";
+  let raw: unknown;
+  try { raw = JSON.parse(v); } catch { ctx.addIssue({ code: "custom", message: "The availability settings are not valid JSON" }); return z.NEVER; }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) { ctx.addIssue({ code: "custom", message: "The availability settings are not valid" }); return z.NEVER; }
+  const r = BookingConfigSchema.safeParse({ ...DEFAULT_CONFIG, ...raw });
+  if (!r.success) { ctx.addIssue({ code: "custom", message: r.error.issues[0].message }); return z.NEVER; }
+  return JSON.stringify(r.data);
+});
+
 const S = z.object({
   your_name: z.string().max(200), business_name: z.string().max(200), contact_email: z.string().max(200),
   services_blurb: z.string().max(2000), signature: z.string().max(1000), physical_address: z.string().max(500),
@@ -37,7 +49,7 @@ const S = z.object({
   role_title: z.string().max(200), bio: z.string().max(2000), availability: z.string().max(300),
   resume_url: optionalUrl, goal_line: z.string().max(500), signature_json: signatureJson,
   footer_freelance: z.number().int().min(0).max(1), attach_audit_pdf: z.number().int().min(0).max(1),
-  booking_url: bookingUrl, ai_voice_note: z.number().int().min(0).max(1),
+  booking_url: bookingUrl, ai_voice_note: z.number().int().min(0).max(1), booking_config: bookingConfig,
 }).partial();
 
 export const settingsRoutes = new Hono<{ Bindings: Env }>();
@@ -51,7 +63,11 @@ settingsRoutes.get("/usage-history", async (c) => c.json({ months: await monthly
 
 settingsRoutes.put("/", async (c) => {
   const p = S.safeParse(await c.req.json().catch(() => ({})));
-  if (!p.success) return c.json({ error: "invalid", fields: [...new Set(p.error.issues.filter((i) => i.path.length).map((i) => String(i.path[0])))] }, 400);
+  if (!p.success) {
+    // A booking_config problem says what is wrong ("A window must end after it starts"); every other field keeps the plain "invalid".
+    const detail = p.error.issues.find((i) => i.path[0] === "booking_config")?.message;
+    return c.json({ error: detail ?? "invalid", fields: [...new Set(p.error.issues.filter((i) => i.path.length).map((i) => String(i.path[0])))] }, 400);
+  }
   return c.json(await saveSettings(c.env.DB, p.data));
 });
 

@@ -197,6 +197,8 @@ export interface Settings {
   booking_url: string;
   /** 1/0: a video says its voice is AI. */
   ai_voice_note: number;
+  /** JSON of a BookingConfig (availability windows, notice, buffer, budget options), or "{}" for the defaults. */
+  booking_config: string;
 }
 export type TonePreset = "friendly_local" | "consultative" | "direct" | "formal";
 export type EmailLength = "short" | "medium" | "long";

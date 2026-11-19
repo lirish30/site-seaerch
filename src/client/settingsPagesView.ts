@@ -1,6 +1,7 @@
 import type { Service, Suppression } from "./types";
 import type { WorkSample } from "./emailView";
 import { readSignature } from "./emailView";
+import { readConfig } from "./bookingView";
 
 /** The same rule the worker applies to links in emails: http(s) only, and a bare "example.com" gets https. */
 export function safeLink(raw: string): string {
@@ -78,3 +79,9 @@ export function setupSentence(items: SetupItem[], samples: WorkSample[]): string
 
 export const suppressionWord = (rows: Suppression[]) =>
   rows.every((r) => r.kind === "domain") ? `${rows.length} domain${rows.length === 1 ? "" : "s"}` : `${rows.length} ${rows.length === 1 ? "entry" : "entries"}`;
+
+/** The overview chip for the Booking page: no windows means nobody can book a call yet, and the booking page says so. */
+export function bookingSummary(raw: string): { tone: "warning" | "positive"; text: string } {
+  const n = readConfig(raw).windows.length;
+  return n === 0 ? { tone: "warning", text: "No hours set" } : { tone: "positive", text: `${n} weekly ${n === 1 ? "window" : "windows"}` };
+}
