@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import Icon from "../Icon";
-import { approvalsLine, draftedByLabel, groupApprovals, parsePayloadText, whenLabel, type ApprovalItem } from "../../approvalsView";
+import { approvalLink, approvalsLine, canBulkApprove, draftedByLabel, groupApprovals, parsePayloadText, whenLabel, type ApprovalItem } from "../../approvalsView";
 import type { Part } from "./useHome";
 
 type Mode = "edit" | "reject";
@@ -34,7 +35,7 @@ export default function ApprovalsCard({ approvals, errs, busy, onApprove, onReje
             <div className="hm-appr-group" key={g.kind}>
               <div className="hm-appr-ghead">
                 <h3>{g.label} <span>{g.items.length}</span></h3>
-                <button type="button" className="btn sm" disabled={groupBusy} onClick={() => onApproveAll(g.items)}>Approve all {g.items.length}</button>
+                {canBulkApprove(g.kind) && <button type="button" className="btn sm" disabled={groupBusy} onClick={() => onApproveAll(g.items)}>Approve all {g.items.length}</button>}
               </div>
               <ul className="hm-appr-list">
                 {g.items.map((a) => (
@@ -59,6 +60,7 @@ function ApprovalRow({ item, error, busy, onApprove, onReject }: {
   const [text, setText] = useState("");
   const [note, setNote] = useState("");
   const [parseErr, setParseErr] = useState("");
+  const link = approvalLink(item);
 
   const openEdit = () => { setText(JSON.stringify(item.payload ?? null, null, 2)); setParseErr(""); setMode("edit"); };
   const submitEdit = () => {
@@ -72,6 +74,7 @@ function ApprovalRow({ item, error, busy, onApprove, onReject }: {
       <div className="hm-main">
         <p className="hm-name">{item.title}</p>
         <p className="hm-reason">{item.preview}</p>
+        {link && <p className="hm-appr-meta"><Link to={link.to}>{link.label}</Link></p>}
         <p className="hm-appr-meta">{draftedByLabel(item.drafted_by)} · {whenLabel(item.created_at)}</p>
         {(error || parseErr) && <p className="hm-err">{error || parseErr}</p>}
         {mode === "edit" && (

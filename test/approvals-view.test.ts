@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { approvalsLine, draftedByLabel, groupApprovals, parsePayloadText, spendLine, type ApprovalItem } from "../src/client/approvalsView";
+import { approvalLink, approvalsLine, canBulkApprove, draftedByLabel, groupApprovals, parsePayloadText, spendLine, type ApprovalItem } from "../src/client/approvalsView";
 
 const item = (id: string, kind: string, created_at: string): ApprovalItem => ({
   id, kind, label: kind === "lead.note" ? "Lead note" : "Email draft", title: id, preview: "p", payload: {},
@@ -37,5 +37,23 @@ describe("approvals view helpers", () => {
     expect(parsePayloadText('{"note":"hi"}')).toEqual({ ok: true, value: { note: "hi" } });
     const bad = parsePayloadText("{nope");
     expect(bad.ok).toBe(false);
+  });
+});
+
+describe("approval links", () => {
+  it("a video publish approval opens the lead's video editor", () => {
+    const a = { ...item("v", "video.publish", "2026-11-01T00:00:00Z"), record_type: "lead", record_id: "biz-1" };
+    expect(approvalLink(a)).toEqual({ to: "/leads/biz-1/video", label: "Watch and edit the video" });
+    expect(approvalLink({ ...a, record_id: null })).toBeNull();
+    expect(approvalLink({ ...item("n", "lead.note", "2026-11-01T00:00:00Z"), record_type: "lead", record_id: "biz-1" })).toBeNull();
+  });
+});
+
+describe("canBulkApprove", () => {
+  it("a video is never published by an approve-all: it is watched and approved on its own", () => {
+    expect(canBulkApprove("video.publish")).toBe(false);
+  });
+  it("everything else can be approved as a group", () => {
+    for (const k of ["email.send", "lead.note", "lead.status"]) expect(canBulkApprove(k), k).toBe(true);
   });
 });

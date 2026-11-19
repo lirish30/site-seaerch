@@ -7,3 +7,5 @@ dist
 .dev.vars
 scripts/out
 .prod-login.txt
+helper/node_modules
+helper/.cache

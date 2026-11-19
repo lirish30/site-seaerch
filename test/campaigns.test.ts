@@ -252,6 +252,18 @@ describe("campaign routes", () => {
     }
   });
 
+  it("a campaign starts with the video switch off, and PATCH turns it on and off", async () => {
+    const c = await createCampaign(env.DB, NEW);
+    expect(c.video_email).toBe(0);
+    expect((await (await send("GET", `/api/campaigns/${c.id}`)).json() as any).video_email).toBe(0);
+    expect(await (await send("PATCH", `/api/campaigns/${c.id}`, { video_email: 1 })).json()).toMatchObject({ video_email: 1 });
+    expect((await getCampaign(env.DB, c.id))!.video_email).toBe(1);
+    expect(await (await send("PATCH", `/api/campaigns/${c.id}`, { video_email: 0 })).json()).toMatchObject({ video_email: 0 });
+    for (const b of [{ video_email: 2 }, { video_email: -1 }, { video_email: true }, { video_email: "1" }, { video_email: 0.5 }]) {
+      expect((await send("PATCH", `/api/campaigns/${c.id}`, b)).status, JSON.stringify(b)).toBe(400);
+    }
+  });
+
   it("PUT step body rules: draft only on step 0 and never with variants, no silent reset of the draft marker", async () => {
     const c = await createCampaign(env.DB, NEW);
     const put = (idx: number, b: unknown) => send("PUT", `/api/campaigns/${c.id}/steps/${idx}`, b);

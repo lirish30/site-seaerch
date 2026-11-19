@@ -1,0 +1,6 @@
+{
+  "streams": [
+    { "index": 0, "codec_name": "pcm_s16le", "codec_type": "audio", "sample_rate": "24000", "channels": 1, "duration": "3.482000" }
+  ],
+  "format": { "filename": "out.wav", "format_name": "wav", "duration": "3.482000", "size": "167404" }
+}

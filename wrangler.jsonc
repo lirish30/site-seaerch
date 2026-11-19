@@ -6,7 +6,7 @@
   "assets": {
     "directory": "./dist/client",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/mcp"]
+    "run_worker_first": ["/api/*", "/mcp", "/helper/*"]
   },
   "d1_databases": [
     { "binding": "DB", "database_name": "site-search", "database_id": "373804f6-ecf3-448e-a9ed-ddc82b853f01", "migrations_dir": "migrations" }
@@ -16,7 +16,8 @@
   "workflows": [
     { "name": "lead-workflow", "binding": "LEAD_WORKFLOW", "class_name": "LeadWorkflow" },
     { "name": "search-workflow", "binding": "SEARCH_WORKFLOW", "class_name": "SearchWorkflow" },
-    { "name": "cro-audit-workflow", "binding": "CRO_AUDIT_WORKFLOW", "class_name": "CroAuditWorkflow" }
+    { "name": "cro-audit-workflow", "binding": "CRO_AUDIT_WORKFLOW", "class_name": "CroAuditWorkflow" },
+    { "name": "video-audit-workflow", "binding": "VIDEO_WORKFLOW", "class_name": "VideoAuditWorkflow" }
   ],
   "ratelimits": [{ "name": "LOGIN_LIMITER", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } }],
   "triggers": { "crons": ["17 13 * * *", "*/15 * * * *"] },

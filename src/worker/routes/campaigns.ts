@@ -16,6 +16,7 @@ const PatchCampaign = z.object({
   name: Name.optional(), niche: z.string().trim().min(1).max(100).optional(), region: z.string().trim().min(1).max(100).optional(),
   towns: Towns.optional(), status: z.enum(["testing", "active", "archived"]).optional(),
   est_job_value_usd: z.number().min(0).nullable().optional(),
+  video_email: z.union([z.literal(0), z.literal(1)]).optional(),
 }).strict().refine((v) => Object.values(v).some((x) => x !== undefined), { message: "nothing to update" });
 
 const PutStep = z.object({

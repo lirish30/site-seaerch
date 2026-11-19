@@ -244,3 +244,15 @@
 /* Outline chips are 1px larger each side than the plain badge: the Figma stroke sits inside the box. */
 .bx .badge2.outline { padding:0 9px; }
 .sv-details textarea.in { height:100px; resize:none; }
+
+/* Settings > Video voice */
+.vt-actions { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-top:12px; }
+.vt-actions label.btn { cursor:pointer; } .vt-actions label.btn.disabled { opacity:.5; cursor:default; }
+.vt-ref audio, .vt-clip audio { width:100%; max-width:420px; margin:0; }
+.vt-line { margin:0 0 10px; font:500 13px/19px var(--font); color:var(--text); }
+.vt-clips { margin-top:8px; }
+.vt-clip { display:flex; flex-direction:column; gap:6px; min-width:0; flex:1; }
+.vt-clip > span { color:var(--text-3); font-weight:400; }
+.vt-note { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+.vt-note div { display:flex; flex-direction:column; gap:2px; font:400 13px/19px var(--font); color:var(--text-3); } .vt-note b { color:var(--text); font-weight:500; }
+.st-callout ol { margin:6px 0 0; padding-left:18px; }

@@ -58,7 +58,9 @@ describe("auth routes", () => {
 
   it.each(["/api/leads", "/api/settings", "/api/searches", "/api/publicx", "/api/public/", "/api/public", "/api/public/other/x",
     "/api/public/report", "/api/public/report/", "/api/public/report/abc/def", "/api/public/report/%2e%2e/leads",
-    `/api/public/report/${"A".repeat(43)}/x`])("%s stays protected without a cookie", async (p) => {
+    `/api/public/report/${"A".repeat(43)}/x`, `/api/public/report/${"A".repeat(43)}/media`,
+    `/api/public/report/${"A".repeat(43)}/media/video.mp4/x`, "/api/public/report//media/video.mp4",
+    `/api/public/report/${"A".repeat(43)}/events`, `/api/public/report/${"A".repeat(43)}/events/`])("%s stays protected without a cookie", async (p) => {
     expect((await SELF.fetch(`https://x${p}`)).status).toBe(401);
   });
 
@@ -72,5 +74,48 @@ describe("auth routes", () => {
     const r = await SELF.fetch(`https://x/api/public/report/${"abcDEF123_-".padEnd(43, "x")}`);
     expect(r.status).toBe(404);
     expect(await r.json()).toEqual({ error: "not found" });
+  });
+
+  it("the three video files need no cookie (404 for an unknown token, not 401)", async () => {
+    for (const n of ["video.mp4", "poster.jpg", "preview.gif"]) expect((await SELF.fetch(`https://x/api/public/report/${"abcDEF123_-".padEnd(43, "x")}/media/${n}`)).status).toBe(404);
+  });
+
+  describe("the watch beacon (POST <token>/events)", () => {
+    const T = "abcDEF123_-".padEnd(43, "x");
+    const send = (path: string, method = "POST") => SELF.fetch(`https://x/api/public/report/${path}`, { method, body: ["GET", "HEAD", "OPTIONS"].includes(method) ? undefined : "{}" });
+
+    it("needs no cookie: an unknown token still gets 204, not 401", async () => {
+      const r = await send(`${T}/events`);
+      expect(r.status).toBe(204);
+      expect(await r.text()).toBe("");
+    });
+
+    it.each(["GET", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])("%s on it stays protected", async (m) => {
+      expect((await send(`${T}/events`, m)).status).toBe(401);
+    });
+
+    it.each([`${T}/events/`, `${T}/events/x`, `${T}/events/media/video.mp4`, `${T}/event`, `${T}/eventsx`, `${T}/Events`, `${T}/x/events`,
+      `${T}/media/video.mp4/events`, `${T}/events/..`, `${T}/events/../x`, `${T}//events`, `${T}/events%2fx`, "events/", "events/x"])("POST %s stays protected", async (p) => {
+      expect((await send(p)).status).toBe(401);
+    });
+
+    it("a single segment is just a malformed token for the public router, never the beacon", async () => {
+      for (const p of ["events", "..%2fleads", `${T}%2fevents`]) expect((await send(p)).status).toBe(404);
+    });
+
+    it("an empty token segment stays protected", async () => {
+      expect((await SELF.fetch("https://x/api/public/report//events", { method: "POST", body: "{}" })).status).toBe(401);
+    });
+
+    it("an encoded slash inside the token segment is one segment: the beacon, which stores nothing for it", async () => {
+      expect((await send("..%2fleads/events")).status).toBe(204);
+      expect((await send("%2e%2e/events")).status).toBe(401); // the URL parser makes this /api/public/events, which is not a report route
+    });
+
+    it("opens nothing else: the other API paths still need the login", async () => {
+      for (const p of ["/api/leads", "/api/video-audits/watched", "/api/public/events", `/api/public/report/${T}/events/x`]) {
+        expect((await SELF.fetch(`https://x${p}`, { method: "POST", body: "{}" })).status).toBe(401);
+      }
+    });
   });
 });

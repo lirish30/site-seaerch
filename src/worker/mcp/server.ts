@@ -8,6 +8,9 @@ import { getSettings } from "../db/settings";
 import { createApproval, listApprovals, UnknownKindError } from "../db/approvals";
 import { getHandler, registeredKinds } from "../approvals/registry";
 import { checkConflict } from "../conflict";
+
+/** The kinds an agent may propose: all but those the app proposes itself. */
+const proposableKinds = () => registeredKinds().filter((k) => k !== "video.publish");
 import { logAgentAction } from "../db/agentActions";
 import { getBusiness } from "../db/businesses";
 import { isKnownRecipient } from "../db/contacts";
@@ -80,7 +83,7 @@ export function buildMcpServer(env: Env): McpServer {
   /**
    * `email.send` is built ENTIRELY here, from the validated payload: the caller's preview, record fields and any enrollment link are ignored, because
    * Claude reads scraped lead facts and inbound mail and could be steered. The Home card shows only the preview, so it must be ours, not the caller's.
-   * The caller may not name a sequence step (it could advance someone else's sequence on send) or the `main` mailbox (it has no warm-up or cap).
+   * The caller may not name a sequence step (it could advance someone else's sequence on send), attach a hero image (the app builds that from a published video) or use the `main` mailbox (it has no warm-up or cap).
    */
   const proposeEmailSend = async (a: { title: string; payload: unknown }) => {
     let p: EmailSendPayload;
@@ -92,6 +95,11 @@ export function buildMcpServer(env: Env): McpServer {
     if (p.enrollmentId !== undefined || p.stepIndex !== undefined) {
       await log("propose_approval", "refused email.send naming a sequence step", { type: "business", id: p.businessId });
       return fail("email.send proposals cannot name an enrollment or a step (enrollmentId, stepIndex); sequence steps are proposed by the app itself. Remove them.");
+    }
+    // A hero (the video's GIF and link) is built by the app from a published video and its report link. An agent could point it at any link.
+    if (p.heroImage !== undefined) {
+      await log("propose_approval", "refused email.send with a hero image", { type: "business", id: p.businessId });
+      return fail("email.send proposals cannot carry a hero image (heroImage); the app attaches the video itself when a campaign sends one. Remove it.");
     }
     if (p.mailbox !== "outreach") {
       await log("propose_approval", `refused email.send from the ${p.mailbox} mailbox`, { type: "business", id: p.businessId });
@@ -122,7 +130,7 @@ export function buildMcpServer(env: Env): McpServer {
   };
 
   server.registerTool("propose_approval", {
-    description: `Propose an action for Logan to approve. Nothing runs until he approves it in the app. Registered kinds: ${registeredKinds().join(", ")}. For email.send the app builds the preview and record link itself from the payload (outreach mailbox only, no enrollmentId/stepIndex); your preview, record_type and record_id are ignored.`,
+    description: `Propose an action for Logan to approve. Nothing runs until he approves it in the app. Registered kinds: ${proposableKinds().join(", ")}. For email.send the app builds the preview and record link itself from the payload (outreach mailbox only, no enrollmentId/stepIndex/heroImage); your preview, record_type and record_id are ignored.`,
     inputSchema: {
       kind: z.string().min(1).max(100), title: z.string().min(1).max(200), preview: z.string().max(5000), payload: z.unknown(),
       record_type: z.string().max(50).optional(), record_id: z.string().max(100).optional(),
@@ -130,13 +138,18 @@ export function buildMcpServer(env: Env): McpServer {
   }, async (a) => {
     try {
       if (a.kind === "email.send") return await proposeEmailSend(a);
+      // A video is put up for approval by the app when it has rendered one, with a preview the app builds. An agent's own card over a video id could mislead.
+      if (a.kind === "video.publish") {
+        await log("propose_approval", "refused video.publish: the app proposes it itself");
+        return fail("video.publish cannot be proposed by the agent; the app proposes it itself when a video has been rendered.");
+      }
       const created = await createApproval(db, { ...a, drafted_by: "mcp" });
       await log("propose_approval", `proposed ${a.kind}: ${a.title}`, a.record_type && a.record_id ? { type: a.record_type, id: a.record_id } : undefined);
       return text(created);
     } catch (e) {
       if (e instanceof UnknownKindError) {
         await log("propose_approval", `rejected unknown kind ${a.kind.slice(0, 100)}`);
-        return fail(`unknown approval kind "${a.kind}". Registered kinds: ${registeredKinds().join(", ")}`);
+        return fail(`unknown approval kind "${a.kind}". Registered kinds: ${proposableKinds().join(", ")}`);
       }
       throw e;
     }

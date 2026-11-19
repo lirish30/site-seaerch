@@ -12,6 +12,9 @@ import { createSearch } from "../src/worker/db/searches";
 import { getBusiness, upsertBusiness } from "../src/worker/db/businesses";
 import { listActivity } from "../src/worker/db/activity";
 import { setAfterSendForTests } from "../src/worker/mail/send";
+import { createVideoAudit, setVideoStatus } from "../src/worker/db/videoAudits";
+import { ensureReport, revokeReports } from "../src/worker/db/reports";
+import { insertTestAudit } from "./fixtures/video";
 
 const NOW = new Date("2026-11-20T10:00:00Z");
 const daysAgo = (n: number) => new Date(NOW.getTime() - n * 86_400_000).toISOString();
@@ -355,6 +358,118 @@ describe("email.send", () => {
     expect(smtpCalls).toHaveLength(1);
     // other paths on third-party hosts are fine
     expect(await approve(env, (await mk({ body: "My work: https://other.example/portfolio" })).id)).toEqual({ ok: true });
+  });
+
+  describe("a video email's hero image", () => {
+    const BASE = "https://go.hellositeline.test";
+    const heroFor = (token: string) => ({ src: `${BASE}/api/public/report/${token}/media/preview.gif`, href: `${BASE}/r/${token}`, alt: "Video audit for Acme Plumbing" });
+    /** A lead's report link whose audit has a published video: what a hero must point at. */
+    async function liveVideo(forBusinessId = businessId, o: { publish?: boolean } = {}) {
+      const audit = await insertTestAudit(forBusinessId);
+      const v = (await createVideoAudit(env.DB, { businessId: forBusinessId, auditId: audit.id }))!;
+      if (o.publish !== false) await setVideoStatus(env.DB, v.id, "published", { video_key: "k.mp4" });
+      const token = (await ensureReport(env.DB, forBusinessId, audit.id, NOW)).token;
+      return { audit, v, token, hero: heroFor(token) };
+    }
+    const other = async () => (await upsertBusiness(env.DB, { placeId: crypto.randomUUID(), name: "Other Plumbing", category: null, address: null, phone: null, websiteUrl: null, mapsUrl: null, rating: null, reviewCount: null }, (await createSearch(env.DB, { location: "Boise", businessType: "plumber", radiusKm: 10, maxResults: 5 })).id)).id;
+
+    it("sends the gif and the watch line when the hero is on the outreach host and its video is live", async () => {
+      const { hero } = await liveVideo();
+      expect(await approve(env, (await mk({ heroImage: hero })).id)).toEqual({ ok: true });
+      expect(smtpCalls[0].text).toContain(`Watch it here: ${hero.href}`);
+      expect(smtpCalls[0].html).toContain(`<img src="${hero.src}"`);
+    });
+
+    it("an OUTREACH_LINK_BASE changed after approval blocks the send with a clear reason", async () => {
+      const { hero } = await liveVideo();
+      const a = await mk({ heroImage: hero });
+      const e = env as { OUTREACH_LINK_BASE?: string };
+      const saved = e.OUTREACH_LINK_BASE;
+      try {
+        e.OUTREACH_LINK_BASE = "https://go2.hellositeline.test";
+        const r = await approve(env, a.id);
+        expect(r).toMatchObject({ ok: false, status: 502 });
+        const msg = (r as { error: string }).error;
+        expect(msg).toContain("video link");
+        expect(msg).toContain(hero.href);
+        expect(msg).toContain("go2.hellositeline.test");
+        expect(smtpCalls).toHaveLength(0);
+        e.OUTREACH_LINK_BASE = undefined; // no base at all cannot vouch for the hero either
+        const unset = await approve(env, a.id);
+        expect(unset).toMatchObject({ ok: false });
+        expect((unset as { error: string }).error).toContain("OUTREACH_LINK_BASE");
+        expect(smtpCalls).toHaveLength(0);
+        e.OUTREACH_LINK_BASE = saved; // put back, the same approval goes out
+        expect(await approve(env, a.id)).toEqual({ ok: true });
+        expect(smtpCalls).toHaveLength(1);
+      } finally { e.OUTREACH_LINK_BASE = saved; }
+    });
+
+    it("a hero for another lead's report is blocked at send", async () => {
+      const { hero } = await liveVideo(await other());
+      const r = await approve(env, (await mk({ heroImage: hero })).id);
+      expect(r).toMatchObject({ ok: false, status: 502 });
+      expect((r as { error: string }).error).toContain("the video link is no longer live: make a new one");
+      expect(smtpCalls).toHaveLength(0);
+    });
+
+    it("a hero whose gif belongs to another report than its link is blocked at send", async () => {
+      const mine = await liveVideo();
+      const theirs = await liveVideo(await other());
+      const mixed = { ...mine.hero, src: theirs.hero.src };
+      const r = await approve(env, (await mk({ heroImage: mixed })).id);
+      expect(r).toMatchObject({ ok: false });
+      expect((r as { error: string }).error).toContain("the video link is no longer live");
+      expect(smtpCalls).toHaveLength(0);
+    });
+
+    it("a revoked report link blocks a hero email", async () => {
+      const { hero } = await liveVideo();
+      const a = await mk({ heroImage: hero });
+      await revokeReports(env.DB, businessId);
+      const r = await approve(env, a.id);
+      expect(r).toMatchObject({ ok: false });
+      expect((r as { error: string }).error).toContain("the video link is no longer live: make a new one");
+      expect(smtpCalls).toHaveLength(0);
+    });
+
+    it("an expired report link blocks a hero email", async () => {
+      const { hero, token } = await liveVideo();
+      const a = await mk({ heroImage: hero });
+      await env.DB.prepare(`UPDATE audit_reports SET expires_at = ? WHERE token = ?`).bind(daysAgo(1), token).run();
+      expect(await approve(env, a.id)).toMatchObject({ ok: false });
+      expect(smtpCalls).toHaveLength(0);
+    });
+
+    it("an unpublished video blocks a hero email", async () => {
+      const { hero, v } = await liveVideo();
+      const a = await mk({ heroImage: hero });
+      await setVideoStatus(env.DB, v.id, "cancelled"); // unpublished since the approval was made
+      const r = await approve(env, a.id);
+      expect(r).toMatchObject({ ok: false });
+      expect((r as { error: string }).error).toContain("the video link is no longer live: make a new one");
+      expect(smtpCalls).toHaveLength(0);
+      await setVideoStatus(env.DB, v.id, "published");
+      expect(await approve(env, a.id)).toEqual({ ok: true }); // and the same approval goes out once it is live again
+    });
+
+    it("a hero whose link names no report at all is blocked at send", async () => {
+      const r = await approve(env, (await mk({ heroImage: heroFor("tok") })).id);
+      expect(r).toMatchObject({ ok: false });
+      expect((r as { error: string }).error).toContain("the video link is no longer live");
+      expect(smtpCalls).toHaveLength(0);
+    });
+
+    it("a retry of an already-sent hero approval still succeeds", async () => {
+      const { hero, v } = await liveVideo();
+      const a = await mk({ heroImage: hero });
+      expect(await approve(env, a.id)).toEqual({ ok: true });
+      await setVideoStatus(env.DB, v.id, "cancelled"); // the video was withdrawn after the mail went out
+      await revokeReports(env.DB, businessId);
+      await env.DB.prepare(`UPDATE approvals SET status = 'pending', decided_at = NULL WHERE id = ?`).bind(a.id).run();
+      expect(await approve(env, a.id)).toEqual({ ok: true });
+      expect(smtpCalls).toHaveLength(1);
+    });
   });
 
   it("a signature with a personal website and a CDN logo still sends", async () => {

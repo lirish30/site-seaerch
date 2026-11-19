@@ -1,5 +1,7 @@
 import type { Finding } from "../types";
 import { businessDomain } from "./businesses";
+import { publishedVideoForAudit, type VideoAudit } from "./videoAudits";
+import { aiVoiceNote } from "../video/plan";
 
 export const REPORT_TTL_DAYS = 30;
 const DAY_MS = 86_400_000;
@@ -50,6 +52,10 @@ export interface PublicReport {
   businessName: string; /** Host of the audited site (e.g. "acme.com"), "" when unknown; shown to the recipient, who owns it. */ website: string; auditedAt: string; counts: { high: number; medium: number; low: number };
   findings: { severity: PublicSeverity; evidence: string }[]; partial: boolean;
   sender: { name: string; businessName: string; email: string; logoUrl: string }; expiresAt: string;
+  /** The audit's published video, or null. The files are served by the media route, never named here. */
+  video: { durationMs: number; aiVoiceNote: boolean } | null;
+  /** The owner's booking link (https only) when there is a video to put it beside, else "". */
+  bookingUrl: string;
 }
 
 const SEVERITIES = ["high", "medium", "low"] as const;
@@ -60,23 +66,47 @@ const PUBLIC_SEVERITY: Record<string, PublicSeverity> = {
   critical: "high", important: "medium", nice: "low", high: "high", medium: "medium", low: "low",
 };
 
+/** The live report link's audit and the audit's published video (null when it has none). Decided exactly as `publicReport` decides a link is live. */
+export async function publishedVideoForToken(db: D1Database, token: string, now = new Date()): Promise<VideoAudit | null> {
+  const r = await db.prepare(
+    `SELECT r.audit_id AS audit_id FROM audit_reports r JOIN audits a ON a.id = r.audit_id AND a.business_id = r.business_id JOIN businesses b ON b.id = r.business_id
+     WHERE r.token = ? AND r.revoked = 0 AND r.expires_at > ?`,
+  ).bind(token, now.toISOString()).first<{ audit_id: string }>();
+  return r ? publishedVideoForAudit(db, r.audit_id) : null;
+}
+
+/**
+ * The lead and audit a report link is live for: not revoked, not expired, its audit still the lead's own. Decided exactly as `publicReport` and
+ * `publishedVideoForToken` decide a link is live. Null for anything else.
+ */
+export async function liveReportTarget(db: D1Database, token: string, now = new Date()): Promise<{ businessId: string; auditId: string } | null> {
+  const r = await db.prepare(
+    `SELECT r.business_id AS business_id, r.audit_id AS audit_id FROM audit_reports r JOIN audits a ON a.id = r.audit_id AND a.business_id = r.business_id JOIN businesses b ON b.id = r.business_id
+     WHERE r.token = ? AND r.revoked = 0 AND r.expires_at > ?`,
+  ).bind(token, now.toISOString()).first<{ business_id: string; audit_id: string }>();
+  return r ? { businessId: r.business_id, auditId: r.audit_id } : null;
+}
+
 /** The ONLY shape exposed publicly. Fields are copied one by one so nothing else can leak in by accident. */
 export async function publicReport(db: D1Database, token: string, now = new Date()): Promise<PublicReport | null> {
   const r = await db.prepare(
-    `SELECT b.name AS business_name, b.domain AS domain, b.website_url AS website_url, a.created_at AS audited_at, a.partial AS partial, a.findings AS findings, r.expires_at AS expires_at,
-            s.your_name AS your_name, s.business_name AS sender_business, s.contact_email AS contact_email, s.logo_url AS logo_url
+    `SELECT b.name AS business_name, b.domain AS domain, b.website_url AS website_url, a.created_at AS audited_at, a.partial AS partial, a.findings AS findings, r.expires_at AS expires_at, r.audit_id AS audit_id,
+            s.your_name AS your_name, s.business_name AS sender_business, s.contact_email AS contact_email, s.logo_url AS logo_url, s.booking_url AS booking_url, s.ai_voice_note AS ai_voice_note
      FROM audit_reports r JOIN audits a ON a.id = r.audit_id AND a.business_id = r.business_id JOIN businesses b ON b.id = r.business_id JOIN settings s ON s.id = 1
      WHERE r.token = ? AND r.revoked = 0 AND r.expires_at > ?`,
-  ).bind(token, now.toISOString()).first<{ business_name: string; domain: string | null; website_url: string | null; audited_at: string; partial: number; findings: string; expires_at: string;
-    your_name: string; sender_business: string; contact_email: string; logo_url: string }>();
+  ).bind(token, now.toISOString()).first<{ business_name: string; domain: string | null; website_url: string | null; audited_at: string; partial: number; findings: string; expires_at: string; audit_id: string;
+    your_name: string; sender_business: string; contact_email: string; logo_url: string; booking_url: string; ai_voice_note: number }>();
   if (!r) return null;
   const all = (JSON.parse(r.findings) as Pick<Finding, "severity" | "evidence">[]).filter((f) => typeof f?.evidence === "string" && f.evidence);
   const findings = SEVERITIES.flatMap((sev) => all.filter((f) => PUBLIC_SEVERITY[f.severity] === sev).map((f) => ({ severity: sev, evidence: f.evidence })));
+  const published = await publishedVideoForAudit(db, r.audit_id);
   const count = (sev: string) => findings.filter((f) => f.severity === sev).length;
   return {
     businessName: r.business_name, website: businessDomain({ domain: r.domain, website_url: r.website_url }) ?? "", auditedAt: r.audited_at, counts: { high: count("high"), medium: count("medium"), low: count("low") },
     findings, partial: r.partial === 1,
     sender: { name: r.your_name, businessName: r.sender_business, email: r.contact_email, logoUrl: r.logo_url.startsWith("https://") ? r.logo_url : "" },
     expiresAt: r.expires_at,
+    video: published ? { durationMs: published.duration_ms ?? 0, aiVoiceNote: aiVoiceNote(r, published.plan) } : null,
+    bookingUrl: published && r.booking_url.startsWith("https://") ? r.booking_url : "",
   };
 }

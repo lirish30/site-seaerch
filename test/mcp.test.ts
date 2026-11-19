@@ -78,6 +78,15 @@ describe("mcp", () => {
     expect(j.result.content[0].text).toContain("lead.note");
   });
 
+  it("mcp cannot propose video.publish", async () => {
+    const before = (await env.DB.prepare(`SELECT COUNT(*) AS n FROM approvals WHERE kind = 'video.publish'`).first<{ n: number }>())!.n;
+    const j = await call("propose_approval", { kind: "video.publish", title: "Publish the audit video", preview: "Harmless text", payload: { videoId: "any-video" }, record_type: "lead", record_id: "b1" });
+    expect(j.result.isError).toBe(true);
+    expect(j.result.content[0].text).toMatch(/video\.publish/);
+    expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM approvals WHERE kind = 'video.publish'`).first<{ n: number }>())!.n).toBe(before);
+    expect((await listAgentActions(env.DB, { limit: 500 })).some((a) => a.tool === "propose_approval" && /refused video\.publish/.test(a.summary))).toBe(true);
+  });
+
   it("propose lead.note creates pending approval and logs action", async () => {
     const before = (await listAgentActions(env.DB, { limit: 500 })).length;
     const j = await call("propose_approval", { kind: "lead.note", title: "Note", preview: "Add note", payload: { businessId: "b1", text: "hi" } });
@@ -126,6 +135,17 @@ describe("mcp", () => {
       expect(b.result.isError).toBe(true);
       expect(b.result.content[0].text).toContain("existing client");
       expect(await countFor(sup.id) + await countFor(won.id)).toBe(0);
+    });
+
+    it("mcp cannot propose an email with a hero image", async () => {
+      const b = await lead("Hero Plumbing", "https://hero-plumbing.test");
+      await knownAs(b.id, "owner@hero-plumbing.test");
+      const hero = { src: "https://go.hellositeline.test/api/public/report/tok/media/preview.gif", href: "https://go.hellositeline.test/r/tok", alt: "Video audit for Hero Plumbing" };
+      const j = await propose(b.id, "owner@hero-plumbing.test", { heroImage: hero });
+      expect(j.result.isError).toBe(true);
+      expect(j.result.content[0].text).toMatch(/heroImage/);
+      expect(await countFor(b.id)).toBe(0);
+      expect((await listAgentActions(env.DB, { limit: 500 })).some((a) => a.tool === "propose_approval" && /refused email\.send with a hero image/.test(a.summary))).toBe(true);
     });
 
     it("refuses a payload the send handler would not accept", async () => {

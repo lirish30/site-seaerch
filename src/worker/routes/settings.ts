@@ -8,6 +8,9 @@ import { parseSignature, renderSignatureHtml, renderSignatureText, safeImageUrl,
 // The logo is embedded in a public page, so only a plain https URL (or none) is accepted.
 const logoUrl = z.string().trim().max(500).refine((v) => v === "" || (/^https:\/\/[^\s]+$/.test(v) && URL.canParse(v)));
 
+// The booking link a video sends people to: https only, like the logo.
+const bookingUrl = logoUrl;
+
 const optionalUrl = z.string().trim().max(500).refine((v) => v === "" || safeUrl(v) !== "");
 
 // The signature is stored in its cleaned form (links normalised, bad entries dropped), but a URL the sender typed that
@@ -34,6 +37,7 @@ const S = z.object({
   role_title: z.string().max(200), bio: z.string().max(2000), availability: z.string().max(300),
   resume_url: optionalUrl, goal_line: z.string().max(500), signature_json: signatureJson,
   footer_freelance: z.number().int().min(0).max(1), attach_audit_pdf: z.number().int().min(0).max(1),
+  booking_url: bookingUrl, ai_voice_note: z.number().int().min(0).max(1),
 }).partial();
 
 export const settingsRoutes = new Hono<{ Bindings: Env }>();

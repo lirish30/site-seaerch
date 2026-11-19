@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fieldErrors, parseJobValue, parseTowns, runResultTone, runSearchesConfirm, runSearchesLines, stepLabel } from "../src/client/campaignView";
+import { VIDEO_EMAIL_LABEL, videoEmailHelp, fieldErrors, parseJobValue, parseTowns, runResultTone, runSearchesConfirm, runSearchesLines, stepLabel } from "../src/client/campaignView";
 
 describe("stepLabel", () => {
   it("names the kind and counts business or calendar days", () => {
@@ -68,5 +68,16 @@ describe("runResultTone", () => {
     expect(runResultTone({ started: 3, blocked: [] })).toBe("ok");
     expect(runResultTone({ started: 2, blocked: [{ town: "A" }] })).toBe("warn");
     expect(runResultTone({ started: 0, blocked: [{ town: "A" }, { town: "B" }] })).toBe("bad");
+  });
+});
+
+describe("video email switch", () => {
+  it("is labelled in the owner's words", () => {
+    expect(VIDEO_EMAIL_LABEL).toBe("Email 1 carries the video audit (needs a published video)");
+  });
+  it("says what Start does only while it is on", () => {
+    expect(videoEmailHelp(0)).toBe("");
+    expect(videoEmailHelp(1)).toContain("published video");
+    expect(videoEmailHelp(1)).toContain("Email 1");
   });
 });

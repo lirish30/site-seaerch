@@ -147,6 +147,11 @@ describe("stalled_deal", () => {
     await act(id, "bulk", ago(1), "tag");
     expect(await of("stalled_deal")).toHaveLength(1);
   });
+  it("a prospect watching the video is engagement, so video_watch does un-stall a deal", async () => {
+    const id = await lead("Watched", { status: "contacted", dealValue: 700 });
+    await act(id, "video_watch", ago(1), "Watched the video audit");
+    expect(await of("stalled_deal")).toEqual([]);
+  });
 });
 
 describe("promising_quick_scan", () => {

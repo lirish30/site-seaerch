@@ -45,3 +45,9 @@ export const runSearchesConfirm = (townCount: number): string =>
 export function runResultTone(r: { started: number; blocked: unknown[] }): "ok" | "warn" | "bad" {
   return r.blocked.length === 0 ? "ok" : r.started > 0 ? "warn" : "bad";
 }
+
+export const VIDEO_EMAIL_LABEL = "Email 1 carries the video audit (needs a published video)";
+
+/** What switching it on means for Start: shown under the checkbox only while it is on. */
+export const videoEmailHelp = (on: 0 | 1): string =>
+  on === 1 ? "Email 1 shows the lead's video as a GIF that links to its report page. A lead can start only once its latest audit has a published video." : "";

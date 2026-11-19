@@ -8,6 +8,8 @@ import { insertDraft } from "../src/worker/db/drafts";
 import { saveSettings } from "../src/worker/db/settings";
 import { REPORT_TTL_DAYS } from "../src/worker/db/reports";
 import type { Finding } from "../src/worker/types";
+import { setVideoStatus } from "../src/worker/db/videoAudits";
+import { renderedVideo } from "./fixtures/video";
 
 let cookie = "";
 const api = (path: string, init: RequestInit = {}) =>
@@ -150,7 +152,7 @@ describe("report management API", () => {
 });
 
 describe("public report endpoint", () => {
-  const KEYS = ["auditedAt", "businessName", "counts", "expiresAt", "findings", "partial", "sender", "website"];
+  const KEYS = ["auditedAt", "bookingUrl", "businessName", "counts", "expiresAt", "findings", "partial", "sender", "video", "website"];
 
   it("returns exactly the documented key set, ordered high -> low, with no internal data", async () => {
     const { b, a } = await seedLead("Ace Plumbing");
@@ -266,5 +268,29 @@ describe("public report endpoint", () => {
       expect((await pub("A".repeat(42))).status).toBe(404);
       expect(calls).toBe(0);
     } finally { (env.DB as any).prepare = orig; }
+  });
+});
+
+describe("public report video", () => {
+  it("public report has video only after publish", async () => {
+    await saveSettings(env.DB, { booking_url: "https://cal.example.com/me", ai_voice_note: 1 });
+    const { v, token } = await renderedVideo();
+    const before = await (await pub(token)).json<any>();
+    expect(before.video).toBeNull();
+    expect(before.bookingUrl).toBe("");
+    await setVideoStatus(env.DB, v.id, "published");
+    const after = await (await pub(token)).json<any>();
+    expect(after.video).toEqual({ durationMs: 95_000, aiVoiceNote: true });
+    expect(after.bookingUrl).toBe("https://cal.example.com/me");
+    // nothing about where the files live
+    const text = JSON.stringify(after);
+    for (const s of [v.id, "video/", "out/", ".mp4"]) expect(text).not.toContain(s);
+    // the note is derived: off in settings, or no cloned line, means no note
+    await saveSettings(env.DB, { ai_voice_note: 0 });
+    expect((await (await pub(token)).json<any>()).video.aiVoiceNote).toBe(false);
+    await saveSettings(env.DB, { ai_voice_note: 1 });
+    const own = await renderedVideo({ source: "recorded" });
+    await setVideoStatus(env.DB, own.v.id, "published");
+    expect((await (await pub(own.token)).json<any>()).video.aiVoiceNote).toBe(false); // every line recorded: no cloned voice to disclose
   });
 });

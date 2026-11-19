@@ -11,6 +11,7 @@ import { GooglePlacesListingSource } from "./listings/places";
 import { FallbackListingSource } from "./listings/fallback";
 import { runCroWithErrorHandling, startCroStages, type CroDeps, type CroParams } from "./cro/pipeline";
 import { puppeteerCroBrowser } from "./cro/capture";
+import { runVideoWithErrorHandling, type VideoParams } from "./video/pipeline";
 
 const RETRY = { retries: { limit: 3, delay: "10 seconds" as const, backoff: "exponential" as const }, timeout: "5 minutes" as const };
 // Bright Data's Maps scraper fails in bursts (HTTP 502 maps_ajax_failed / no_ready_cookies), but a search that is still
@@ -97,5 +98,11 @@ export function croDepsFromEnv(env: Env): CroDeps {
 export class CroAuditWorkflow extends WorkflowEntrypoint<Env, CroParams> {
   async run(event: WorkflowEvent<CroParams>, step: WorkflowStep) {
     return runCroWithErrorHandling(croDepsFromEnv(this.env), adaptStep(step), event.payload);
+  }
+}
+
+export class VideoAuditWorkflow extends WorkflowEntrypoint<Env, VideoParams> {
+  async run(event: WorkflowEvent<VideoParams>, step: WorkflowStep) {
+    return runVideoWithErrorHandling(this.env, adaptStep(step), event.payload);
   }
 }

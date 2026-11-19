@@ -34,6 +34,7 @@ export function parseSnooze(detail: string | null): { kind: TodayKind; until: nu
 
 // Rows written by the Today queue or by bulk edits are not contact with the prospect, so they must not un-stall a deal.
 // job_found rows were written by the removed job watch; old ones still must not count as contact.
+// video_watch is deliberately NOT in this set: a prospect watching the video is engagement and does un-stall a deal.
 const NOT_CONTACT = new Set(["today_done", "snoozed", "bulk", "starred", "unstarred", "job_found"]);
 
 interface ActivityRow { business_id: string; kind: string; detail: string | null; created_at: string; }

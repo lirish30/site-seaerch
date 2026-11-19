@@ -125,6 +125,7 @@ export type OffsetKind = "business" | "calendar";
 export interface Campaign {
   id: string; name: string; niche: string; region: string; towns: string[];
   status: CampaignStatus; est_job_value_usd: number | null; created_at: string;
+  video_email: 0 | 1;
   steps?: SequenceStep[];
 }
 export interface SequenceStep {

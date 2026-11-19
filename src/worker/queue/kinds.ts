@@ -3,3 +3,4 @@ import "./replyClassify";
 import "./siteReview";
 import "./leadDraft";
 import "./cro";
+import "./videoScript";

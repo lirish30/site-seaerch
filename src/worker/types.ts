@@ -120,6 +120,7 @@ export interface Person {
 export const ACTIVITY_KINDS = [
   "status", "archived", "restored", "website", "reaudit", "score_flagged", "export", "draft", "cro_audit", "suppressed", "import", "bulk",
   "today_done", "snoozed", "starred", "unstarred", "note", "email_sent", "email_reply", "email_bounce",
+  "video_watch",
 ] as const;
 export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
 export interface Activity { id: string; business_id: string; kind: ActivityKind; detail: string | null; created_at: string; }
@@ -188,6 +189,14 @@ export interface Settings {
   signature_json: string;
   /** 1/0: new drafts carry the mailing footer. `attach_audit_pdf` is no longer used (cold email carries no attachment); the column and key stay so no migration is needed. */
   footer_freelance?: number; attach_audit_pdf?: number;
+  /** The engine the owner picked in the blind voice test, or null (nothing picked yet, or they record their own lines). */
+  voice_engine: "qwen3-tts" | "chatterbox" | "openvoice-v2" | null;
+  /** R2 key of the owner's reference recording, or null. */
+  voice_ref_key: string | null;
+  /** https URL (or "") a video's call to action points to. */
+  booking_url: string;
+  /** 1/0: a video says its voice is AI. */
+  ai_voice_note: number;
 }
 export type TonePreset = "friendly_local" | "consultative" | "direct" | "formal";
 export type EmailLength = "short" | "medium" | "long";

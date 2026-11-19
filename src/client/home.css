@@ -134,6 +134,8 @@
 .hm-appr-ghead h3 { font:600 13px/19px var(--font); color:var(--text-2); } .hm-appr-ghead h3 span { font-weight:500; color:var(--text-3); }
 .hm-appr-list { list-style:none; margin:0; padding:0; }
 .hm-appr-row { align-items:flex-start; } .hm-appr-row:last-child { border-bottom:0; }
+.hm-helper-dot { display:inline-block; width:8px; height:8px; margin-right:8px; border-radius:50%; background:var(--text-3); vertical-align:middle; }
+.hm-helper-dot.on { background:var(--positive); }
 .hm-queue-body { padding:6px 18px 14px; }
 .hm-queue-list { list-style:none; margin:0; padding:0; }
 .hm-queue-list li { display:flex; justify-content:space-between; align-items:baseline; gap:12px; padding:8px 0; border-bottom:1px solid var(--border); font:400 13px/19px var(--font); color:var(--text); }

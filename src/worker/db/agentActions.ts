@@ -1,12 +1,12 @@
 import { recordUsage } from "./usage";
 
 export type AgentAction = {
-  id: string; actor: "mcp" | "job"; tool: string; summary: string;
+  id: string; actor: "mcp" | "job" | "helper"; tool: string; summary: string;
   record_type: string | null; record_id: string | null; cost_usd: number; created_at: string;
 };
 
 export async function logAgentAction(db: D1Database, a: {
-  actor: "mcp" | "job"; tool: string; summary: string; record_type?: string; record_id?: string; cost_usd?: number;
+  actor: "mcp" | "job" | "helper"; tool: string; summary: string; record_type?: string; record_id?: string; cost_usd?: number;
 }): Promise<void> {
   const cost = a.cost_usd ?? 0;
   await db.prepare(`INSERT INTO agent_actions (id, actor, tool, summary, record_type, record_id, cost_usd, created_at) VALUES (?,?,?,?,?,?,?,?)`)

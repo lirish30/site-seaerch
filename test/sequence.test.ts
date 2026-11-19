@@ -11,11 +11,13 @@ import { createSearch } from "../src/worker/db/searches";
 import { getBusiness, upsertBusiness } from "../src/worker/db/businesses";
 import { replaceContacts } from "../src/worker/db/contacts";
 import { insertDraft } from "../src/worker/db/drafts";
-import { insertAudit } from "../src/worker/db/audits";
+import { insertAudit, latestAudit } from "../src/worker/db/audits";
 import { listActivity } from "../src/worker/db/activity";
 import { addDoNotContact, listDoNotContact } from "../src/worker/db/doNotContact";
 import { listSuppressions } from "../src/worker/db/suppression";
-import { createCampaign, saveStep, listSteps } from "../src/worker/db/campaigns";
+import { createCampaign, saveStep, listSteps, updateCampaign } from "../src/worker/db/campaigns";
+import { createVideoAudit, publishedVideoForAudit, setVideoStatus } from "../src/worker/db/videoAudits";
+import { ensureReport, publishedVideoForToken } from "../src/worker/db/reports";
 import { setAfterSendForTests } from "../src/worker/mail/send";
 import { addBusinessDays } from "../src/worker/sequence/dates";
 import { RULE_PHRASES, VETTED_RULE_PHRASES, advanceAfterSend, problemOne, scanDueSteps, startSequence } from "../src/worker/sequence/engine";
@@ -120,6 +122,31 @@ describe("addBusinessDays", () => {
     expect(addBusinessDays(at("2026-11-18T10:00:00Z"), 12).toISOString()).toBe("2026-12-04T10:00:00.000Z");
     expect(addBusinessDays(at("2026-11-22T10:00:00Z"), 0).toISOString()).toBe("2026-11-22T10:00:00.000Z");
     expect(() => addBusinessDays(NOW, -1)).toThrow();
+  });
+});
+
+describe("a video campaign across the 30-day report link", () => {
+  it("a published video is still found after the 30-day report link expired and was re-minted", async () => {
+    const audit = (await latestAudit(env.DB, businessId))!;
+    const v = (await createVideoAudit(env.DB, { businessId, auditId: audit.id }))!;
+    await setVideoStatus(env.DB, v.id, "published");
+    const first = await ensureReport(env.DB, businessId, audit.id, NOW);
+    expect((await publishedVideoForToken(env.DB, first.token, NOW))?.id).toBe(v.id);
+
+    const later = new Date(NOW.getTime() + 31 * 86_400_000); // the 30-day link has expired
+    expect(await publishedVideoForToken(env.DB, first.token, later)).toBeNull();
+    const second = await ensureReport(env.DB, businessId, audit.id, later);
+    expect(second.token).not.toBe(first.token);
+    // the video lives on the audit, the token is separate: the new link finds the same video, the old one stays dead
+    expect((await publishedVideoForAudit(env.DB, audit.id))?.id).toBe(v.id);
+    expect((await publishedVideoForToken(env.DB, second.token, later))?.id).toBe(v.id);
+    expect(await publishedVideoForToken(env.DB, first.token, later)).toBeNull();
+
+    // and Email 1 started after the expiry carries the re-minted link
+    clock = later;
+    await updateCampaign(env.DB, campaignId, { video_email: 1 });
+    expect((await startSequence(env, { businessId, campaignId })).ok).toBe(true);
+    expect((await approvalRows())[0].payload.heroImage.href).toMatch(new RegExp(`/r/${second.token}$`));
   });
 });
 

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The Siteline Mac helper as a login item. launchd cannot expand ~ or $HOME, so install.sh-style substitution is done by hand (see README.md):
+
+    sed -e "s|__NODE__|$(command -v node)|" -e "s|__HELPER__|$PWD/helper|" -e "s|__HOME__|$HOME|" \
+      helper/launchd/com.siteline.helper.plist > ~/Library/LaunchAgents/com.siteline.helper.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.siteline.helper.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.siteline.helper</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE__</string>
+    <string>__HELPER__/src/cli.ts</string>
+    <string>run</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__HELPER__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- Restart after a crash, but not after a clean exit: a revoked token makes the helper exit 0 so it is not restarted in a loop. -->
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/siteline-helper.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/siteline-helper.log</string>
+</dict>
+</plist>

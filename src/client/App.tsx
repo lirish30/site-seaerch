@@ -3,6 +3,7 @@ import Login from "./pages/Login";
 import NewSearch from "./pages/NewSearch";
 import SearchDetail from "./pages/SearchDetail";
 import LeadDetail from "./pages/LeadDetail";
+import VideoEditor from "./pages/VideoEditor";
 import AllLeads from "./pages/AllLeads";
 import Report from "./pages/Report";
 import Radar from "./pages/Radar";
@@ -26,6 +27,8 @@ import Google from "./pages/settings/Google";
 import Usage from "./pages/settings/Usage";
 import Security from "./pages/settings/Security";
 import Footer from "./pages/settings/Footer";
+import Helper from "./pages/settings/Helper";
+import VoiceTest from "./pages/settings/VoiceTest";
 import Scores from "./pages/settings/Scores";
 import Shell from "./components/Shell";
 
@@ -44,6 +47,7 @@ export default function App() {
             <Route path="/today" element={<Today />} />
             <Route path="/leads" element={<AllLeads />} />
             <Route path="/leads/:id" element={<LeadDetail />} />
+            <Route path="/leads/:id/video" element={<VideoEditor />} />
             <Route path="/promising" element={<Promising />} />
             <Route path="/import" element={<Import />} />
             <Route path="/outreach" element={<Outreach />} />
@@ -63,6 +67,8 @@ export default function App() {
             <Route path="/settings/usage" element={<Usage />} />
             <Route path="/settings/security" element={<Security />} />
             <Route path="/settings/footer" element={<Footer />} />
+            <Route path="/settings/helper" element={<Helper />} />
+            <Route path="/settings/voice-test" element={<VoiceTest />} />
             <Route path="/settings/scores" element={<Scores />} />
           </Routes>
         </Shell>

@@ -3,6 +3,9 @@ export interface ReportFinding { severity: Severity; evidence: string; }
 export interface ReportData {
   businessName: string; website?: string; auditedAt: string; counts: Record<Severity, number>; findings: ReportFinding[]; partial: boolean;
   sender: { name: string; businessName: string; email: string; logoUrl: string }; expiresAt: string;
+  /** The published video, or null; absent from an older server's answer. */
+  video?: { durationMs: number; aiVoiceNote: boolean } | null;
+  bookingUrl?: string;
 }
 
 export const SEVERITY_LABELS: Record<Severity, string> = { high: "Worth fixing first", medium: "Worth a look", low: "Smaller things" };
@@ -77,3 +80,12 @@ export function basedOnText(r: Pick<ReportData, "website" | "auditedAt">): strin
   const date = longDate(r.auditedAt);
   return `Based on an automated check${r.website ? ` of ${r.website}` : ""}${date ? ` on ${date}` : ""}.`;
 }
+
+/** The one line under the player saying the voice is AI, or "" when it is not (or the server said nothing about it). */
+export const videoNote = (v: { aiVoiceNote: boolean }): string => (v.aiVoiceNote ? "Narrated with an AI version of my voice." : "");
+
+/** The booking button's words, or "" (no button) unless the link is https. The server already drops other links; the client does not trust that. */
+export const bookingLabel = (url: string): string => (url.startsWith("https://") ? "Book a 20-minute call" : "");
+
+/** Where a report's video files are served from. `token` is a report token (see `isReportToken`). */
+export const mediaUrl = (token: string, name: "video.mp4" | "poster.jpg" | "preview.gif"): string => `/api/public/report/${token}/media/${name}`;

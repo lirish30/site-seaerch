@@ -5,6 +5,8 @@ export type OffsetKind = "business" | "calendar";
 export interface Campaign {
   id: string; name: string; niche: string; region: string; towns: string[];
   status: CampaignStatus; est_job_value_usd: number | null; created_at: string;
+  /** 1: Email 1 carries the lead's published video (a linked GIF); 0: Email 1 is the draft as written. */
+  video_email: 0 | 1;
 }
 export interface SequenceStep {
   id: string; campaign_id: string; idx: number; kind: StepKind;
@@ -106,13 +108,13 @@ export async function listCampaigns(db: D1Database): Promise<Campaign[]> {
   return (await db.prepare(`SELECT * FROM campaigns ORDER BY created_at DESC, id`).all<CampaignRow>()).results.map(toCampaign);
 }
 
-export type CampaignPatch = Partial<Pick<Campaign, "name" | "niche" | "region" | "towns" | "status" | "est_job_value_usd">>;
+export type CampaignPatch = Partial<Pick<Campaign, "name" | "niche" | "region" | "towns" | "status" | "est_job_value_usd" | "video_email">>;
 
 /** Null when the campaign does not exist. */
 export async function updateCampaign(db: D1Database, id: string, patch: CampaignPatch): Promise<Campaign | null> {
   const { towns, ...rest } = patch;
   // Column names come from this fixed list, never from the caller; values are bound.
-  const cols = (["name", "niche", "region", "status", "est_job_value_usd"] as const).filter((k) => rest[k] !== undefined);
+  const cols = (["name", "niche", "region", "status", "est_job_value_usd", "video_email"] as const).filter((k) => rest[k] !== undefined);
   const sets = cols.map((k) => `${k} = ?`);
   const vals: unknown[] = cols.map((k) => rest[k]);
   if (towns !== undefined) { sets.push("towns = ?"); vals.push(JSON.stringify(towns)); }

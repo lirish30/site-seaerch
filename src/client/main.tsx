@@ -11,5 +11,6 @@ import "./find-c.css";
 import "./settings.css";
 import "./settings-b.css";
 import "./public.css";
+import "./video.css";
 
 createRoot(document.getElementById("root")!).render(<BrowserRouter><App /></BrowserRouter>);

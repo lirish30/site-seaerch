@@ -51,6 +51,7 @@ export function describeActivity(a: Pick<Activity, "kind" | "detail">): Activity
     case "email_sent": return { icon: "send", tone: "info", title: "Email sent", detail: d, bubble: false };
     case "email_reply": return { icon: "mail", tone: "positive", title: "Reply received", detail: d, bubble: false };
     case "email_bounce": return { icon: "alert", tone: "critical", title: "Email bounced", detail: d, bubble: false };
+    case "video_watch": return { icon: "eye", tone: "positive", title: d ?? "Watched the video audit", detail: null, bubble: false };
     case "snoozed": return { icon: "clock", tone: "neutral", title: "Snoozed", detail: d, bubble: false };
     default: return { icon: "info", tone: "neutral", title: upperFirst(a.kind.replace(/_/g, " ")), detail: d, bubble: false };
   }
