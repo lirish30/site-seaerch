@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formOf, nextActions, notesOf, optionSummary } from "../src/client/dealView";
+import { callDoneCheck, formOf, isNotesDirty, nextActions, notesOf, optionSummary } from "../src/client/dealView";
 import { dealHref } from "../src/client/pipelineView";
 import type { Package } from "../src/worker/db/packages";
 import type { CallRecap } from "../src/worker/queue/callRecap";
@@ -81,5 +81,51 @@ describe("formOf and notesOf", () => {
     expect(notesOf({ ...formOf(null), avgJob: "lots" }, null)).toEqual({ ok: false, error: expect.stringMatching(/Average job/) });
     expect(notesOf({ ...formOf(null), missed: "2.5" }, null)).toEqual({ ok: false, error: expect.stringMatching(/Missed jobs/) });
     expect(notesOf({ ...formOf(null), avgJob: "$1,250", missed: " 3 " }, null)).toMatchObject({ ok: true, notes: { avgJobValueCents: 125000, missedJobsPerMonth: 3 } });
+  });
+});
+
+describe("the notes form survives a tab switch and a reload of the deal", () => {
+  it("prefills the platform from the audit only when there are no saved notes", () => {
+    expect(formOf(null, { platform: "wordpress" }).platform).toBe("wordpress");
+    expect(formOf(null, { platform: "wix" }).platform).toBe("other");
+    expect(formOf(null, { platform: null }).platform).toBe("other");
+    expect(formOf(null, null).platform).toBe("other");
+    expect(formOf(null).platform).toBe("other");
+    // Saved notes keep what Logan chose, whatever the audit says.
+    expect(formOf({ ...emptyNotes(), platform: "other" }, { platform: "wordpress" }).platform).toBe("other");
+    expect(formOf({ ...emptyNotes(), platform: "wordpress" }, { platform: "wix" }).platform).toBe("wordpress");
+  });
+
+  it("is not dirty as loaded (with or without the prefill) and is dirty once something is typed", () => {
+    const audit = { platform: "wordpress" };
+    const fresh = formOf(null, audit);
+    expect(isNotesDirty(fresh, null, audit)).toBe(false);
+    expect(isNotesDirty({ ...fresh, answers: fresh.answers.map((a, i) => (i === 0 ? "water heaters" : a)) }, null, audit)).toBe(true);
+    expect(isNotesDirty({ ...fresh, platform: "other" }, null, audit)).toBe(true); // Logan changing the prefill is an edit
+    const saved = { ...emptyNotes(), answers: [{ n: 1, text: "water heaters" }], platform: "wordpress" as const };
+    expect(isNotesDirty(formOf(saved), saved)).toBe(false);
+    expect(isNotesDirty({ ...formOf(saved), goals: ["More calls", "", ""] }, saved)).toBe(true);
+  });
+
+  it("unsaved typing stays dirty when the deal reloads with the same saved notes, and is clean once the saved notes match it", () => {
+    const typed = { ...formOf(null), goals: ["More calls", "", ""] };
+    expect(isNotesDirty(typed, null)).toBe(true); // a reload that brings back no notes does not clear it
+    const stored = notesOf(typed, null);
+    if (!stored.ok) throw new Error(stored.error);
+    expect(isNotesDirty(formOf(stored.notes), stored.notes)).toBe(false); // after a save the form is rebuilt from what was stored
+  });
+});
+
+describe("callDoneCheck", () => {
+  it("stops on notes that are not valid, with the reason, so the call is not marked done", () => {
+    expect(callDoneCheck({ ...formOf(null), avgJob: "lots" }, null)).toEqual({ ok: false, error: expect.stringMatching(/Average job/) });
+    expect(callDoneCheck({ ...formOf(null), missed: "2.5" }, null)).toEqual({ ok: false, error: expect.stringMatching(/Missed jobs/) });
+  });
+  it("saves first when something is written, and goes straight on when nothing is", () => {
+    const written = { ...formOf(null), answers: ["water heaters", ...Array(9).fill("")] };
+    expect(callDoneCheck(written, null)).toMatchObject({ ok: true, save: true });
+    expect(callDoneCheck(formOf(null), null)).toMatchObject({ ok: true, save: false });
+    expect(callDoneCheck({ ...formOf(null), goals: ["More calls", "", ""] }, null)).toMatchObject({ ok: true, save: true }); // any typed box is kept, not only an answer
+    expect(callDoneCheck({ ...formOf(null), platform: "wordpress" }, null)).toMatchObject({ ok: true, save: false }); // the platform alone is not worth a save
   });
 });

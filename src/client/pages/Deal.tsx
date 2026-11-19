@@ -4,7 +4,7 @@ import { api, ApiError } from "../api";
 import { formatSlot } from "../bookingView";
 import CallPrepPanel from "../components/CallPrepPanel";
 import UpcomingBooking from "../components/UpcomingBooking";
-import { formOf, nextActions, notesOf, optionSummary, type NotesForm } from "../dealView";
+import { callDoneCheck, formOf, isNotesDirty, nextActions, notesOf, optionSummary, type NotesForm } from "../dealView";
 import { dollars, formatPrice, parseDollars, type Package } from "../packagesView";
 import { STAGE_LABEL } from "../pipelineView";
 import type { Deal } from "../../worker/db/deals";
@@ -20,28 +20,44 @@ const errorText = (e: unknown, fallback: string) => (e instanceof Error ? e.mess
 export default function DealPage() {
   const { id = "" } = useParams();
   const [deal, setDeal] = useState<Deal | null>(null);
-  const [lead, setLead] = useState<{ name: string; findings: { code: string; evidence: string }[] } | null>(null);
+  const [lead, setLead] = useState<{ name: string; platform: string | null; findings: { code: string; evidence: string }[] } | null>(null);
+  // The notes form lives here, not in the Notes tab, so typing survives a switch to Prep and back. It is replaced only by a save (or a new deal).
+  const [form, setForm] = useState<NotesForm | null>(null);
   const [catalog, setCatalog] = useState<Package[]>([]);
   const [tab, setTab] = useState<Tab | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let live = true;
-    setDeal(null); setLead(null); setTab(null); setFailed(false);
+    setDeal(null); setLead(null); setForm(null); setTab(null); setFailed(false);
     api.get<Deal>(`/deals/${id}`).then((d) => {
       if (!live) return;
       setDeal(d);
       setTab(d.recap ? "recap" : d.stage === "booked" ? "prep" : "notes");
-      api.get<{ business: { name: string }; audit: { findings: { code: string; evidence: string }[] } | null }>(`/leads/${d.businessId}`)
-        .then((x) => { if (live) setLead({ name: x.business.name, findings: x.audit?.findings ?? [] }); })
-        .catch(() => { if (live) setLead({ name: "this lead", findings: [] }); });
+      const ready = (name: string, platform: string | null, findings: { code: string; evidence: string }[]) => {
+        if (!live) return;
+        setLead({ name, platform, findings });
+        setForm(formOf(d.notes, { platform }));
+      };
+      api.get<{ business: { name: string }; audit: { platform: string | null; findings: { code: string; evidence: string }[] } | null }>(`/leads/${d.businessId}`)
+        .then((x) => ready(x.business.name, x.audit?.platform ?? null, x.audit?.findings ?? []))
+        .catch(() => ready("this lead", null, []));
     }).catch(() => { if (live) setFailed(true); });
     api.get<Package[]>("/packages").then((c) => { if (live) setCatalog(c); }).catch(() => {});
     return () => { live = false; };
   }, [id]);
 
   if (failed) return <div className="deal"><p className="error deal-body" role="alert">Couldn’t load this deal. <Link to="/pipeline">Back to the pipeline</Link></p></div>;
-  if (!deal || !tab) return <div className="deal"><p className="muted deal-body">Loading…</p></div>;
+  const dirty = !!deal && !!form && !!lead && isNotesDirty(form, deal.notes, lead);
+  // Closing or reloading the page with typed notes that are not saved asks first (the same browser prompt the Settings pages use).
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+
+  if (!deal || !tab || !form) return <div className="deal"><p className="muted deal-body">Loading…</p></div>;
 
   const actions = nextActions(deal);
   const TABS: [Tab, string][] = [["prep", "Prep"], ["notes", "Notes"], ["recap", "Recap"], ["deck", "Deck (next step)"]];
@@ -65,7 +81,7 @@ export default function DealPage() {
           {TABS.map(([key, label]) => <button key={key} type="button" aria-pressed={tab === key} onClick={() => setTab(key)}>{label}</button>)}
         </div>
         {tab === "prep" && <CallPrepPanel leadId={deal.businessId} findings={lead?.findings ?? []} />}
-        {tab === "notes" && <NotesTab deal={deal} onChange={setDeal} />}
+        {tab === "notes" && <NotesTab deal={deal} form={form} setForm={setForm} audit={lead} dirty={dirty} onChange={setDeal} />}
         {tab === "recap" && <RecapTab deal={deal} catalog={catalog} onChange={setDeal} />}
         {tab === "deck" && <p className="muted">The deck is built from the notes and the recap in the next step.</p>}
       </div>
@@ -73,13 +89,14 @@ export default function DealPage() {
   );
 }
 
-function NotesTab({ deal, onChange }: { deal: Deal; onChange: (d: Deal) => void }) {
-  const [form, setForm] = useState<NotesForm>(() => formOf(deal.notes));
+function NotesTab({ deal, form, setForm, audit, dirty, onChange }: {
+  deal: Deal; form: NotesForm; setForm: (f: NotesForm) => void; audit: { platform: string | null } | null; dirty: boolean; onChange: (d: Deal) => void;
+}) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
   const closed = deal.stage === "won" || deal.stage === "lost";
-  const set = (patch: Partial<NotesForm>) => { setForm({ ...form, ...patch }); setSaved(false); };
+  const set = (patch: Partial<NotesForm>) => { setForm({ ...form, ...patch }); setSaved(false); setError(""); };
   const setAt = (key: "answers" | "goals" | "currentState", i: number, v: string) => set({ [key]: form[key].map((x, j) => (j === i ? v : x)) });
 
   const parsed = notesOf(form, deal.notes?.callHeldAt ?? null);
@@ -88,13 +105,18 @@ function NotesTab({ deal, onChange }: { deal: Deal; onChange: (d: Deal) => void 
   async function save(): Promise<boolean> {
     setError("");
     if (!parsed.ok) { setError(parsed.error); return false; }
-    try { onChange(await api.put<Deal>(`/deals/${deal.id}/notes`, parsed.notes)); setSaved(true); return true; }
+    try {
+      const stored = await api.put<Deal>(`/deals/${deal.id}/notes`, parsed.notes);
+      setForm(formOf(stored.notes, audit)); onChange(stored); setSaved(true); return true;
+    }
     catch (e) { setError(errorText(e, "Could not save the notes")); return false; }
   }
   async function run(fn: () => Promise<void>) { setBusy(true); try { await fn(); } finally { setBusy(false); } }
-  /** Saves what is typed first, so marking the call done never leaves notes behind on the screen. */
+  /** Stops when the typed notes are not valid (the reason is shown), and saves what is typed first, so marking the call done never leaves notes behind. */
   const callDone = () => run(async () => {
-    if (parsed.ok && hasNotes(parsed.notes) && !(await save())) return;
+    const check = callDoneCheck(form, deal.notes?.callHeldAt ?? null);
+    if (!check.ok) { setError(check.error); return; }
+    if (check.save && !(await save())) return;
     try { onChange(await api.post<Deal>(`/deals/${deal.id}/call-done`)); setSaved(false); }
     catch (e) { setError(errorText(e, "Could not mark the call done")); }
   });
@@ -127,7 +149,7 @@ function NotesTab({ deal, onChange }: { deal: Deal; onChange: (d: Deal) => void 
         <label className="deal-field"><span>Their site is on</span>
           <select value={form.platform} disabled={closed} onChange={(e) => set({ platform: e.target.value as NotesForm["platform"] })}>
             <option value="wordpress">WordPress</option><option value="other">Something else (Wix, Squarespace, GoDaddy…)</option>
-          </select></label>
+          </select><small className="muted">Care is only offered for WordPress sites.</small></label>
         <label className="deal-field"><span>Who decides</span>
           <input maxLength={300} value={form.decisionMakers} disabled={closed} onChange={(e) => set({ decisionMakers: e.target.value })} /></label>
       </div>
@@ -135,6 +157,7 @@ function NotesTab({ deal, onChange }: { deal: Deal; onChange: (d: Deal) => void 
       <div className="cp-actions">
         <button type="button" className="btn" disabled={busy || closed} onClick={() => run(async () => { await save(); })}>Save notes</button>
         {deal.stage === "booked" && <button type="button" className="btn" disabled={busy} onClick={callDone}>Call done</button>}
+        {dirty && !saved && <span className="muted small">Unsaved changes.</span>}
         {saved && <span className="muted small" role="status">Saved.</span>}
         {deal.notes?.callHeldAt && <span className="muted small">Call held {new Date(deal.notes.callHeldAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}.</span>}
       </div>

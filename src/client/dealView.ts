@@ -42,13 +42,17 @@ export interface NotesForm {
   answers: string[]; goals: string[]; currentState: string[]; avgJob: string; missed: string; platform: DiscoveryNotes["platform"]; decisionMakers: string;
 }
 
-export function formOf(n: DiscoveryNotes | null): NotesForm {
+/** What the audit says about the site, for prefilling the platform: only "wordpress" counts as WordPress, anything else (or no audit) is "other". */
+export type AuditPlatform = { platform: string | null } | null | undefined;
+
+/** The form for a deal's saved notes. With no saved notes the platform is prefilled from the audit; saved notes keep the platform Logan chose. */
+export function formOf(n: DiscoveryNotes | null, audit?: AuditPlatform): NotesForm {
   const pad = (a: string[]) => [...a, "", "", ""].slice(0, 3);
   return {
     answers: Array.from({ length: 10 }, (_, i) => n?.answers.find((a) => a.n === i + 1)?.text ?? ""),
     goals: pad(n?.goals ?? []), currentState: pad(n?.currentState ?? []),
     avgJob: n?.avgJobValueCents == null ? "" : String(n.avgJobValueCents / 100), missed: n?.missedJobsPerMonth == null ? "" : String(n.missedJobsPerMonth),
-    platform: n?.platform ?? "other", decisionMakers: n?.decisionMakers ?? "",
+    platform: n ? n.platform : audit?.platform === "wordpress" ? "wordpress" : "other", decisionMakers: n?.decisionMakers ?? "",
   };
 }
 
@@ -64,4 +68,18 @@ export function notesOf(f: NotesForm, callHeldAt: string | null): { ok: true; no
     goals: list(f.goals), currentState: list(f.currentState), avgJobValueCents: avg, missedJobsPerMonth: missed,
     platform: f.platform, decisionMakers: f.decisionMakers.trim(), callHeldAt,
   } };
+}
+
+/** Whether the form holds edits that are not saved: it differs from the form the saved notes (or the audit prefill) would give. */
+export const isNotesDirty = (form: NotesForm, saved: DiscoveryNotes | null, audit?: AuditPlatform): boolean => JSON.stringify(form) !== JSON.stringify(formOf(saved, audit));
+
+/**
+ * Whether "Call done" may go ahead: the typed notes must be valid (else it stops, with the reason), and `save` says whether there is anything written
+ * that has to be saved first (any box filled in, not only an answer) so marking the call done never leaves typed notes behind.
+ */
+export function callDoneCheck(form: NotesForm, callHeldAt: string | null): { ok: true; save: boolean; notes: DiscoveryNotes } | { ok: false; error: string } {
+  const r = notesOf(form, callHeldAt);
+  if (!r.ok) return r;
+  const n = r.notes;
+  return { ok: true, save: n.answers.length > 0 || n.goals.length > 0 || n.currentState.length > 0 || n.avgJobValueCents !== null || n.missedJobsPerMonth !== null || n.decisionMakers !== "", notes: n };
 }
