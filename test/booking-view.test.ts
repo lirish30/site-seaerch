@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bookingError, budgetProblem, cancelPath, dayHeading, formatSlot, groupByDay, safeMeetUrl, timeOfDay } from "../src/client/bookingView";
+import { bookingError, budgetProblem, cancelPath, cancelledCopy, dayHeading, formatSlot, groupByDay, safeMeetUrl, timeOfDay } from "../src/client/bookingView";
 
 describe("formatSlot", () => {
   it("shows the viewer's zone", () => {
@@ -60,5 +60,15 @@ describe("booking page text", () => {
     expect(bookingError(422)).toMatch(/check the form/i);
     expect(bookingError(503)).toMatch(/reply to the email/i);
     expect(bookingError(500)).toBe(bookingError(503));
+    expect(bookingError(429)).toMatch(/too many attempts.*reply to the email/i);
+  });
+
+  it("a cancelled recommendation meeting says to reply, with no 'pick another time'; a cancelled call can be rebooked", () => {
+    const meeting = cancelledCopy("recommendation");
+    expect(meeting).toMatchObject({ title: "Your meeting is cancelled", rebook: false });
+    expect(meeting.body).toBe("No hard feelings. Reply to the email and we'll find another time.");
+    expect(meeting.body).not.toMatch(/pick another time/i);
+    expect(cancelledCopy("discovery")).toMatchObject({ title: "Your call is cancelled", rebook: true });
+    expect(cancelledCopy(undefined).rebook).toBe(true); // an answer from before the kind was sent reads as the call
   });
 });

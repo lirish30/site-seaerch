@@ -22,6 +22,15 @@ export function nextActions(d: Pick<Deal, "stage" | "skipCall" | "notes" | "reca
   return out;
 }
 
+/**
+ * Whether "Offer two times" shows. Before the recommendation meeting is booked it does; once the meeting is booked it only does when no confirmed meeting
+ * is left (the guest cancelled theirs), so Logan can rebook. `hasMeeting` is `null` while the lead's bookings are still loading: nothing is offered then.
+ */
+export function canOfferTimes(stage: Deal["stage"], hasMeeting: boolean | null): boolean {
+  if (stage === "won" || stage === "lost" || at(stage) > at("recommendation_booked")) return false;
+  return stage === "recommendation_booked" ? hasMeeting === false : true;
+}
+
 /** One option for the screen: each package with its catalog price, and the up-front and monthly totals (null when there is none). */
 export function optionSummary(option: Option, catalog: Package[]): { items: string[]; upfront: string | null; monthly: string | null } {
   const t = optionTotals(option, catalog);
@@ -31,7 +40,8 @@ export function optionSummary(option: Option, catalog: Package[]): { items: stri
       if (!p) return `${i.key}: not in the catalog`;
       return `${p.name}: ${formatPrice(p)}${i.setupDiscountCents ? ` (less ${dollars(i.setupDiscountCents)} off setup)` : ""}`;
     }),
-    upfront: t.upfrontCents > 0 ? dollars(t.upfrontCents) : null,
+    // A "from" package makes the sum a "from" figure, as the line items say.
+    upfront: t.upfrontCents > 0 ? `${option.items.some((i) => catalog.find((c) => c.key === i.key)?.fromPrice) ? "from " : ""}${dollars(t.upfrontCents)}` : null,
     monthly: t.monthlyCents > 0 ? `${dollars(t.monthlyCents)}/mo` : null,
   };
 }

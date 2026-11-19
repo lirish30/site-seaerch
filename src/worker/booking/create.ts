@@ -3,7 +3,7 @@ import type { Env } from "../env";
 import { checkConflict } from "../conflict";
 import { logActivity } from "../db/activity";
 import {
-  bookingFor, cancelBooking, getBooking, getBookingByCancelToken, insertBookingIfFree, setBookingDeal, setBookingEvent, type Booking,
+  bookingFor, bookingsSince, cancelBooking, getBooking, getBookingByCancelToken, hasHeldBooking, insertBookingIfFree, setBookingDeal, setBookingEvent, type Booking,
 } from "../db/bookings";
 import { getBusiness } from "../db/businesses";
 import { createDeal } from "../db/deals";
@@ -18,13 +18,23 @@ import { getBookingFetch } from "./deps";
 import { computeSlots, isOffered } from "./slots";
 
 const DAY = 86_400_000;
+/** The most bookings (any status) one lead can make through the guest page in 24 hours. */
+export const MAX_BOOKINGS_PER_DAY = 3;
 
 /**
  * What the booking form sends. Every string is trimmed and length-capped; HTML is not stripped (the text is kept as typed) and is escaped everywhere
  * it is output. `start` is checked against the offered slots later, so here it is only a short string.
  */
+/**
+ * A name goes into the confirmation mail Logan's mailbox sends to a third party, and the mail linkifies its body, so a name that is, or carries, a web
+ * address or an email address is refused (a colon covers "https://", "mailto:" and "javascript:"). Control characters become one space.
+ */
+export const nameProblem = (s: string): boolean => /:|@|www\./i.test(s);
+const cleanName = (s: string) => s.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ").replace(/\s+/g, " ").trim();
+const NameSchema = z.string().max(100).transform(cleanName).pipe(z.string().min(1).refine((s) => !nameProblem(s), "name"));
+
 export const BookingFormSchema = z.object({
-  name: z.string().trim().min(1).max(100),
+  name: NameSchema,
   email: z.string().trim().max(254).pipe(z.email()),
   phone: z.string().trim().max(30).optional(),
   topic: z.string().trim().min(1).max(500),
@@ -36,7 +46,7 @@ export const BookingFormSchema = z.object({
 export type BookingForm = z.infer<typeof BookingFormSchema>;
 
 /** Why a booking did not happen. 404 is the one answer for a link that is gone and for a lead that may not be contacted: it never says which. */
-export interface BookingFailure { ok: false; status: 404 | 409 | 422 | 503; error: string; /** The old booking link, on a 503, so the page can send the person there. */ fallbackUrl?: string }
+export interface BookingFailure { ok: false; status: 404 | 409 | 422 | 429 | 503; error: string; /** The old booking link, on a 503, so the page can send the person there. */ fallbackUrl?: string }
 const NOT_FOUND: BookingFailure = { ok: false, status: 404, error: "not found" };
 
 /** The settings' own booking link (the Plan 3 one), shown only when it is https. */
@@ -77,7 +87,8 @@ export async function bookingPage(env: Env, token: string, now: Date): Promise<{
   const existing = await bookingFor(env.DB, business.id, "discovery");
   const calToken = await calendarFor(env, cfg);
   let slots: string[] = [];
-  if (calToken && !existing) {
+  // A lead whose discovery call already happened is offered no more: the page says there are no times and to reply to the email.
+  if (calToken && !existing && !(await hasHeldBooking(env.DB, business.id, "discovery"))) {
     try { slots = computeSlots(cfg, "discovery", await busyFor(calToken, cfg, now), now); }
     catch (e) {
       console.error("booking: free/busy failed", e instanceof Error ? e.message : "unknown error");
@@ -115,12 +126,16 @@ export async function createVisitorBooking(env: Env, token: string, form: Bookin
   const cfg = parseConfig(settings.booking_config), fallbackUrl = fallbackOf(settings.booking_url);
   const unavailable = (error = "booking is not available right now, please reply to the email"): BookingFailure => ({ ok: false, status: 503, error, fallbackUrl });
 
+  // Abuse cap: a lead that has made three bookings in a day (cancelled ones count) is told to reply instead. No time or calendar is read first.
+  if ((await bookingsSince(env.DB, business.id, new Date(now.getTime() - DAY))) >= MAX_BOOKINGS_PER_DAY) return { ok: false, status: 429, error: "too many attempts, reply to the email" };
   const calToken = await calendarFor(env, cfg);
   if (!calToken) return unavailable();
 
   const budget = cfg.budgetOptions.find((o) => o.id === form.budgetId);
   if (!budget || !cfg.timelineOptions.includes(form.timeline)) return { ok: false, status: 422, error: "choose one of the options offered" };
   if (await bookingFor(env.DB, business.id, "discovery")) return { ok: false, status: 409, error: "a call is already booked" };
+  // The discovery call already happened: the guest page does not book a second (what comes next is Logan's recommendation meeting).
+  if (await hasHeldBooking(env.DB, business.id, "discovery")) return { ok: false, status: 409, error: "a call is already booked" };
 
   let busy;
   try { busy = await busyFor(calToken, cfg, now); }
@@ -190,27 +205,27 @@ const TOKEN = /^[A-Za-z0-9_-]{43}$/;
  * does not run the conflict gate (a do-not-contact guest can still release their slot). The cancel token is still scoped to the report's own lead.
  * A call that has started cannot be cancelled. It moves nothing else: the deal and the lead stay where they were.
  */
-export async function cancelByToken(env: Env, token: string, cancelToken: string, now: Date): Promise<{ ok: boolean }> {
+export async function cancelByToken(env: Env, token: string, cancelToken: string, now: Date): Promise<{ ok: boolean; kind?: Booking["kind"] }> {
   if (!TOKEN.test(token) || !TOKEN.test(cancelToken)) return { ok: false };
   const businessId = await reportBusinessId(env.DB, token);
   if (!businessId) return { ok: false };
   const booking = await getBookingByCancelToken(env.DB, businessId, cancelToken);
   if (!booking) return { ok: false };
-  if (booking.status === "cancelled") return { ok: true };
+  // The kind tells the page what to offer next (a guest may book their own discovery call again; the recommendation meeting is Logan's to rebook).
+  if (booking.status === "cancelled") return { ok: true, kind: booking.kind };
   if (booking.status !== "confirmed" || booking.startAt <= now.toISOString()) return { ok: false };
-  if (booking.calendarEventId) {
-    try {
-      const calToken = await calendarToken(env, getBookingFetch());
-      if (!calToken) return { ok: false };
-      await deleteEvent(getBookingFetch(), calToken, booking.calendarEventId);
-    } catch (e) {
-      console.error("booking: could not delete the event for a cancel", e instanceof Error ? e.message : "unknown error");
-      return { ok: false };
-    }
+  try {
+    const calToken = await calendarToken(env, getBookingFetch());
+    if (!calToken) return { ok: false };
+    // The event's id is the booking's own when the create call never recorded one, so it can still be taken down.
+    await deleteEvent(getBookingFetch(), calToken, booking.calendarEventId ?? eventIdFor(booking.id));
+  } catch (e) {
+    console.error("booking: could not delete the event for a cancel", e instanceof Error ? e.message : "unknown error");
+    return { ok: false };
   }
   if (await cancelBooking(env.DB, booking.id, now)) {
     const settings = await getSettings(env.DB);
     await logActivity(env.DB, booking.businessId, "booking_cancelled", `${booking.kind === "discovery" ? "Discovery call" : "Recommendation meeting"} cancelled (was ${when(booking.startAt, parseConfig(settings.booking_config).timezone)})`);
   }
-  return { ok: true };
+  return { ok: true, kind: booking.kind };
 }

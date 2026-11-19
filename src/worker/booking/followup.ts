@@ -47,7 +47,9 @@ export async function bookRecommendation(env: Env, dealId: string, startIso: str
   if (!deal) return fail(422, "the deal no longer exists");
   if (deal.stage === "won" || deal.stage === "lost") return fail(409, "the deal is closed");
   if (await bookingFor(env.DB, deal.businessId, "recommendation")) return fail(409, "a recommendation meeting is already booked");
-  if (!canMove(deal.stage, "recommendation_booked")) return fail(409, `the deal is already past this step (it is ${deal.stage.replace(/_/g, " ")})`);
+  // A deal already at `recommendation_booked` with no confirmed meeting is the guest having cancelled theirs: it can be booked again, and the stage stays.
+  const rebook = deal.stage === "recommendation_booked";
+  if (!rebook && !canMove(deal.stage, "recommendation_booked")) return fail(409, `the deal is already past this step (it is ${deal.stage.replace(/_/g, " ")})`);
   const business = await getBusiness(env.DB, deal.businessId);
   if (!business) return fail(422, "the lead no longer exists");
   const guest = await inviteTo(env, business.id, business.name, businessDomain(business));
@@ -91,7 +93,7 @@ export async function bookRecommendation(env: Env, dealId: string, startIso: str
 
   try {
     await setBookingEvent(env.DB, booking.id, event.eventId, event.meetUrl);
-    await moveDeal(env.DB, deal.id, "recommendation_booked");
+    if (!rebook) await moveDeal(env.DB, deal.id, "recommendation_booked");
   } catch (e) {
     console.error("followup: the hand-off failed, undoing the booking", e instanceof Error ? e.message : "unknown error");
     await undo(event.eventId);

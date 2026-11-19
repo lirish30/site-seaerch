@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { callDoneCheck, formOf, isNotesDirty, nextActions, notesOf, optionSummary, priceDrift } from "../src/client/dealView";
+import { callDoneCheck, canOfferTimes, formOf, isNotesDirty, nextActions, notesOf, optionSummary, priceDrift } from "../src/client/dealView";
 import { dealHref } from "../src/client/pipelineView";
 import type { Package } from "../src/worker/db/packages";
 import type { CallRecap } from "../src/worker/queue/callRecap";
@@ -48,6 +48,13 @@ describe("optionSummary", () => {
 
   it("names each package with its catalog price and totals up front and monthly", () => {
     expect(optionSummary(option, catalog)).toEqual({ items: ["Quick Fix: $797", "Care: $129/mo"], upfront: "$797", monthly: "$129/mo" });
+  });
+  it("says 'from' on the up-front total when an option holds a from-priced package, as its own line does", () => {
+    const withStarter = [...catalog, pkg("starter_site", { name: "Starter Site", priceCents: 399700, fromPrice: true })];
+    const o: Option = { ...option, items: [{ key: "starter_site" }, { key: "care" }] };
+    expect(optionSummary(o, withStarter)).toEqual({ items: ["Starter Site: from $3,997", "Care: $129/mo"], upfront: "from $3,997", monthly: "$129/mo" });
+    expect(optionSummary({ ...option, items: [{ key: "quick_fix" }, { key: "starter_site" }] }, withStarter).upfront).toBe("from $4,794");
+    expect(optionSummary(option, withStarter).upfront).toBe("$797"); // no from-priced package, no "from"
   });
   it("leaves a total out when there is none", () => {
     expect(optionSummary({ ...option, items: [{ key: "quick_fix" }] }, catalog)).toEqual({ items: ["Quick Fix: $797"], upfront: "$797", monthly: null });
@@ -155,5 +162,17 @@ describe("priceDrift", () => {
     expect(priceDrift({ priceSnapshot: frozen }, frozen.map((s) => pkg(s)))).toEqual([]);
     expect(priceDrift({ priceSnapshot: [] }, frozen.map((s) => pkg(s)))).toEqual([]);
     expect(priceDrift({ priceSnapshot: frozen }, [])).toEqual([]);
+  });
+});
+
+describe("canOfferTimes", () => {
+  it("offers two times before the meeting is booked, and again when the booked meeting is gone", () => {
+    for (const stage of ["booked", "discovery_done"] as const) expect(canOfferTimes(stage, null), stage).toBe(true);
+    expect(canOfferTimes("recommendation_booked", false)).toBe(true); // the guest cancelled theirs
+    expect(canOfferTimes("recommendation_booked", true)).toBe(false);
+    expect(canOfferTimes("recommendation_booked", null)).toBe(false); // still loading: nothing is offered
+  });
+  it("never offers them once the deal is past the meeting or closed", () => {
+    for (const stage of ["recommended", "proposal_sent", "won", "lost"] as const) expect(canOfferTimes(stage, false), stage).toBe(false);
   });
 });

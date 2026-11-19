@@ -4,7 +4,7 @@ import { api, ApiError } from "../api";
 import { formatSlot } from "../bookingView";
 import CallPrepPanel from "../components/CallPrepPanel";
 import UpcomingBooking from "../components/UpcomingBooking";
-import { callDoneCheck, formOf, isNotesDirty, nextActions, notesOf, optionSummary, priceDrift, type NotesForm } from "../dealView";
+import { callDoneCheck, canOfferTimes, formOf, isNotesDirty, nextActions, notesOf, optionSummary, priceDrift, type NotesForm } from "../dealView";
 import { dollars, formatPrice, parseDollars, type Package } from "../packagesView";
 import { STAGE_LABEL } from "../pipelineView";
 import type { Deal } from "../../worker/db/deals";
@@ -195,9 +195,18 @@ function RecapTab({ deal, catalog, onChange }: { deal: Deal; catalog: Package[];
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [booked, setBooked] = useState("");
+  // Whether a recommendation meeting is confirmed for this lead (null while loading). A guest who cancels theirs leaves the deal at "meeting booked" with none.
+  const [hasMeeting, setHasMeeting] = useState<boolean | null>(null);
+  const [meetingReloads, setMeetingReloads] = useState(0);
   const shownAt = useRef<string | null>(deal.recap?.generatedAt ?? null);
   const closed = deal.stage === "won" || deal.stage === "lost";
   const written = hasNotes(deal.notes);
+
+  useEffect(() => {
+    let live = true;
+    api.get<{ kind: string }[]>(`/bookings?lead=${encodeURIComponent(deal.businessId)}`).then((all) => { if (live) setHasMeeting(all.some((b) => b.kind === "recommendation")); }).catch(() => { if (live) setHasMeeting(null); });
+    return () => { live = false; };
+  }, [deal.businessId, deal.stage, meetingReloads]);
 
   // While a recap is queued, look again every so often; a newer `generatedAt` means Claude wrote it.
   const reload = useCallback(() => api.get<Deal>(`/deals/${deal.id}`).then(onChange), [deal.id, onChange]);
@@ -216,12 +225,12 @@ function RecapTab({ deal, catalog, onChange }: { deal: Deal; catalog: Package[];
   const offer = () => run(async () => { setBooked(""); setTimes(await api.get<{ slots: string[]; tz: string }>(`/deals/${deal.id}/followup-slots`)); });
   const book = (start: string, tz: string) => run(async () => {
     await api.post(`/deals/${deal.id}/book-recommendation`, { start });
-    setTimes(null); setBooked(formatSlot(start, tz)); await reload();
+    setTimes(null); setBooked(formatSlot(start, tz)); setMeetingReloads((n) => n + 1); await reload();
   });
 
   const recap = deal.recap, options = deal.options;
   const leadLabel = recap ? LEAD_TYPE_GUIDE.find((g) => g.type === recap.leadType)?.lead : null;
-  const canOffer = !closed && deal.stage !== "recommendation_booked" && deal.stage !== "recommended" && deal.stage !== "proposal_sent";
+  const canOffer = canOfferTimes(deal.stage, hasMeeting);
   return (
     <section className="deal-recap" aria-label="Recap">
       <div className="cp-actions">

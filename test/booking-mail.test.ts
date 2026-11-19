@@ -50,6 +50,25 @@ describe("renderConfirmation", () => {
   });
 });
 
+describe("the recommendation meeting's wording", () => {
+  const rec = booking({ kind: "recommendation", endAt: "2026-11-24T18:30:00.000Z" });
+  it("the confirmation says meeting, not call, in the subject and the body", () => {
+    const m = renderConfirmation(rec, settings, BASE, TOKEN);
+    expect(m.subject).toBe("Your meeting is booked for Tue, Nov 24 at 10:00 AM PST");
+    expect(m.body).toContain("Your meeting is booked for Tuesday, November 24 at 10:00 AM Pacific Standard Time. It runs 30 minutes.");
+    expect(`${m.subject} ${m.body}`).not.toMatch(/\bcall\b/i);
+  });
+  it("the reminders say meeting, and the discovery call's still say call", () => {
+    for (const [offset, left] of [[1440, "24 hours"], [60, "1 hour"], [10, "10 minutes"]] as const) {
+      const m = renderReminder(rec, offset, settings);
+      expect(m.subject).toBe(`Your meeting is in ${left}`);
+      expect(m.body).toContain(`A reminder that your meeting is in ${left}`);
+      expect(`${m.subject} ${m.body}`).not.toMatch(/\bcall\b/i);
+      expect(renderReminder(booking(), offset, settings).subject).toBe(`Your call is in ${left}`);
+    }
+  });
+});
+
 describe("renderReminder", () => {
   it("reminder subject says the time left", () => {
     expect(renderReminder(booking(), 1440, settings).subject).toBe("Your call is in 24 hours");

@@ -115,3 +115,20 @@ export async function markBookingHeld(db: D1Database, id: string): Promise<boole
   const res = await db.prepare(`UPDATE bookings SET status = 'held' WHERE id = ? AND status = 'confirmed'`).bind(id).run();
   return (res.meta.changes ?? 0) === 1;
 }
+
+/** How many bookings of any status (cancelled ones too) the lead has made since `since`: the guest page's cap on book, cancel, book loops. */
+export async function bookingsSince(db: D1Database, businessId: string, since: Date): Promise<number> {
+  const r = await db.prepare(`SELECT COUNT(*) AS n FROM bookings WHERE business_id = ? AND created_at >= ?`).bind(businessId, since.toISOString()).first<{ n: number }>();
+  return r?.n ?? 0;
+}
+
+/** Whether the lead has a booking of this kind whose call already happened. The guest page never makes a second one. */
+export async function hasHeldBooking(db: D1Database, businessId: string, kind: BookingKind): Promise<boolean> {
+  return !!(await db.prepare(`SELECT 1 AS x FROM bookings WHERE business_id = ? AND kind = ? AND status = 'held' LIMIT 1`).bind(businessId, kind).first());
+}
+
+/** Sets a confirmed booking to a state that ends it (cancelled, or the guest did not come). True only for the call that did it; anything not confirmed is left alone. */
+export async function endBooking(db: D1Database, id: string, status: "cancelled" | "no_show", at: Date): Promise<boolean> {
+  const res = await db.prepare(`UPDATE bookings SET status = ?, cancelled_at = ? WHERE id = ? AND status = 'confirmed'`).bind(status, at.toISOString(), id).run();
+  return (res.meta.changes ?? 0) === 1;
+}

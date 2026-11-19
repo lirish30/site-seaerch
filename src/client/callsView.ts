@@ -7,7 +7,7 @@ export const CALLS_AHEAD_DAYS = 7;
 export type CallLabel = "today" | "tomorrow" | "later";
 
 /** One row of GET /api/today/calls. */
-export interface CallRow { id: string; businessId: string; businessName: string; contactName: string; startAt: string; meetUrl: string | null }
+export interface CallRow { id: string; businessId: string; businessName: string; contactName: string; startAt: string; meetUrl: string | null; kind: "discovery" | "recommendation"; dealId: string | null }
 
 /** The calendar date ("2026-11-18") an instant falls on in `tz`. */
 const dayOf = (d: Date, tz: string) => new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
@@ -37,3 +37,29 @@ export function callWhen(iso: string, label: CallLabel, tz = CALLS_ZONE): string
   const date = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", month: "short", day: "numeric" }).format(new Date(iso));
   return `${date}, ${clock(iso, tz)}`;
 }
+
+/** The confirmed calls that started and were never marked (held, cancelled or a no-show), the longest waiting first: each needs an outcome from Logan. */
+export function pastCalls<T extends { startAt: string }>(bookings: T[], now: Date): T[] {
+  return bookings.filter((b) => Date.parse(b.startAt) < now.getTime()).sort((a, b) => Date.parse(a.startAt) - Date.parse(b.startAt));
+}
+
+export type BookingAction = "cancel" | "no_show" | "done";
+
+/**
+ * What Logan can do with a confirmed booking. One still to come can be cancelled. One that started needs an outcome: it was a no-show, or it happened
+ * ("done"). The call is done from its deal (Call done moves the deal and stamps the notes); a recommendation meeting has no step of its own, so it is
+ * marked held in place.
+ */
+export function bookingActions(startAt: string, now: Date): BookingAction[] {
+  return Date.parse(startAt) < now.getTime() ? ["no_show", "done"] : ["cancel"];
+}
+
+/** The endpoint an action calls, or null when the action is not a call (a discovery call's "done" is a link to its deal). */
+export function actionRequest(action: BookingAction, b: { id: string; kind: "discovery" | "recommendation" }): { path: string; body: unknown } | null {
+  if (action === "cancel") return { path: `/bookings/${b.id}/cancel`, body: {} };
+  if (action === "no_show") return { path: `/bookings/${b.id}/cancel`, body: { noShow: true } };
+  return b.kind === "recommendation" ? { path: `/bookings/${b.id}/held`, body: {} } : null;
+}
+
+/** "Discovery call" or "Recommendation meeting": a booking's kind in words. */
+export const kindLabel = (kind: "discovery" | "recommendation"): string => (kind === "recommendation" ? "Recommendation meeting" : "Discovery call");

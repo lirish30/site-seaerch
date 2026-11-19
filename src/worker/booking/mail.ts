@@ -14,6 +14,9 @@ export interface BookingMail { subject: string; body: string }
 /** The same words for every guest. Nothing here is written by a model, and the only text a person typed that reaches a mail is their name. */
 const LEFT = { 1440: "24 hours", 60: "1 hour", 10: "10 minutes" } as const;
 
+/** What the booking is called to the guest: the discovery call is a "call", the recommendation meeting a "meeting". */
+const noun = (b: Pick<Booking, "kind">) => (b.kind === "recommendation" ? "meeting" : "call");
+
 /** Intl puts a no-break or narrow space before AM/PM; a mail wants a plain one. */
 const tidy = (s: string) => s.replace(/[\u00A0\u202F]/g, " ");
 const part = (iso: string, tz: string, o: Intl.DateTimeFormatOptions) => tidy(new Intl.DateTimeFormat("en-US", { timeZone: tz, ...o }).format(new Date(iso)));
@@ -42,12 +45,12 @@ export function renderConfirmation(b: Booking, s: Settings, linkBase: string, to
   const tz = parseConfig(s.booking_config).timezone, base = guestLinkBase(linkBase);
   const body = [
     `Hi ${oneLine(b.contactName)},`,
-    `Your call is booked for ${longWhen(b.startAt, tz)}. It runs ${DURATION_MIN[b.kind]} minutes.`,
+    `Your ${noun(b)} is booked for ${longWhen(b.startAt, tz)}. It runs ${DURATION_MIN[b.kind]} minutes.`,
     b.meetUrl ? `Join with Google Meet: ${b.meetUrl}` : "The video link was not ready when this went out. Reply to this email and I will send it.",
     base ? `Need to cancel? This link frees up the time: ${base}/r/${token}/book?cancel=${b.cancelToken}` : "Need to cancel? Just reply to this email.",
     "Talk soon.",
   ].join("\n\n");
-  return { subject: `Your call is booked for ${shortWhen(b.startAt, tz)}`, body };
+  return { subject: `Your ${noun(b)} is booked for ${shortWhen(b.startAt, tz)}`, body };
 }
 
 /** The reminder that goes out `offsetMin` minutes before the call. No cancel link: the confirmation has it. */
@@ -55,11 +58,11 @@ export function renderReminder(b: Booking, offsetMin: 1440 | 60 | 10, s: Setting
   const tz = parseConfig(s.booking_config).timezone;
   const body = [
     `Hi ${oneLine(b.contactName)},`,
-    `A reminder that your call is in ${LEFT[offsetMin]}, on ${longWhen(b.startAt, tz)}.`,
+    `A reminder that your ${noun(b)} is in ${LEFT[offsetMin]}, on ${longWhen(b.startAt, tz)}.`,
     b.meetUrl ? `Join with Google Meet: ${b.meetUrl}` : "Reply to this email if you need the video link.",
     "See you then.",
   ].join("\n\n");
-  return { subject: `Your call is in ${LEFT[offsetMin]}`, body };
+  return { subject: `Your ${noun(b)} is in ${LEFT[offsetMin]}`, body };
 }
 
 /** Why the main mailbox cannot send right now (no password secret, not set up, switched off), or null when it can. */

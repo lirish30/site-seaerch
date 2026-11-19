@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { callWhen, upcomingCalls } from "../src/client/callsView";
+import { actionRequest, bookingActions, callWhen, kindLabel, pastCalls, upcomingCalls } from "../src/client/callsView";
 
 const call = (id: string, startAt: string) => ({ id, startAt });
 // Wednesday 18 Nov 2026, 10:00 in Los Angeles (PST, UTC-8).
@@ -41,5 +41,27 @@ describe("callWhen", () => {
     expect(callWhen("2026-11-18T23:00:00.000Z", "today")).toBe("Today, 3:00 PM PST");
     expect(callWhen("2026-11-19T17:00:00.000Z", "tomorrow")).toBe("Tomorrow, 9:00 AM PST");
     expect(callWhen("2026-11-23T18:00:00.000Z", "later")).toBe("Mon, Nov 23, 10:00 AM PST");
+  });
+});
+
+describe("pastCalls and the owner's actions", () => {
+  it("pastCalls keeps the calls that started, the longest waiting first", () => {
+    const out = pastCalls([call("b", "2026-11-17T18:00:00.000Z"), call("future", "2026-11-18T18:00:01.000Z"), call("a", "2026-11-10T18:00:00.000Z"), call("now", "2026-11-18T18:00:00.000Z")], NOW);
+    expect(out.map((c) => c.id)).toEqual(["a", "b"]); // one starting exactly now has not started yet
+  });
+
+  it("a call still to come can be cancelled; one that started is a no-show or done", () => {
+    expect(bookingActions("2026-11-18T18:30:00.000Z", NOW)).toEqual(["cancel"]);
+    expect(bookingActions("2026-11-18T17:30:00.000Z", NOW)).toEqual(["no_show", "done"]);
+  });
+
+  it("each action is one request; a discovery call's done is not (it is Call done on its deal)", () => {
+    const d = { id: "k1", kind: "discovery" as const }, r = { id: "k2", kind: "recommendation" as const };
+    expect(actionRequest("cancel", d)).toEqual({ path: "/bookings/k1/cancel", body: {} });
+    expect(actionRequest("no_show", d)).toEqual({ path: "/bookings/k1/cancel", body: { noShow: true } });
+    expect(actionRequest("done", d)).toBeNull();
+    expect(actionRequest("done", r)).toEqual({ path: "/bookings/k2/held", body: {} });
+    expect(kindLabel("recommendation")).toBe("Recommendation meeting");
+    expect(kindLabel("discovery")).toBe("Discovery call");
   });
 });

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import Icon from "../components/Icon";
-import { bookingError, cancelPath, dayHeading, formatSlot, groupByDay, safeMeetUrl, timeOfDay, type BookPage, type Booked } from "../bookingView";
+import { bookingError, cancelPath, cancelledCopy, dayHeading, formatSlot, groupByDay, safeMeetUrl, timeOfDay, type BookPage, type Booked } from "../bookingView";
 
 type Load = "loading" | "ok" | "gone" | "error";
 type Decision = "me" | "me_and_other";
@@ -49,6 +49,7 @@ export default function Book({ token }: { token: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [cancel, setCancel] = useState<"idle" | "busy" | "done" | "failed">("idle");
+  const [cancelledKind, setCancelledKind] = useState("");
 
   useEffect(() => {
     const prevTitle = document.title;
@@ -99,14 +100,18 @@ export default function Book({ token }: { token: string }) {
     setCancel("busy");
     try {
       const res = await fetch(`/api/public/report/${token}/book/cancel`, { method: "POST", credentials: "omit", headers: { "content-type": "application/json" }, body: JSON.stringify({ cancelToken }) });
-      const data = (await res.json().catch(() => ({}))) as { ok?: boolean };
+      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; kind?: string };
+      if (res.ok && data.ok) setCancelledKind(data.kind ?? "");
       setCancel(res.ok && data.ok ? "done" : "failed");
     } catch { setCancel("failed"); }
   }
 
   // The cancel link from the email: ask first (opening the link only shows this; a mail scanner that fetches it cancels nothing), then do it.
   if (cancelToken) {
-    if (cancel === "done") return <Message icon="check" title="Your call is cancelled"><p>No hard feelings. You can pick another time whenever you like.</p><a className="btn" href={`/r/${token}/book`}>Pick another time</a></Message>;
+    if (cancel === "done") {
+      const copy = cancelledCopy(cancelledKind);
+      return <Message icon="check" title={copy.title}><p>{copy.body}</p>{copy.rebook && <a className="btn" href={`/r/${token}/book`}>Pick another time</a>}</Message>;
+    }
     return (
       <Message icon="calendar" title="Cancel your call?">
         <p>We'll take it off the calendar. You can book again afterwards.</p>

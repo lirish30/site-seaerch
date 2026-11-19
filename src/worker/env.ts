@@ -8,6 +8,8 @@ export interface Env {
   CRO_AUDIT_WORKFLOW: Workflow;
   VIDEO_WORKFLOW: Workflow;
   LOGIN_LIMITER?: RateLimit;
+  /** Throttles the public booking routes per report link and client IP. Optional, like LOGIN_LIMITER. */
+  BOOKING_LIMITER?: RateLimit;
   APP_PASSWORD: string;
   SESSION_SECRET: string;
   /** Bearer token for the /mcp endpoint (Worker secret). */

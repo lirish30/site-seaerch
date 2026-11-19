@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type MiddlewareHandler } from "hono";
 import { getCookie } from "hono/cookie";
 import { verifySession } from "../auth";
 import type { Env } from "../env";
@@ -85,6 +85,21 @@ async function readJson(req: Request): Promise<{ ok: true; body: unknown } | { o
   try { return { ok: true, body: JSON.parse(text) }; } catch { return { ok: false, status: 400 }; }
 }
 
+// Every cold-outreach recipient holds a valid link, and a booking page read costs a Google token refresh and a free/busy call, so each booking route is
+// limited per link and client IP. The binding is optional (local and test runs without it are not limited), as with the login limiter.
+const bookingLimited: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
+  const token = c.req.param("token") ?? "";
+  const limiter = c.env.BOOKING_LIMITER;
+  // A malformed token is a 404 that never touches anything, so it is not counted.
+  if (limiter && TOKEN.test(token)) {
+    const { success } = await limiter.limit({ key: `${token}:${c.req.header("cf-connecting-ip") ?? "unknown"}` });
+    if (!success) return c.json({ error: "too many requests" }, 429);
+  }
+  return next();
+};
+publicRoutes.use("/report/:token/book", bookingLimited);
+publicRoutes.use("/report/:token/book/cancel", bookingLimited);
+
 publicRoutes.get("/report/:token/book", async (c) => {
   const token = c.req.param("token");
   if (!TOKEN.test(token)) return c.json(NOT_FOUND, 404);
@@ -99,8 +114,12 @@ publicRoutes.post("/report/:token/book", async (c) => {
   const read = await readJson(c.req.raw);
   if (!read.ok) return c.json({ error: read.status === 413 ? "too large" : "invalid body" }, read.status);
   const parsed = BookingFormSchema.safeParse(read.body);
-  // Only the names of the fields that failed: what was typed is never echoed.
-  if (!parsed.success) return c.json({ error: "invalid body", fields: Object.keys(z.flattenError(parsed.error).fieldErrors) }, 400);
+  // Only the names of the fields that failed: what was typed is never echoed. A name that is refused for what it holds (an address) is a 422.
+  if (!parsed.success) {
+    const fields = Object.keys(z.flattenError(parsed.error).fieldErrors);
+    const refusedName = parsed.error.issues.some((i) => i.path[0] === "name" && i.code === "custom");
+    return c.json({ error: "invalid body", fields }, refusedName ? 422 : 400);
+  }
   const r = await createVisitorBooking(c.env, token, parsed.data, new Date());
   if (!r.ok) return r.status === 404 ? c.json(NOT_FOUND, 404) : c.json({ error: r.error, ...(r.fallbackUrl !== undefined && { fallbackUrl: r.fallbackUrl }) }, r.status);
   const b = r.booking;

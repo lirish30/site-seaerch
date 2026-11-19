@@ -116,7 +116,7 @@ describe("POST /report/:token/book", () => {
     expect([wrong.status, await wrong.json()]).toEqual([200, { ok: false }]);
     expect((await (await get(token)).json<any>()).existing).not.toBeNull();
     const right = await post(token, { cancelToken: booking.cancelToken }, "book/cancel");
-    expect([right.status, await right.json()]).toEqual([200, { ok: true }]);
+    expect([right.status, await right.json()]).toEqual([200, { ok: true, kind: "discovery" }]);
     expect((await post(token, { cancelToken: booking.cancelToken }, "book/cancel")).status).toBe(200);
     expect(google.deleted()).toHaveLength(1);
     expect((await (await get(token)).json<any>()).existing).toBeNull();
@@ -130,7 +130,7 @@ describe("POST /report/:token/book", () => {
     await env.DB.prepare(`UPDATE audit_reports SET expires_at = ? WHERE token = ?`).bind("2020-01-01T00:00:00.000Z", token).run();
     expect((await get(token)).status).toBe(404); // the page is gone ...
     const res = await post(token, { cancelToken: booking.cancelToken }, "book/cancel"); // ... the cancel is not
-    expect([res.status, await res.json()]).toEqual([200, { ok: true }]);
+    expect([res.status, await res.json()]).toEqual([200, { ok: true, kind: "discovery" }]);
     expect(google.deleted()).toHaveLength(1);
   });
 
@@ -254,6 +254,6 @@ describe("GET /api/today/calls (the Today card)", () => {
     expect(res.status).toBe(200);
     const { calls } = await res.json<{ calls: Record<string, unknown>[] }>();
     expect(calls).toHaveLength(1);
-    expect(calls[0]).toEqual({ id: soon.id, businessId: soon.businessId, businessName: "Soon Co", contactName: "Pat", startAt: soon.startAt, meetUrl: null });
+    expect(calls[0]).toEqual({ id: soon.id, businessId: soon.businessId, businessName: "Soon Co", contactName: "Pat", startAt: soon.startAt, meetUrl: null, kind: "discovery", dealId: null });
   });
 });

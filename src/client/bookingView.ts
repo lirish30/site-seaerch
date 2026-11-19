@@ -68,6 +68,17 @@ export function bookingError(status: number): string {
   if (status === 409) return "That time was just taken. Pick another one.";
   if (status === 422 || status === 400) return "Please check the form and try again.";
   if (status === 413) return "That is too long. Please shorten your answers.";
+  if (status === 429) return "Too many attempts. Please reply to the email and we'll find a time.";
   if (status === 404) return "This link isn't available. Reply to the email and we'll sort it out.";
   return "Booking isn't available right now. Please reply to the email and we'll find a time.";
+}
+
+/**
+ * What the cancel page says once the cancel went through, by the kind of booking it freed. A guest picks their own discovery time again; the
+ * recommendation meeting is Logan's to rebook, so there is no button, only a line that says to reply. An unknown kind reads as the discovery call.
+ */
+export function cancelledCopy(kind: string | undefined): { title: string; body: string; rebook: boolean } {
+  return kind === "recommendation"
+    ? { title: "Your meeting is cancelled", body: "No hard feelings. Reply to the email and we'll find another time.", rebook: false }
+    : { title: "Your call is cancelled", body: "No hard feelings. You can pick another time whenever you like.", rebook: true };
 }

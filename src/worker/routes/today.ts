@@ -13,11 +13,14 @@ export const todayRoutes = new Hono<{ Bindings: Env }>();
 
 todayRoutes.get("/", async (c) => c.json({ items: await buildToday(c.env.DB, new Date()) }));
 
-/** The confirmed calls in the next 7 days, for the Calls card: who, when and the Meet link. Nothing the guest answered on the form leaves here. */
+/**
+ * The confirmed calls for the Calls card: the next 7 days, and any that have started without being marked (held, cancelled or a no-show), who, when, what
+ * kind and the Meet link. Nothing the guest answered on the form leaves here, and never their cancel token.
+ */
 todayRoutes.get("/calls", async (c) => {
   const now = new Date();
-  const all = await upcomingBookings(c.env.DB, now, new Date(now.getTime() + 7 * 86_400_000));
-  return c.json({ calls: all.map((b) => ({ id: b.id, businessId: b.businessId, businessName: b.businessName, contactName: b.contactName, startAt: b.startAt, meetUrl: b.meetUrl })) });
+  const all = await upcomingBookings(c.env.DB, new Date(0), new Date(now.getTime() + 7 * 86_400_000));
+  return c.json({ calls: all.map((b) => ({ id: b.id, businessId: b.businessId, businessName: b.businessName, contactName: b.contactName, startAt: b.startAt, meetUrl: b.meetUrl, kind: b.kind, dealId: b.dealId })) });
 });
 
 /** The Home KPI cards, pipeline counts and recent activity. */

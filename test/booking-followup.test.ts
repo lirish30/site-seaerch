@@ -202,9 +202,39 @@ describe("bookRecommendation", () => {
     const r = await bookRecommendation(e, deal.id, SLOT_2, NOW);
     if (!r.ok) throw new Error(r.error);
     expect(out[0].text).toContain(`https://go.hellositeline.test/r/${token}/book?cancel=${r.booking.cancelToken}`);
-    expect(await cancelByToken(e, token, r.booking.cancelToken, NOW)).toEqual({ ok: true });
+    expect(await cancelByToken(e, token, r.booking.cancelToken, NOW)).toEqual({ ok: true, kind: "recommendation" });
     expect(await bookingFor(env.DB, b.id, "recommendation")).toBeNull();
     expect((await listActivity(env.DB, b.id)).filter((a) => a.kind === "booking_cancelled").map((a) => a.detail)).toEqual([expect.stringMatching(/^Recommendation meeting cancelled/)]);
+  });
+
+  it("after the guest cancels the meeting, Logan can book it again: the deal stays at recommendation_booked with exactly one confirmed meeting", async () => {
+    const { b, token, deal } = await bookedLead();
+    const first = await bookRecommendation(e, deal.id, SLOT_2, NOW);
+    if (!first.ok) throw new Error(first.error);
+    expect((await getDeal(env.DB, deal.id))!.stage).toBe("recommendation_booked");
+    // While the meeting stands, a second one is refused.
+    expect(await bookRecommendation(e, deal.id, "2026-11-26T18:00:00.000Z", NOW)).toMatchObject({ ok: false, status: 409 });
+    expect(await cancelByToken(e, token, first.booking.cancelToken, NOW)).toEqual({ ok: true, kind: "recommendation" });
+    expect(await bookingFor(env.DB, b.id, "recommendation")).toBeNull();
+    expect((await getDeal(env.DB, deal.id))!.stage).toBe("recommendation_booked"); // the cancel moves nothing
+    const again = await bookRecommendation(e, deal.id, "2026-11-26T18:00:00.000Z", NOW);
+    if (!again.ok) throw new Error(again.error);
+    expect(again.booking).toMatchObject({ kind: "recommendation", status: "confirmed", startAt: "2026-11-26T18:00:00.000Z" });
+    expect((await getDeal(env.DB, deal.id))!.stage).toBe("recommendation_booked");
+    const rows = (await env.DB.prepare(`SELECT status FROM bookings WHERE business_id = ? AND kind = 'recommendation' ORDER BY created_at, id`).bind(b.id).all<{ status: string }>()).results.map((r) => r.status).sort();
+    expect(rows).toEqual(["cancelled", "confirmed"]);
+    expect((await listActivity(env.DB, b.id)).filter((a) => a.kind === "followup_booked")).toHaveLength(2);
+    // A deal that is past this step (recommended) still cannot book one.
+    await moveDeal(env.DB, deal.id, "recommended");
+    expect(await bookRecommendation(e, deal.id, SLOT_2, NOW)).toMatchObject({ ok: false, status: 409 });
+  });
+
+  it("a deal at recommendation_booked that has no meeting books one without moving the stage twice", async () => {
+    const { deal } = await bookedLead();
+    await moveDeal(env.DB, deal.id, "recommendation_booked"); // e.g. the meeting row is gone
+    const r = await bookRecommendation(e, deal.id, SLOT_2, NOW);
+    expect(r.ok).toBe(true);
+    expect((await getDeal(env.DB, deal.id))!.stage).toBe("recommendation_booked");
   });
 
   it("a confirmation that cannot go out never undoes the booking", async () => {
@@ -250,6 +280,18 @@ describe("the follow-up routes", () => {
     expect((await api("GET", `/api/deals/${deal.id}/followup-slots`)).status).toBe(503);
     await moveDeal(env.DB, deal.id, "lost", { lostReason: "x" });
     expect((await api("GET", `/api/deals/${deal.id}/followup-slots`)).status).toBe(409);
+  });
+
+  it("the guest's cancel through the public route says which kind of booking was cancelled, and a wrong token says nothing about it", async () => {
+    const { token, deal } = await bookedLead();
+    const r = await bookRecommendation(e, deal.id, SLOT_2, NOW);
+    if (!r.ok) throw new Error(r.error);
+    const cancel = (cancelToken: string) => api("POST", `/api/public/report/${token}/book/cancel`, { cancelToken }, false);
+    const wrong = await cancel("x".repeat(43));
+    expect([wrong.status, await wrong.text()]).toEqual([200, JSON.stringify({ ok: false })]);
+    const right = await cancel(r.booking.cancelToken);
+    expect([right.status, await right.json()]).toEqual([200, { ok: true, kind: "recommendation" }]);
+    expect(await (await cancel(r.booking.cancelToken)).json()).toEqual({ ok: true, kind: "recommendation" }); // the same again
   });
 
   it("POST book-recommendation books it and moves the deal; a taken time is a 409; a bad body is a 400", async () => {
