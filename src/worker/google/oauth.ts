@@ -2,7 +2,9 @@ import { hmacHex } from "./crypto";
 
 // drive.file only sees files this app creates. There is no Gmail scope: outreach goes out through the mailboxes, never through Google.
 // A token stored by an earlier consent may still carry the old Gmail scope; it is simply never used.
-export const SCOPES = ["openid", "email", "https://www.googleapis.com/auth/drive.file"];
+// calendar.events creates and deletes the booked-call events (with a Meet link); calendar.freebusy reads busy times on the primary calendar only.
+export const SCOPES = ["openid", "email", "https://www.googleapis.com/auth/drive.file",
+  "https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/calendar.freebusy"];
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const STATE_TTL_MS = 10 * 60 * 1000;

@@ -345,7 +345,7 @@ describe("routes", () => {
 
   it("google: status reports unconfigured; the Drive export needs a connection; callback is public but rejects bad state", async () => {
     const st = await (await api("/api/google/status")).json<any>();
-    expect(st).toEqual({ configured: false, connected: false, email: null });
+    expect(st).toEqual({ configured: false, connected: false, email: null, calendar: false });
     expect((await api("/api/google/connect")).status).toBe(501);
     const { b } = await seedLead();
     expect((await api(`/api/leads/${b.id}/drive`, { method: "POST", body: "{}" })).status).toBe(400);

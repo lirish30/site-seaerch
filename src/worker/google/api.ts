@@ -2,7 +2,7 @@ import type { Fetch } from "./oauth";
 
 const te = new TextEncoder();
 
-async function google<T>(f: Fetch, token: string, url: string, init: RequestInit = {}): Promise<T> {
+export async function google<T>(f: Fetch, token: string, url: string, init: RequestInit = {}): Promise<T> {
   const res = await f(url, { ...init, headers: { authorization: `Bearer ${token}`, ...(init.headers ?? {}) } });
   const json = await res.json<any>().catch(() => ({}));
   if (!res.ok) throw new Error(`Google API ${res.status}: ${json.error?.message ?? "request failed"}`);
