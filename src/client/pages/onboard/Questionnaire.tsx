@@ -76,8 +76,8 @@ export default function Questionnaire({ page, api, now, closed, hooks }: { page:
     blocked: () => Object.keys(errorsRef.current).length > 0,
     unload: { plan: api.answersUnload, fire: (plan) => api.sendNow(plan, "answers") },
     onSaved: hooks.onSaved, onLocked: hooks.onLocked, onGone: hooks.onGone,
-    send: async (delta) => {
-      const first = await api.saveAnswers(delta);
+    send: async (delta, gate) => {
+      const first = await api.saveAnswers(delta, gate);
       if (first.kind !== "rejected" || !first.fields.length) return first;
       const bad = new Set(first.fields);
       setErrors((prev) => ({ ...prev, ...Object.fromEntries(first.fields.map((f) => [f, first.message])) }));
@@ -96,7 +96,7 @@ export default function Questionnaire({ page, api, now, closed, hooks }: { page:
   // Moving to the confirmation moves focus to it; going back returns focus to the button that opened it.
   useEffect(() => { if (confirming) confirmBox.current?.focus(); }, [confirming]);
   // If an answer is cleared or refused while the question is open, it is no longer sendable: close it.
-  useEffect(() => { if (confirming && !ok) setConfirming(false); }, [confirming, ok]);
+  useEffect(() => { if (confirming && (!ok || refused)) setConfirming(false); }, [confirming, ok, refused]);
 
   function change(id: string, value: string, flushNow: boolean) {
     setAnswers((a) => ({ ...a, [id]: value }));

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AUTOSAVE_MS, type Outcome, type UnloadPlan } from "../../onboardView";
+import { AUTOSAVE_MS, combine, mayRun, type Outcome, type UnloadPlan, type UnloadState } from "../../onboardView";
 
 export interface SaveState {
   phase: "idle" | "dirty" | "saving" | "saved" | "error";
@@ -9,15 +9,18 @@ export interface SaveState {
 }
 
 export interface SaverOptions<T> {
-  /** Sends a value (through the page's pacer) and says how it went. Never throws. */
-  send: (value: T) => Promise<Outcome>;
+  /**
+   * Sends a value (through the page's pacer) and says how it went. Never throws. `gate` must be handed to the request and asked at the moment the pacer lets
+   * it go: it says whether to fetch at all (false: the value was sent another way meanwhile) and marks the fetch as started.
+   */
+  send: (value: T, gate: () => boolean) => Promise<Outcome>;
   /** Joins a value waiting to go with a newer one (answers add up; text is replaced). Default: the newer one wins. */
   merge?: (older: T, newer: T) => T;
   /**
-   * For the moment the tab is hidden or the box goes away: `plan` says what to do with the waiting value (given what is already in flight) and `fire` sends a
-   * keepalive plan at once. Without it, the waiting value goes the normal, paced way.
+   * For the moment the tab is hidden or the box goes away: `plan` says what to do with what is waiting (typed, queued in the pacer, or already fetching) and
+   * `fire` sends a keepalive plan at once. Without it, the waiting value goes the normal, paced way.
    */
-  unload?: { plan: (pending: T, inFlight: T | null) => UnloadPlan; fire: (plan: Extract<UnloadPlan, { action: "keepalive" }>) => Promise<Outcome> };
+  unload?: { plan: (s: UnloadState<T>) => UnloadPlan; fire: (plan: Extract<UnloadPlan, { action: "keepalive" }>) => Promise<Outcome> };
   /** True while a refused value is still outstanding: the box is then never reported as fully saved. */
   blocked?: () => boolean;
   onSaved?: () => void;
@@ -38,7 +41,10 @@ export function useSaver<T>(opts: SaverOptions<T>): { state: SaveState; schedule
   o.current = opts;
   const [state, setState] = useState<SaveState>(IDLE);
   const pending = useRef<{ value: T } | null>(null);
-  const inFlight = useRef<{ value: T } | null>(null);
+  /** The value handed to the pacer: `started` is false while it waits its turn (no fetch yet) and true once its fetch has been issued. */
+  const current = useRef<{ value: T; started: boolean } | null>(null);
+  /** The token of the one queued job allowed to fetch. Bumping it stands every queued job down. */
+  const gen = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const retryTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const line = useRef<Promise<boolean>>(Promise.resolve(true));
@@ -83,10 +89,15 @@ export function useSaver<T>(opts: SaverOptions<T>): { state: SaveState; schedule
       const job = pending.current;
       if (!job) return clean.current;
       pending.current = null;
-      inFlight.current = job;
+      const token = ++gen.current;
+      const entry = { value: job.value, started: false };
+      current.current = entry;
       show({ phase: "saving", message: "Saving...", retryable: false });
-      const outcome = await o.current.send(job.value);
-      inFlight.current = null;
+      // The pacer asks this when it lets the request go. A job stood down while it waited never fetches.
+      const outcome = await o.current.send(job.value, () => { if (!mayRun(token, gen.current)) return false; entry.started = true; return true; });
+      if (current.current === entry) current.current = null;
+      // Stood down: the same value (or a newer one) went by keepalive and that send settles it.
+      if (!mayRun(token, gen.current)) return clean.current;
       return settle(outcome, job.value);
     });
     return line.current;
@@ -103,21 +114,29 @@ export function useSaver<T>(opts: SaverOptions<T>): { state: SaveState; schedule
     timer.current = setTimeout(() => void flush(), AUTOSAVE_MS);
   }, [flush, show]);
 
-  /** The tab was hidden or the box is going away: send what is waiting once, now. */
+  /**
+   * The tab was hidden or the box is going away: send what is unsent once, now. A value queued in the pacer has not been fetched yet, so it counts as unsent:
+   * it goes by keepalive (joined with anything newer, the newer winning) and the queued job is stood down so it can never fetch after, and overwrite, it.
+   */
   const sendOnLeave = useCallback(() => {
-    const job = pending.current;
-    if (!job) return; // nothing waiting: nothing to send (a second event right after the first lands here)
+    const cur = current.current;
+    const queued = cur && !cur.started ? cur.value : null;
+    const started = cur && cur.started ? cur.value : null;
+    const waiting = pending.current;
+    if (!waiting && queued === null) return; // nothing unsent (a second event right after the first lands here)
     const unload = o.current.unload;
-    const plan: UnloadPlan = unload ? unload.plan(job.value, inFlight.current?.value ?? null) : { action: "paced" };
+    const plan: UnloadPlan = unload ? unload.plan({ pending: waiting ? waiting.value : null, queued, started }) : { action: "paced" };
     if (plan.action === "paced") { void flush(); return; }
     clearTimeout(timer.current);
     clearTimeout(retryTimer.current);
+    const value = combine(queued, waiting ? waiting.value : null, o.current.merge);
     pending.current = null;
-    if (plan.action === "none") return; // the same thing is already on its way, and that send settles it
-    const sent = job;
-    inFlight.current = sent;
+    if (plan.supersede) { gen.current += 1; if (current.current === cur && !cur?.started) current.current = null; }
+    if (plan.action === "none" || value === null) return; // the same thing is already on its way, and that send settles it
+    const sent = { value, started: true };
+    current.current = sent;
     void unload!.fire(plan).then((outcome) => {
-      if (inFlight.current === sent) inFlight.current = null;
+      if (current.current === sent) current.current = null;
       settle(outcome, sent.value);
     });
   }, [flush, settle]);

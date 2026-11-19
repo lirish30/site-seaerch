@@ -182,18 +182,41 @@ export function createPacer(gapMs: number, clock: Clock = realClock): <T>(job: (
 export const KEEPALIVE_LIMIT_BYTES = 60 * 1024;
 
 /**
- * What to do with the value that is waiting when the tab is hidden or closed.
- * - `none`: nothing to send (nothing waiting, or the same thing is already on its way).
- * - `keepalive`: send this one request now, outside the pacer (a closed or frozen tab would never reach a pacer's wait), with `keepalive: true`.
- * - `paced`: the request is too big for keepalive, so it goes the normal way.
+ * What to do with what is waiting when the tab is hidden or closed.
+ * - `none`: nothing to send (nothing waiting, or the same thing is already on its way). `supersede` is true when a queued job still holds that value and
+ *   must be stood down so it never fetches.
+ * - `keepalive`: send this one request now, outside the pacer (a closed or frozen tab would never reach a pacer's wait), with `keepalive: true`. `supersede`
+ *   is true when a queued job (not yet fetching) held an older value: it must be stood down so it can never run after this and overwrite it.
+ * - `paced`: the request is too big for keepalive, so it goes the normal way, in line behind whatever is queued, which keeps the order.
  */
-export type UnloadPlan = { action: "none" } | { action: "keepalive"; url: string; method: "PUT"; body: string } | { action: "paced" };
+export type UnloadPlan =
+  | { action: "none"; supersede: boolean }
+  | { action: "keepalive"; url: string; method: "PUT"; body: string; supersede: boolean }
+  | { action: "paced" };
 
-/** Decides the plan for one box. `pending` is what is waiting (null for nothing), `inFlight` is what has already been sent and not answered. */
-export function unloadPlan<T>(pending: T | null, inFlight: T | null, url: string, bodyOf: (v: T) => unknown, limit: number = KEEPALIVE_LIMIT_BYTES): UnloadPlan {
-  if (pending === null) return { action: "none" };
-  const body = JSON.stringify(bodyOf(pending));
-  if (inFlight !== null && JSON.stringify(bodyOf(inFlight)) === body) return { action: "none" };
-  if (new TextEncoder().encode(body).length > limit) return { action: "paced" };
-  return { action: "keepalive", url, method: "PUT", body };
+/**
+ * The three places a value can be for one box: `pending` (typed, not handed to the pacer yet), `queued` (handed to the pacer, whose wait has not ended, so
+ * no fetch has been issued) and `started` (the fetch has been issued). Null for none.
+ */
+export interface UnloadState<T> { pending: T | null; queued: T | null; started: T | null }
+
+/** What a queued value and a newer pending one come to together: the newer wins (joined by `merge` when the values add up, as answers do). */
+export function combine<T>(queued: T | null, pending: T | null, merge?: (older: T, newer: T) => T): T | null {
+  if (queued === null) return pending;
+  if (pending === null) return queued;
+  return merge ? merge(queued, pending) : pending;
+}
+
+/** Whether a queued job may still fetch when the pacer reaches it: only if it is still the current one. Standing a job down makes its token stale. */
+export const mayRun = (token: number, current: number): boolean => token === current;
+
+/** Decides the plan for one box (see `UnloadPlan`). A queued value counts as unsent: the tab may close before the pacer reaches it. */
+export function unloadPlan<T>(o: UnloadState<T> & { url: string; bodyOf: (v: T) => unknown; merge?: (older: T, newer: T) => T; limit?: number }): UnloadPlan {
+  const value = combine(o.queued, o.pending, o.merge);
+  const queued = o.queued !== null;
+  if (value === null) return { action: "none", supersede: false };
+  const body = JSON.stringify(o.bodyOf(value));
+  if (o.started !== null && JSON.stringify(o.bodyOf(o.started)) === body) return { action: "none", supersede: queued };
+  if (new TextEncoder().encode(body).length > (o.limit ?? KEEPALIVE_LIMIT_BYTES)) return { action: "paced" };
+  return { action: "keepalive", url: o.url, method: "PUT", body, supersede: queued };
 }

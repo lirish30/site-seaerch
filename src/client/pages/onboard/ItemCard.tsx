@@ -11,8 +11,8 @@ interface Props { item: PublicOnboardingItem; api: OnboardApi; now: Date; timezo
 function TextBox({ item, api, hooks }: { item: PublicOnboardingItem; api: OnboardApi; hooks: PageHooks }) {
   const [text, setText] = useState(item.textValue ?? "");
   const saver = useSaver<string>({
-    send: (v) => api.saveText(item.id, v),
-    unload: { plan: (pending, inFlight) => api.textUnload(item.id, pending, inFlight), fire: (plan) => api.sendNow(plan, "text") },
+    send: (v, gate) => api.saveText(item.id, v, gate),
+    unload: { plan: (s) => api.textUnload(item.id, s), fire: (plan) => api.sendNow(plan, "text") },
     onSaved: hooks.onSaved, onLocked: hooks.onLocked, onGone: hooks.onGone,
   });
   const left = 5000 - text.length;

@@ -1,4 +1,10 @@
-import { createPacer, REQUEST_GAP_MS, unloadPlan, writeOutcome, type Outcome, type PublicOnboarding, type UnloadPlan, type WriteKind } from "../../onboardView";
+import { createPacer, REQUEST_GAP_MS, unloadPlan, writeOutcome, type Outcome, type PublicOnboarding, type UnloadPlan, type UnloadState, type WriteKind } from "../../onboardView";
+
+/** Asked when the pacer lets a request go: true to send (and note that the fetch has started), false when the request was stood down. */
+export type Gate = () => boolean;
+
+/** What a request answers with when it was stood down: nothing was sent, and the caller does not act on it. */
+const STOOD_DOWN: Outcome = { kind: "ok" };
 
 /** What a file the server took looks like. */
 export interface SavedFile { id: string; fileName: string; sizeBytes: number }
@@ -14,15 +20,16 @@ export interface OnboardApi {
   load(): Promise<LoadResult>;
   /** Same as `load`, but in the pacer's line behind whatever else is waiting. For the quiet refetch after a save. */
   refresh(): Promise<LoadResult>;
-  saveAnswers(answers: Record<string, string>): Promise<Outcome>;
+  /** `gate` is asked at the moment the pacer lets the request go: false stands the request down (nothing is fetched). It also marks the fetch as started. */
+  saveAnswers(answers: Record<string, string>, gate?: Gate): Promise<Outcome>;
   submit(): Promise<Outcome>;
-  saveText(itemId: string, text: string): Promise<Outcome>;
+  saveText(itemId: string, text: string, gate?: Gate): Promise<Outcome>;
   upload(itemId: string, file: File): Promise<{ outcome: Outcome; file?: SavedFile }>;
   removeFile(fileId: string): Promise<Outcome>;
   /** What to do with the answers waiting when the tab goes away (see `unloadPlan`). */
-  answersUnload(pending: Record<string, string>, inFlight: Record<string, string> | null): UnloadPlan;
+  answersUnload(s: UnloadState<Record<string, string>>): UnloadPlan;
   /** The same for one item's text. */
-  textUnload(itemId: string, pending: string, inFlight: string | null): UnloadPlan;
+  textUnload(itemId: string, s: UnloadState<string>): UnloadPlan;
   /** Sends a `keepalive` plan at once, outside the pacer: a closing or frozen tab would never get through the pacer's wait. */
   sendNow(plan: Extract<UnloadPlan, { action: "keepalive" }>, kind: "answers" | "text"): Promise<Outcome>;
 }
@@ -64,10 +71,15 @@ export function makeApi(token: string): OnboardApi {
   return {
     load: () => fetchPage(base),
     refresh: () => paced(() => fetchPage(base)),
-    saveAnswers: (answers) => paced(async () => (await send(`${base}/answers`, { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify({ answers }) }, "answers")).outcome),
+    saveAnswers: (answers, gate) => paced(async () => {
+      if (gate && !gate()) return STOOD_DOWN;
+      return (await send(`${base}/answers`, { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify({ answers }) }, "answers")).outcome;
+    }),
     submit: () => paced(async () => (await send(`${base}/submit`, { method: "POST" }, "submit")).outcome),
-    saveText: (itemId, text) =>
-      paced(async () => (await send(`${base}/items/${encodeURIComponent(itemId)}/text`, { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify({ text }) }, "text")).outcome),
+    saveText: (itemId, text, gate) => paced(async () => {
+      if (gate && !gate()) return STOOD_DOWN;
+      return (await send(`${base}/items/${encodeURIComponent(itemId)}/text`, { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify({ text }) }, "text")).outcome;
+    }),
     upload: (itemId, file) => paced(async () => {
       const form = new FormData();
       form.append("file", file);
@@ -75,8 +87,8 @@ export function makeApi(token: string): OnboardApi {
       return { outcome, file: outcome.kind === "ok" ? savedFile(body?.file) : undefined };
     }),
     removeFile: (fileId) => paced(async () => (await send(`${base}/files/${encodeURIComponent(fileId)}`, { method: "DELETE" }, "delete")).outcome),
-    answersUnload: (pending, inFlight) => unloadPlan(pending, inFlight, `${base}/answers`, (a) => ({ answers: a })),
-    textUnload: (itemId, pending, inFlight) => unloadPlan(pending, inFlight, `${base}/items/${encodeURIComponent(itemId)}/text`, (text) => ({ text })),
+    answersUnload: (s) => unloadPlan({ ...s, url: `${base}/answers`, bodyOf: (a) => ({ answers: a }), merge: (older, newer) => ({ ...older, ...newer }) }),
+    textUnload: (itemId, s) => unloadPlan({ ...s, url: `${base}/items/${encodeURIComponent(itemId)}/text`, bodyOf: (text) => ({ text }) }),
     sendNow: async (plan, kind) => (await send(plan.url, { method: plan.method, headers: JSON_HEADERS, body: plan.body, keepalive: true }, kind)).outcome,
   };
 }
