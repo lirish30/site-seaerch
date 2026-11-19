@@ -6,7 +6,7 @@ import { getDeal, saveRecapStmt, stampDeckFrozen } from "../src/worker/db/deals"
 import { listCurrentPackages, savePackage } from "../src/worker/db/packages";
 import { createVideoAudit, savePlan } from "../src/worker/db/videoAudits";
 import { offerOf, type CallRecap } from "../src/worker/queue/callRecap";
-import { MAX_DECK_IMAGE_BYTES, deckContentDisposition, deckFileName, deckRoutes } from "../src/worker/routes/deck";
+import { MAX_DECK_IMAGE_BYTES, deckContentDisposition, deckFileName, deckRoutes, safeFileName } from "../src/worker/routes/deck";
 import type { Option } from "../src/worker/sales/options";
 import type { VideoPlan } from "../src/worker/video/plan";
 import { seedRecapDeal } from "./fixtures/deal";
@@ -124,6 +124,17 @@ describe("deck routes", () => {
   it("deckFileName is safe and dated", () => {
     expect(deckFileName("Ace / Plumbing\r\n\"Co\"", new Date("2026-11-18T20:00:00Z"))).toBe("Ace Plumbing Co - Recommendation - 2026-11-18.pdf");
     expect(deckFileName("///", new Date("2026-11-18T20:00:00Z"))).toBe("Website - Recommendation - 2026-11-18.pdf");
+  });
+
+  it("deckFileName output is unchanged", () => {
+    const now = new Date("2026-11-18T20:00:00Z");
+    expect(deckFileName("Łódź  Plumbing", now)).toBe("Łódź Plumbing - Recommendation - 2026-11-18.pdf");
+    expect(deckFileName("Łódź  Plumbing", now, { ascii: true })).toBe("Lodz Plumbing - Recommendation - 2026-11-18.pdf");
+    expect(deckFileName("東京配管", now, { ascii: true })).toBe("Website - Recommendation - 2026-11-18.pdf");
+    expect(deckFileName("x".repeat(120), now)).toBe(`${"x".repeat(80)} - Recommendation - 2026-11-18.pdf`);
+    expect(safeFileName("Ace / Plumbing", { fallback: "Proposal" })).toBe("Ace Plumbing");
+    expect(safeFileName("///", { fallback: "Proposal" })).toBe("Proposal");
+    expect(safeFileName("///")).toBe("Website");
   });
 
   it("the download header folds the plain filename to ASCII and carries the real name in filename*", () => {

@@ -43,13 +43,17 @@ const FOLD: Record<string, string> = { "Ł": "L", "ł": "l", "Ø": "O", "ø": "o
 const asciiFold = (s: string) => s.replace(/[ŁłØøĐđßÆæŒœÞþÐð]/g, (c) => FOLD[c]).normalize("NFKD").replace(/\p{M}+/gu, "").replace(/[^A-Za-z0-9 ._-]/g, " ");
 
 /**
- * "<Business> - Recommendation - <YYYY-MM-DD>.pdf" with anything a header or a file system would object to taken out. Letters of any script stay (this is
- * the name for `filename*`); with `ascii` they are folded to plain letters (a name with none, such as Chinese, becomes "Website") for the plain `filename=`.
+ * A file name base with anything a header or a file system would object to taken out. Letters of any script stay (this is the name for `filename*`);
+ * with `ascii` they are folded to plain letters (a name with none, such as Chinese, becomes the fallback) for the plain `filename=`.
  */
-export function deckFileName(name: string, now: Date, o: { ascii?: boolean } = {}): string {
+export function safeFileName(name: string, o: { ascii?: boolean; fallback?: string } = {}): string {
   const safe = name.replace(/[^\p{L}\p{N} ._-]/gu, " ");
-  const clean = (o.ascii ? asciiFold(safe) : safe).replace(/\s+/g, " ").trim().slice(0, 80).trim() || "Website";
-  return `${clean} - Recommendation - ${now.toISOString().slice(0, 10)}.pdf`;
+  return (o.ascii ? asciiFold(safe) : safe).replace(/\s+/g, " ").trim().slice(0, 80).trim() || o.fallback || "Website";
+}
+
+/** "<Business> - Recommendation - <YYYY-MM-DD>.pdf", the business name made safe by `safeFileName`. */
+export function deckFileName(name: string, now: Date, o: { ascii?: boolean } = {}): string {
+  return `${safeFileName(name, o)} - Recommendation - ${now.toISOString().slice(0, 10)}.pdf`;
 }
 
 /** The download header: a plain ASCII `filename` for old clients and the real name in `filename*` (RFC 6266), so a name outside Latin-1 never reaches a header raw. */
