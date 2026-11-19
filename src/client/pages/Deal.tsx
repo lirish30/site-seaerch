@@ -6,13 +6,16 @@ import CallPrepPanel from "../components/CallPrepPanel";
 import UpcomingBooking from "../components/UpcomingBooking";
 import { callDoneCheck, canOfferTimes, formOf, isNotesDirty, nextActions, notesOf, optionSummary, priceDrift, type NotesForm } from "../dealView";
 import { dollars, formatPrice, parseDollars, type Package } from "../packagesView";
+import { formOf as proposalFormOf, isProposalDirty, type ProposalForm } from "../proposalView";
+import ProposalTab, { type ProposalData } from "./ProposalTab";
 import { STAGE_LABEL } from "../pipelineView";
+import type { Document } from "../../worker/db/documents";
 import type { Deal } from "../../worker/db/deals";
 import { DISCOVERY_QUESTIONS } from "../../worker/sales/discovery";
 import { hasNotes, LEAD_TYPE_GUIDE, monthlyAtStakeCents } from "../../worker/sales/notes";
 import type { Option } from "../../worker/sales/options";
 
-type Tab = "prep" | "notes" | "recap" | "deck";
+type Tab = "prep" | "notes" | "recap" | "deck" | "proposal";
 const POLL_MS = 15_000;
 const errorText = (e: unknown, fallback: string) => (e instanceof Error ? e.message : fallback);
 
@@ -24,12 +27,16 @@ export default function DealPage() {
   // The notes form lives here, not in the Notes tab, so typing survives a switch to Prep and back. It is replaced only by a save (or a new deal).
   const [form, setForm] = useState<NotesForm | null>(null);
   const [catalog, setCatalog] = useState<Package[]>([]);
+  // The proposal form lives here too, for the same reason: typing survives a switch of tab. Saving, sending and voiding replace it from what the server stored.
+  const [proposal, setProposal] = useState<ProposalData | null>(null);
+  const [pform, setPform] = useState<ProposalForm | null>(null);
+  const [proposalFailed, setProposalFailed] = useState(false);
   const [tab, setTab] = useState<Tab | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let live = true;
-    setDeal(null); setLead(null); setForm(null); setTab(null); setFailed(false);
+    setDeal(null); setLead(null); setForm(null); setProposal(null); setPform(null); setProposalFailed(false); setTab(null); setFailed(false);
     api.get<Deal>(`/deals/${id}`).then((d) => {
       if (!live) return;
       setDeal(d);
@@ -44,24 +51,37 @@ export default function DealPage() {
         .catch(() => ready("this lead", null, []));
     }).catch(() => { if (live) setFailed(true); });
     api.get<Package[]>("/packages").then((c) => { if (live) setCatalog(c); }).catch(() => {});
+    api.get<ProposalData>(`/deals/${id}/proposal`).then((p) => { if (live) setProposal(p); }).catch(() => { if (live) setProposalFailed(true); });
     return () => { live = false; };
   }, [id]);
 
+  // The form starts from the saved proposal (or the recommended option) once both the deal and its proposal have loaded, and not again until a save replaces it.
+  useEffect(() => {
+    if (deal && proposal && !pform) setPform(proposalFormOf(proposal.current, { recommendedOptionId: deal.recommendedOptionId, contact: proposal.defaultContact }));
+  }, [deal, proposal, pform]);
+  const reloadProposal = useCallback(async (fresh: Document | null | undefined) => {
+    const next = await api.get<ProposalData>(`/deals/${id}/proposal`);
+    setProposal(next);
+    if (fresh !== undefined && deal) setPform(proposalFormOf(fresh ?? next.current, { recommendedOptionId: deal.recommendedOptionId, contact: next.defaultContact }));
+  }, [id, deal]);
+
   // Every hook is called above the early returns below: a render that skips one (the failed load) would throw "Rendered fewer hooks than expected".
   const dirty = !!deal && !!form && !!lead && isNotesDirty(form, deal.notes, lead);
-  // Closing or reloading the page with typed notes that are not saved asks first (the same browser prompt the Settings pages use).
+  const proposalDirty = !!deal && !!proposal && !!pform && isProposalDirty(pform, proposal.current, { recommendedOptionId: deal.recommendedOptionId, contact: proposal.defaultContact });
+  // Closing or reloading the page with typed notes or a proposal that are not saved asks first (the same browser prompt the Settings pages use).
+  const unsaved = dirty || proposalDirty;
   useEffect(() => {
-    if (!dirty) return;
+    if (!unsaved) return;
     const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty]);
+  }, [unsaved]);
 
   if (failed) return <div className="deal"><p className="error deal-body" role="alert">Couldn’t load this deal. <Link to="/pipeline">Back to the pipeline</Link></p></div>;
   if (!deal || !tab || !form) return <div className="deal"><p className="muted deal-body">Loading…</p></div>;
 
   const actions = nextActions(deal);
-  const TABS: [Tab, string][] = [["prep", "Prep"], ["notes", "Notes"], ["recap", "Recap"], ["deck", "Deck"]];
+  const TABS: [Tab, string][] = [["prep", "Prep"], ["notes", "Notes"], ["recap", "Recap"], ["deck", "Deck"], ["proposal", "Proposal"]];
   return (
     <div className="deal">
       <header className="page-header">
@@ -85,6 +105,9 @@ export default function DealPage() {
         {tab === "notes" && <NotesTab deal={deal} form={form} setForm={setForm} audit={lead} dirty={dirty} onChange={setDeal} />}
         {tab === "recap" && <RecapTab deal={deal} catalog={catalog} onChange={setDeal} />}
         {tab === "deck" && <DeckTab deal={deal} catalog={catalog} />}
+        {tab === "proposal" && (pform
+          ? <ProposalTab deal={deal} catalog={catalog} data={proposal} form={pform} setForm={setPform} dirty={proposalDirty} onReload={reloadProposal} />
+          : proposalFailed ? <p className="error" role="alert">Couldn’t load the proposal. Reload the page to try again.</p> : <p className="muted">Loading…</p>)}
       </div>
     </div>
   );

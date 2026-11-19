@@ -59,13 +59,14 @@ export const ProposalContentSchema = z.object({
   clauseLibraryVersion: z.number().int().min(1),
 }) satisfies z.ZodType<ProposalContent>;
 
-const DEFAULT_ASSUMPTIONS = [
+/** The assumptions and exclusions every proposal starts with; the owner's own are added after them (the Proposal tab reads its extras back by skipping these). */
+export const DEFAULT_ASSUMPTIONS = [
   "The client supplies the text, photos, logo and other content the site needs, and approves it on time.",
   `The project includes ${TERMS.revisionRounds} revision rounds.`,
   "The client owns, or has permission to use, everything it supplies.",
   "Search rankings, traffic and leads are not promised.",
 ];
-const DEFAULT_OUT_OF_SCOPE = [
+export const DEFAULT_OUT_OF_SCOPE = [
   "Third-party fees such as domain names, premium plugins and themes, stock photos, paid advertising and software subscriptions.",
   "Copywriting, photography and video, unless the scope names them.",
   "Pages, features and integrations that are not listed in the scope.",

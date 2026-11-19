@@ -13,6 +13,8 @@ MAILBOX_OUTREACH_PASSWORD=
 MAILBOX_MAIN_PASSWORD=
 # Base URL for links in cold email: an https host with no path, a subdomain of the outreach domain (never workers.dev), e.g. https://go.example.com
 OUTREACH_LINK_BASE=
+# Base URL for a client's proposal link: an https host with no path, not the outreach host and never workers.dev, e.g. https://clients.example.com
+CLIENT_LINK_BASE=
 # Optional passkey settings. Default = the request host. For local dev set e.g. localhost / http://localhost:5173
 # WEBAUTHN_RP_ID=
 # WEBAUTHN_ORIGIN=

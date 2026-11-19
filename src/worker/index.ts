@@ -34,9 +34,11 @@ import { packageRoutes } from "./routes/packages";
 import { dealRoutes, leadDealRoutes } from "./routes/deals";
 import { deckRoutes } from "./routes/deck";
 import { bookingRoutes } from "./routes/bookings";
+import { documentRoutes } from "./routes/documents";
 import "./approvals/leadNote";
 import "./approvals/emailSend";
 import "./approvals/videoPublish";
+import "./approvals/proposalSend";
 import { mcpRoute } from "./mcp/route";
 import { runScheduled } from "./schedule";
 
@@ -77,6 +79,7 @@ app.route("/api/deals", dealRoutes);
 app.route("/api/deals", deckRoutes()); // /:id/deck.html, /:id/deck.pdf, /:id/deck/freeze
 app.route("/api/leads", leadDealRoutes); // /:id/deal
 app.route("/api/bookings", bookingRoutes);
+app.route("/api", documentRoutes); // /deals/:id/proposal, /documents/:id/...
 // Mounted last at /api: /api/leads/:id/cro-audit(s), /api/cro-items/:id, /api/cro-audits/:id/... (all behind requireAuth).
 app.route("/api", croRoutes);
 // Also mounted at /api: /api/leads/:id/video and /api/video-audits/:id/... (behind requireAuth).

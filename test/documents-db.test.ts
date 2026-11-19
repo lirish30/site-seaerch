@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { describe, it, expect } from "vitest";
 import {
-  DocumentStateError, countViews, createDraft, expireDue, getByToken, getDocument, listForDeal, markSent, recordView, setPaid, setPdf, signDocument, signaturesFor,
+  DocumentStateError, countViews, createDraft, nextDraftVersion, expireDue, getByToken, getDocument, listForDeal, markSent, recordView, setPaid, setPdf, signDocument, signaturesFor,
   updateDraft, voidDocument,
 } from "../src/worker/db/documents";
 import { newClientToken } from "../src/worker/documents/token";
@@ -56,6 +56,21 @@ describe("createDraft", () => {
     expect(await listForDeal(env.DB, s.dealId)).toHaveLength(1);
   });
 
+  it("a replaced draft keeps its version number, so none is skipped", async () => {
+    const s = await seedDeal();
+    expect(await nextDraftVersion(env.DB, s.dealId)).toBe(1);
+    const first = await createDraft(env.DB, { dealId: s.dealId, businessId: s.businessId, optionId: "a", content: proposal({ optionId: "a" }) });
+    expect(first.version).toBe(1);
+    expect(await nextDraftVersion(env.DB, s.dealId)).toBe(1);
+    const second = await createDraft(env.DB, { dealId: s.dealId, businessId: s.businessId, optionId: "c", content: proposal({ optionId: "c" }) });
+    expect(second.version).toBe(1);
+    await voidDocument(env.DB, second.id, "start over");
+    expect(await nextDraftVersion(env.DB, s.dealId)).toBe(2);
+    const third = await createDraft(env.DB, { dealId: s.dealId, businessId: s.businessId, optionId: "b", content: proposal({ version: 2 }) });
+    expect(third.version).toBe(2);
+    expect(third.content.header.version).toBe(third.version);
+  });
+
   it("a void document does not block the next draft", async () => {
     const s = await openDoc();
     await voidDocument(env.DB, s.doc.id, "wrong option");
@@ -99,6 +114,17 @@ describe("markSent", () => {
     expect(sigs[0]).toMatchObject({ documentId: doc.id, role: "provider", signerName: "Pat Provider", contentSha256: "a".repeat(64), consentVersion: 1 });
     expect((await getByToken(env.DB, token))!.id).toBe(doc.id);
     expect(await getByToken(env.DB, newClientToken())).toBeNull();
+  });
+
+  it("markSent with test marks the document a test and a plain send leaves it as it was", async () => {
+    const { doc } = await draftFor();
+    const sent = await markSent(env.DB, doc.id, {
+      token: newClientToken(), content: doc.content, contentSha256: "b".repeat(64), sentAt: "2026-12-01T17:00:00.000Z", expiresAt: EXPIRES_AT, approvalId: null, test: true,
+      provider: { signerName: "Pat Provider", signerEmail: "hello@siteline.test", signedAt: "2026-12-01T17:00:00.000Z", ip: null, userAgent: null, consentText: "c", consentVersion: 1, contentSha256: "b".repeat(64) },
+    });
+    expect(sent.test).toBe(true);
+    const plain = await openDoc();
+    expect(plain.doc.test).toBe(false);
   });
 
   it("markSent twice with the same approval id returns the same document", async () => {

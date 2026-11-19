@@ -47,11 +47,17 @@ describe("approval links", () => {
     expect(approvalLink({ ...a, record_id: null })).toBeNull();
     expect(approvalLink({ ...item("n", "lead.note", "2026-11-01T00:00:00Z"), record_type: "lead", record_id: "biz-1" })).toBeNull();
   });
+  it("a proposal approval opens its deal", () => {
+    const a = { ...item("p", "proposal.send", "2026-11-01T00:00:00Z"), record_type: "deal", record_id: "deal-1" };
+    expect(approvalLink(a)).toEqual({ to: "/deals/deal-1", label: "Open the proposal" });
+    expect(approvalLink({ ...a, record_id: null })).toBeNull();
+  });
 });
 
 describe("canBulkApprove", () => {
   it("a video is never published by an approve-all: it is watched and approved on its own", () => {
     expect(canBulkApprove("video.publish")).toBe(false);
+    expect(canBulkApprove("proposal.send")).toBe(false);
   });
   it("everything else can be approved as a group", () => {
     for (const k of ["email.send", "lead.note", "lead.status"]) expect(canBulkApprove(k), k).toBe(true);

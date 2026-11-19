@@ -84,13 +84,24 @@ export function deleteDraftDocumentStmts(db: D1Database, businessId: string): D1
 }
 
 /**
- * A new draft for the deal. It replaces the deal's existing draft (a draft is only ever edited or rebuilt), and its version is one more than the
- * highest the deal has had. A deal with a sent, viewed or signed document refuses: void it first.
+ * The version number the deal's next draft takes: the existing draft's own (a draft is rebuilt in place, so its number is reused and none is skipped),
+ * or one more than the highest the deal has had.
+ */
+export async function nextDraftVersion(db: D1Database, dealId: string): Promise<number> {
+  const r = await db.prepare(
+    `SELECT COALESCE((SELECT version FROM documents WHERE deal_id = ? AND status = 'draft'), (SELECT COALESCE(MAX(version), 0) FROM documents WHERE deal_id = ?) + 1) AS v`,
+  ).bind(dealId, dealId).first<{ v: number }>();
+  return r?.v ?? 1;
+}
+
+/**
+ * A new draft for the deal. It replaces the deal's existing draft (a draft is only ever edited or rebuilt) and takes that draft's version number, or
+ * one more than the highest the deal has had when there is none (`nextDraftVersion`). A deal with a sent, viewed or signed document refuses: void it first.
  */
 export async function createDraft(db: D1Database, o: { dealId: string; businessId: string; optionId: OptionId; content: ProposalContent; test?: boolean }): Promise<Document> {
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
-  const max = await db.prepare(`SELECT COALESCE(MAX(version), 0) AS v FROM documents WHERE deal_id = ?`).bind(o.dealId).first<{ v: number }>();
+  const version = await nextDraftVersion(db, o.dealId);
   const res = await db.batch([
     db.prepare(`DELETE FROM documents WHERE deal_id = ? AND status = 'draft'`).bind(o.dealId),
     // Guarded in the statement, so a document sent between the read and the write still blocks it.
@@ -98,7 +109,7 @@ export async function createDraft(db: D1Database, o: { dealId: string; businessI
       `INSERT INTO documents (id, deal_id, business_id, version, status, test, option_id, content, created_at, updated_at)
        SELECT ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?
        WHERE NOT EXISTS (SELECT 1 FROM documents WHERE deal_id = ? AND status IN ('sent', 'viewed', 'signed'))`,
-    ).bind(id, o.dealId, o.businessId, (max?.v ?? 0) + 1, o.test ? 1 : 0, o.optionId, JSON.stringify(o.content), now, now, o.dealId),
+    ).bind(id, o.dealId, o.businessId, version, o.test ? 1 : 0, o.optionId, JSON.stringify(o.content), now, now, o.dealId),
   ]);
   if ((res[1].meta.changes ?? 0) !== 1) throw new DocumentStateError("this deal already has a sent or signed proposal; void it first");
   return (await getDocument(db, id))!;
@@ -118,6 +129,8 @@ export async function updateDraft(db: D1Database, id: string, content: ProposalC
  */
 export async function markSent(db: D1Database, id: string, o: {
   token: string; content: ProposalContent; contentSha256: string; sentAt: string; expiresAt: string; approvalId: string | null; provider: SignatureInput;
+  /** True for the owner's own test copy: the document is marked `test` (it never moves a deal or takes a payment). */
+  test?: boolean;
 }): Promise<Document> {
   const doc = await getDocument(db, id);
   if (!doc) throw new DocumentStateError("document not found");
@@ -127,9 +140,9 @@ export async function markSent(db: D1Database, id: string, o: {
   const p = o.provider;
   const res = await db.batch([
     db.prepare(
-      `UPDATE documents SET status = 'sent', content = ?, option_id = ?, content_sha256 = ?, token = ?, sent_at = ?, expires_at = ?, approval_id = ?, updated_at = ?
+      `UPDATE documents SET status = 'sent', content = ?, option_id = ?, content_sha256 = ?, token = ?, sent_at = ?, expires_at = ?, approval_id = ?, test = MAX(test, ?), updated_at = ?
        WHERE id = ? AND status = 'draft'`,
-    ).bind(JSON.stringify(o.content), o.content.optionId, o.contentSha256, o.token, o.sentAt, o.expiresAt, o.approvalId, o.sentAt, id),
+    ).bind(JSON.stringify(o.content), o.content.optionId, o.contentSha256, o.token, o.sentAt, o.expiresAt, o.approvalId, o.test ? 1 : 0, o.sentAt, id),
     // Only when the update above took: the document now carries this call's token.
     db.prepare(
       `INSERT INTO document_signatures (id, document_id, role, signer_name, signer_email, signed_at, ip, user_agent, consent_text, consent_version, content_sha256)
