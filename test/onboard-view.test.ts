@@ -234,12 +234,15 @@ describe("createPacer", () => {
 });
 
 describe("a refused secret-shaped answer", () => {
-  it("tells the client plainly to leave out any password or key and just name the provider", () => {
-    const o = writeOutcome(422, { error: "invalid body", fields: ["item1"] }, null, "text");
-    expect(o).toEqual({ kind: "rejected", message: LOGIN_MESSAGE, fields: ["item1"] });
+  it("one neutral message for every refused write, whatever the item or question is", () => {
+    for (const kind of ["text", "answers", "file", "submit"] as const) {
+      expect(writeOutcome(422, { error: "invalid body", fields: ["item1"] }, null, kind)).toEqual({ kind: "rejected", message: LOGIN_MESSAGE, fields: ["item1"] });
+    }
+    expect(LOGIN_MESSAGE).toBe("This looks like it has a password, key or login in it. Please take that part out and write the rest in your own words. We'll ask for access a safer way.");
     expect(LOGIN_MESSAGE).toMatch(/password/);
     expect(LOGIN_MESSAGE).toMatch(/key/);
-    expect(LOGIN_MESSAGE).toMatch(/name of the company|name the company|just the name/i);
-    expect(LOGIN_MESSAGE).not.toMatch(/DNS|token|payload/i);
+    expect(LOGIN_MESSAGE).toMatch(/login/);
+    expect(LOGIN_MESSAGE).toMatch(/take that part out/);
+    expect(LOGIN_MESSAGE).not.toMatch(/company|service|provider|DNS|token|payload/i);
   });
 });
