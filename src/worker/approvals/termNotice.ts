@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { dollars } from "../../client/packagesView";
 import { mainMailboxProblem } from "../booking/mail";
-import { invoiceRecipient, renderTermNotice, signOff, subscriptionPlanName } from "../billing/mail";
+import { existingCare, invoiceRecipient, renderTermNotice, signOff, subscriptionPlanName } from "../billing/mail";
 import { checkConflict } from "../conflict";
 import { logActivityOnce } from "../db/activity";
 import type { Approval } from "../db/approvals";
@@ -31,12 +31,14 @@ registerHandler({
     if (!sub) throw new Error("This subscription was not found.");
     const plan = await subscriptionPlanName(env, sub);
     const care = await getPackage(db, "care");
-    const note = (to: string) => logActivityOnce(db, sub.businessId, "note", `term notice sent: ${plan} ends ${sub.termEndsOn ?? "soon"}, then Care${care ? ` ${dollars(care.priceCents)} a month` : ""}${sub.test ? " (test)" : ""} to ${to}`);
+    const own = await existingCare(db, sub); // the document's own Care plan, when it has one still going, carries on at its own price
+    const careCents = own.live?.monthlyCents ?? care?.priceCents;
+    const note = (to: string) => logActivityOnce(db, sub.businessId, "note", `term notice sent: ${plan} ends ${sub.termEndsOn ?? "soon"}, then Care${careCents !== undefined ? ` ${dollars(careCents)} a month` : ""}${sub.test ? " (test)" : ""} to ${to}`);
     const mailed = await getByApproval(db, a.id);
     if (mailed?.status === "sent") { await note(mailed.counterpart); return; } // an earlier run of this approval mailed it and something after the mail failed
     if (sub.status !== "active" || sub.endAction !== "convert_to_care" || !sub.termEndsOn) return; // no longer true: nothing to tell the client
 
-    if (!care) throw new Error("The Care package is missing from the catalog, so the notice cannot say the new price.");
+    if (careCents === undefined) throw new Error("The Care package is missing from the catalog, so the notice cannot say the new price.");
     const settings = await getSettings(db);
     const mailbox = await mainMailboxProblem(env);
     if (mailbox) throw new Error(`The main mailbox cannot send: ${mailbox}`);
@@ -49,7 +51,7 @@ registerHandler({
       if (conflict.blocked && conflict.source !== "client") throw new Error(`Blocked: ${conflict.reason}`);
     }
 
-    const mail = renderTermNotice(sub, { clientName: who.clientName, contactName: who.contactName, yourName: signOff(settings), planName: plan, careMonthlyCents: care.priceCents });
+    const mail = renderTermNotice(sub, { clientName: who.clientName, contactName: who.contactName, yourName: signOff(settings), planName: plan, careMonthlyCents: careCents, careContinues: !!own.live });
     const to = sub.test ? owner : who.to;
     await sendEmail(env, {
       mailbox: "main", to, subject: `${sub.test ? "[Test] " : ""}${mail.subject}`, body: mail.body, includeFooter: false, ...(sub.test ? {} : { businessId: sub.businessId }),

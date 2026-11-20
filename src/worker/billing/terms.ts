@@ -15,7 +15,7 @@ import "../approvals/termNotice"; // the kind must be registered before an appro
 import { draftAndPropose } from "./draft";
 import { parseBillingConfig } from "./config";
 import { addMonths, calendarDateIn, calendarDaysBetween } from "./dates";
-import { invoiceRecipient, renderTermNotice, signOff, subscriptionPlanName, type Recipient } from "./mail";
+import { existingCare, invoiceRecipient, renderTermNotice, signOff, subscriptionPlanName, type Recipient } from "./mail";
 
 export const TERM_NOTICE_KIND = "subscription.term_notice";
 
@@ -108,13 +108,13 @@ export async function cancelSubscription(env: Env, id: string, o: { confirmEarly
 }
 
 /** What the client's notice will be, as far as it can be known before it is approved. */
-async function noticePreview(env: Env, sub: Subscription, careCents: number): Promise<{ title: string; preview: string }> {
+async function noticePreview(env: Env, sub: Subscription, careCents: number, careContinues: boolean): Promise<{ title: string; preview: string }> {
   const settings = await getSettings(env.DB);
   let who: Recipient | null = null, problem = "";
   try { who = await invoiceRecipient(env, sub); } catch (e) { problem = e instanceof Error ? e.message : "no recipient"; }
   const clientName = who?.clientName || (await getBusiness(env.DB, sub.businessId))?.name || "the client";
   const plan = await subscriptionPlanName(env, sub);
-  const mail = renderTermNotice(sub, { clientName, contactName: who?.contactName ?? "", yourName: signOff(settings), planName: plan, careMonthlyCents: careCents });
+  const mail = renderTermNotice(sub, { clientName, contactName: who?.contactName ?? "", yourName: signOff(settings), planName: plan, careMonthlyCents: careCents, careContinues });
   const toLine = !who ? `To: nobody yet (${problem})`
     : sub.test ? `To: ${settings.your_name.trim() || "You"} <${settings.contact_email.trim()}> (a test: nothing goes to ${who.to})`
     : `To: ${who.contactName ? `${who.contactName} <${who.to}>` : who.to}`;
@@ -122,7 +122,7 @@ async function noticePreview(env: Env, sub: Subscription, careCents: number): Pr
     toLine, `Subject: ${sub.test ? "[Test] " : ""}${mail.subject}`, "", mail.body, "",
     `Plan: ${plan}, ${dollars(sub.monthlyCents)} a month`,
     `Term ends: ${sub.termEndsOn ?? "unknown"}`,
-    `Then: Care at ${dollars(careCents)} a month (the price in the catalog today)`,
+    careContinues ? `Then: Care continues on its own plan at ${dollars(careCents)} a month` : `Then: Care at ${dollars(careCents)} a month (the price in the catalog today)`,
     "", "Nothing is mailed until you approve. To keep the client on a refresh instead, set the subscription to \"client chose a refresh\" and this notice will not go out.",
   ].join("\n");
   return { title: `Send term notice to ${clientName}`.replace(/\s+/g, " ").slice(0, 200), preview };
@@ -140,9 +140,11 @@ async function draftNotice(env: Env, sub: Subscription, now: Date): Promise<bool
   ).bind(stamp, sub.id).run();
   if ((claimed.meta.changes ?? 0) !== 1) return false;
   try {
-    const care = await getPackage(db, "care");
-    if (!care) throw new Error("the Care package is missing from the catalog");
-    const { title, preview } = await noticePreview(env, sub, care.priceCents);
+    const own = await existingCare(db, sub);
+    const care = own.live ? null : await getPackage(db, "care");
+    const careCents = own.live?.monthlyCents ?? care?.priceCents;
+    if (careCents === undefined) throw new Error("the Care package is missing from the catalog");
+    const { title, preview } = await noticePreview(env, sub, careCents, !!own.live);
     await createApproval(db, { kind: TERM_NOTICE_KIND, title, preview, payload: { subscriptionId: sub.id }, record_type: "business", record_id: sub.businessId, drafted_by: "logan" });
   } catch (e) {
     await db.prepare(`UPDATE subscriptions SET term_notice_sent_at = NULL WHERE id = ? AND term_notice_sent_at = ?`).bind(sub.id, stamp).run();
@@ -152,9 +154,12 @@ async function draftNotice(env: Env, sub: Subscription, now: Date): Promise<bool
 }
 
 /**
- * Moves one subscription whose term has ended to Care: the Stripe price is swapped to the catalog's current Care price (no proration; the key `convert:<id>` makes a repeat a replay, so a swap
- * that Stripe made but the row did not record is not made twice), then the row is rewritten in ONE statement guarded on the subscription still being active and still set to convert, with its
- * timeline line in the same batch. A Stripe failure leaves the row as it was, and the next sweep tries again. A live key never touches a test row. False when nothing was converted.
+ * Handles one subscription whose term has ended. Without a Care row on its document it is moved to Care: the Stripe price is swapped to the catalog's current Care price (no proration; the
+ * key `convert:<id>` makes a repeat a replay, so a swap that Stripe made but the row did not record is not made twice), then the row is rewritten in ONE statement guarded on the subscription
+ * still being active and still set to convert, with its timeline line in the same batch. When the SAME document already has a Care row, the unique (document, package) index rules the swap out
+ * and Care is already billed on its own plan: the Website Subscription is stopped at the end of its paid period (key `end:<id>`) and the row is marked `ended`, one guarded statement with its
+ * timeline line (a Care row that is closed gets a line saying nothing moved to Care). A Stripe failure leaves the row as it was, and the next sweep tries again. A live key never touches a
+ * test row. False when nothing was converted or ended.
  */
 async function convert(env: Env, sub: Subscription): Promise<boolean> {
   const db = env.DB;
@@ -162,14 +167,22 @@ async function convert(env: Env, sub: Subscription): Promise<boolean> {
   if (!key || !mode) { console.error("terms: Stripe is not set up, so a subscription that reached the end of its term waits", sub.id); return false; }
   if (sub.test && mode === "live") return false;
   if (!sub.stripeSubscriptionId) { console.error("terms: a subscription at the end of its term has no Stripe subscription", sub.id); return false; }
+  const own = await existingCare(db, sub);
+  const f = stripeFetch({});
+  const plan = oneLine(await subscriptionPlanName(env, sub));
+
+  if (own.live || own.closed) {
+    await cancelSubscriptionAtPeriodEnd(f, key, sub.stripeSubscriptionId, `end:${sub.id}`);
+    const line = own.live ? "Website subscription term ended; Care continues on the existing plan" : "Website subscription term ended; the Care plan on this document is closed, so nothing moved to Care";
+    const [res] = await db.batch([
+      db.prepare(`UPDATE subscriptions SET status = 'ended' WHERE id = ? AND status = 'active' AND end_action = 'convert_to_care'`).bind(sub.id),
+      activityIfChangedStmt(db, sub.businessId, "note", `${line} (${plan})${sub.test ? " (test)" : ""}`),
+    ]);
+    return (res.meta.changes ?? 0) === 1;
+  }
+
   const care = await getPackage(db, "care");
   if (!care || !Number.isSafeInteger(care.priceCents) || care.priceCents <= 0) { console.error("terms: no usable Care price in the catalog", sub.id); return false; }
-  // One subscription per document and package: a document that already has its own Care row cannot take a second. Nothing is changed at Stripe, and it is flagged each sweep until Logan settles it.
-  const clash = await db.prepare(`SELECT id FROM subscriptions WHERE document_id = ? AND package_key = 'care' AND id <> ?`).bind(sub.documentId, sub.id).first();
-  if (clash) { console.error("terms: this document already has a Care subscription, so the end of the term needs a decision", sub.id); return false; }
-
-  const plan = await subscriptionPlanName(env, sub);
-  const f = stripeFetch({});
   const product = await ensureProduct(f, key, { packageKey: "care", name: care.name }, "product:care:convert");
   await changeSubscriptionPrice(f, key, { subscriptionId: sub.stripeSubscriptionId, productId: product.id, name: care.name, monthlyCents: care.priceCents }, `convert:${sub.id}`);
 
@@ -178,7 +191,7 @@ async function convert(env: Env, sub: Subscription): Promise<boolean> {
       `UPDATE subscriptions SET package_key = 'care', package_version = ?, monthly_cents = ?, end_action = 'none', term_months = NULL, term_ends_on = NULL
        WHERE id = ? AND status = 'active' AND end_action = 'convert_to_care'`,
     ).bind(care.version, care.priceCents, sub.id),
-    activityIfChangedStmt(db, sub.businessId, "note", `subscription moved to Care: ${oneLine(plan)} ended its term, now ${dollars(care.priceCents)} a month${sub.test ? " (test)" : ""}`),
+    activityIfChangedStmt(db, sub.businessId, "note", `subscription moved to Care: ${plan} ended its term, now ${dollars(care.priceCents)} a month${sub.test ? " (test)" : ""}`),
   ]);
   return (res.meta.changes ?? 0) === 1;
 }

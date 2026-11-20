@@ -90,7 +90,7 @@ export interface TermNoticeMail { subject: string; body: string }
  */
 export function renderTermNotice(
   sub: Pick<Subscription, "termEndsOn">,
-  c: { clientName: string; contactName: string; yourName: string; planName: string; careMonthlyCents: number },
+  c: { clientName: string; contactName: string; yourName: string; planName: string; careMonthlyCents: number; careContinues?: boolean },
 ): TermNoticeMail {
   const first = oneLine(c.contactName).split(" ")[0].slice(0, 60);
   const client = oneLine(c.clientName).slice(0, 120);
@@ -99,11 +99,23 @@ export function renderTermNotice(
   const body = [
     first ? `Hi ${first},` : "Hi,",
     `The ${plan} term for ${client} ends on ${ends}.`,
-    `After that it moves to Care, at ${dollars(c.careMonthlyCents)} a month.`,
+    // A document that already has its own Care plan: nothing moves, the Website Subscription simply ends and Care goes on at its own price.
+    c.careContinues ? `Care continues as it is now, at ${dollars(c.careMonthlyCents)} a month.` : `After that it moves to Care, at ${dollars(c.careMonthlyCents)} a month.`,
     "If you would like a refresh of the site instead, reply to this email and we will talk it through.",
     ["Thanks,", oneLine(c.yourName)].filter(Boolean).join("\n"),
   ].join("\n\n");
   return { subject: `Your ${plan} term for ${client} ends on ${ends}`.slice(0, 200), body };
+}
+
+/**
+ * The Care subscription the SAME document already has (a build proposal normally sells the Website Subscription and Care together). `live` is its monthly price while it is still going
+ * (anything but cancelled or ended); `closed` is true when the document has a Care row that is cancelled or ended. Either way the unique (document, package) index means the Website
+ * Subscription cannot be renamed to Care at the end of its term.
+ */
+export async function existingCare(db: D1Database, sub: Pick<Subscription, "id" | "documentId">): Promise<{ live: { monthlyCents: number } | null; closed: boolean }> {
+  const rows = (await db.prepare(`SELECT status, monthly_cents FROM subscriptions WHERE document_id = ? AND package_key = 'care' AND id <> ?`).bind(sub.documentId, sub.id).all<{ status: string; monthly_cents: number }>()).results;
+  const live = rows.find((r) => r.status !== "cancelled" && r.status !== "ended");
+  return { live: live ? { monthlyCents: live.monthly_cents } : null, closed: !live && rows.length > 0 };
 }
 
 /** The name of the plan as the client signed it (the frozen schedule line), else the catalog's name for that version, else a plain word. */

@@ -257,17 +257,106 @@ describe("conversion to Care", () => {
     expect(await sweepTerms(E_TEST, at(TERM_END))).toEqual({ notices: 0, converted: 2 }); // a test key may rehearse any lead (r2 and the test row)
     expect((await getSubscription(env.DB, t.id))!.packageKey).toBe("care");
   });
+});
 
-  it("a document that already has a Care subscription is flagged and left alone", async () => {
+/** A document that sells BOTH the Website Subscription and Care (what a build proposal normally carries): the Website Subscription active and due to convert, Care at its own price. */
+async function bothRows(o: { careStatus?: "active" | "cancelled" | "ended"; careCents?: number } = {}) {
+  const s = await seedSubscriptionDoc({ keys: ["website_subscription", "care"] });
+  await planSubscriptions(E_TEST, (await getDocument(env.DB, s.documentId))!);
+  const rows = await listSubscriptions(env.DB, { businessId: s.businessId });
+  const site = rows.find((x) => x.packageKey === "website_subscription")!, care = rows.find((x) => x.packageKey === "care")!;
+  await markSubscription(env.DB, site.id, { status: "active", stripeSubscriptionId: `sub_${crypto.randomUUID().slice(0, 8)}`, termEndsOn: TERM_END }, { from: ["planned"] });
+  const careStatus = o.careStatus ?? "active";
+  await env.DB.prepare(`UPDATE subscriptions SET status = ?, monthly_cents = ? WHERE id = ?`).bind(careStatus, o.careCents ?? 9900, care.id).run();
+  return { ...s, site: (await getSubscription(env.DB, site.id))!, care: (await getSubscription(env.DB, care.id))! };
+}
+const priceChanges = (api: ReturnType<typeof stripeApi>) => stripePosts(api).filter((c) => c.form.get("proration_behavior") !== null);
+const cancels = (api: ReturnType<typeof stripeApi>) => stripePosts(api).filter((c) => c.form.get("cancel_at_period_end") === "true");
+
+describe("a document that has its own Care subscription", () => {
+  it("the notice quotes the existing Care row's price with the end-of-term wording, drafted once", async () => {
+    const s = await bothRows({ careCents: 9900 });
+    expect(await sweepTerms(E_TEST, at("2028-11-20"))).toEqual({ notices: 1, converted: 0 });
+    expect(await sweepTerms(E_TEST, at("2028-11-20"))).toEqual({ notices: 0, converted: 0 });
+    const [n, ...rest] = await noticesFor(s.site.id);
+    expect(rest).toHaveLength(0);
+    const row = (await env.DB.prepare(`SELECT preview FROM approvals WHERE id = ?`).bind(n.id).first<{ preview: string }>())!;
+    expect(row.preview).toContain("December 20, 2028");
+    expect(row.preview).toContain("Care continues");
+    expect(row.preview).toContain("$99 a month");
+    expect(row.preview).not.toContain("$129");
+    expect(row.preview).not.toContain("moves to Care");
+
+    expect(await approve(E_TEST, n.id)).toEqual({ ok: true });
+    expect(mail.sent).toHaveLength(1);
+    expect(mail.sent[0].text).toContain("Care continues");
+    expect(mail.sent[0].text).toContain("$99 a month");
+    expect(mail.sent[0].text).not.toContain("moves to Care");
+  });
+
+  it("at term end it ends the Website Subscription at period end once and Care carries on", async () => {
     const api = stripeApi(); setStripeFetchForTests(api.f);
-    const s = await active({ keys: ["website_subscription", "care"] });
-    const rows = await listSubscriptions(env.DB, { businessId: s.businessId });
-    const site = rows.find((x) => x.packageKey === "website_subscription")!;
-    await markSubscription(env.DB, site.id, { status: "active", stripeSubscriptionId: "sub_both", termEndsOn: TERM_END }, { from: ["planned", "active"] });
-    await env.DB.prepare(`UPDATE subscriptions SET status = 'active' WHERE id = ?`).bind(site.id).run();
+    const s = await bothRows();
+    errors.mockClear();
+    expect(await sweepTerms(E_TEST, at(TERM_END))).toEqual({ notices: 0, converted: 1 });
+    expect(await sweepTerms(E_TEST, at(TERM_END))).toEqual({ notices: 0, converted: 0 }); // replayed
+    expect(await sweepTerms(E_TEST, at("2028-12-21"))).toEqual({ notices: 0, converted: 0 });
+    const posts = stripePosts(api);
+    expect(posts).toHaveLength(1);
+    expect(cancels(api)).toHaveLength(1);
+    expect(priceChanges(api)).toHaveLength(0);
+    expect(posts[0].headers["idempotency-key"]).toBe(`end:${s.site.id}`);
+    expect(new URL(posts[0].url).pathname).toBe(`/v1/subscriptions/${s.site.stripeSubscriptionId}`);
+    expect(await getSubscription(env.DB, s.site.id)).toMatchObject({ status: "ended", packageKey: "website_subscription" });
+    expect(await getSubscription(env.DB, s.care.id)).toEqual(s.care); // Care is untouched
+    const lines = (await listActivity(env.DB, s.businessId)).filter((x) => x.detail?.includes("Care continues on the existing plan"));
+    expect(lines).toHaveLength(1);
+    expect(lines[0].detail).toContain("Website subscription term ended");
+    expect(errors).not.toHaveBeenCalled();
+  });
+
+  it("a Stripe failure leaves the row unchanged and is tried again next sweep", async () => {
+    let down = true;
+    const api = stripeApi({ fail: (c) => (down && c.method === "POST" ? stripeError("Stripe is down") : null) });
+    setStripeFetchForTests(api.f);
+    const s = await bothRows();
     expect(await sweepTerms(E_TEST, at(TERM_END))).toEqual({ notices: 0, converted: 0 });
-    expect(stripePosts(api)).toHaveLength(0);
-    expect((await getSubscription(env.DB, site.id))!.packageKey).toBe("website_subscription");
+    expect(await getSubscription(env.DB, s.site.id)).toEqual(s.site);
+    down = false;
+    expect(await sweepTerms(E_TEST, at("2028-12-21"))).toEqual({ notices: 0, converted: 1 });
+    expect((await getSubscription(env.DB, s.site.id))!.status).toBe("ended");
+    expect(cancels(api).length).toBeGreaterThanOrEqual(1);
+    expect(priceChanges(api)).toHaveLength(0);
+  });
+
+  it("a live key never ends a test row", async () => {
+    const api = stripeApi(); setStripeFetchForTests(api.f);
+    const s = await bothRows();
+    await env.DB.prepare(`UPDATE subscriptions SET test = 1 WHERE id = ?`).bind(s.site.id).run();
+    expect(await sweepTerms(E_LIVE, at(TERM_END))).toEqual({ notices: 0, converted: 0 });
+    expect(api.calls).toHaveLength(0);
+    expect((await getSubscription(env.DB, s.site.id))!.status).toBe("active");
+  });
+
+  it("a Care row that is cancelled or ended is no clash for the notice, and the index forces the end path", async () => {
+    for (const careStatus of ["cancelled", "ended"] as const) {
+      const api = stripeApi(); setStripeFetchForTests(api.f);
+      const s = await bothRows({ careStatus });
+      expect(await sweepTerms(E_TEST, at("2028-11-20"))).toEqual({ notices: 1, converted: 0 });
+      const [n] = await noticesFor(s.site.id);
+      const row = (await env.DB.prepare(`SELECT preview FROM approvals WHERE id = ?`).bind(n.id).first<{ preview: string }>())!;
+      expect(row.preview).toContain("moves to Care"); // the existing wording, at the catalog price
+      expect(row.preview).toContain("$129 a month");
+
+      // The unique index (document, package) still holds the closed Care row, so no swap is possible: the Website Subscription ends instead, and the timeline says why.
+      expect(await sweepTerms(E_TEST, at(TERM_END))).toEqual({ notices: 0, converted: 1 });
+      expect(cancels(api)).toHaveLength(1);
+      expect(priceChanges(api)).toHaveLength(0);
+      expect((await getSubscription(env.DB, s.site.id))!.status).toBe("ended");
+      expect((await listActivity(env.DB, s.businessId)).filter((x) => x.detail?.includes("is closed, so nothing moved to Care"))).toHaveLength(1);
+      expect(await sweepTerms(E_TEST, at(TERM_END))).toEqual({ notices: 0, converted: 0 });
+      expect(cancels(api)).toHaveLength(1);
+    }
   });
 });
 
