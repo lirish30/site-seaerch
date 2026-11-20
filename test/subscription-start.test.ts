@@ -128,17 +128,42 @@ describe("subscription.start approval", () => {
   });
 });
 
+describe("the first payment the link mail states", () => {
+  const clock = (iso: string) => setMailDeps({ smtp: async (_mb, _pw, msg) => { mail.sent.push(msg); }, now: () => new Date(iso) });
+  // The first charge is 2 Jan 2027 (noon UTC): within 3 days of the clock the card is taken at Checkout, so no date can be promised.
+  const WHEN = "The first payment is taken when you set it up.";
+  const cases: [string, string, boolean][] = [
+    ["a launch-start row approved a day after its first charge date", "2027-01-03T18:00:00.000Z", true],
+    ["a first charge date 1 day ahead", "2027-01-01T18:00:00.000Z", true],
+    ["a first charge date 5 days ahead", "2026-12-28T18:00:00.000Z", false],
+  ];
+  for (const [name, now, atCheckout] of cases) {
+    it(`${name}: the mail and the preview say ${atCheckout ? "it is taken at set-up, with no date" : "the date"}`, async () => {
+      clock(now);
+      const { a } = await proposed();
+      for (const text of [a.preview]) {
+        expect(text.includes(WHEN), "preview").toBe(atCheckout);
+        expect(text.includes("The first payment is on January 2, 2027."), "preview").toBe(!atCheckout);
+      }
+      expect(await approve(E_TEST, a.id)).toEqual({ ok: true });
+      expect(mail.sent[0].text.includes(WHEN), "mail").toBe(atCheckout);
+      expect(mail.sent[0].text.includes("The first payment is on January 2, 2027."), "mail").toBe(!atCheckout);
+      if (atCheckout) expect(mail.sent[0].text).not.toContain("January 2, 2027");
+    });
+  }
+});
+
 describe("renderSubscriptionLink", () => {
   const sub = { monthlyCents: 29700, firstChargeOn: "2027-01-02", termMonths: 24 as number | null, test: false };
 
   it("uses fixed words: plan, price, first charge, term, the link", () => {
-    const m = renderSubscriptionLink(sub, "https://clients.example/s/TOKEN", { clientName: "Ace Plumbing", contactName: "Pat Jones", yourName: "Logan", planName: "Website Subscription" });
+    const m = renderSubscriptionLink(sub, "https://clients.example/s/TOKEN", { clientName: "Ace Plumbing", contactName: "Pat Jones", yourName: "Logan", planName: "Website Subscription", chargedNow: false });
     expect(m.subject).toBe("Your monthly Website Subscription plan for Ace Plumbing");
     expect(m.body).toBe([
       "Hi Pat,",
       "Here is the link to set up the monthly payment for Ace Plumbing: Website Subscription.",
       "Amount: $297 a month. The first payment is on January 2, 2027. The term is 24 months.",
-      "You can set it up online, by card or bank transfer, here:",
+      "You can set it up online, by card, here:",
       "https://clients.example/s/TOKEN",
       "Reply to this email if you have a question.",
       "Thanks,\nLogan",
@@ -146,7 +171,7 @@ describe("renderSubscriptionLink", () => {
   });
 
   it("leaves out the term of an open-ended plan and the date when there is none", () => {
-    const m = renderSubscriptionLink({ ...sub, termMonths: null, firstChargeOn: null }, "https://x/s/T", { clientName: "Ace", contactName: "", yourName: "", planName: "Care" });
+    const m = renderSubscriptionLink({ ...sub, termMonths: null, firstChargeOn: null }, "https://x/s/T", { clientName: "Ace", contactName: "", yourName: "", planName: "Care", chargedNow: false });
     expect(m.body).toContain("Amount: $297 a month.");
     expect(m.body).not.toContain("term");
     expect(m.body).not.toContain("first payment");
@@ -154,9 +179,16 @@ describe("renderSubscriptionLink", () => {
     expect(m.body.endsWith("Reply to this email if you have a question.\n\nThanks,")).toBe(true);
   });
 
+  it("says the first payment is taken at set-up, with no date, when the card is charged at Checkout", () => {
+    const m = renderSubscriptionLink(sub, "https://x/s/T", { clientName: "Ace", contactName: "Pat", yourName: "Logan", planName: "Care", chargedNow: true });
+    expect(m.body).toContain("Amount: $297 a month. The first payment is taken when you set it up. The term is 24 months.");
+    expect(m.body).not.toContain("January");
+    expect(m.body).not.toContain("bank");
+  });
+
   it("puts what a person typed on one line and caps it", () => {
     const evil = "Ace\r\nBcc: attacker@evil.test\n" + "x".repeat(500);
-    const m = renderSubscriptionLink(sub, "https://x/s/T", { clientName: evil, contactName: `Pat\nBcc: a@b.c ${"y".repeat(500)}`, yourName: "Logan\nBcc: z@z.z", planName: `Care ${"z".repeat(500)}` });
+    const m = renderSubscriptionLink(sub, "https://x/s/T", { clientName: evil, contactName: `Pat\nBcc: a@b.c ${"y".repeat(500)}`, yourName: "Logan\nBcc: z@z.z", planName: `Care ${"z".repeat(500)}`, chargedNow: false });
     expect(m.subject).not.toMatch(/[\r\n]/);
     expect(m.subject.length).toBeLessThanOrEqual(200);
     const lines = m.body.split("\n\n");

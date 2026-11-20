@@ -2,7 +2,7 @@ import { z } from "zod";
 import { dollars } from "../../client/packagesView";
 import { mainMailboxProblem } from "../booking/mail";
 import { parseBillingConfig } from "../billing/config";
-import { addDays, calendarDateIn } from "../billing/dates";
+import { addDays, calendarDateIn, calendarDaysBetween } from "../billing/dates";
 import { invoiceRecipient, renderReminder, signOff, type ReminderMail } from "../billing/mail";
 import { checkConflict } from "../conflict";
 import { logActivityOnce } from "../db/activity";
@@ -27,15 +27,17 @@ export const reminderBase = (inv: Pick<InvoiceRow, "failedOn" | "dueOn">): strin
 
 /**
  * The fixed reminder for `step`, from the invoice and the settings as they are now. `total` is how many steps the ladder has (a step past the end counts as the last), `offset` is the step's own
- * distance from the due date, and the pause date is the base date plus `pauseAfterDays`. Null when the invoice has no date to count from.
+ * distance from the due date (raised to today's distance from it when that is later, so the tone is true on the day it is read), and the pause date is the base date plus `pauseAfterDays`. Null when the invoice has no date to count from.
  */
 export function reminderMail(settings: Settings, inv: InvoiceRow, step: number, link: string, contactName: string): (ReminderMail & { pauseOn: string }) | null {
   const base = reminderBase(inv);
   if (!base) return null;
   const cfg = parseBillingConfig(settings.billing_config);
   const pauseOn = addDays(base, cfg.pauseAfterDays);
-  const offset = cfg.reminderOffsets[step - 1];
   const today = calendarDateIn(getMailDeps().now(), zoneOf(settings)); // the mail clock, for the preview and the send alike, so both say the same
+  // The tone is how far past (or before) the due date TODAY is, never less than the step's own offset: a heads-up approved after the due date reads as due today or overdue, not "coming up".
+  const configured = cfg.reminderOffsets[step - 1];
+  const offset = configured === undefined ? undefined : Math.max(configured, calendarDaysBetween(base, today));
   const mail = renderReminder(step, Math.max(step, cfg.reminderOffsets.length), inv, link, { contactName, yourName: signOff(settings), pauseOn, today, ...(offset !== undefined ? { offset } : {}) });
   return { ...mail, pauseOn };
 }

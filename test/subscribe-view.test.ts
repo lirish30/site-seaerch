@@ -12,7 +12,8 @@ describe("subscribeCopy", () => {
     expect(c.lines).toContain("$297 a month");
     expect(c.lines).toContain("First charge on December 9, 2026");
     expect(c.lines).toContain("For 12 months");
-    expect(text(c)).toContain("card or bank account");
+    expect(text(c)).toContain("enter a card");
+    expect(text(c)).not.toContain("bank account");
     expect(c.button).toBe("Set up payment");
   });
 

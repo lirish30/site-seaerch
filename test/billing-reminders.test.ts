@@ -150,6 +150,23 @@ describe("the sweep", () => {
     expect((await remindersFor(s.invoice.id)).map((a) => JSON.parse(a.payload).step)).toEqual([2, 3]);
   });
 
+  it("drafting a later step rejects the same invoice's earlier pending reminder, and no other invoice's", async () => {
+    const s = await sent();
+    const other = await sent();
+    expect(await sweepReminders(e, at("2027-01-17"))).toBe(2); // step 1 of each
+    const [first] = await remindersFor(s.invoice.id);
+    expect(first.status).toBe("pending");
+    expect(await sweepReminders(e, at("2027-01-20"))).toBe(2); // step 2 of each: the step 1 of each is now stale
+    expect((await remindersFor(s.invoice.id)).map((a) => [JSON.parse(a.payload).step, a.status])).toEqual([[1, "rejected"], [2, "pending"]]);
+    expect((await remindersFor(other.invoice.id)).map((a) => [JSON.parse(a.payload).step, a.status])).toEqual([[1, "rejected"], [2, "pending"]]);
+    const note = await env.DB.prepare(`SELECT decision_note FROM approvals WHERE id = ?`).bind(first.id).first<{ decision_note: string }>();
+    expect(note!.decision_note).toBe("superseded by reminder 2");
+    // A step that was already approved stays approved: only a pending one is withdrawn.
+    expect(await approve(e, (await remindersFor(s.invoice.id))[1].id)).toEqual({ ok: true });
+    expect(await sweepReminders(e, at("2027-01-23"))).toBe(2); // step 3
+    expect((await remindersFor(s.invoice.id)).map((a) => [JSON.parse(a.payload).step, a.status])).toEqual([[1, "rejected"], [2, "approved"], [3, "pending"]]);
+  });
+
   it("a draft, paid, void, uncollectible or test invoice is never reminded", async () => {
     const draft = await seedDraft();
     const paid = await sent(); const voided = await sent(); const lost = await sent(); const test = await sent({ test: true });
@@ -329,6 +346,55 @@ describe("approving a reminder", () => {
   });
 });
 
+describe("the tone follows today, not only the step's own offset", () => {
+  const clock = (day: string) => setMailDeps({ smtp: async (_mb, _pw, msg) => { mail.sent.push(msg); }, now: () => at(day) });
+  async function heldUp() {
+    const s = await sent();
+    clock("2027-01-17");
+    expect(await sweepReminders(e, at("2027-01-17"))).toBe(1); // step 1, a heads-up, drafted three days out
+    const [a] = await remindersFor(s.invoice.id);
+    expect(JSON.parse(a.payload).step).toBe(1);
+    return { ...s, approvalId: a.id as string, preview: a.preview as string };
+  }
+
+  it("a heads-up approved before the due date is unchanged", async () => {
+    const s = await heldUp();
+    clock("2027-01-19");
+    expect(await approve(e, s.approvalId)).toEqual({ ok: true });
+    expect(mail.sent[0].text).toContain("coming up");
+    expect(mail.sent[0].subject).toMatch(/^Reminder: .* is due on January 20, 2027$/);
+  });
+
+  it("a heads-up approved after the due date never says it is coming up, and says it is overdue", async () => {
+    const s = await heldUp();
+    clock("2027-01-25");
+    expect(await approve(e, s.approvalId)).toEqual({ ok: true });
+    expect(mail.sent[0].text).not.toContain("coming up");
+    expect(mail.sent[0].text).toContain("was due on January 20, 2027 and is now overdue");
+    expect(mail.sent[0].subject.startsWith("Overdue: ")).toBe(true);
+    expect(mail.sent[0].text.toLowerCase()).not.toContain("pause"); // a step 1 of 4 never names the pause
+  });
+
+  it("a heads-up approved on the due date says it is due today", async () => {
+    const s = await heldUp();
+    clock("2027-01-20");
+    expect(await approve(e, s.approvalId)).toEqual({ ok: true });
+    expect(mail.sent[0].text).not.toContain("coming up");
+    expect(mail.sent[0].text).toContain("is due today");
+    expect(mail.sent[0].subject).toContain("is due today");
+  });
+
+  it("the draft preview, made after the due date, says the same as the mail", async () => {
+    await saveSettings(env.DB, { billing_config: JSON.stringify({ reminderOffsets: [-3] }) });
+    const s = await sent();
+    clock("2027-01-25");
+    expect(await sweepReminders(e, at("2027-01-25"))).toBe(1); // the one step, drafted late
+    const [a] = await remindersFor(s.invoice.id);
+    expect(a.preview).not.toContain("coming up");
+    expect(a.preview).toContain("is now overdue");
+  });
+});
+
 describe("the pause sentence", () => {
   const NOW = "Work on your project cannot continue until this invoice is paid.";
   /** The mail clock (what a reminder's preview and send read as today), with the same recording sender. */
@@ -434,6 +500,25 @@ describe("renderReminder", () => {
     expect(renderReminder(1, 4, inv(), LINK, c).body).toContain("coming up");
     expect(renderReminder(2, 4, inv(), LINK, c).body).toContain("due today");
     expect(renderReminder(3, 4, inv(), LINK, c).body).toContain("overdue");
+  });
+
+  it("a failed invoice with no failed_on never names its due date as the day the payment failed, and never prints null", () => {
+    const m = renderReminder(2, 4, inv({ status: "failed", failedOn: null, dueOn: DUE }), LINK, { ...c, offset: 0 });
+    expect(m.body).toContain("did not go through.");
+    expect(m.body).not.toContain("January 20");
+    expect(m.body + m.subject).not.toContain("null");
+    const withDay = renderReminder(2, 4, inv({ status: "failed", failedOn: "2027-01-10", dueOn: null }), LINK, { ...c, offset: 0 });
+    expect(withDay.body).toContain("did not go through on January 10, 2027.");
+  });
+
+  it("the draft preview of a failed invoice with no failed_on says no date and prints no null", async () => {
+    const s = await mirrored({ status: "failed", failedOn: null, dueOn: "2027-01-20" });
+    expect(s.invoice).toMatchObject({ status: "failed", failedOn: null });
+    expect(await sweepReminders(e, at("2027-01-20"))).toBe(1);
+    const [a] = await remindersFor(s.invoice.id);
+    expect(a.preview).not.toContain("null");
+    expect(a.preview).not.toContain("did not go through on");
+    expect(a.preview).toContain("payment failed");
   });
 
   it("a failed autopay invoice links the page to update the payment method", () => {

@@ -9,6 +9,7 @@ import { getSubscription, insertPlanned, listSubscriptions, markSubscription, ty
 import { clientBase } from "../documents/mail";
 import type { Env } from "../env";
 import { getMailDeps } from "../mail/deps";
+import { chargedAtCheckout } from "../stripe/client";
 import { onProjectDone } from "../projects/hooks";
 import { zoneOf } from "../sop/cadence";
 import "../approvals/subscriptionStart"; // the kind must be registered before an approval of it is made
@@ -52,7 +53,7 @@ async function previewOf(env: Env, sub: Subscription, firstChargeOn: string): Pr
   const clientName = who?.clientName || (await getBusiness(env.DB, sub.businessId))?.name || "the client";
   const plan = await subscriptionPlanName(env, sub);
   const link = `${clientBase(env) ?? "(set CLIENT_LINK_BASE first)"}/s/(the link is made when you approve)`;
-  const mail = renderSubscriptionLink({ ...sub, firstChargeOn }, link, { clientName, contactName: who?.contactName ?? "", yourName: signOff(settings), planName: plan });
+  const mail = renderSubscriptionLink({ ...sub, firstChargeOn }, link, { clientName, contactName: who?.contactName ?? "", yourName: signOff(settings), planName: plan, chargedNow: chargedAtCheckout(firstChargeOn, getMailDeps().now().getTime()) });
   const toLine = !who ? `To: nobody yet (${problem})`
     : sub.test ? `To: ${settings.your_name.trim() || "You"} <${settings.contact_email.trim()}> (a test: nothing goes to ${who.to})`
     : `To: ${who.contactName ? `${who.contactName} <${who.to}>` : who.to}`;

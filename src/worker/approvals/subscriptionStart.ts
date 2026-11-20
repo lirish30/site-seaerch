@@ -13,8 +13,9 @@ import { clientBase } from "../documents/mail";
 import { CLIENT_BASE_PROBLEM } from "../documents/service";
 import { newClientToken } from "../documents/token";
 import type { Env } from "../env";
+import { getMailDeps } from "../mail/deps";
 import { sendEmail } from "../mail/send";
-import { stripeMode } from "../stripe/client";
+import { chargedAtCheckout, stripeMode } from "../stripe/client";
 import { registerHandler } from "./registry";
 
 const Payload = z.object({ subscriptionId: z.string().min(1) });
@@ -67,7 +68,7 @@ registerHandler({
     sub = (await getSubscription(db, sub.id)) ?? sub;
     if (sub.status !== "link_sent" || !sub.token) throw new Error("This subscription changed while its link was being made. Look at it again, then approve this again.");
 
-    const mail = renderSubscriptionLink(sub, `${base}/s/${sub.token}`, { clientName: who.clientName, contactName: who.contactName, yourName: signOff(settings), planName: plan });
+    const mail = renderSubscriptionLink(sub, `${base}/s/${sub.token}`, { clientName: who.clientName, contactName: who.contactName, yourName: signOff(settings), planName: plan, chargedNow: chargedAtCheckout(sub.firstChargeOn, getMailDeps().now().getTime()) });
     const to = sub.test ? owner : who.to;
     await sendEmail(env, {
       mailbox: "main", to, subject: `${sub.test ? "[Test] " : ""}${mail.subject}`, body: mail.body, includeFooter: false, ...(sub.test ? {} : { businessId: sub.businessId }),

@@ -273,7 +273,10 @@ describe("subscriptions", () => {
     expect(form.get("subscription_data[metadata][subscription_id]")).toBe("sub_row_1");
     expect(form.get("subscription_data[metadata][business_id]")).toBe("biz_1");
     expect(form.get("payment_method_types[0]")).toBe("card");
-    expect(form.get("payment_method_types[1]")).toBe("us_bank_account");
+    // Card only: an ACH debit settles days later and Checkout would leave the row waiting, so a subscription is never offered a bank account.
+    expect(form.has("payment_method_types[1]")).toBe(false);
+    expect(form.getAll("payment_method_types[0]")).toEqual(["card"]);
+    expect([...form.keys()].some((k) => k.startsWith("payment_method_types") && form.get(k) === "us_bank_account")).toBe(false);
     expect(form.get("line_items[0][quantity]")).toBe("1");
     expect(form.get("line_items[0][price_data][currency]")).toBe("usd");
     expect(form.get("line_items[0][price_data][product]")).toBe("prod_1");

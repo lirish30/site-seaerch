@@ -34,7 +34,7 @@ export function subscribeCopy(p: PublicSubscription): SubscribeCopy {
   const later = !p.chargedNow && p.firstChargeOn !== null;
   return {
     heading: "Set up your monthly payment",
-    lines: [...plan, later && p.firstChargeOn ? `First charge on ${chargeDate(p.firstChargeOn)}` : "Charged today", termWords(p.termMonths), "You'll choose a card or bank account on the next page."],
+    lines: [...plan, later && p.firstChargeOn ? `First charge on ${chargeDate(p.firstChargeOn)}` : "Charged today", termWords(p.termMonths), "You'll enter a card on the next page."],
     button: "Set up payment",
     note: "The next page is our payment processor's secure page. We never see your card or bank details.",
   };

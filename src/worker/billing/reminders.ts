@@ -1,5 +1,6 @@
 import { dollars } from "../../client/packagesView";
 import { REMINDER_KIND, reminderBase, reminderMail } from "../approvals/invoiceReminder"; // importing it registers the kind, which must exist before an approval of it is made
+import { reject } from "../approvals/decide";
 import { createApproval } from "../db/approvals";
 import { getBusiness } from "../db/businesses";
 import { listInvoices, type InvoiceRow } from "../db/invoices";
@@ -42,11 +43,26 @@ async function previewOf(env: Env, inv: InvoiceRow, step: number, total: number)
     : `To: ${who.contactName ? `${who.contactName} <${who.to}>` : who.to}`;
   const preview = [
     toLine, `Subject: ${inv.test ? "[Test] " : ""}${mail.subject}`, "", mail.body, "",
-    `Invoice: ${inv.description} (${dollars(inv.amountCents)}), ${inv.status === "failed" ? `payment failed ${inv.failedOn}` : `due ${inv.dueOn}`}`,
+    `Invoice: ${inv.description} (${dollars(inv.amountCents)}), ${inv.status === "failed" ? `payment failed${inv.failedOn ? ` ${inv.failedOn}` : ""}${!inv.failedOn && inv.dueOn ? ` (due ${inv.dueOn})` : ""}` : `due ${inv.dueOn}`}`,
     `Reminder ${step} of ${Math.max(step, total)}.`,
     "", "Nothing is mailed until you approve. If the invoice is paid first, approving sends nothing.",
   ].join("\n");
   return { title: `Send reminder ${step} for ${inv.description} to ${clientName}`.replace(/\s+/g, " ").slice(0, 200), preview };
+}
+
+/**
+ * A reminder step drafted later makes the earlier ones of the same invoice stale (a heads-up that would go out after the due date): each earlier step still waiting is rejected, with a note.
+ * Only a pending approval is touched (an approved one has already gone), and only this invoice's. Never throws: the new step is already drafted.
+ */
+async function supersedeEarlier(db: D1Database, invoiceId: string, step: number): Promise<void> {
+  try {
+    const waiting = (await db.prepare(
+      `SELECT id FROM approvals WHERE kind = ? AND status = 'pending' AND json_extract(payload, '$.invoiceId') = ? AND CAST(json_extract(payload, '$.step') AS INTEGER) < ?`,
+    ).bind(REMINDER_KIND, invoiceId, step).all<{ id: string }>()).results;
+    for (const w of waiting) await reject(db, w.id, `superseded by reminder ${step}`);
+  } catch (e) {
+    console.error("reminders: could not withdraw an earlier reminder", invoiceId, e instanceof Error ? e.message : "unknown error");
+  }
 }
 
 /**
@@ -85,6 +101,7 @@ export async function sweepReminders(env: Env, now: Date): Promise<number> {
         });
         await db.prepare(`UPDATE invoice_nudges SET approval_id = ? WHERE invoice_id = ? AND step = ?`).bind(a.id, inv.id, key).run();
         drafted++;
+        await supersedeEarlier(db, inv.id, step);
       } catch (e) {
         await db.prepare(`DELETE FROM invoice_nudges WHERE invoice_id = ? AND step = ? AND approval_id IS NULL`).bind(inv.id, key).run();
         throw e;

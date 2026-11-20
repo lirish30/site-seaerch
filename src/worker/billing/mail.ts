@@ -66,10 +66,11 @@ export function renderReminder(
   const first = oneLine(c.contactName).split(" ")[0].slice(0, 60);
   const what = oneLine(inv.description).slice(0, 200);
   const amount = dollars(inv.amountCents);
-  const date = inv.failedOn ?? inv.dueOn;
+  const failed = inv.status === "failed";
+  // The day belongs to the situation: a failed payment names the day it failed (only an autopay failure has one), anything else its due date. A failed invoice with no such day names none.
+  const date = failed ? inv.failedOn : inv.dueOn;
   const day = date ? longDate(date) : "";
   const tone: "ahead" | "today" | "late" = c.offset !== undefined ? (c.offset < 0 ? "ahead" : c.offset === 0 ? "today" : "late") : step <= 1 ? "ahead" : step === 2 ? "today" : "late";
-  const failed = inv.status === "failed";
   // Only an overdue last step says anything about the pause. Once `pauseOn` is today or past, a date in the future tense would be wrong (and the hold may already be placed), so it says what is true either way.
   const last = step >= total && tone === "late";
   const pauseLine = c.today !== undefined && c.pauseOn <= c.today
@@ -139,26 +140,27 @@ export interface SubscriptionLinkMail { subject: string; body: string }
 
 /**
  * The mail that carries a subscription's link (the client's own page, where they start the monthly payment through Stripe's Checkout): the same words for every client, a fixed template,
- * nothing written by a model. It says the plan, the monthly price, the date of the first payment and the term when there is one. What a person typed (the client's and the contact's names,
+ * nothing written by a model. It says the plan, the monthly price, when the first payment is taken (`c.chargedNow`: when they set it up, no date; else the date) and the term when there is one. What a person typed (the client's and the contact's names,
  * the plan's name) is shown as typed, on one line and capped; the sender escapes it.
  */
 export function renderSubscriptionLink(
   sub: Pick<Subscription, "monthlyCents" | "firstChargeOn" | "termMonths">, link: string,
-  c: { clientName: string; contactName: string; yourName: string; planName: string },
+  c: { clientName: string; contactName: string; yourName: string; planName: string; chargedNow: boolean },
 ): SubscriptionLinkMail {
   const first = oneLine(c.contactName).split(" ")[0].slice(0, 60);
   const client = oneLine(c.clientName).slice(0, 120);
   const plan = oneLine(c.planName).slice(0, 120);
   const amount = [
     `Amount: ${dollars(sub.monthlyCents)} a month.`,
-    sub.firstChargeOn ? `The first payment is on ${longDate(sub.firstChargeOn)}.` : "",
+    // A card taken at Checkout has no date to promise; otherwise the first payment is on the date.
+    c.chargedNow ? "The first payment is taken when you set it up." : sub.firstChargeOn ? `The first payment is on ${longDate(sub.firstChargeOn)}.` : "",
     sub.termMonths ? `The term is ${sub.termMonths} months.` : "",
   ].filter(Boolean).join(" ");
   const body = [
     first ? `Hi ${first},` : "Hi,",
     `Here is the link to set up the monthly payment for ${client}: ${plan}.`,
     amount,
-    "You can set it up online, by card or bank transfer, here:",
+    "You can set it up online, by card, here:",
     link,
     "Reply to this email if you have a question.",
     ["Thanks,", oneLine(c.yourName)].filter(Boolean).join("\n"),
