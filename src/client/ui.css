@@ -512,7 +512,10 @@ a.chip-link:hover { background:var(--bg-hover); color:var(--text); } .chip-link 
   /* Wraps onto a second row rather than pushing the Account button off a narrow screen (a 375px phone fits about eight of the ten rail items on one row). */
   .rail { width:auto; flex-direction:row; flex-wrap:wrap; align-items:center; padding:8px 4px; gap:6px; }
   .rail-logo { margin:0 8px 0 0; } .rail-spacer { flex:1; }
-  .popover.rail-left { left:auto; right:0; top:44px; bottom:auto; }
+  /* The rail may be one row or two, so a popover anchors to the rail itself (not to the button that opened it): it spans the rail's width right under it, which keeps it inside the screen and leaves every rail button visible to close it. The inline position on .rail-pop has to be overridden for that. */
+  .rail { position:relative; }
+  .rail-pop { position:static !important; }
+  .popover.rail-left { left:0; right:0; top:100%; bottom:auto; margin-top:4px; min-width:0; max-width:none; }
   .sidebar { width:auto; flex-direction:row; align-items:center; overflow-x:auto; padding:0 0 8px; gap:4px; }
   .sidebar .side-title, .sidebar .side-head, .sidebar .side-spacer, .sidebar .side-gap { display:none; }
   .side-item { width:auto; flex:none; }
