@@ -86,6 +86,55 @@
 .wk-cell:hover { background:var(--bg-hover); }
 .wk-add-time { display:flex; flex-direction:column; gap:8px; }
 
+/* Settings > SOPs (the template list and the editor) */
+.sp { display:flex; flex-direction:column; gap:16px; }
+.sp .st-card > header { flex-wrap:wrap; gap:10px; }
+.sp-templates { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
+.sp-trow { display:flex; flex-wrap:wrap; align-items:center; gap:10px; min-height:44px; padding:10px 12px; border:1px solid var(--border); border-radius:10px; background:var(--bg-surface); }
+.sp-trow-main { flex:1 1 220px; min-width:0; overflow-wrap:anywhere; }
+.sp-trow-main p { margin:2px 0 0; }
+.sp-switch, .sp-check { display:inline-flex; align-items:center; gap:10px; min-height:44px; font-size:14px; font-weight:400; cursor:pointer; }
+.sp-switch { font-weight:500; }
+.sp .st-card > header > div { flex:1 1 280px; min-width:0; }
+.sp-body { display:flex; flex-direction:column; gap:14px; }
+.sp-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:10px; }
+.sp-applies-list { display:flex; flex-wrap:wrap; column-gap:18px; }
+.sp-phase { display:flex; flex-direction:column; gap:8px; padding:12px; border:1px solid var(--border); border-radius:12px; background:var(--bg-muted); }
+.sp-phase-head { display:flex; flex-wrap:wrap; align-items:flex-end; gap:8px; }
+.sp-phase-head .deal-field { flex:1 1 220px; }
+.sp-step { border:1px solid var(--border); border-radius:10px; background:var(--bg-surface); }
+.sp-step > summary, .sp-step > details > summary { display:flex; flex-wrap:wrap; align-items:center; gap:8px 10px; min-height:44px; padding:6px 12px; cursor:pointer; list-style:none; }
+.sp-step > summary::-webkit-details-marker, .sp-step > details > summary::-webkit-details-marker { display:none; }
+.sp-step-title { flex:1 1 180px; min-width:0; font-size:14px; font-weight:500; overflow-wrap:anywhere; }
+.sp-fields { display:flex; flex-direction:column; gap:10px; padding:4px 12px 12px; border-top:1px solid var(--border); padding-top:12px; }
+.sp-requires > summary { display:flex; align-items:center; min-height:44px; cursor:pointer; font-weight:500; font-size:14px; }
+.sp-requires > summary::after, .sp-step > summary::after, .sp-step > details > summary::after { content:"\25BE"; margin-left:auto; padding-left:8px; color:var(--text-3); }
+.sp-requires[open] > summary::after, .sp-step[open] > summary::after, .sp-step > details[open] > summary::after { content:"\25B4"; }
+.sp-requires ul { list-style:none; margin:0; padding:0; max-height:260px; overflow:auto; }
+.sp-save { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding-top:12px; border-top:1px solid var(--border); }
+.sp-problems { flex:1 1 100%; padding:10px 12px; border-radius:8px; background:var(--warning-soft); color:var(--text); font-size:14px; line-height:20px; }
+.sp-confirm { display:flex; flex-direction:column; gap:8px; padding:12px; border:1px solid var(--border-strong); border-radius:10px; background:var(--bg-muted); }
+.sp-confirm p { margin:0; }
+.sp-problems p { margin:0 0 4px; } .sp-problems ul { margin:0; padding-left:20px; }
+
+/* Change orders */
+.co { display:flex; flex-direction:column; gap:12px; }
+.co-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px; }
+.co-item { display:flex; flex-direction:column; gap:8px; padding:12px; border:1px solid var(--border); border-radius:10px; background:var(--bg-surface); min-width:0; }
+.co-head { display:flex; flex-wrap:wrap; align-items:center; gap:8px 10px; }
+.co-title { flex:1 1 200px; min-width:0; overflow-wrap:anywhere; }
+.co-facts { margin:0; display:grid; grid-template-columns:auto 1fr; gap:2px 12px; font-size:14px; }
+.co-facts dt { color:var(--text-3); } .co-facts dd { margin:0; overflow-wrap:anywhere; }
+.co-ul { margin:0; padding-left:20px; font-size:14px; line-height:21px; overflow-wrap:anywhere; }
+.co-link { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.co-link input { flex:1 1 220px; min-width:0; }
+.co-form { display:flex; flex-direction:column; gap:12px; padding:12px; border:1px solid var(--border); border-radius:10px; background:var(--bg-muted); }
+.co-form .deal-field small { color:var(--text-3); font-weight:400; }
+.co-preview { margin:0; font-weight:500; }
+.co-signed { padding:8px 10px; border-radius:8px; background:var(--positive-soft); font-size:14px; line-height:20px; }
+.co-signed p { margin:0; }
+.co-record { font-family:var(--font-mono); font-size:12px; }
+
 @media (max-width: 640px) {
   .wk-body { padding:16px; }
   .wk-cards { grid-template-columns:minmax(0, 1fr); }

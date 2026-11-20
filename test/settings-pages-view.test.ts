@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  billingLine, billingProblem, bookingSummary, documentsProblem, documentsSummary, hasBuiltSignature, isHttps, prettyLink, profileMissing, readDocumentsDraft, safeLink, samplesNeeded, samplesNudge, setupItems, setupSentence, suppressionWord, voiceSummary,
+  billingLine, billingProblem, bookingSummary, documentsProblem, documentsSummary, hasBuiltSignature, hoursToMinutes, isHttps, prettyLink, profileMissing, readDocumentsDraft, readWorkDraft, safeLink, samplesNeeded, samplesNudge, setupItems, setupSentence, suppressionWord, voiceSummary, workSummary,
 } from "../src/client/settingsPagesView";
 import type { Service, Suppression } from "../src/client/types";
 
@@ -93,5 +93,23 @@ describe("billing line", () => {
     expect(billingProblem({ stripeMode: "test", webhookConfigured: false, clientBase: "https://c.example" })).toMatch(/STRIPE_WEBHOOK_SECRET/);
     expect(billingProblem({ stripeMode: "test", webhookConfigured: true, clientBase: null })).toMatch(/CLIENT_LINK_BASE/);
     expect(billingProblem({ stripeMode: "live", webhookConfigured: true, clientBase: "https://c.example" })).toBeNull();
+  });
+});
+
+describe("work settings", () => {
+  it("readWorkDraft fills missing keys and survives junk", () => {
+    expect(readWorkDraft("")).toEqual({ costRateCentsPerHour: 0, weekStartsOn: 1, timerCapMinutes: 720 });
+    expect(readWorkDraft(JSON.stringify({ costRateCentsPerHour: 4500 })).weekStartsOn).toBe(1);
+    expect(readWorkDraft("[]").timerCapMinutes).toBe(720);
+    expect(readWorkDraft("{nope").costRateCentsPerHour).toBe(0);
+  });
+  it("workSummary says when the cost rate is missing", () => {
+    expect(workSummary("{}")).toEqual({ tone: "warning", text: "Cost rate not set" });
+    expect(workSummary(JSON.stringify({ costRateCentsPerHour: 4500 }))).toEqual({ tone: "positive", text: "Cost rate $45 an hour" });
+  });
+  it("hoursToMinutes reads whole and part hours", () => {
+    expect(hoursToMinutes("12")).toBe(720);
+    expect(hoursToMinutes(" 1.5 ")).toBe(90);
+    expect(["", "0", "-1", "abc", "1,5", "1h"].map(hoursToMinutes)).toEqual([null, null, null, null, null, null]);
   });
 });

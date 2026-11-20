@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
+import ChangeOrdersPanel from "../components/ChangeOrdersPanel";
+import ProjectSopTab from "../components/ProjectSopTab";
 import TaskRow from "../components/TaskRow";
-import { dollars } from "../packagesView";
-import { changeOrderChip, kindLabel, milestoneChips, ownerBadge, phaseGroups, profitLines, projectProgress, projectState, timeEstimate, timeRows, type Tone } from "../projectView";
+import { kindLabel, milestoneChips, ownerBadge, phaseGroups, profitLines, projectProgress, projectState, timeEstimate, timeRows, type Tone } from "../projectView";
 import { formatMinutes, parseDuration, varianceLabel } from "../timeView";
 import { announceProjectsChanged, TIMER_CHANGED, workError, type ProjectDetail, type RunningEntry } from "../workData";
-import type { OwnerChangeOrder } from "../../worker/changeorders/service";
 import type { OwnerTag } from "../../worker/sop/model";
 
 type Tab = "tasks" | "sop" | "time" | "change-orders" | "profit";
@@ -15,26 +15,7 @@ const POLL_MS = 20_000;
 const TONE: Record<Tone, string> = { neutral: "outline", good: "positive", warn: "warning", muted: "" };
 const isTab = (s: string | null): s is Tab => TABS.some(([k]) => k === s);
 
-/** The change orders of a project. A placeholder: it lists each one's title, state and price. Task 11 replaces this with the working panel (draft, send, void, mark paid). */
-export function ChangeOrdersTab({ changeOrders }: { projectId: string; changeOrders: OwnerChangeOrder[]; onChanged: () => Promise<void> }) {
-  if (changeOrders.length === 0) return <p className="muted">No change orders on this project.</p>;
-  return (
-    <ul className="wk-list" aria-label="Change orders">
-      {changeOrders.map((co) => {
-        const chip = changeOrderChip(co);
-        return (
-          <li key={co.id} className="wk-row">
-            <span className="wk-row-main"><b>{co.content.title}</b> <span className="muted small">{co.content.reference}</span></span>
-            <span className={`badge2 ${TONE[chip.tone]}`}><i className="dot" />{chip.label}</span>
-            <span>{dollars(co.content.priceCents)}</span>
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
-
-/** A project: its state and milestones, then Tasks, the SOP it came from (read only here), Time, Change orders and Profit. */
+/** A project: its state and milestones, then Tasks, the SOP it came from (editable here), Time, Change orders and Profit. */
 export default function ProjectPage() {
   const { id = "" } = useParams();
   const [params, setParams] = useSearchParams();
@@ -131,9 +112,9 @@ export default function ProjectPage() {
         </div>
 
         {tab === "tasks" && <TasksTab data={data} runningTaskId={running?.taskId ?? null} openTask={openTask} onChange={load} />}
-        {tab === "sop" && <SopTab data={data} />}
+        {tab === "sop" && <ProjectSopTab data={data} onChanged={load} />}
         {tab === "time" && <TimeTab data={data} />}
-        {tab === "change-orders" && <ChangeOrdersTab projectId={project.id} changeOrders={data.changeOrders} onChanged={load} />}
+        {tab === "change-orders" && <ChangeOrdersPanel projectId={project.id} changeOrders={data.changeOrders} projectStatus={project.status} onChanged={load} />}
         {tab === "profit" && (
           <section className="card wk-profit" aria-label="Profit">
             <h3>Profit</h3>
@@ -186,33 +167,6 @@ function TasksTab({ data, runningTaskId, openTask, onChange }: { data: ProjectDe
         </details>
       )}
     </>
-  );
-}
-
-function SopTab({ data }: { data: ProjectDetail }) {
-  const { project, template } = data;
-  const steps = phaseGroups(data.tasks.filter((t) => t.isStep));
-  return (
-    <section aria-label="SOP">
-      <p>{template
-        ? <>Started from <b>{template.name}</b>, version {project.templateVersion ?? "?"}.{project.templateVersion !== null && template.version > project.templateVersion ? ` The template is now on version ${template.version}; this project keeps its own copy.` : ""}</>
-        : "This project was made by hand. It has no template."}</p>
-      <p className="muted small">This is this client’s own copy of the plan: the tasks. Editing a step or sending changes back to the template comes later.</p>
-      {steps.map((g) => (
-        <div key={g.phaseKey} className="wk-phase">
-          <h3>{g.title}<span className="wk-count">{g.total} {g.total === 1 ? "step" : "steps"}</span></h3>
-          <ul className="wk-list">
-            {g.tasks.map((t) => (
-              <li key={t.id} className="wk-row">
-                <span className="wk-row-main">{t.stepKey && <b className="wk-key">{t.stepKey}</b>} {t.title}</span>
-                <span className="badge2">{ownerBadge(t.owner)}</span>
-                <span className="muted small">{t.estMinutes > 0 ? formatMinutes(t.estMinutes) : "no estimate"}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))}
-    </section>
   );
 }
 

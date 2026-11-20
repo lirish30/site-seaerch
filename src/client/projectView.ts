@@ -156,3 +156,13 @@ export const timeRows = (tasks: Task[], minutes: Record<string, number>): Task[]
 export function timeEstimate(tasks: Task[], minutes: Record<string, number>): number {
   return tasks.filter((t) => t.status !== "skipped" && (t.startedAt !== null || t.status === "done" || (minutes[t.id] ?? 0) > 0)).reduce((n, t) => n + t.estMinutes, 0);
 }
+
+/**
+ * Which start buttons a deal's page offers. "Start projects" is the retry for a won deal that has none (the paid deposit normally starts them). "Start a test project" is
+ * for a deal whose latest signed proposal (the list is newest first) is a test copy. A deal that already has a project is offered neither.
+ */
+export function startOffers(deal: { stage: string }, docs: { status: string; test: boolean }[], projects: unknown[]): { canStart: boolean; canStartTest: boolean } {
+  if (projects.length > 0) return { canStart: false, canStartTest: false };
+  const latestSigned = docs.find((d) => d.status === "signed");
+  return { canStart: deal.stage === "won", canStartTest: !!latestSigned && latestSigned.test };
+}

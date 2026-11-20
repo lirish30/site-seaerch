@@ -3,6 +3,7 @@ import type { WorkSample } from "./emailView";
 import { readSignature } from "./emailView";
 import { readConfig } from "./bookingView";
 import { DEFAULT_DOCUMENTS_CONFIG, legalGate, type DocumentsConfig } from "../worker/documents/config";
+import { DEFAULT_WORK_CONFIG, type WorkConfig } from "../worker/time/config";
 
 /** The same rule the worker applies to links in emails: http(s) only, and a bare "example.com" gets https. */
 export function safeLink(raw: string): string {
@@ -104,6 +105,25 @@ export function documentsProblem(c: DocumentsConfig): string | null {
 export function documentsSummary(raw: string): { tone: "warning" | "positive"; text: string } {
   const c = readDocumentsDraft(raw);
   return legalGate(c) ? { tone: "warning", text: "Not lawyer-reviewed" } : { tone: "positive", text: `Reviewed ${c.legalReviewedAt!.slice(0, 10)}` };
+}
+
+/** The work settings as the page edits them: missing keys take their default, and a half-finished edit is kept as typed (the worker is what refuses it). */
+export function readWorkDraft(raw: string): WorkConfig {
+  try { const v = JSON.parse(raw || "{}"); return v && typeof v === "object" && !Array.isArray(v) ? { ...DEFAULT_WORK_CONFIG, ...v } : { ...DEFAULT_WORK_CONFIG }; } catch { return { ...DEFAULT_WORK_CONFIG }; }
+}
+
+/** The overview chip for the Work page: a project's profit is only a margin once a cost rate is set. */
+export function workSummary(raw: string): { tone: "warning" | "positive"; text: string } {
+  const c = readWorkDraft(raw);
+  return c.costRateCentsPerHour > 0 ? { tone: "positive", text: `Cost rate $${c.costRateCentsPerHour / 100} an hour` } : { tone: "warning", text: "Cost rate not set" };
+}
+
+/** A number of hours typed in a box ("12", "1.5") as whole minutes; null for blank, zero, negative or not a number. */
+export function hoursToMinutes(raw: string): number | null {
+  const v = raw.trim();
+  if (!/^\d+(\.\d+)?$/.test(v)) return null;
+  const minutes = Math.round(Number(v) * 60);
+  return minutes > 0 ? minutes : null;
 }
 
 /** What GET /api/documents/config says about billing. Booleans and the mode only: the worker never sends a secret. */

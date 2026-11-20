@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  blockedText, bucketCounts, changeOrderChip, dealProjects, listProgress, timeEstimate, timeRows, kindLabel, milestoneChips, ownerBadge, phaseGroups, profitLines, projectBucket, projectProgress, projectState, taskState,
+  blockedText, bucketCounts, changeOrderChip, dealProjects, startOffers, listProgress, timeEstimate, timeRows, kindLabel, milestoneChips, ownerBadge, phaseGroups, profitLines, projectBucket, projectProgress, projectState, taskState,
 } from "../src/client/projectView";
 import type { Task } from "../src/worker/db/tasks";
 
@@ -173,5 +173,24 @@ describe("time tab helpers", () => {
     expect(timeEstimate([a, b, c, d], minutes)).toBe(90);
     expect(timeEstimate([c, d], {})).toBe(0);
     expect(timeEstimate([c], { [c.id]: 10 })).toBe(120);
+  });
+});
+
+describe("startOffers", () => {
+  const doc = (status: string, test: boolean) => ({ status, test });
+  it("offers Start projects for a won deal with none", () => {
+    expect(startOffers({ stage: "won" }, [doc("signed", false)], [])).toEqual({ canStart: true, canStartTest: false });
+  });
+  it("offers nothing once the deal has a project, and Start only for a won deal", () => {
+    expect(startOffers({ stage: "won" }, [doc("signed", false)], [{}])).toEqual({ canStart: false, canStartTest: false });
+    expect(startOffers({ stage: "proposal" }, [doc("sent", false)], [])).toEqual({ canStart: false, canStartTest: false });
+  });
+  it("offers a test project when the latest signed proposal is a test copy (newest first)", () => {
+    expect(startOffers({ stage: "proposal" }, [doc("void", false), doc("signed", true), doc("signed", false)], [])).toEqual({ canStart: false, canStartTest: true });
+  });
+  it("does not offer a test project when the latest signed one is real, or none is signed", () => {
+    expect(startOffers({ stage: "proposal" }, [doc("signed", false), doc("signed", true)], []).canStartTest).toBe(false);
+    expect(startOffers({ stage: "proposal" }, [doc("sent", true)], []).canStartTest).toBe(false);
+    expect(startOffers({ stage: "proposal" }, [], []).canStartTest).toBe(false);
   });
 });
