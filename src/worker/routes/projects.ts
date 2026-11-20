@@ -6,7 +6,7 @@ import { listChangeOrders } from "../db/changeOrders";
 import { getBusiness } from "../db/businesses";
 import { getDeal } from "../db/deals";
 import { getDocument } from "../db/documents";
-import { paidTotalForDeal } from "../db/invoices";
+import { paidTotalForDocument } from "../db/invoices";
 import { createProject, getProject, listMilestones, listProjects, PROJECT_STATUSES, projectIsLive, setProjectStatus, type Project, type ProjectStatus } from "../db/projects";
 import { getSettings } from "../db/settings";
 import { getTemplate, saveTemplate } from "../db/sops";
@@ -59,7 +59,7 @@ projectRoutes.get("/projects", async (c) => {
 });
 
 /**
- * What the project was sold for and what has been paid on it. The sale is the proposal's one-time money (its payment schedule's milestones); the money paid is the deal's paid invoices.
+ * What the project was sold for and what has been paid on it. The sale is the proposal's one-time money (its payment schedule's milestones); the money paid is what the proposal's own deposit and milestone invoices have paid (a change order's money is counted through the order, never here).
  * A Care project that follows a build on the same proposal carries neither (the build has the one-time money), a Care project on its own does, and a project made by hand has none.
  * A signed change order adds its price to what was sold, and to what was paid once it is paid.
  */
@@ -69,7 +69,7 @@ async function soldAndPaid(env: Env, p: Project, orders: { status: string; paidA
   const followsBuild = p.kind === "care_onboarding" && !!doc && (await listProjects(env.DB, { businessId: p.businessId })).some((x) => x.documentId === doc.id && x.kind !== "care_onboarding");
   if (doc && !followsBuild) {
     soldCents = doc.content.schedule.milestones.reduce((sum, m) => sum + m.amountCents, 0);
-    paidCents = p.dealId ? await paidTotalForDeal(env.DB, p.dealId) : 0;
+    paidCents = await paidTotalForDocument(env.DB, doc.id, ["deposit", "milestone"]);
   }
   for (const o of orders) {
     if (o.status !== "signed") continue;

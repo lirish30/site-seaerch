@@ -1,11 +1,12 @@
 import { env } from "cloudflare:test";
 import { expect } from "vitest";
 import { createDraft, setPaid, signDocument } from "../../src/worker/db/documents";
-import { insertDraftInvoice, type InvoiceKind, type InvoiceLine } from "../../src/worker/db/invoices";
+import { attachStripeInvoice, getInvoice, insertDraftInvoice, type InvoiceKind, type InvoiceLine, type InvoiceRow } from "../../src/worker/db/invoices";
 import { listCurrentPackages, snapshotOf } from "../../src/worker/db/packages";
 import { createProject } from "../../src/worker/db/projects";
 import { paymentSchedule } from "../../src/worker/documents/schedule";
 import { PROPOSAL_OPTIONS, clientSig, proposal, seedDeal, sendDraft } from "./documents";
+import { invoiceEvent } from "./stripe";
 
 /** A deal with a draft proposal: what a draft invoice hangs off. */
 export async function seedDoc() {
@@ -50,4 +51,18 @@ export async function seedSignedProject(o: { option?: "b" | "c"; test?: boolean;
     templateKey: "BUILD", templateVersion: 1, careDeferred: false, startedAt: SIGNED_AT,
   });
   return { ...s, documentId: doc.id, project, schedule: content.schedule };
+}
+
+// ---- Task 4: invoices that exist at Stripe, and the events about them ----
+
+/** A draft made open the way an approved send does: Stripe ids, a link and a due date attached. */
+export async function openInvoice(draft: InvoiceRow): Promise<InvoiceRow> {
+  const stripeInvoiceId = `in_${crypto.randomUUID().slice(0, 8)}`;
+  expect(await attachStripeInvoice(env.DB, draft.id, { stripeCustomerId: "cus_1", stripeInvoiceId, hostedUrl: "https://invoice.stripe.com/i/x", dueOn: "2027-01-20", now: "2026-12-20T10:00:00.000Z" })).toBe(true);
+  return (await getInvoice(env.DB, draft.id))!;
+}
+
+/** An invoice.* event for a billing invoice: Stripe echoes back the metadata we set (ref, kind, document). */
+export function refEvent(type: string, inv: InvoiceRow, object: Record<string, unknown> = {}) {
+  return invoiceEvent(type, inv, { object: { metadata: { ref: inv.ref, kind: inv.kind, document_id: inv.documentId ?? undefined }, ...object } });
 }

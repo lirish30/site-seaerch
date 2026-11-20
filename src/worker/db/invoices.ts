@@ -139,6 +139,27 @@ export async function insertInvoice(db: D1Database, o: {
   return (await getInvoice(db, id)) as SentInvoice;
 }
 
+/**
+ * An invoice Stripe made on its own (a subscription's monthly invoice), mirrored here so it is counted. It is open at insert, with its Stripe ids; the ref is its own (`stripe:<invoice id>`).
+ * A second call for the same ref or Stripe invoice returns the first row with `created: false` and changes nothing.
+ */
+export async function insertMirroredInvoice(db: D1Database, o: {
+  businessId: string; dealId: string | null; documentId: string | null; projectId: string | null; subscriptionId: string; kind: "subscription"; ref: string; test: boolean;
+  description: string; lines: InvoiceLine[]; stripeCustomerId: string | null; stripeInvoiceId: string; hostedUrl: string | null; dueOn: string | null; failedOn: string | null; now: string;
+}): Promise<{ invoice: InvoiceRow; created: boolean }> {
+  const amountCents = o.lines.reduce((sum, l) => sum + l.amountCents, 0);
+  if (!wholeCents(amountCents) || !o.lines.every((l) => wholeCents(l.amountCents))) throw new RangeError("an invoice is for a whole, positive number of cents");
+  const id = crypto.randomUUID();
+  const res = await db.prepare(
+    `INSERT INTO invoices (id, business_id, deal_id, document_id, project_id, subscription_id, kind, ref, test, description, lines, stripe_customer_id, stripe_invoice_id, amount_cents, status, hosted_url, due_on, sent_at, failed_on, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+  ).bind(id, o.businessId, o.dealId, o.documentId, o.projectId, o.subscriptionId, o.kind, o.ref, o.test ? 1 : 0, o.description, JSON.stringify(o.lines), o.stripeCustomerId, o.stripeInvoiceId, amountCents, o.hostedUrl, o.dueOn, o.now, o.failedOn, o.now).run();
+  if ((res.meta.changes ?? 0) === 1) return { invoice: (await getInvoice(db, id))!, created: true };
+  const existing = (await getInvoiceByStripeId(db, o.stripeInvoiceId)) ?? (await getInvoiceByRef(db, o.ref));
+  if (!existing) throw new Error(`invoice ${o.ref} was neither created nor found`);
+  return { invoice: existing, created: false };
+}
+
 /** A draft that has been approved and made at Stripe becomes open, with its Stripe ids, link and due date. Guarded in the statement: true only when it was still a draft. */
 export async function attachStripeInvoice(db: D1Database, id: string, o: { stripeCustomerId: string; stripeInvoiceId: string; hostedUrl: string; dueOn: string | null; now: string }): Promise<boolean> {
   const res = await db.prepare(

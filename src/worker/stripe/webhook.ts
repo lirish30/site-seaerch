@@ -1,5 +1,11 @@
+import { mirrorSubscriptionInvoice, subscriptionCheckoutCompleted, subscriptionUpdated } from "../billing/mirror";
+import { calendarDateIn } from "../billing/dates";
+import { liftHoldsForInvoice } from "../db/holds";
 import { claimEvent, finishEvent, getInvoiceByStripeId, markInvoice, releaseEvent, type InvoiceRow, type InvoiceStatus } from "../db/invoices";
+import { getSettings } from "../db/settings";
+import { markSubscription } from "../db/subscriptions";
 import type { Env } from "../env";
+import { zoneOf } from "../sop/cadence";
 
 const enc = new TextEncoder();
 export const SIGNATURE_TOLERANCE_SEC = 300;
@@ -44,15 +50,21 @@ const MAX_NOTE = 200;
 const str = (v: unknown): string => String(v ?? "").slice(0, 40);
 
 /**
- * What an invoice.paid says that we do not agree with, or null when it matches: the amount paid is exactly the cents we invoiced, in dollars,
- * and the invoice was made for this document (the metadata we set when creating it).
+ * What an invoice.paid says that we do not agree with, or null when it matches: the amount paid is exactly the cents we invoiced, in dollars, and the invoice is the one
+ * we made. A deposit is matched on its document (the metadata we set when creating it); every other kind on its own ref, which the document alone cannot tell from its siblings.
+ * An invoice Stripe made for a subscription carries none of our metadata: its ref is its own Stripe id.
  */
 export function paidProblem(inv: InvoiceRow, obj: Record<string, any>): string | null {
   const problems: string[] = [];
   if (obj.amount_paid !== inv.amountCents) problems.push(`amount paid ${str(obj.amount_paid)} is not the ${inv.amountCents} invoiced`);
   if (obj.currency !== "usd") problems.push(`currency ${str(obj.currency)} is not usd`);
-  const doc = obj.metadata && typeof obj.metadata === "object" ? obj.metadata.document_id : undefined;
-  if (doc !== inv.documentId) problems.push(`document ${str(doc)} is not the invoiced one`);
+  const meta = obj.metadata && typeof obj.metadata === "object" ? obj.metadata : {};
+  if (inv.kind === "deposit") {
+    if (meta.document_id !== inv.documentId) problems.push(`document ${str(meta.document_id)} is not the invoiced one`);
+  } else {
+    const ref = inv.kind === "subscription" && inv.ref.startsWith("stripe:") ? `stripe:${String(obj.id ?? "")}` : meta.ref;
+    if (ref !== inv.ref) problems.push(`ref ${str(ref)} is not the invoiced one`);
+  }
   return problems.length ? problems.join("; ").slice(0, MAX_NOTE) : null;
 }
 
@@ -63,17 +75,27 @@ const MOVES: Record<string, { to: InvoiceStatus; notFrom: InvoiceStatus[] }> = {
   "invoice.payment_failed": { to: "failed", notFrom: ["paid", "void", "uncollectible"] },
 };
 
-async function apply(env: Env, event: StripeEvent, deps: StripeDeps): Promise<StripeResult> {
-  const isPaid = event.type === "invoice.paid";
-  if (!isPaid && !MOVES[event.type]) return "ignored";
+/** Events about an invoice: `invoice.paid` is checked against the amount (below), the rest move the row. */
+const INVOICE_EVENTS = new Set(["invoice.paid", ...Object.keys(MOVES)]);
+
+async function applyInvoice(env: Env, event: StripeEvent, deps: StripeDeps, now: Date): Promise<StripeResult> {
   const obj = event.data?.object;
   if (!obj || typeof obj.id !== "string") return "ignored";
-  const inv = await getInvoiceByStripeId(env.DB, obj.id);
-  if (!inv) return "ignored"; // another product on the same Stripe account, or an invoice we did not make
+  const isPaid = event.type === "invoice.paid";
+  // Another product on the same Stripe account, or an invoice we did not make: ignored, unless it is a month of one of our subscriptions, which Stripe made itself.
+  const inv = (await getInvoiceByStripeId(env.DB, obj.id)) ?? (await mirrorSubscriptionInvoice(env, obj, event.type, now));
+  if (!inv) return "ignored";
 
   if (!isPaid) {
     const move = MOVES[event.type];
-    return (await markInvoice(env.DB, inv.id, { status: move.to }, { notFrom: move.notFrom })) ? "applied" : "ignored";
+    // A failed autopay month is dated (the date the reminders and the pause count from) and puts its subscription past due.
+    const autopay = inv.kind === "subscription";
+    const failedOn = autopay && event.type === "invoice.payment_failed" ? calendarDateIn(now, zoneOf(await getSettings(env.DB))) : undefined;
+    if (!(await markInvoice(env.DB, inv.id, { status: move.to, failedOn }, { notFrom: move.notFrom }))) return "ignored";
+    if (autopay && inv.subscriptionId && event.type === "invoice.payment_failed") await markSubscription(env.DB, inv.subscriptionId, { status: "past_due" }, { from: ["active"] });
+    // A voided invoice can no longer be paid, so it holds nobody's work back.
+    if (event.type === "invoice.voided") await liftHoldsForInvoice(env.DB, inv.id, "void", now.toISOString());
+    return "applied";
   }
 
   const problem = paidProblem(inv, obj);
@@ -87,6 +109,17 @@ async function apply(env: Env, event: StripeEvent, deps: StripeDeps): Promise<St
   // onPaid runs for every paid event that is not a duplicate, including the retry of one whose onPaid threw: it must be safe to run twice.
   if (deps.onPaid) await deps.onPaid(env, (await getInvoiceByStripeId(env.DB, obj.id))!);
   return "applied";
+}
+
+async function apply(env: Env, event: StripeEvent, deps: StripeDeps, now: Date): Promise<StripeResult> {
+  if (INVOICE_EVENTS.has(event.type)) return applyInvoice(env, event, deps, now);
+  const obj = event.data?.object;
+  if (!obj || typeof obj !== "object") return "ignored";
+  if (event.type === "checkout.session.completed") return (await subscriptionCheckoutCompleted(env, obj, now)) ? "applied" : "ignored";
+  if (event.type === "customer.subscription.updated") return (await subscriptionUpdated(env, obj, now)) ? "applied" : "ignored";
+  // A deleted subscription arrives with the status it ended in; it is cancelled whatever that says.
+  if (event.type === "customer.subscription.deleted") return (await subscriptionUpdated(env, { ...obj, status: "canceled" }, now)) ? "applied" : "ignored";
+  return "ignored";
 }
 
 export interface StripeDeps { onPaid?: (env: Env, inv: InvoiceRow) => Promise<void>; /** The clock, for the event lease. */ now?: () => Date }
@@ -103,7 +136,7 @@ export async function handleStripeEvent(env: Env, event: StripeEvent, deps: Stri
   const claim = await claimEvent(env.DB, event.id, event.type, now());
   if (claim !== "claimed") return claim;
   try {
-    const result = await apply(env, event, deps);
+    const result = await apply(env, event, deps, new Date());
     await finishEvent(env.DB, event.id, now());
     return result;
   } catch (e) {
