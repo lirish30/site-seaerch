@@ -56,6 +56,8 @@ describe("billing routes", () => {
       await env.DB.prepare(`UPDATE subscriptions SET status = 'link_sent' WHERE id = ?`).bind(link.subs[0].id).run();
       const gone = await activeSub();
       await env.DB.prepare(`UPDATE subscriptions SET status = 'cancelled' WHERE id = ?`).bind(gone.sub.id).run();
+      const rehearsal = await activeSub(); // a test row is active but is not money
+      await env.DB.prepare(`UPDATE subscriptions SET test = 1 WHERE id = ?`).bind(rehearsal.sub.id).run();
       const after = (await json("GET", "/billing/summary")).body;
       expect(after.mrrCents - before.mrrCents).toBe(a.sub.monthlyCents + p.sub.monthlyCents);
     });

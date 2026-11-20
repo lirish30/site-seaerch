@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { WEBHOOK_EVENTS } from "../src/client/billingView";
 import {
   billingLine, billingProblem, bookingSummary, documentsProblem, documentsSummary, hasBuiltSignature, hoursToMinutes, isHttps, prettyLink, profileMissing, readDocumentsDraft, readWorkDraft, costRateProblem, timerCapProblem, safeLink, samplesNeeded, samplesNudge, setupItems, setupSentence, suppressionWord, voiceSummary, workSummary,
 } from "../src/client/settingsPagesView";
@@ -91,6 +92,9 @@ describe("billing line", () => {
   it("says what is missing, in the order it blocks", () => {
     expect(billingProblem({ stripeMode: null, webhookConfigured: true, clientBase: "https://c.example" })).toMatch(/STRIPE_SECRET_KEY/);
     expect(billingProblem({ stripeMode: "test", webhookConfigured: false, clientBase: "https://c.example" })).toMatch(/STRIPE_WEBHOOK_SECRET/);
+    // One list of events, the one Settings > Billing shows: not a second, shorter copy.
+    const hint = billingProblem({ stripeMode: "test", webhookConfigured: false, clientBase: "https://c.example" })!;
+    for (const e of WEBHOOK_EVENTS) expect(hint, e).toContain(e);
     expect(billingProblem({ stripeMode: "test", webhookConfigured: true, clientBase: null })).toMatch(/CLIENT_LINK_BASE/);
     expect(billingProblem({ stripeMode: "live", webhookConfigured: true, clientBase: "https://c.example" })).toBeNull();
   });

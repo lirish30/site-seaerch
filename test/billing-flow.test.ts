@@ -36,6 +36,7 @@ const WEBSITE_OPTIONS: Option[] = [
   { id: "b", label: "Website Subscription", tagline: "A site on a plan", items: [{ key: "website_subscription" }, { key: "care" }], recommended: true },
 ];
 
+let eventSeq = 0; // a counter, not randomness, so a failing run replays the same ids
 let mail: Awaited<ReturnType<typeof readyToSend>>;
 let errors: ReturnType<typeof vi.spyOn>;
 let cookie = "";
@@ -391,7 +392,7 @@ describe("billing, end to end", () => {
     const cycle = (id: string, over: Record<string, unknown> = {}) => ({
       id, object: "invoice", subscription: "sub_ace_care", customer: "cus_ace", currency: "usd", amount_due: 12900, amount_paid: 0, hosted_invoice_url: `https://invoice.stripe.com/i/${id}`, livemode: false, ...over,
     });
-    const event = (type: string, object: Record<string, unknown>) => ({ id: `evt_${type.replace(/\./g, "_")}_${String(object.id)}_${Math.random().toString(36).slice(2, 8)}`, type, data: { object } });
+    const event = (type: string, object: Record<string, unknown>) => ({ id: `evt_${type.replace(/\./g, "_")}_${String(object.id)}_${++eventSeq}`, type, data: { object } });
     expect(await deliver(event("invoice.paid", cycle("in_ace_c1", { amount_paid: 12900 })))).toBe(200);
     const monthlyInvoices = async () => (await invoicesOf(a.businessId, ["subscription"])).sort((x, y) => x.ref.localeCompare(y.ref)).map((i) => [i.ref, i.status, i.amountCents, i.failedOn]);
     expect(await monthlyInvoices()).toEqual([["stripe:in_ace_c1", "paid", 12900, null]]);

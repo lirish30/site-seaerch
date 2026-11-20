@@ -91,8 +91,8 @@ export async function markSubscription(db: D1Database, id: string, patch: Subscr
   return (res.meta.changes ?? 0) === 1;
 }
 
-/** What the active and past-due subscriptions bill each month, in integer cents. */
+/** What the active and past-due subscriptions bill each month, in integer cents. A rehearsal (test) row is not money, so it is left out. */
 export async function sumActiveMonthlyCents(db: D1Database): Promise<number> {
-  const r = await db.prepare(`SELECT COALESCE(SUM(monthly_cents), 0) AS total FROM subscriptions WHERE status IN ('active', 'past_due')`).first<{ total: number }>();
+  const r = await db.prepare(`SELECT COALESCE(SUM(monthly_cents), 0) AS total FROM subscriptions WHERE status IN ('active', 'past_due') AND test = 0`).first<{ total: number }>();
   return r?.total ?? 0;
 }

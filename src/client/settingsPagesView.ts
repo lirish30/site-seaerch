@@ -1,4 +1,5 @@
 import { dollars } from "./packagesView";
+import { WEBHOOK_EVENTS, WEBHOOK_PATH } from "./billingView";
 import type { Service, Suppression } from "./types";
 import type { WorkSample } from "./emailView";
 import { readSignature } from "./emailView";
@@ -139,7 +140,7 @@ export function billingLine(c: BillingConfig): string {
 /** What is missing before a deposit can be invoiced and its payment seen, or null when all is set. */
 export function billingProblem(c: BillingConfig): string | null {
   if (!c.stripeMode) return "Set STRIPE_SECRET_KEY (a Worker secret) to invoice deposits.";
-  if (!c.webhookConfigured) return "Set STRIPE_WEBHOOK_SECRET (a Worker secret) so a payment is noticed, and point a Stripe webhook at /hooks/stripe for the invoice.paid, invoice.voided, invoice.marked_uncollectible and invoice.payment_failed events.";
+  if (!c.webhookConfigured) return `Set STRIPE_WEBHOOK_SECRET (a Worker secret) so a payment is noticed, and point a Stripe webhook at ${WEBHOOK_PATH} for these events: ${WEBHOOK_EVENTS.join(", ")}.`;
   if (!c.clientBase) return "Set CLIENT_LINK_BASE (https) so a client has a link to the proposal.";
   return null;
 }

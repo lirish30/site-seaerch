@@ -77,6 +77,10 @@ describe("subscriptions db", () => {
     await markSubscription(env.DB, s2.id, { status: "past_due" });
     await markSubscription(env.DB, s3.id, { status: "cancelled" });
     expect(await sumActiveMonthlyCents(env.DB)).toBe(before + 15000);
+    // A rehearsal (test) row is never money.
+    const t = (await insertPlanned(env.DB, plan(await seedDoc(), { monthlyCents: 4000, test: true }))).subscription;
+    await markSubscription(env.DB, t.id, { status: "active" });
+    expect(await sumActiveMonthlyCents(env.DB)).toBe(before + 15000);
     expect((await listSubscriptions(env.DB, { businessId: a.businessId })).map((s) => s.id).sort()).toEqual([s1.id, s2.id].sort());
     expect((await listSubscriptions(env.DB, { businessId: a.businessId, statuses: ["past_due"] })).map((s) => s.id)).toEqual([s2.id]);
     expect(await listSubscriptions(env.DB, { businessId: a.businessId, statuses: [] })).toEqual([]);
