@@ -24,6 +24,19 @@ const entry = (taskId: string, projectId: string, businessId: string, source: "t
   ).bind(crypto.randomUUID(), taskId, projectId, businessId, T, endedAt, source, T).run();
 
 describe("the projects migration", () => {
+  it("claude_tasks is indexed by the step a job is about, for failedJobCount, Today's capped count and the queue's close-by-target (M5)", async () => {
+    const idx = await env.DB.prepare(`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_claude_tasks_target'`).first<{ sql: string }>();
+    expect(idx!.sql).toMatch(/claude_tasks\(target_id, target_type\)/);
+    for (const sql of [
+      `SELECT COUNT(*) FROM claude_tasks WHERE kind = ? AND target_id = ? AND status IN ('failed', 'expired')`,
+      `SELECT 1 FROM claude_tasks c WHERE c.kind = ? AND c.target_id = ? AND c.status IN ('pending', 'claimed')`,
+      `UPDATE claude_tasks SET status = 'stale' WHERE target_type = ? AND target_id = ? AND status IN ('pending', 'claimed')`,
+    ]) {
+      const plan = (await env.DB.prepare(`EXPLAIN QUERY PLAN ${sql}`).bind("task", "x").all<{ detail: string }>()).results.map((r) => r.detail).join(" ");
+      expect(plan, sql).toContain("idx_claude_tasks_target");
+    }
+  });
+
   it("settings gets work_config with the empty-object default", async () => {
     const r = await env.DB.prepare(`SELECT work_config FROM settings WHERE id = 1`).first<{ work_config: string }>();
     expect(r!.work_config).toBe("{}");
