@@ -80,8 +80,13 @@ export function itemReason(item: Pick<TodayItem, "kind" | "reason">, ctx: { cont
   return item.reason;
 }
 
-/** Where a row's main button goes: the lead, or the lead's email tab for an unsent draft. Null for "Run full scan", which is a request, not a link. */
+/**
+ * Where a row's main button goes: the lead, or the lead's email tab for an unsent draft, or the client's projects for a project row (one lead can have several projects, so it
+ * is the list for that lead, not one project). Null for "Run full scan", which is a request, not a link.
+ */
 export const itemLink = (item: Pick<TodayItem, "kind" | "businessId">): string | null =>
-  item.kind === "promising_quick_scan" ? null : `/leads/${item.businessId}${item.kind === "draft_unsent" ? "?tab=email" : ""}`;
+  item.kind === "promising_quick_scan" ? null
+    : item.kind === "project_attention" ? `/projects?businessId=${encodeURIComponent(item.businessId)}`
+    : `/leads/${item.businessId}${item.kind === "draft_unsent" ? "?tab=email" : ""}`;
 
 export const filterEmpty = (f: KindFilter) => (f === "all" ? "" : `Nothing under ${KIND_VIEW[f].pill} right now.`);

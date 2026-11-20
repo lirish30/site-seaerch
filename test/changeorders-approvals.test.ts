@@ -181,8 +181,8 @@ describe("change_order.send approval", () => {
 
     const done = await ready();
     const b = await createChangeOrderSendApproval(e, done.co);
-    await setProjectStatus(env.DB, done.project.id, "done");
-    expect((await approve(e, b.id) as { error: string }).error).toMatch(/project is done/);
+    await setProjectStatus(env.DB, done.project.id, "cancelled");
+    expect((await approve(e, b.id) as { error: string }).error).toMatch(/project is cancelled/);
 
     const noEmail = await ready();
     await editDraft(e, noEmail.co.id, { contactEmail: "" });
@@ -301,12 +301,15 @@ describe("change_order.draft approval", () => {
     expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM change_orders WHERE origin_approval_id = ?`).bind(a.id).first<{ n: number }>())!.n).toBe(0);
   });
 
-  it("is refused for a done project", async () => {
+  it("is refused for a cancelled project, and taken for a finished one", async () => {
     const s = await seedProject();
-    await setProjectStatus(env.DB, s.project.id, "done");
+    await setProjectStatus(env.DB, s.project.id, "cancelled");
     const r = await approve(e, (await propose(draftPayload(s.project.id))).id);
     expect(r).toMatchObject({ ok: false });
-    expect((r as { error: string }).error).toMatch(/project is done/);
+    expect((r as { error: string }).error).toMatch(/project is cancelled/);
+    const d = await seedProject();
+    await setProjectStatus(env.DB, d.project.id, "done");
+    expect(await approve(e, (await propose(draftPayload(d.project.id))).id)).toEqual({ ok: true });
   });
 
   it("refuses a payload that is not exactly what the kind takes", async () => {

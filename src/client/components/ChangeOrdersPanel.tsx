@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api";
 import { careRateHint, hoursText, linesOf, listProblem, parseDaysInput, parseHoursInput, pricePreview, signedRecord, statusLabel, statusTone, voidable } from "../changeOrderView";
 import { dollars, parseDollars, type Package } from "../packagesView";
-import type { Tone } from "../projectView";
+import { canTakeChangeOrder, type Tone } from "../projectView";
 import { workError } from "../workData";
 import type { OwnerChangeOrder } from "../../worker/changeorders/service";
 import type { ProjectStatus } from "../../worker/db/projects";
@@ -179,7 +179,7 @@ export default function ChangeOrdersPanel({ projectId, changeOrders, projectStat
     }).catch(() => {});
     return () => { live = false; };
   }, []);
-  const open = projectStatus === "active" || projectStatus === "paused";
+  const open = canTakeChangeOrder(projectStatus);
 
   return (
     <section className="co" aria-label="Change orders">

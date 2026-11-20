@@ -6,7 +6,7 @@ import { getPackage, savePackage } from "../src/worker/db/packages";
 import { setProjectStatus } from "../src/worker/db/projects";
 import { listComments, listTasks } from "../src/worker/db/tasks";
 import {
-  afterSigned, changeOrderLink, draftChangeOrder, editDraft, markChangeOrderPaid, unlockIfReady, voidDraftOrSent,
+  afterSigned, changeOrderLink, draftChangeOrder, editDraft, markChangeOrderPaid, sendProblems, unlockIfReady, voidDraftOrSent,
 } from "../src/worker/changeorders/service";
 import { clearProjectHooksForTests, onTasksChanged } from "../src/worker/projects/hooks";
 import type { Env } from "../src/worker/env";
@@ -70,19 +70,32 @@ describe("draftChangeOrder", () => {
     expect((await draftChangeOrder(e, { ...base, projectId: test.project.id, hours: 1 })).test).toBe(true);
   });
 
-  it("a done project refuses a change order, and so do a cancelled and an unknown one", async () => {
+  it("a finished build or Care project takes a change order (a launched site still needs extra work); a cancelled and an unknown one refuse", async () => {
     const done = await seedProject();
     await setProjectStatus(env.DB, done.project.id, "done");
-    await expect(draftChangeOrder(e, { ...base, projectId: done.project.id, hours: 1 })).rejects.toThrow(/project is done/);
+    expect((await draftChangeOrder(e, { ...base, projectId: done.project.id, hours: 1 })).status).toBe("draft");
+    const care = await seedProject({ kind: "care_onboarding", templateKey: "CARE-0" });
+    await setProjectStatus(env.DB, care.project.id, "done");
+    expect((await draftChangeOrder(e, { ...base, projectId: care.project.id, hours: 1 })).status).toBe("draft");
     const gone = await seedProject();
     await setProjectStatus(env.DB, gone.project.id, "cancelled");
+    await expect(draftChangeOrder(e, { ...base, projectId: gone.project.id, hours: 1 })).rejects.toThrow(/project is cancelled/);
     await expect(draftChangeOrder(e, { ...base, projectId: gone.project.id, hours: 1 })).rejects.toBeInstanceOf(ChangeOrderStateError);
     await expect(draftChangeOrder(e, { ...base, projectId: "nope", hours: 1 })).rejects.toThrow(/no such project/);
-    expect(await env.DB.prepare(`SELECT COUNT(*) AS n FROM change_orders WHERE project_id IN (?, ?)`).bind(done.project.id, gone.project.id).first<{ n: number }>()).toEqual({ n: 0 });
+    expect(await env.DB.prepare(`SELECT COUNT(*) AS n FROM change_orders WHERE project_id = ?`).bind(gone.project.id).first<{ n: number }>()).toEqual({ n: 0 });
     // a paused project is still a project: the client can ask while it waits
     const paused = await seedProject();
     await setProjectStatus(env.DB, paused.project.id, "paused", { reason: "invoice overdue" });
     expect((await draftChangeOrder(e, { ...base, projectId: paused.project.id, hours: 1 })).status).toBe("draft");
+  });
+
+  it("a send is refused for a cancelled project only, never for a finished one", async () => {
+    const s = await seedProject({ test: true });
+    const co = await draftChangeOrder(e, { ...base, projectId: s.project.id, hours: 1 });
+    await setProjectStatus(env.DB, s.project.id, "done");
+    expect((await sendProblems(e, co)).filter((p) => /project/i.test(p) && /cannot go out/.test(p))).toEqual([]);
+    await env.DB.prepare(`UPDATE projects SET status = 'cancelled' WHERE id = ?`).bind(s.project.id).run();
+    expect(await sendProblems(e, co)).toContain("The project is cancelled, so a change order cannot go out on it.");
   });
 
   it("refuses bad hours, an empty title and text that reads like a login", async () => {

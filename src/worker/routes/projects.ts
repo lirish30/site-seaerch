@@ -116,13 +116,18 @@ projectRoutes.post("/projects", async (c) => {
 const PatchProjectBody = z.object({ status: z.enum(["active", "paused", "cancelled"]).optional(), pausedReason: TEXT(2000).optional() }).strict()
   .refine((b) => b.status !== undefined || b.pausedReason !== undefined, { message: "nothing to change" });
 
-/** Pause (with a reason), resume or cancel. A finished or cancelled project never reopens. Resuming hands the project's ready Claude steps over at once. */
+/**
+ * Pause (with a reason), resume or cancel. A finished or cancelled project never reopens, except that a finished Care onboarding project can be cancelled (it is the client's ongoing
+ * Care service; cancelling is how Logan stops its cadences and Claude dispatch). Resuming hands the project's ready Claude steps over at once.
+ */
 projectRoutes.patch("/projects/:id", async (c) => {
   const body = await bodyOf(c, PatchProjectBody);
   if (body instanceof Response) return body;
   const p = await getProject(c.env.DB, c.req.param("id"));
   if (!p) return c.json(NOT_FOUND, 404);
-  if (p.status === "done" || p.status === "cancelled") return c.json({ error: `This project is ${p.status}, so it cannot be changed.` }, 409);
+  const careService = p.status === "done" && p.kind === "care_onboarding";
+  if (careService && body.status !== "cancelled") return c.json({ error: "This Care project is finished and its Care work is running. It can only be cancelled, which stops that work." }, 409);
+  if ((p.status === "done" && !careService) || p.status === "cancelled") return c.json({ error: `This project is ${p.status}, so it cannot be changed.` }, 409);
   const next: ProjectStatus = body.status ?? p.status;
   if (next !== "paused" && body.pausedReason !== undefined) return c.json({ error: "Only a paused project has a reason." }, 409);
   const reason = next === "paused" ? (body.pausedReason !== undefined ? cleanText(body.pausedReason, 300) : p.pausedReason) || null : null;

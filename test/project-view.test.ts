@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  blockedText, bucketCounts, dealProjects, startOffers, listProgress, timeEstimate, timeRows, kindLabel, milestoneChips, ownerBadge, phaseGroups, profitLines, projectBucket, projectProgress, projectState, taskState,
+  blockedText, bucketCounts, canTakeChangeOrder, cancelConfirm, cancelLabel, dealProjects, stepsEditable, stopControls, visibleProjects, startOffers, listProgress, timeEstimate, timeRows, kindLabel, milestoneChips, ownerBadge, phaseGroups, profitLines, projectBucket, projectProgress, projectState, taskState,
 } from "../src/client/projectView";
 import type { Task } from "../src/worker/db/tasks";
 
@@ -103,21 +103,70 @@ describe("profitLines", () => {
 });
 
 describe("project state and buckets", () => {
-  const base = { status: "active" as const, waitingOnClient: false };
+  const base = { status: "active" as const, kind: "build" as const, waitingOnClient: false };
+  const care = { kind: "care_onboarding" as const, waitingOnClient: false };
   it("labels each state", () => {
     expect(projectState(base)).toEqual({ label: "Active", tone: "neutral" });
     expect(projectState({ ...base, waitingOnClient: true })).toEqual({ label: "Waiting on client", tone: "muted" });
-    expect(projectState({ status: "paused", waitingOnClient: false })).toEqual({ label: "Paused", tone: "warn" });
-    expect(projectState({ status: "done", waitingOnClient: false })).toEqual({ label: "Done", tone: "good" });
-    expect(projectState({ status: "cancelled", waitingOnClient: false })).toEqual({ label: "Cancelled", tone: "muted" });
+    expect(projectState({ ...base, status: "paused" })).toEqual({ label: "Paused", tone: "warn" });
+    expect(projectState({ ...base, status: "done" })).toEqual({ label: "Done", tone: "good" });
+    expect(projectState({ ...base, status: "cancelled" })).toEqual({ label: "Cancelled", tone: "muted" });
   });
-  it("buckets for the sidebar: waiting is its own, cancelled sits with done", () => {
-    const rows = [base, { ...base, waitingOnClient: true }, { status: "paused" as const, waitingOnClient: false }, { status: "done" as const, waitingOnClient: false }, { status: "cancelled" as const, waitingOnClient: false }, base];
-    expect(rows.map(projectBucket)).toEqual(["active", "waiting", "paused", "done", "done", "active"]);
-    expect(bucketCounts(rows)).toEqual({ active: 2, waiting: 1, paused: 1, done: 2 });
+  it("a finished Care onboarding project is live: it says its Care is running and sits in Active, not Done", () => {
+    expect(projectState({ ...care, status: "done" })).toEqual({ label: "Care running", tone: "good" });
+    expect(projectBucket({ ...care, status: "done" })).toBe("active");
+    // a finished build or quick fix is done, and a cancelled Care project is done too
+    expect(projectBucket({ ...base, status: "done" })).toBe("done");
+    expect(projectBucket({ ...care, status: "cancelled" })).toBe("done");
+    expect(projectState({ ...care, status: "cancelled" })).toEqual({ label: "Cancelled", tone: "muted" });
+  });
+  it("buckets for the sidebar: waiting is its own, cancelled sits with done, a live Care project counts as active", () => {
+    const rows = [base, { ...base, waitingOnClient: true }, { ...base, status: "paused" as const }, { ...base, status: "done" as const }, { ...base, status: "cancelled" as const }, base, { ...care, status: "done" as const }];
+    expect(rows.map(projectBucket)).toEqual(["active", "waiting", "paused", "done", "done", "active", "active"]);
+    expect(bucketCounts(rows)).toEqual({ active: 3, waiting: 1, paused: 1, done: 2 });
   });
   it("kindLabel", () => {
     expect([kindLabel("build"), kindLabel("quick_fix"), kindLabel("care_onboarding"), kindLabel("custom")]).toEqual(["Site build", "Quick fix", "Care setup", "Custom"]);
+  });
+});
+
+describe("stop controls and what a project still takes", () => {
+  const p = (status: "active" | "paused" | "done" | "cancelled", kind: "build" | "care_onboarding" = "build") => ({ status, kind });
+  it("an active project can be paused or cancelled, a paused one resumed or cancelled", () => {
+    expect(stopControls(p("active"))).toEqual({ pause: true, resume: false, cancel: "project" });
+    expect(stopControls(p("paused"))).toEqual({ pause: false, resume: true, cancel: "project" });
+  });
+  it("a finished Care project can only be cancelled, and says it stops the Care service", () => {
+    expect(stopControls(p("done", "care_onboarding"))).toEqual({ pause: false, resume: false, cancel: "care" });
+    expect(cancelLabel("care")).toMatch(/Care/);
+    expect(cancelConfirm("Ace: Care onboarding", "care")).toMatch(/stops? .*Care/i);
+    expect(cancelLabel("project")).toBe("Cancel project");
+  });
+  it("a finished build and a cancelled project have no stop controls", () => {
+    expect(stopControls(p("done"))).toEqual({ pause: false, resume: false, cancel: null });
+    expect(stopControls(p("cancelled", "care_onboarding"))).toEqual({ pause: false, resume: false, cancel: null });
+  });
+  it("any project that is not cancelled takes a change order and has its steps edited, a live Care project included", () => {
+    expect(["active", "paused", "done"].every((s) => canTakeChangeOrder(s as "done"))).toBe(true);
+    expect(canTakeChangeOrder("cancelled")).toBe(false);
+    expect(stepsEditable(p("active"))).toBe(true);
+    expect(stepsEditable(p("paused"))).toBe(true);
+    expect(stepsEditable(p("done", "care_onboarding"))).toBe(true);
+    expect(stepsEditable(p("done"))).toBe(false);
+    expect(stepsEditable(p("cancelled"))).toBe(false);
+  });
+});
+
+describe("the project list for a lead", () => {
+  const row = (id: string, businessId: string, status: "active" | "done" | "cancelled" = "active", kind: "build" | "care_onboarding" = "build") => ({ id, businessId, status, kind, waitingOnClient: false });
+  const rows = [row("1", "a"), row("2", "a", "done"), row("3", "b"), row("4", "a", "cancelled", "care_onboarding")];
+  it("filters to one lead and then shows every one of its projects whatever the state", () => {
+    expect(visibleProjects(rows, { view: "active", businessId: "a" }).map((r) => r.id)).toEqual(["1", "2", "4"]);
+    expect(visibleProjects(rows, { view: "active", businessId: "none" })).toEqual([]);
+  });
+  it("without a lead it is the view's own bucket", () => {
+    expect(visibleProjects(rows, { view: "active", businessId: null }).map((r) => r.id)).toEqual(["1", "3"]);
+    expect(visibleProjects(rows, { view: "done", businessId: null }).map((r) => r.id)).toEqual(["2", "4"]);
   });
 });
 

@@ -16,8 +16,9 @@ export default function WorkSidebar() {
     window.addEventListener(PROJECTS_CHANGED, load);
     return () => { live = false; window.removeEventListener(PROJECTS_CHANGED, load); };
   }, [pathname]);
-  const onList = pathname === "/projects";
-  const view = new URLSearchParams(search).get("view") ?? "active";
+  const params = new URLSearchParams(search);
+  const onList = pathname === "/projects" && !params.get("businessId"); // one lead's projects is none of the lists
+  const view = params.get("view") ?? "active";
   return (
     <>
       <SideTitle title="Projects" />

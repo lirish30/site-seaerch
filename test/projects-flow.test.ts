@@ -294,9 +294,14 @@ describe("projects, end to end", () => {
     expect(care.project.name).toBe("Ace Plumbing: Care onboarding");
     expect(care.tasks.length).toBeGreaterThan(5);
     expect((await jobs(a.businessId)).some((j) => j.projectId === care.project.id && j.stepKey === "1.2")).toBe(true);
-    // A done build takes no change order (the extra work goes on the Care project, which is open).
-    const refused = await owner("POST", `/projects/${build.project.id}/change-orders`, { title: "Too late", hours: 1 });
-    expect(refused.status).toBe(409);
+    // A launched build still takes a change order (ruling R13: any project that is not cancelled does). Draft one on the done build through the real route, then void it so the
+    // rest of the flow (the Care project's order) is unchanged.
+    const late = await owner("POST", `/projects/${build.project.id}/change-orders`, { title: "After launch", hours: 1 });
+    expect(late.status).toBe(201);
+    const lateOrder = (await late.json<{ changeOrder: { id: string; status: string; projectId: string } }>()).changeOrder;
+    expect(lateOrder).toMatchObject({ status: "draft", projectId: build.project.id });
+    await ok("POST", `/change-orders/${lateOrder.id}/void`, { reason: "Raised on the wrong project" });
+    expect((await project(build.project.id)).changeOrders.map((o) => o.status)).toEqual(["void"]);
 
     // ---- A small piece of extra work comes up in an email: Claude flags it over MCP, Logan approves the draft.
     const flagged = await mcp("propose_approval", {

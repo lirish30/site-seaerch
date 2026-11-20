@@ -1,4 +1,4 @@
-import type { Project, ProjectKind, ProjectStatus } from "../worker/db/projects";
+import { projectIsLive, type Project, type ProjectKind, type ProjectStatus } from "../worker/db/projects";
 import type { Task } from "../worker/db/tasks";
 import type { MilestoneKey, OwnerTag } from "../worker/sop/model";
 
@@ -99,26 +99,56 @@ export function profitLines(p: ProfitData, costRateCentsPerHour: number): string
 
 export type Bucket = "active" | "waiting" | "paused" | "done";
 
-/** The state chip on a project. A project waiting on its client is still active, but says so. */
-export function projectState(p: { status: ProjectStatus; waitingOnClient: boolean }): { label: string; tone: Tone } {
+type StateOf = { status: ProjectStatus; kind: ProjectKind; waitingOnClient: boolean };
+
+/**
+ * The state chip on a project. A project waiting on its client is still active, but says so. A finished Care onboarding project is the client's ongoing Care service (it is live:
+ * its weekly and monthly work keeps being made and sent to Claude), so it says that instead of "Done".
+ */
+export function projectState(p: StateOf): { label: string; tone: Tone } {
   if (p.status === "paused") return { label: "Paused", tone: "warn" };
-  if (p.status === "done") return { label: "Done", tone: "good" };
+  if (p.status === "done") return projectIsLive(p) ? { label: "Care running", tone: "good" } : { label: "Done", tone: "good" };
   if (p.status === "cancelled") return { label: "Cancelled", tone: "muted" };
   return p.waitingOnClient ? { label: "Waiting on client", tone: "muted" } : { label: "Active", tone: "neutral" };
 }
 
-/** Which sidebar list a project is in: cancelled sits with done. */
-export function projectBucket(p: { status: ProjectStatus; waitingOnClient: boolean }): Bucket {
+/** Which sidebar list a project is in: cancelled sits with done, and a live (finished) Care project sits with active. */
+export function projectBucket(p: StateOf): Bucket {
   if (p.status === "paused") return "paused";
-  if (p.status === "done" || p.status === "cancelled") return "done";
+  if (p.status === "cancelled" || (p.status === "done" && !projectIsLive(p))) return "done";
   return p.waitingOnClient ? "waiting" : "active";
 }
 
-export function bucketCounts(rows: { status: ProjectStatus; waitingOnClient: boolean }[]): Record<Bucket, number> {
+export function bucketCounts(rows: StateOf[]): Record<Bucket, number> {
   const out: Record<Bucket, number> = { active: 0, waiting: 0, paused: 0, done: 0 };
   for (const r of rows) out[projectBucket(r)]++;
   return out;
 }
+
+/** The rows the projects page shows: one lead's projects whatever their state (the Today link goes there), else the view's own list. */
+export function visibleProjects<T extends StateOf & { businessId: string }>(rows: T[], o: { view: Bucket; businessId: string | null }): T[] {
+  return o.businessId ? rows.filter((r) => r.businessId === o.businessId) : rows.filter((r) => projectBucket(r) === o.view);
+}
+
+/** What the project page offers for stopping work. Only a Care project that is finished and running can be cancelled alone: that stops its Care service (its cadences and Claude dispatch). */
+export type CancelMode = "project" | "care";
+export function stopControls(p: { status: ProjectStatus; kind: ProjectKind }): { pause: boolean; resume: boolean; cancel: CancelMode | null } {
+  if (p.status === "active") return { pause: true, resume: false, cancel: "project" };
+  if (p.status === "paused") return { pause: false, resume: true, cancel: "project" };
+  if (p.status === "done" && projectIsLive(p)) return { pause: false, resume: false, cancel: "care" };
+  return { pause: false, resume: false, cancel: null };
+}
+export const cancelLabel = (mode: CancelMode): string => (mode === "care" ? "Stop Care (cancel project)" : "Cancel project");
+export const cancelConfirm = (name: string, mode: CancelMode): string =>
+  mode === "care"
+    ? `Cancel "${name}"? This stops the client's Care service: its weekly and monthly tasks stop being made and nothing more goes to Claude. It cannot be reopened.`
+    : `Cancel "${name}"? Its open Claude steps stop and nothing more is done on it. It cannot be reopened.`;
+
+/** A change order can be drafted on any project that is not cancelled: a launched site still needs extra work. */
+export const canTakeChangeOrder = (status: ProjectStatus): boolean => status !== "cancelled";
+
+/** Whether the project's steps can be edited: while it is paused or live (active, or a finished Care service). */
+export const stepsEditable = (p: { status: ProjectStatus; kind: ProjectKind }): boolean => p.status === "paused" || projectIsLive(p);
 
 const KIND: Record<ProjectKind, string> = { build: "Site build", quick_fix: "Quick fix", care_onboarding: "Care setup", custom: "Custom" };
 export const kindLabel = (k: ProjectKind): string => KIND[k];

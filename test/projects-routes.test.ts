@@ -5,7 +5,7 @@ import { listActivity } from "../src/worker/db/activity";
 import { createDraft, getDocument, setPaid, signDocument } from "../src/worker/db/documents";
 import { insertInvoice, markInvoice } from "../src/worker/db/invoices";
 import { getChangeOrder, markSent, signChangeOrder } from "../src/worker/db/changeOrders";
-import { getProject, markProjectDone, setProjectStatus } from "../src/worker/db/projects";
+import { addCadence, getProject, listCadences, markProjectDone, setProjectStatus } from "../src/worker/db/projects";
 import { ensureSeedSops, getTemplate, saveTemplate } from "../src/worker/db/sops";
 import { getSettings, saveSettings } from "../src/worker/db/settings";
 import { getTask, insertTasks, listComments, listTasks, setTaskStatus } from "../src/worker/db/tasks";
@@ -220,6 +220,25 @@ describe("creating and changing a project", () => {
     }
     expect((await getProject(env.DB, done.project.id))!.status).toBe("done");
     expect((await getProject(env.DB, cancelled.project.id))!.status).toBe("cancelled");
+  });
+
+  it("a finished Care onboarding project can be cancelled to stop its Care work, and only cancelled", async () => {
+    const care = await seedProject({ bare: true, kind: "care_onboarding", templateKey: "CARE-0" });
+    await markProjectDone(env.DB, care.project.id, T0);
+    await addCadence(env.DB, care.project.id, "CARE-1");
+    expect((await listCadences(env.DB, { liveProjectsOnly: true })).map((c) => c.projectId)).toContain(care.project.id);
+    for (const status of ["active", "paused"]) {
+      const r = await json("PATCH", `/projects/${care.project.id}`, { status });
+      expect(r.status, status).toBe(409);
+      expect(r.body.error).toMatch(/Care/);
+    }
+    expect((await getProject(env.DB, care.project.id))!.status).toBe("done");
+    const r = await json("PATCH", `/projects/${care.project.id}`, { status: "cancelled" });
+    expect(r.status).toBe(200);
+    expect(r.body.project.status).toBe("cancelled");
+    // cancelled is not live: its cadences and dispatch stop
+    expect((await listCadences(env.DB, { liveProjectsOnly: true })).map((c) => c.projectId)).not.toContain(care.project.id);
+    expect((await json("PATCH", `/projects/${care.project.id}`, { status: "active" })).status).toBe(409);
   });
 
   it("adds an ad hoc task that is not a step, and refuses a login in its title", async () => {

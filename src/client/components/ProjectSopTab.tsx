@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
-import { ownerBadge, phaseGroups } from "../projectView";
+import { ownerBadge, phaseGroups, stepsEditable } from "../projectView";
 import { diffDetails, diffSummary, parseEstimate, stepsFromTaskRows, templateProblems } from "../sopView";
 import { formatMinutes } from "../timeView";
 import { announceProjectsChanged, workError, type ProjectDetail } from "../workData";
@@ -95,7 +95,7 @@ export default function ProjectSopTab({ data, onChanged }: { data: ProjectDetail
   const { project, template } = data;
   const steps = data.tasks.filter((t) => t.isStep);
   const groups = phaseGroups(steps);
-  const editable = project.status === "active" || project.status === "paused";
+  const editable = stepsEditable(project);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");

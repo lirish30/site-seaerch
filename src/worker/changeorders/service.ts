@@ -104,7 +104,7 @@ export interface DraftOptions {
 /**
  * Drafts a change order on a project: the rate defaults to the current `hourly` package price and the price to `round(hours x rate)` (a price given wins). The order takes its client
  * and contact from the project's proposal (or the discovery booking), and its deal and test flag from the project. It makes one locked, billable task per deliverable (or one named after
- * the change order). Refuses a project that is done, cancelled or unknown. One draft per `originApprovalId`: a replay finds the first and repairs its tasks if they are missing.
+ * the change order). Refuses a project that is cancelled or unknown (a finished one takes a change order: a launched site still needs extra work). One draft per `originApprovalId`: a replay finds the first and repairs its tasks if they are missing.
  * Nothing is sent. The text is cleaned, and text that reads like a login or password is refused.
  */
 export async function draftChangeOrder(env: Env, o: DraftOptions): Promise<ChangeOrder> {
@@ -115,7 +115,8 @@ export async function draftChangeOrder(env: Env, o: DraftOptions): Promise<Chang
   }
   const project = await getProject(db, o.projectId);
   if (!project) throw new ChangeOrderStateError("There is no such project.");
-  if (project.status === "done" || project.status === "cancelled") throw new ChangeOrderStateError(`This project is ${project.status}, so it cannot take a change order.`);
+  // Only a cancelled project refuses: a launched site (or a Care client) still needs extra work, so a finished one takes a change order too.
+  if (project.status === "cancelled") throw new ChangeOrderStateError(`This project is ${project.status}, so it cannot take a change order.`);
   const business = await getBusiness(db, project.businessId);
   if (!business) throw new ChangeOrderStateError("This project's lead was not found.");
   if (project.dealId && !(await getDeal(db, project.dealId))) throw new ChangeOrderStateError("This project's deal was not found.");
@@ -244,7 +245,7 @@ export function ownerChangeOrder(env: Env, co: ChangeOrder): OwnerChangeOrder {
 /**
  * Why a send is refused, in the order Logan would fix them. A REAL order needs the lawyer's review recorded (`legalGate`, exactly as a proposal does), a contact the conflict gate allows
  * and a contact email; a TEST order goes to the owner only and needs the owner's email instead. Always: the order is a draft (or this same approval's retry), the main mailbox can send,
- * the client link base is set and the project is still open.
+ * the client link base is set and the project is not cancelled.
  */
 export async function sendProblems(env: Env, co: ChangeOrder, o: { approvalId?: string } = {}): Promise<string[]> {
   const db = env.DB;
@@ -264,7 +265,7 @@ export async function sendProblems(env: Env, co: ChangeOrder, o: { approvalId?: 
   if (!clientBase(env)) problems.push(CLIENT_BASE_PROBLEM);
   const project = await getProject(db, co.projectId);
   if (!project) problems.push("This change order's project was not found.");
-  else if (!retry && (project.status === "done" || project.status === "cancelled")) problems.push(`The project is ${project.status}, so a change order cannot go out on it.`);
+  else if (!retry && project.status === "cancelled") problems.push(`The project is ${project.status}, so a change order cannot go out on it.`);
   if (co.test) {
     if (!settings.contact_email.trim()) problems.push("Add your contact email in Settings first: the test goes to it.");
   } else if (!co.content.contactEmail.includes("@")) problems.push("This change order has no contact email.");

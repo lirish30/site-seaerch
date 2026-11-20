@@ -4,7 +4,7 @@ import { api } from "../api";
 import ChangeOrdersPanel from "../components/ChangeOrdersPanel";
 import ProjectSopTab from "../components/ProjectSopTab";
 import TaskRow from "../components/TaskRow";
-import { kindLabel, milestoneChips, ownerBadge, phaseGroups, profitLines, projectProgress, projectState, timeEstimate, timeRows, type Tone } from "../projectView";
+import { cancelConfirm, cancelLabel, kindLabel, milestoneChips, ownerBadge, phaseGroups, profitLines, projectProgress, projectState, stopControls, timeEstimate, timeRows, type Tone } from "../projectView";
 import { formatMinutes, parseDuration, varianceLabel } from "../timeView";
 import { announceProjectsChanged, TIMER_CHANGED, workError, type ProjectDetail, type RunningEntry } from "../workData";
 import type { OwnerTag } from "../../worker/sop/model";
@@ -68,9 +68,9 @@ export default function ProjectPage() {
   if (!data) return <div className="wk"><p className="muted wk-body">Loading…</p></div>;
 
   const { project, tasks } = data;
-  const state = projectState({ status: project.status, waitingOnClient: data.waitingOnClient });
+  const state = projectState({ status: project.status, kind: project.kind, waitingOnClient: data.waitingOnClient });
   const progress = projectProgress(tasks);
-  const open = project.status === "active" || project.status === "paused";
+  const stop = stopControls(project);
   return (
     <div className="wk">
       <header className="page-header">
@@ -85,11 +85,11 @@ export default function ProjectPage() {
             {project.dealId && <Link className="small" to={`/deals/${project.dealId}`}>Deal</Link>}
           </div>
         </div>
-        {open && (
+        {(stop.pause || stop.resume || stop.cancel) && (
           <div className="header-actions">
-            {project.status === "active" && <button type="button" className="btn" disabled={busy} aria-expanded={pausing} onClick={() => setPausing((p) => !p)}>Pause</button>}
-            {project.status === "paused" && <button type="button" className="btn primary" disabled={busy} onClick={() => void patch({ status: "active" })}>Resume</button>}
-            <button type="button" className="btn" disabled={busy} onClick={() => { if (window.confirm(`Cancel "${project.name}"? Its open Claude steps stop and nothing more is done on it. It cannot be reopened.`)) void patch({ status: "cancelled" }); }}>Cancel project</button>
+            {stop.pause && <button type="button" className="btn" disabled={busy} aria-expanded={pausing} onClick={() => setPausing((p) => !p)}>Pause</button>}
+            {stop.resume && <button type="button" className="btn primary" disabled={busy} onClick={() => void patch({ status: "active" })}>Resume</button>}
+            {stop.cancel && <button type="button" className="btn" disabled={busy} onClick={() => { if (window.confirm(cancelConfirm(project.name, stop.cancel!))) void patch({ status: "cancelled" }); }}>{cancelLabel(stop.cancel)}</button>}
           </div>
         )}
       </header>

@@ -93,15 +93,16 @@ export async function hasProject(db: D1Database, businessId: string): Promise<bo
 }
 
 /**
- * Sets the status. The guard is in the statement: a done or cancelled project never reopens (the row is returned as it is). `done` stamps `completedAt`;
- * the reason is kept only while paused. Throws when there is no such project.
+ * Sets the status. The guard is in the statement: a done or cancelled project never reopens (the row is returned as it is), with one exception: a finished Care onboarding
+ * project (the client's ongoing Care service, which `projectIsLive` keeps running) can be cancelled, so Logan has a way to stop it when the client leaves. Nothing else moves it
+ * (a done Care project is never paused or reopened; pausing it is Plan 8's to design). `done` stamps `completedAt`; the reason is kept only while paused. Throws when there is no such project.
  */
 export async function setProjectStatus(db: D1Database, id: string, status: ProjectStatus, o: { reason?: string | null; now?: string } = {}): Promise<Project> {
   const now = o.now ?? nowIso();
   await db.prepare(
     `UPDATE projects SET status = ?, paused_reason = ?, completed_at = CASE WHEN ? = 'done' THEN ? ELSE completed_at END, updated_at = ?
-     WHERE id = ? AND status NOT IN ('done', 'cancelled')`,
-  ).bind(status, status === "paused" ? (o.reason ?? null) : null, status, now, now, id).run();
+     WHERE id = ? AND (status NOT IN ('done', 'cancelled') OR (status = 'done' AND kind = 'care_onboarding' AND ? = 'cancelled'))`,
+  ).bind(status, status === "paused" ? (o.reason ?? null) : null, status, now, now, id, status).run();
   const p = await getProject(db, id);
   if (!p) throw new Error(`project ${id} not found`);
   return p;

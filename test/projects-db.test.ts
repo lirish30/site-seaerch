@@ -122,6 +122,21 @@ describe("setProjectStatus", () => {
     }
   });
 
+  it("a finished Care onboarding project can be cancelled (its service stops), and nothing else moves it", async () => {
+    const c = await seedProject({ kind: "care_onboarding", templateKey: "CARE-0" });
+    await setProjectStatus(env.DB, c.project.id, "done", { now: T1 });
+    for (const to of ["active", "paused", "done"] as const) {
+      expect(await setProjectStatus(env.DB, c.project.id, to, { now: T2 }), to).toMatchObject({ status: "done", completedAt: T1, updatedAt: T1 });
+    }
+    expect(await setProjectStatus(env.DB, c.project.id, "cancelled", { now: T2 })).toMatchObject({ status: "cancelled", completedAt: T1, updatedAt: T2 });
+    // cancelled is final, and an active or paused Care project is cancelled as before
+    expect(await setProjectStatus(env.DB, c.project.id, "active", { now: T2 })).toMatchObject({ status: "cancelled" });
+    // a finished build or quick fix still cannot be cancelled
+    const b = await seedProject({ kind: "quick_fix", templateKey: "QUICKFIX" });
+    await setProjectStatus(env.DB, b.project.id, "done", { now: T1 });
+    expect(await setProjectStatus(env.DB, b.project.id, "cancelled", { now: T2 })).toMatchObject({ status: "done" });
+  });
+
   it("an unknown project rejects", async () => {
     await expect(setProjectStatus(env.DB, "nope", "done", { now: T1 })).rejects.toThrow();
   });

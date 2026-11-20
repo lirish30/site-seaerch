@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import Icon from "../components/Icon";
-import { kindLabel, listProgress, projectBucket, projectState, type Bucket, type Tone } from "../projectView";
+import { kindLabel, listProgress, projectState, visibleProjects, type Bucket, type Tone } from "../projectView";
+import { projectIsLive } from "../../worker/db/projects";
 import { PROJECTS_CHANGED, type MyTasks, type ProjectRow } from "../workData";
 
 const TONE: Record<Tone, string> = { neutral: "outline", good: "positive", warn: "warning", muted: "" };
@@ -18,6 +19,7 @@ const isBucket = (s: string | null): s is Bucket => s === "active" || s === "wai
 export default function Projects() {
   const [params] = useSearchParams();
   const wanted = params.get("view");
+  const lead = params.get("businessId");
   const view: Bucket = isBucket(wanted) ? wanted : "active";
   const [rows, setRows] = useState<ProjectRow[] | null>(null);
   const [next, setNext] = useState<Map<string, string>>(new Map());
@@ -35,8 +37,8 @@ export default function Projects() {
     return () => window.removeEventListener(PROJECTS_CHANGED, load);
   }, [load]);
 
-  const shown = (rows ?? []).filter((p) => projectBucket(p) === view);
-  const v = VIEWS[view];
+  const shown = visibleProjects(rows ?? [], { view, businessId: lead });
+  const v = lead ? { title: `Projects for ${shown[0]?.businessName ?? "this client"}`, blurb: "Every project for this client, whatever its state.", empty: "This client has no projects." } : VIEWS[view];
   return (
     <div className="wk">
       <header className="page-header">
@@ -45,6 +47,7 @@ export default function Projects() {
           <p>{v.blurb}</p>
         </div>
         <div className="header-actions">
+          {lead && <Link to="/projects" className="btn">All projects</Link>}
           <Link to="/timesheet" className="btn"><Icon name="clock" size={16} />Timesheet</Link>
           <button type="button" className="btn" onClick={load}><Icon name="refresh" size={16} />Refresh</button>
         </div>
@@ -73,7 +76,7 @@ export default function Projects() {
                     <span className="wk-bar" aria-hidden="true"><i style={{ width: `${pct}%` }} /></span>
                     <span className="small muted">{done} of {total} done</span>
                   </span>
-                  {p.status === "active" && <span className="small">{mine ? <>Next for you: {mine}</> : <span className="muted">Nothing waiting on you</span>}</span>}
+                  {projectIsLive(p) && <span className="small">{mine ? <>Next for you: {mine}</> : <span className="muted">Nothing waiting on you</span>}</span>}
                 </Link>
               </li>
             );
