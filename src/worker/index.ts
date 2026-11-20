@@ -43,6 +43,8 @@ import "./approvals/videoPublish";
 import "./approvals/proposalSend";
 import "./approvals/onboardingWelcome";
 import "./approvals/onboardingNudge";
+import "./approvals/sopReview";
+import "./projects/dispatch"; // registers the hook that sends the next ready Claude step when a task changes
 import { mcpRoute } from "./mcp/route";
 import { runScheduled } from "./schedule";
 

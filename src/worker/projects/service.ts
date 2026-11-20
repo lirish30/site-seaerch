@@ -160,7 +160,8 @@ export async function reopenTask(env: Env, id: string, now: Date): Promise<Task>
   const task = await need(env, id);
   if (task.status === "todo") return task;
   if (task.status !== "done" && task.status !== "skipped") throw new TaskStateError("Only a finished or skipped step can be reopened.");
-  if (!(await setTaskStatus(env.DB, id, "todo", { from: ["done", "skipped"], now: now.toISOString() }))) return lostRace(env, id, "todo");
+  // The job and review links are cleared with the status, so a Claude job still open for this step can no longer apply its result to it.
+  if (!(await setTaskStatus(env.DB, id, "todo", { from: ["done", "skipped"], now: now.toISOString(), claudeTaskId: null, reviewApprovalId: null }))) return lostRace(env, id, "todo");
   await runTasksChanged(env, task.projectId);
   return need(env, id);
 }

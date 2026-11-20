@@ -10,7 +10,7 @@ import { getHandler, registeredKinds } from "../approvals/registry";
 import { checkConflict } from "../conflict";
 
 /** The kinds the app proposes itself, with a card it builds: an agent's own title and preview over one of these could mislead the person approving it. */
-const APP_PROPOSED = ["video.publish", "proposal.send", "onboarding.welcome", "onboarding.nudge"];
+const APP_PROPOSED = ["video.publish", "proposal.send", "onboarding.welcome", "onboarding.nudge", "sop.review", "change_order.send"];
 /** The kinds an agent may propose: all but those the app proposes itself. */
 const proposableKinds = () => registeredKinds().filter((k) => !APP_PROPOSED.includes(k));
 import { logAgentAction } from "../db/agentActions";

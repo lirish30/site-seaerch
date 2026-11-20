@@ -76,6 +76,9 @@ describe("canBulkApprove", () => {
   it("the onboarding welcome is approved on its own: the preview asks Logan to add a video link first", () => {
     expect(canBulkApprove("onboarding.welcome")).toBe(false);
   });
+  it("a step Claude did is approved on its own: Logan looks at the work first", () => {
+    expect(canBulkApprove("sop.review")).toBe(false);
+  });
   it("everything else can be approved as a group", () => {
     for (const k of ["email.send", "lead.note", "lead.status"]) expect(canBulkApprove(k), k).toBe(true);
   });
