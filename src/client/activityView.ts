@@ -78,6 +78,7 @@ export function describeActivity(a: Pick<Activity, "kind" | "detail">): Activity
     // The daily sweep writes "<reference> (<id>): expired"; an owner's void writes "... voided: <reason>".
     case "change_order_void": return { icon: "ban", tone: "warning", title: d && /\): expired$/.test(d) ? "Change order expired" : "Change order voided", detail: d, bubble: false };
     case "change_order_declined": return { icon: "ban", tone: "warning", title: "Change order declined", detail: d, bubble: false };
+    case "invoice_sent": return { icon: "send", tone: "info", title: "Invoice sent", detail: d, bubble: false };
     case "snoozed": return { icon: "clock", tone: "neutral", title: "Snoozed", detail: d, bubble: false };
     default: return { icon: "info", tone: "neutral", title: upperFirst(a.kind.replace(/_/g, " ")), detail: d, bubble: false };
   }

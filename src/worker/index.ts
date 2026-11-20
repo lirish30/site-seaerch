@@ -50,6 +50,8 @@ import "./approvals/onboardingNudge";
 import "./approvals/sopReview";
 import "./approvals/changeOrderSend";
 import "./approvals/changeOrderDraft";
+import "./approvals/invoiceSend";
+import "./billing/milestones"; // registers the hook that drafts and proposes a milestone invoice when a project reaches one
 import "./projects/dispatch"; // registers the hook that sends the next ready Claude step when a task changes
 import "./projects/start"; // registers the hook that starts Care when the build it waited for is done
 import { mcpRoute } from "./mcp/route";

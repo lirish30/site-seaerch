@@ -1,7 +1,11 @@
 import { env } from "cloudflare:test";
-import { createDraft } from "../../src/worker/db/documents";
+import { expect } from "vitest";
+import { createDraft, setPaid, signDocument } from "../../src/worker/db/documents";
 import { insertDraftInvoice, type InvoiceKind, type InvoiceLine } from "../../src/worker/db/invoices";
-import { proposal, seedDeal } from "./documents";
+import { listCurrentPackages, snapshotOf } from "../../src/worker/db/packages";
+import { createProject } from "../../src/worker/db/projects";
+import { paymentSchedule } from "../../src/worker/documents/schedule";
+import { PROPOSAL_OPTIONS, clientSig, proposal, seedDeal, sendDraft } from "./documents";
 
 /** A deal with a draft proposal: what a draft invoice hangs off. */
 export async function seedDoc() {
@@ -21,4 +25,29 @@ export async function seedDraft(o: { seed?: Seed; kind?: InvoiceKind; ref?: stri
     lines: o.lines ?? [{ description: "Design approved", amountCents: 100000 }],
   });
   return { ...s, invoice, created };
+}
+
+// ---- Task 3: a project started from a signed and paid proposal ----
+
+const SIGNED_AT = "2026-12-02T09:00:00.000Z";
+const FAR = "2099-01-01T00:00:00.000Z";
+
+/**
+ * A real project started from a document that was sent, signed and paid, with the payment schedule the catalog gives for the option ("b" Starter with Care, "c" Growth with Care).
+ * `test` marks the project (and its document) a test copy.
+ */
+export async function seedSignedProject(o: { option?: "b" | "c"; test?: boolean; paid?: boolean; signed?: boolean } = {}) {
+  const s = await seedDeal();
+  const packages = (await listCurrentPackages(env.DB)).map(snapshotOf);
+  const option = PROPOSAL_OPTIONS.find((p) => p.id === (o.option ?? "b"))!;
+  const content = { ...proposal(), optionId: option.id, schedule: paymentSchedule(option, packages) };
+  const draft = await createDraft(env.DB, { dealId: s.dealId, businessId: s.businessId, optionId: option.id, content, test: o.test });
+  const { doc, hash } = await sendDraft(draft.id, content, { expiresAt: FAR });
+  if (o.signed !== false) expect(await signDocument(env.DB, doc.id, clientSig(hash), SIGNED_AT)).toBe("signed");
+  if (o.paid !== false) await setPaid(env.DB, doc.id, SIGNED_AT);
+  const { project } = await createProject(env.DB, {
+    businessId: s.businessId, dealId: s.dealId, documentId: doc.id, onboardingId: null, kind: "build", name: "Ace Plumbing: Website build", test: o.test ?? false,
+    templateKey: "BUILD", templateVersion: 1, careDeferred: false, startedAt: SIGNED_AT,
+  });
+  return { ...s, documentId: doc.id, project, schedule: content.schedule };
 }

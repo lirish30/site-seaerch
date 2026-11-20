@@ -2,13 +2,14 @@ import { logActivity, logActivityOnce } from "../db/activity";
 import { getBusiness, updateLead } from "../db/businesses";
 import { DealMoveError, getDeal, moveDeal } from "../db/deals";
 import { getDocument, setPaid, type Document } from "../db/documents";
-import { getInvoiceForDocument, getStripeCustomer, insertInvoice, markInvoice, saveStripeCustomer, type InvoiceRow } from "../db/invoices";
+import { getInvoiceForDocument, insertInvoice, markInvoice, type InvoiceRow } from "../db/invoices";
 import type { Env } from "../env";
 import type { Fetch } from "../google/oauth";
 import { startOnboarding } from "../onboarding/start";
 import { startProjects } from "../projects/start";
 import { stopOutreach } from "../sequence/stop";
-import { StripeError, createCustomer, createDepositInvoice, retrieveInvoice, stripeMode } from "../stripe/client";
+import { StripeError, createDepositInvoice, retrieveInvoice, stripeMode } from "../stripe/client";
+import { ensureStripeCustomer } from "../billing/customer";
 import { paidProblem } from "../stripe/webhook";
 
 /** What the client's page says about the deposit. */
@@ -34,6 +35,8 @@ export function setStripeFetchForTests(f: Fetch | null): void {
   fetchForTests = f;
 }
 const fetcher = (deps: { fetch?: Fetch }): Fetch => deps.fetch ?? fetchForTests ?? ((url, init) => fetch(url, init));
+/** The Fetch every Stripe call goes through (the test's fake when one was handed in), so billing's calls and the deposit's share it. */
+export const stripeFetch = fetcher;
 
 const oneLine = (s: string) => s.replace(/\s+/g, " ").trim();
 /** A reason that is safe to store and show: one line, never the secret key, never longer than the cap. */
@@ -124,8 +127,7 @@ async function ensure(env: Env, docId: string, deps: { fetch?: Fetch }): Promise
     const h = doc.content.header;
     // Only what the signed document froze goes to Stripe, and the keys are fixed per document and business, so a retry after a half-finished attempt
     // (a draft invoice left at Stripe, a customer made but not saved) replays what Stripe already did instead of making a second one.
-    const customerId = (await getStripeCustomer(env.DB, doc.businessId))
-      ?? await saveStripeCustomer(env.DB, doc.businessId, (await createCustomer(f, key, { name: h.clientName, email: h.contactEmail, businessId: doc.businessId }, `customer:${doc.businessId}`)).id);
+    const customerId = await ensureStripeCustomer(env, { businessId: doc.businessId, name: h.clientName, email: h.contactEmail }, f);
     const made = await createDepositInvoice(f, key, {
       customerId, amountCents: doc.content.schedule.depositCents, description: `${h.clientName} — deposit (${h.reference} v${doc.version})`,
       documentId: doc.id, dealId: doc.dealId, businessId: doc.businessId,
