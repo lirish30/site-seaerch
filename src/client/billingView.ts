@@ -86,23 +86,29 @@ export const cancelSubscriptionText = (plan: string, running: boolean): string =
     ? `Cancel the ${plan} subscription? Stripe stops billing at the end of the period the client has already paid for. If months are left in the term, you will be shown the balance before anything else happens.`
     : `Cancel the ${plan} subscription? It has not started billing, so nothing is charged and nothing is sent to the client.`;
 
-type SubState = Pick<Subscription, "status" | "startsWhen">;
+type SubState = Pick<Subscription, "status" | "startsWhen"> & { linkLost?: boolean };
 const STARTS: Record<Subscription["startsWhen"], string> = {
   signing: "Starts by itself once the deposit is paid.", launch: "Starts by itself when the build project is done.", kickoff: "Starts at kickoff: nothing is billed until you press Start billing.",
 };
+const START_BILLING = "Start billing", PUT_UP_AGAIN = "Put it up again";
 
-/** What happens next with a subscription, and which buttons apply: Start billing (kickoff ones, until they are sent) and Cancel (until it is over). */
-export function subscriptionNext(s: SubState): { text: string; canStart: boolean; canCancel: boolean; running: boolean } {
+/** What happens next with a subscription, and which buttons apply: the start button (`buttonText`: Start billing for a kickoff one, Put it up again for a proposed one of any kind or one whose link never reached the client) and Cancel (until it is over). */
+export function subscriptionNext(s: SubState): { text: string; canStart: boolean; buttonText: string; canCancel: boolean; running: boolean } {
   const canCancel = s.status !== "cancelled" && s.status !== "ended";
   const running = s.status === "active" || s.status === "past_due";
+  const no = (text: string) => ({ text, canStart: false, buttonText: START_BILLING, canCancel, running });
   switch (s.status) {
-    case "planned": return { text: STARTS[s.startsWhen], canStart: s.startsWhen === "kickoff", canCancel, running };
-    case "proposed": return { text: s.startsWhen === "kickoff" ? "Waiting for your approval to send the client their subscription link. Start billing again to refresh it." : "Waiting for your approval to send the client their subscription link.", canStart: s.startsWhen === "kickoff", canCancel, running };
-    case "link_sent": return { text: "The link was sent. Billing starts when the client sets up their payment.", canStart: false, canCancel, running };
-    case "active": return { text: "Billing monthly through Stripe.", canStart: false, canCancel, running };
-    case "past_due": return { text: "The last payment failed. Stripe is retrying it.", canStart: false, canCancel, running };
-    case "cancelled": return { text: "Cancelled.", canStart: false, canCancel, running };
-    case "ended": return { text: "The term has ended.", canStart: false, canCancel, running };
+    case "planned": return { ...no(STARTS[s.startsWhen]), canStart: s.startsWhen === "kickoff" };
+    case "proposed": return s.startsWhen === "kickoff"
+      ? { ...no("Waiting for your approval to send the client their subscription link. Start billing again to refresh it."), canStart: true }
+      : { ...no("This was proposed but not sent yet."), canStart: true, buttonText: PUT_UP_AGAIN };
+    case "link_sent": return s.linkLost
+      ? { ...no("The link was never sent, so nothing reached the client."), canStart: true, buttonText: PUT_UP_AGAIN }
+      : no("The link was sent. Billing starts when the client sets up their payment.");
+    case "active": return no("Billing monthly through Stripe.");
+    case "past_due": return no("The last payment failed. Stripe is retrying it.");
+    case "cancelled": return no("Cancelled.");
+    case "ended": return no("The term has ended.");
   }
 }
 

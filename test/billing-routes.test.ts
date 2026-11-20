@@ -6,6 +6,7 @@ import { signChangeOrder } from "../src/worker/db/changeOrders";
 import { activeHolds } from "../src/worker/db/holds";
 import { getInvoice, getInvoiceByRef, markInvoice } from "../src/worker/db/invoices";
 import { saveSettings } from "../src/worker/db/settings";
+import { insertOutbound, markSent } from "../src/worker/db/messages";
 import { getSubscription } from "../src/worker/db/subscriptions";
 import { insertTasks } from "../src/worker/db/tasks";
 import { insertEntry } from "../src/worker/db/time";
@@ -224,6 +225,27 @@ describe("billing routes", () => {
       const active = (await json("GET", "/billing/subscriptions?status=active")).body.subscriptions;
       expect(active.every((s: any) => s.status === "active")).toBe(true);
       expect((await json("GET", "/billing/subscriptions?status=nonsense")).status).toBe(400);
+    });
+
+    it("flags a stranded link_sent row as linkLost, and not a mailed one, with no token in the payload", async () => {
+      const strand = async (mail: "failed" | "sent") => {
+        const p = await plannedSubs(["local_seo"]);
+        const sub = p.subs[0];
+        const approval = (await json("POST", `/billing/subscriptions/${sub.id}/start`)).body.approval;
+        await env.DB.prepare(`UPDATE approvals SET status = ?, decided_at = ? WHERE id = ?`).bind(mail === "sent" ? "approved" : "rejected", "2026-12-01T10:00:00.000Z", approval.id).run();
+        const id = crypto.randomUUID();
+        expect(await insertOutbound(env.DB, id, { mailbox: "main", businessId: p.businessId, enrollmentId: null, stepIndex: null, approvalId: approval.id, messageId: `<${id}@x>`, inReplyTo: null, to: "pat@ace.test", subject: "Link", text: "x", now: "2026-12-01T10:00:00.000Z" })).toBe(true);
+        if (mail === "sent") await markSent(env.DB, id, "2026-12-01T10:00:01.000Z"); else await env.DB.prepare(`UPDATE messages SET status = 'failed' WHERE id = ?`).bind(id).run();
+        await env.DB.prepare(`UPDATE subscriptions SET status = 'link_sent', token = ? WHERE id = ?`).bind(`secret-link-token-${mail}`, sub.id).run();
+        return sub.id as string;
+      };
+      const lost = await strand("failed"), mailed = await strand("sent");
+      const { body } = await json("GET", "/billing/subscriptions");
+      const byId = (id: string) => body.subscriptions.find((s: any) => s.id === id);
+      expect(byId(lost).linkLost).toBe(true);
+      expect(byId(mailed).linkLost).toBe(false);
+      expect(body.subscriptions.filter((s: any) => s.status !== "link_sent").every((s: any) => s.linkLost === false)).toBe(true);
+      expect(JSON.stringify(body)).not.toContain("secret-link-token");
     });
 
     it("Start billing proposes a kickoff subscription, and refuses one that does not start at kickoff", async () => {

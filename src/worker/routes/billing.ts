@@ -7,7 +7,7 @@ import { discardInvoice, voidSentInvoice } from "../billing/discard";
 import { proposeInvoice } from "../billing/draft";
 import { hourlyInvoice } from "../billing/hourly";
 import { liftManually } from "../billing/hold";
-import { startKickoff } from "../billing/subscriptions";
+import { linkNeverReachedClient, startKickoff } from "../billing/subscriptions";
 import { EarlyExitError, cancelSubscription, setEndAction } from "../billing/terms";
 import { getChangeOrder } from "../db/changeOrders";
 import { activeHolds, getHold } from "../db/holds";
@@ -62,8 +62,11 @@ async function guarded(c: Ctx, run: () => Promise<Response>): Promise<Response> 
 /** An approval as the owner's pages need it. */
 const approvalOf = (a: { id: string; kind: string; title: string; status: string } | null) => (a ? { id: a.id, kind: a.kind, title: a.title, status: a.status } : null);
 
-/** A subscription without the token of the client's link (a secret that lives in the approval and the mail, not in a list). */
-const subscriptionOf = ({ token: _token, ...rest }: Subscription) => rest;
+/** A subscription without the token of the client's link (a secret that lives in the approval and the mail, not in a list), plus `linkLost`: a `link_sent` row whose link mail never reached the client (it may be put up again). */
+const subscriptionOf = async (db: D1Database, sub: Subscription) => {
+  const { token: _token, ...rest } = sub;
+  return { ...rest, linkLost: await linkNeverReachedClient(db, sub) };
+};
 
 const SUM = (rows: InvoiceRow[]) => rows.reduce((n, i) => n + i.amountCents, 0);
 
@@ -145,7 +148,8 @@ billingRoutes.post("/projects/:id/invoices/hourly", async (c) => {
 billingRoutes.get("/billing/subscriptions", async (c) => {
   const q = queryOf(c, SubscriptionQuery);
   if (q instanceof Response) return q;
-  return c.json({ subscriptions: (await listSubscriptions(c.env.DB, q.status ? { statuses: [q.status] } : {})).map(subscriptionOf) });
+  const rows = await listSubscriptions(c.env.DB, q.status ? { statuses: [q.status] } : {});
+  return c.json({ subscriptions: await Promise.all(rows.map((r) => subscriptionOf(c.env.DB, r))) });
 });
 
 /** Logan's "Start billing" for a subscription that starts at kickoff: puts it up for approval. */
@@ -163,7 +167,7 @@ billingRoutes.patch("/billing/subscriptions/:id", async (c) => {
   const body = await bodyOf(c, EndActionBody);
   if (body instanceof Response) return body;
   if (!(await setEndAction(c.env.DB, id, body.endAction))) return c.json({ error: "This subscription is already over, so its end action cannot change." }, 409);
-  return c.json({ subscription: subscriptionOf((await getSubscription(c.env.DB, id))!) });
+  return c.json({ subscription: await subscriptionOf(c.env.DB, (await getSubscription(c.env.DB, id))!) });
 });
 
 /** Cancels a subscription. A balance for leaving early is 409 with its amount until `confirmEarlyExit` is true. */
@@ -173,7 +177,7 @@ billingRoutes.post("/billing/subscriptions/:id/cancel", async (c) => {
   if (body instanceof Response) return body;
   return guarded(c, async () => {
     const out = await cancelSubscription(c.env, c.req.param("id"), { confirmEarlyExit: body.confirmEarlyExit === true, now: new Date() });
-    return c.json({ subscription: subscriptionOf(out.subscription), invoice: out.invoice });
+    return c.json({ subscription: await subscriptionOf(c.env.DB, out.subscription), invoice: out.invoice });
   });
 });
 

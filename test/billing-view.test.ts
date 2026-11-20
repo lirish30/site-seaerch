@@ -78,12 +78,24 @@ describe("earlyExitText", () => {
 describe("subscriptionNext", () => {
   const s = (o: Record<string, unknown>) => ({ status: "planned", startsWhen: "kickoff", ...o }) as Parameters<typeof subscriptionNext>[0];
   it("offers Start billing for a kickoff subscription that has not started", () => {
-    expect(subscriptionNext(s({}))).toMatchObject({ canStart: true });
-    expect(subscriptionNext(s({ status: "proposed" }))).toMatchObject({ canStart: true });
+    expect(subscriptionNext(s({}))).toMatchObject({ canStart: true, buttonText: "Start billing" });
+    expect(subscriptionNext(s({ status: "proposed" }))).toMatchObject({ canStart: true, buttonText: "Start billing" });
     expect(subscriptionNext(s({ startsWhen: "launch" }))).toMatchObject({ canStart: false });
+    expect(subscriptionNext(s({ startsWhen: "signing" }))).toMatchObject({ canStart: false });
+  });
+  it("lets any proposed subscription be put up again, whenever it starts", () => {
+    for (const startsWhen of ["signing", "launch"]) {
+      expect(subscriptionNext(s({ status: "proposed", startsWhen }))).toMatchObject({ canStart: true, buttonText: "Put it up again", text: "This was proposed but not sent yet." });
+    }
+  });
+  it("lets a link_sent subscription be put up again only when its link was lost", () => {
+    expect(subscriptionNext(s({ status: "link_sent", linkLost: true }))).toMatchObject({ canStart: true, buttonText: "Put it up again", text: "The link was never sent, so nothing reached the client." });
+    expect(subscriptionNext(s({ status: "link_sent", linkLost: false }))).toMatchObject({ canStart: false });
+    expect(subscriptionNext(s({ status: "link_sent" })).canStart).toBe(false);
   });
   it("tells the link was sent, and that a live one is running", () => {
     expect(subscriptionNext(s({ status: "link_sent" })).text).toMatch(/link was sent/i);
+    expect(subscriptionNext(s({ status: "link_sent", linkLost: false })).text).toMatch(/link was sent/i);
     expect(subscriptionNext(s({ status: "active" })).canStart).toBe(false);
   });
   it("lets a live subscription be cancelled and a finished one not", () => {
