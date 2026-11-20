@@ -2,13 +2,14 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { createReviewApproval, discardReviewApproval } from "../approvals/sopReview";
 import { getDocument } from "../db/documents";
-import { getAnswers, getOnboarding, listFiles, listItems } from "../db/onboardings";
-import { getProject, projectIsLive, type ProjectKind } from "../db/projects";
+import { getAnswers, listFiles, listItems } from "../db/onboardings";
+import { getProject, projectIsLive, type Project, type ProjectKind } from "../db/projects";
 import {
   addComment, CREDENTIAL_REFUSED, getTask, listComments, listTasks, patchTask, setTaskStatus, TaskInputError, type ChecklistItem, type Task,
 } from "../db/tasks";
 import { cleanText, looksLikeCredential, QUESTIONS } from "../onboarding/templates";
 import { runTasksChanged } from "../projects/hooks";
+import { onboardingFor } from "../projects/onboarding";
 import { completeTask, TaskStateError } from "../projects/service";
 import { OWNER_LABEL, unmetRequirements } from "../sop/model";
 import { TaskRefused, registerTaskKind, type QueuePart, type TaskKindDef } from "./registry";
@@ -104,9 +105,8 @@ const changeOrderPart = (task: Task): QueuePart[] =>
   task.changeOrderId && task.description.trim() ? [{ type: "text", text: `Notes on this step (the change order's summary):\n${cleanText(task.description, 2000)}` }] : [];
 
 /** The client's answers and what they sent, each as a part of its own so nothing they wrote can run into anything else. */
-async function untrustedParts(env: Env, onboardingId: string | null): Promise<QueuePart[]> {
-  if (!onboardingId) return [];
-  const o = await getOnboarding(env.DB, onboardingId);
+async function untrustedParts(env: Env, project: Project): Promise<QueuePart[]> {
+  const o = await onboardingFor(env.DB, project);
   if (!o) return [];
   const parts: QueuePart[] = [];
   const add = (text: string) => parts.push({ type: "text", text });
@@ -193,7 +193,7 @@ const sopStep: TaskKindDef<SopStepPayload, SopStepResult> = {
     const loganNotes = (await listComments(env.DB, t.task.id)).filter((c) => c.author === "logan").slice(-10).map((c) => cleanText(c.body, 1000));
     return {
       instructions: instructionsFor({ task: t.task, projectName: project.name, projectKind: project.kind, packages: doc?.content.packages.map((x) => x.name) ?? [], loganNotes }),
-      untrusted: [...changeOrderPart(t.task), ...checklistPart(t.task), ...(await untrustedParts(env, project.onboardingId))],
+      untrusted: [...changeOrderPart(t.task), ...checklistPart(t.task), ...(await untrustedParts(env, project))],
     };
   },
 

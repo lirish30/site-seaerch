@@ -582,3 +582,21 @@ describe("a step moved to review frees its dispatch slot (M4)", () => {
     expect(hook).toHaveBeenCalledWith(expect.anything(), c.project.id);
   });
 });
+
+describe("an onboarding that started after the project (F3)", () => {
+  it("the client's answers reach Claude (untrusted) when the project was made before its onboarding, and a test onboarding does not reach a real project", async () => {
+    const s = await seedProjectWithOnboarding({ test: true, answers: { business: ANSWER } });
+    await env.DB.prepare(`UPDATE projects SET onboarding_id = NULL WHERE id = ?`).bind(s.project.id).run();
+    const c = await claimed({ seed: s as unknown as Seed });
+    const def = getTaskKind(SOP_STEP_KIND)!;
+    const built = await def.build(e, { taskId: c.task.id }, c.job);
+    if ("stale" in built) throw new Error(built.stale);
+    expect(built.instructions).not.toContain("UNIQUE-");
+    expect(built.untrusted.map((p) => (p.type === "text" ? p.text : "")).some((t) => t.includes(ANSWER))).toBe(true);
+    // the same onboarding is a rehearsal's: a real project does not read it
+    await env.DB.prepare(`UPDATE projects SET test = 0 WHERE id = ?`).bind(s.project.id).run();
+    const real = await def.build(e, { taskId: c.task.id }, c.job);
+    if ("stale" in real) throw new Error(real.stale);
+    expect(real.untrusted.map((p) => (p.type === "text" ? p.text : "")).some((t) => t.includes(ANSWER))).toBe(false);
+  });
+});

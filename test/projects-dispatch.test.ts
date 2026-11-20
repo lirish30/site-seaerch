@@ -237,3 +237,41 @@ describe("retries and stranded steps", () => {
     expect(await comments(t("a").id)).toEqual([]);
   });
 });
+
+describe("an onboarding that started after the project (F3)", () => {
+  it("a project made before its onboarding existed (onboardingId null) still waits on the silent client, and a client write clears it", async () => {
+    const s = await seedProjectWithOnboarding({ sentAt: "2026-11-01T12:00:00.000Z" });
+    await env.DB.prepare(`UPDATE projects SET onboarding_id = NULL WHERE id = ?`).bind(s.project.id).run();
+    const t = await stepsFor(s.project.id, s.businessId, [{ key: "a" }]);
+    expect(await dispatchReady(e, NOW)).toEqual({ queued: 0 });
+    expect(await jobs()).toEqual([]);
+    await touchClient(env.DB, s.onboarding.id, NOW.toISOString());
+    expect(await dispatchReady(e, NOW)).toEqual({ queued: 1 });
+    expect(await status(t("a").id)).toBe("in_progress");
+  });
+
+  it("a test onboarding is not used for a real project, and a real one is not used for a test project", async () => {
+    const s = await seedProjectWithOnboarding({ sentAt: "2026-11-01T12:00:00.000Z", test: true });
+    await env.DB.prepare(`UPDATE projects SET onboarding_id = NULL, test = 0 WHERE id = ?`).bind(s.project.id).run();
+    await stepsFor(s.project.id, s.businessId, [{ key: "a" }]);
+    expect(await dispatchReady(e, NOW)).toEqual({ queued: 1 }); // the test onboarding's silence does not hold a real project
+  });
+});
+
+describe("a finished Care project is never waiting on its onboarding (F6)", () => {
+  it("keeps dispatching its recurring Claude work after 14 days of onboarding silence, while the same silence still holds a build", async () => {
+    const sent = "2026-11-01T12:00:00.000Z";
+    const care = await seedProjectWithOnboarding({ sentAt: sent });
+    await env.DB.prepare(`UPDATE projects SET kind = 'care_onboarding', status = 'done' WHERE id = ?`).bind(care.project.id).run();
+    const [recurring] = await insertTasks(env.DB, [newTask(care.project.id, care.businessId, {
+      isStep: false, stepKey: null, phaseKey: "recurring", title: "Weekly Care update", owner: "claude", cadenceKey: "CARE-1", periodKey: "2026-W50",
+    })]);
+    expect(await dispatchReady(e, NOW)).toEqual({ queued: 1 });
+    expect(await status(recurring.id)).toBe("in_progress");
+    // an unfinished Care onboarding (active) is still held by the silence, like any build
+    await env.DB.prepare(`UPDATE projects SET status = 'active' WHERE id = ?`).bind(care.project.id).run();
+    await env.DB.prepare(`UPDATE tasks SET status = 'todo', claude_task_id = NULL WHERE id = ?`).bind(recurring.id).run();
+    await env.DB.prepare(`DELETE FROM claude_tasks`).run();
+    expect(await dispatchReady(e, NOW)).toEqual({ queued: 0 });
+  });
+});
