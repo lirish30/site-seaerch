@@ -3,9 +3,10 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { estimateVsActual, projectProfit } from "../src/worker/time/profit";
 import { DEFAULT_WORK_CONFIG, parseWorkConfig, WorkConfigSchema } from "../src/worker/time/config";
 import { getSettings } from "../src/worker/db/settings";
-import { insertInvoice, markInvoice, paidTotalForDeal } from "../src/worker/db/invoices";
+import { insertDraftInvoice, insertInvoice, markInvoice, paidTotalForDeal } from "../src/worker/db/invoices";
 import { createDraft } from "../src/worker/db/documents";
 import { proposal, seedDeal, sendDraft } from "./fixtures/documents";
+import { openInvoice, seedSignedProject } from "./fixtures/billing";
 
 describe("projectProfit", () => {
   it("projectProfit with a zero cost rate has zero cost", () => {
@@ -127,5 +128,37 @@ describe("paidTotalForDeal", () => {
     expect(await paidTotalForDeal(env.DB, s.dealId)).toBe(299851);
     const other = await seedDeal();
     expect(await paidTotalForDeal(env.DB, other.dealId)).toBe(0);
+  });
+});
+
+describe("project profit: what was paid", () => {
+  let cookie = "";
+  beforeAll(async () => {
+    const r = await SELF.fetch("https://x/api/login", { method: "POST", body: JSON.stringify({ password: "test-pass" }), headers: { "content-type": "application/json" } });
+    cookie = r.headers.get("set-cookie")!.split(";")[0];
+  });
+
+  it("profit paid counts the document's deposit and milestone invoices and not a change-order invoice", async () => {
+    const s = await seedSignedProject({ option: "c" });
+    const make = async (kind: "milestone" | "change_order" | "hourly" | "subscription", cents: number, paid: boolean) => {
+      const { invoice } = await insertDraftInvoice(env.DB, {
+        businessId: s.businessId, dealId: s.dealId, documentId: s.documentId, projectId: s.project.id, changeOrderId: null, subscriptionId: null,
+        kind, ref: `${kind}:${crypto.randomUUID()}`, test: false, description: kind, lines: [{ description: kind, amountCents: cents }],
+      });
+      const open = await openInvoice(invoice);
+      if (paid) await markInvoice(env.DB, open.id, { status: "paid", paidAt: "2027-01-10T10:00:00.000Z" });
+    };
+    const deposit = await insertInvoice(env.DB, {
+      businessId: s.businessId, dealId: s.dealId, documentId: s.documentId, kind: "deposit", stripeCustomerId: "cus_1", stripeInvoiceId: `in_${crypto.randomUUID()}`, amountCents: 199850, hostedUrl: "https://pay.test/x",
+    });
+    await markInvoice(env.DB, deposit.id, { status: "paid", paidAt: "2026-12-04T10:00:00.000Z" });
+    await make("milestone", 100001, true);
+    await make("milestone", 77700, false); // sent but unpaid
+    await make("change_order", 25000, true); // the change order's own price is counted through the order, never here
+    await make("hourly", 31300, true);
+    await make("subscription", 29900, true);
+    const r = await SELF.fetch(`https://x/api/projects/${s.project.id}`, { headers: { cookie } });
+    expect(r.status).toBe(200);
+    expect((await r.json<any>()).profit.paidCents).toBe(199850 + 100001);
   });
 });

@@ -133,6 +133,8 @@ export async function listTodayCandidates(db: D1Database, nowIso: string, minQui
       OR EXISTS (SELECT 1 FROM deals dl JOIN documents doc ON doc.deal_id = dl.id WHERE dl.business_id = businesses.id AND dl.stage = 'proposal_sent' AND doc.status IN ('sent','viewed'))
       OR EXISTS (SELECT 1 FROM onboardings ob WHERE ob.business_id = businesses.id AND ob.closed_at IS NULL AND ob.test = 0)
       OR EXISTS (SELECT 1 FROM projects pr WHERE pr.business_id = businesses.id AND ${liveProjectSql("pr")} AND pr.test = 0)
+      OR EXISTS (SELECT 1 FROM invoices iv WHERE iv.business_id = businesses.id AND iv.test = 0 AND iv.status IN ('draft','open','failed'))
+      OR EXISTS (SELECT 1 FROM billing_holds bh WHERE bh.business_id = businesses.id AND bh.lifted_at IS NULL)
     ) ORDER BY created_at, id`;
   const res = (await db.prepare(sql).bind(nowIso, minQuickScore).all<BusinessRow & { latest_draft_at: string | null; latest_score: number | null }>()).results;
   return res.map((r) => ({ ...fromBusinessRow(r), latest_draft_at: r.latest_draft_at ?? null, latest_score: r.latest_score ?? null }));

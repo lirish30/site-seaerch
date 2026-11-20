@@ -40,6 +40,7 @@ import { projectRoutes } from "./routes/projects";
 import { sopRoutes } from "./routes/sops";
 import { timeRoutes } from "./routes/time";
 import { changeOrderRoutes } from "./routes/changeOrders";
+import { billingRoutes } from "./routes/billing";
 import { stripeWebhookRoutes } from "./routes/stripeWebhook";
 import "./approvals/leadNote";
 import "./approvals/emailSend";
@@ -50,6 +51,13 @@ import "./approvals/onboardingNudge";
 import "./approvals/sopReview";
 import "./approvals/changeOrderSend";
 import "./approvals/changeOrderDraft";
+import "./approvals/invoiceSend";
+import "./approvals/subscriptionStart";
+import "./approvals/termNotice";
+import "./approvals/invoiceReminder";
+import "./approvals/pauseNotice";
+import "./billing/milestones"; // registers the hook that drafts and proposes a milestone invoice when a project reaches one
+import "./billing/subscriptions"; // registers the hook that proposes a launch subscription when its build project is done
 import "./projects/dispatch"; // registers the hook that sends the next ready Claude step when a task changes
 import "./projects/start"; // registers the hook that starts Care when the build it waited for is done
 import { mcpRoute } from "./mcp/route";
@@ -100,6 +108,7 @@ app.route("/api", projectRoutes); // /projects..., /tasks..., /me/tasks, /deals/
 app.route("/api", sopRoutes); // /sops...
 app.route("/api", timeRoutes); // /time..., /timer/stop, /tasks/:id/timer/start, /tasks/:id/time
 app.route("/api", changeOrderRoutes); // /projects/:id/change-orders, /change-orders/:id/...
+app.route("/api", billingRoutes); // /billing/..., /change-orders/:id/invoice, /projects/:id/invoices/hourly
 // Mounted last at /api: /api/leads/:id/cro-audit(s), /api/cro-items/:id, /api/cro-audits/:id/... (all behind requireAuth).
 app.route("/api", croRoutes);
 // Also mounted at /api: /api/leads/:id/video and /api/video-audits/:id/... (behind requireAuth).

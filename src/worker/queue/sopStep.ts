@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { createReviewApproval, discardReviewApproval } from "../approvals/sopReview";
 import { getDocument } from "../db/documents";
+import { isOnHold } from "../db/holds";
 import { getAnswers, listFiles, listItems } from "../db/onboardings";
 import { getProject, projectIsLive, type Project, type ProjectKind } from "../db/projects";
 import {
@@ -146,10 +147,10 @@ function mergeChecklist(have: ChecklistItem[], add: ChecklistItem[]): ChecklistI
 
 /**
  * Puts a task back to to-do after its job ended without a result. The system comment and the cleared job id are written with the status change, and only if the job still holds the step.
- * `paused` is for a project that is not active: the step goes back with a comment that says so, and it is not Claude's failure. Otherwise, once the step has `MAX_AUTO_RETRIES` failed or
+ * `paused` is for a project that is not active, and `held` for a client whose overdue invoice has put a billing hold on their work: the step goes back with a comment that says so, and it is not Claude's failure. Otherwise, once the step has `MAX_AUTO_RETRIES` failed or
  * expired jobs, the comment says it is Logan's now (automatic dispatch has stopped sending it; "Ask Claude" still can).
  */
-export async function giveBack(env: Env, taskId: string, o: { jobId?: string; paused?: boolean } = {}): Promise<void> {
+export async function giveBack(env: Env, taskId: string, o: { jobId?: string; paused?: boolean; held?: boolean } = {}): Promise<void> {
   const db = env.DB;
   const t = await getTask(db, taskId);
   if (!t || t.status !== "in_progress" || !t.claudeTaskId) return; // finished, taken over by Logan, or never Claude's
@@ -159,7 +160,9 @@ export async function giveBack(env: Env, taskId: string, o: { jobId?: string; pa
     const holder = await db.prepare(`SELECT status FROM claude_tasks WHERE id = ?`).bind(t.claudeTaskId).first<{ status: string }>();
     if (holder && (holder.status === "pending" || holder.status === "claimed")) return;
   }
-  const body = o.paused
+  const body = o.held
+    ? "This client has an unpaid invoice, so this step went back to to do"
+    : o.paused
     ? "The project is not active, so this step went back to to do"
     : (await failedJobCount(db, t.id)) >= MAX_AUTO_RETRIES
       ? "Claude could not do this step; it is yours. Press Ask Claude to try again"
@@ -177,7 +180,7 @@ const sopStep: TaskKindDef<SopStepPayload, SopStepResult> = {
   /**
    * The fixed instructions hold only what the app wrote (the step, its done-when, the owner mode, the project and package names) and Logan's own notes. The client's
    * questionnaire answers and what they sent are untrusted, one part each, and never reach the instructions. Stale when the step is finished, skipped or locked, was taken back
-   * from this job, or its project is not live (paused, cancelled, or finished other than a Care onboarding).
+   * from this job, its project is not live (paused, cancelled, or finished other than a Care onboarding), or its client has a billing hold (an overdue invoice).
    */
   async build(env, p, job) {
     const t = await target(env, p, job);
@@ -188,6 +191,11 @@ const sopStep: TaskKindDef<SopStepPayload, SopStepResult> = {
       // The step would stay in progress under a dead job: give it back now (not Claude's failure), so it is to do again when the project is.
       await giveBack(env, t.task.id, { jobId: job.id, paused: true });
       return { stale: `the project is ${project.status}` };
+    }
+    if (await isOnHold(env.DB, project.businessId)) {
+      // The client's invoice went overdue after the step was handed over: the same, and it is sent again when the hold lifts.
+      await giveBack(env, t.task.id, { jobId: job.id, held: true });
+      return { stale: "the client has an unpaid invoice (a billing hold)" };
     }
     const doc = project.documentId ? await getDocument(env.DB, project.documentId) : null;
     const loganNotes = (await listComments(env.DB, t.task.id)).filter((c) => c.author === "logan").slice(-10).map((c) => cleanText(c.body, 1000));
@@ -212,6 +220,7 @@ const sopStep: TaskKindDef<SopStepPayload, SopStepResult> = {
       // made the first completion throw, so Claude is retrying. Finishing again repairs whatever is missing and fires nothing when it is all recorded.
       const owner = await getProject(db, task.projectId);
       if (!owner || !projectIsLive(owner)) return { stale: `the project is ${owner?.status ?? "gone"}` };
+      if (await isOnHold(db, owner.businessId)) return { stale: "the client has an unpaid invoice (a billing hold)" };
       try { await completeTask(env, task.id, { by: "claude", now: new Date() }); }
       catch (e) {
         if (e instanceof TaskStateError) return { stale: e.message };
@@ -226,6 +235,10 @@ const sopStep: TaskKindDef<SopStepPayload, SopStepResult> = {
     if (!project || !projectIsLive(project)) {
       await giveBack(env, task.id, { jobId: job.id, paused: true });
       return { stale: `the project is ${project?.status ?? "gone"}` };
+    }
+    if (await isOnHold(db, project.businessId)) {
+      await giveBack(env, task.id, { jobId: job.id, held: true }); // nothing of the result is applied, the step is sent again when the hold lifts
+      return { stale: "the client has an unpaid invoice (a billing hold)" };
     }
 
     const summary = cleanText(r.summary, COMMENT_MAX);

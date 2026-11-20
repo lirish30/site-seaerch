@@ -75,8 +75,12 @@ const isPublicOnboarding = (path: string, method: string) =>
 const isPublicChangeOrder = (path: string, method: string) =>
   (method === "GET" && /^\/api\/public\/c\/[^/]+$/.test(path)) || (method === "POST" && /^\/api\/public\/c\/[^/]+\/(sign|decline)$/.test(path));
 
+// A client's subscription page (`GET /api/public/s/<token>`) and its one write (`POST .../checkout`): one non-empty token segment each, those methods only.
+const isPublicSubscription = (path: string, method: string) =>
+  (method === "GET" && /^\/api\/public\/s\/[^/]+$/.test(path)) || (method === "POST" && /^\/api\/public\/s\/[^/]+\/checkout$/.test(path));
+
 export const requireAuth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
-  if (PUBLIC.has(c.req.path) || isPublicReport(c.req.path, c.req.method) || isPublicProposal(c.req.path, c.req.method) || isPublicOnboarding(c.req.path, c.req.method) || isPublicChangeOrder(c.req.path, c.req.method)) return next();
+  if (PUBLIC.has(c.req.path) || isPublicReport(c.req.path, c.req.method) || isPublicProposal(c.req.path, c.req.method) || isPublicOnboarding(c.req.path, c.req.method) || isPublicChangeOrder(c.req.path, c.req.method) || isPublicSubscription(c.req.path, c.req.method)) return next();
   const token = getCookie(c, "session");
   if (!token || !(await verifySession(c.env.SESSION_SECRET, token, Date.now()))) return c.json({ error: "unauthorized" }, 401);
   return next();

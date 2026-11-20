@@ -2,13 +2,16 @@ import { logActivity, logActivityOnce } from "../db/activity";
 import { getBusiness, updateLead } from "../db/businesses";
 import { DealMoveError, getDeal, moveDeal } from "../db/deals";
 import { getDocument, setPaid, type Document } from "../db/documents";
-import { getInvoiceForDocument, getStripeCustomer, insertInvoice, markInvoice, saveStripeCustomer, type InvoiceRow } from "../db/invoices";
+import { getInvoiceForDocument, insertInvoice, markInvoice, type InvoiceRow } from "../db/invoices";
 import type { Env } from "../env";
 import type { Fetch } from "../google/oauth";
 import { startOnboarding } from "../onboarding/start";
 import { startProjects } from "../projects/start";
 import { stopOutreach } from "../sequence/stop";
-import { StripeError, createCustomer, createDepositInvoice, retrieveInvoice, stripeMode } from "../stripe/client";
+import { StripeError, createDepositInvoice, retrieveInvoice, stripeMode } from "../stripe/client";
+import { ensureStripeCustomer } from "../billing/customer";
+import { liftHoldOfDeadInvoice } from "../billing/lift";
+import { planSubscriptions } from "../billing/subscriptions";
 import { paidProblem } from "../stripe/webhook";
 
 /** What the client's page says about the deposit. */
@@ -34,6 +37,8 @@ export function setStripeFetchForTests(f: Fetch | null): void {
   fetchForTests = f;
 }
 const fetcher = (deps: { fetch?: Fetch }): Fetch => deps.fetch ?? fetchForTests ?? ((url, init) => fetch(url, init));
+/** The Fetch every Stripe call goes through (the test's fake when one was handed in), so billing's calls and the deposit's share it. */
+export const stripeFetch = fetcher;
 
 const oneLine = (s: string) => s.replace(/\s+/g, " ").trim();
 /** A reason that is safe to store and show: one line, never the secret key, never longer than the cap. */
@@ -45,7 +50,8 @@ function safeReason(e: unknown, key: string | undefined): string {
 /** How an invoice row reads to the client. A void or uncollectible invoice cannot be paid, and a document has only the one. */
 function viewOf(inv: InvoiceRow): PublicPayment {
   if (inv.status === "paid") return { state: "paid", amountCents: inv.amountCents };
-  if (inv.status === "void" || inv.status === "uncollectible") return UNAVAILABLE;
+  // A draft (never sent) or a row with no link has nothing to pay yet; a void or uncollectible one can no longer be paid.
+  if (inv.status === "draft" || inv.status === "void" || inv.status === "uncollectible" || !inv.hostedUrl) return UNAVAILABLE;
   return { state: "open", amountCents: inv.amountCents, url: inv.hostedUrl };
 }
 
@@ -62,6 +68,8 @@ async function noteFailure(env: Env, doc: Document, reason: string): Promise<voi
  */
 async function settle(env: Env, doc: Document, inv: InvoiceRow, f: Fetch): Promise<InvoiceRow> {
   const key = env.STRIPE_SECRET_KEY;
+  const stripeInvoiceId = inv.stripeInvoiceId, documentId = inv.documentId;
+  if (!stripeInvoiceId || !documentId) return inv; // a deposit made at Stripe has both; a row without them has nothing to settle
   try {
     if (inv.status === "paid") {
       if (!doc.paidAt) await onInvoicePaid(env, inv);
@@ -69,22 +77,25 @@ async function settle(env: Env, doc: Document, inv: InvoiceRow, f: Fetch): Promi
     }
     if (inv.status !== "open" && inv.status !== "failed") return inv;
     if (!key || !stripeMode(key) || Date.now() - Date.parse(inv.createdAt) < RECHECK_AFTER_MS) return inv;
-    const s = await retrieveInvoice(f, key, inv.stripeInvoiceId);
+    const s = await retrieveInvoice(f, key, stripeInvoiceId);
     if (s.status === "paid") {
-      const problem = paidProblem(inv, { amount_paid: s.amountPaid, currency: s.currency, metadata: { document_id: inv.documentId } });
+      const problem = paidProblem(inv, { amount_paid: s.amountPaid, currency: s.currency, metadata: { document_id: documentId } });
       if (problem) await markInvoice(env.DB, inv.id, { mismatch: problem }, { notFrom: ["paid", "void"] });
       else {
         await markInvoice(env.DB, inv.id, { status: "paid", paidAt: inv.paidAt ?? new Date().toISOString(), mismatch: null });
-        const paid = (await getInvoiceForDocument(env.DB, inv.documentId))!;
+        const paid = (await getInvoiceForDocument(env.DB, documentId))!;
         await onInvoicePaid(env, paid);
         return paid;
       }
-    } else if (s.status === "void") await markInvoice(env.DB, inv.id, { status: "void" }, { notFrom: ["paid"] });
-    else if (s.status === "uncollectible") await markInvoice(env.DB, inv.id, { status: "uncollectible" }, { notFrom: ["paid", "void"] });
+    } else if (s.status === "void") {
+      if (await markInvoice(env.DB, inv.id, { status: "void" }, { notFrom: ["paid"] })) await liftHoldOfDeadInvoice(env, inv.id, new Date());
+    } else if (s.status === "uncollectible") {
+      if (await markInvoice(env.DB, inv.id, { status: "uncollectible" }, { notFrom: ["paid", "void"] })) await liftHoldOfDeadInvoice(env, inv.id, new Date());
+    }
   } catch (e) {
     console.error("deposit: could not bring the invoice up to date", safeReason(e, key));
   }
-  return (await getInvoiceForDocument(env.DB, inv.documentId)) ?? inv;
+  return (await getInvoiceForDocument(env.DB, documentId)) ?? inv;
 }
 
 /**
@@ -121,8 +132,7 @@ async function ensure(env: Env, docId: string, deps: { fetch?: Fetch }): Promise
     const h = doc.content.header;
     // Only what the signed document froze goes to Stripe, and the keys are fixed per document and business, so a retry after a half-finished attempt
     // (a draft invoice left at Stripe, a customer made but not saved) replays what Stripe already did instead of making a second one.
-    const customerId = (await getStripeCustomer(env.DB, doc.businessId))
-      ?? await saveStripeCustomer(env.DB, doc.businessId, (await createCustomer(f, key, { name: h.clientName, email: h.contactEmail, businessId: doc.businessId }, `customer:${doc.businessId}`)).id);
+    const customerId = await ensureStripeCustomer(env, { businessId: doc.businessId, name: h.clientName, email: h.contactEmail }, f);
     const made = await createDepositInvoice(f, key, {
       customerId, amountCents: doc.content.schedule.depositCents, description: `${h.clientName} — deposit (${h.reference} v${doc.version})`,
       documentId: doc.id, dealId: doc.dealId, businessId: doc.businessId,
@@ -131,6 +141,7 @@ async function ensure(env: Env, docId: string, deps: { fetch?: Fetch }): Promise
       return viewOf(await insertInvoice(env.DB, {
         businessId: doc.businessId, dealId: doc.dealId, documentId: doc.id, kind: "deposit", stripeCustomerId: customerId,
         stripeInvoiceId: made.invoiceId, amountCents: doc.content.schedule.depositCents, hostedUrl: made.hostedUrl,
+        ref: `deposit:${doc.id}`, description: "Deposit", test: doc.test, lines: [{ description: "Deposit", amountCents: doc.content.schedule.depositCents }],
       }));
     } catch (e) {
       // Another request for the same document got there first (the same Stripe invoice, by the idempotency key): its row is the one.
@@ -206,6 +217,7 @@ async function winDeal(env: Env, doc: Document): Promise<void> {
  * a document with a paid time has had all of this done. A test copy is marked paid and nothing else; a real one also wins its deal and starts its onboarding and its projects.
  */
 export async function onInvoicePaid(env: Env, inv: InvoiceRow): Promise<void> {
+  if (!inv.documentId) { console.error("deposit: a paid invoice has no document", inv.id); return; }
   const doc = await getDocument(env.DB, inv.documentId);
   if (!doc) { console.error("deposit: a paid invoice has no document", inv.id); return; }
   await logActivityOnce(env.DB, doc.businessId, "deposit_paid", `Deposit ${dollars(inv.amountCents)} paid (${doc.content.header.reference} v${doc.version})${doc.test ? ", test copy" : ""}`);
@@ -223,6 +235,14 @@ export async function onInvoicePaid(env: Env, inv: InvoiceRow): Promise<void> {
       try {
         await logActivityOnce(env.DB, doc.businessId, "note", `${doc.content.header.reference} v${doc.version}: projects were not started: ${reason}. Use Start projects on the deal, or wait for the daily sweep.`);
       } catch (e2) { console.error("deposit: could not note that projects were not started", safeReason(e2, env.STRIPE_SECRET_KEY)); }
+    }
+    // The subscriptions the document sold are planned (one row each, nothing proposed or made at Stripe). Their own try, like the projects': a failure here neither stops the payment nor the rest.
+    try { await planSubscriptions(env, doc); }
+    catch (e) {
+      const reason = safeReason(e, env.STRIPE_SECRET_KEY);
+      console.error("deposit: subscriptions were not planned", reason);
+      try { await logActivityOnce(env.DB, doc.businessId, "note", `${doc.content.header.reference} v${doc.version}: subscriptions were not planned: ${reason}. The monthly plans for this client need planning by hand.`); }
+      catch (e2) { console.error("deposit: could not note that subscriptions were not planned", safeReason(e2, env.STRIPE_SECRET_KEY)); }
     }
   }
   await setPaid(env.DB, doc.id, inv.paidAt ?? new Date().toISOString());

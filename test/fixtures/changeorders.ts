@@ -4,6 +4,10 @@ import { sealChangeOrder } from "../../src/worker/changeorders/service";
 import { getSettings } from "../../src/worker/db/settings";
 import { newClientToken } from "../../src/worker/documents/token";
 import { canonicalJson, sha256Hex } from "../../src/worker/documents/hash";
+import { discardInvoice } from "../../src/worker/billing/discard";
+import { changeOrderRef } from "../../src/worker/billing/changeOrderInvoice";
+import { getInvoiceByRef } from "../../src/worker/db/invoices";
+import type { Env } from "../../src/worker/env";
 import { seedProject } from "./projects";
 
 export const NOW_ISO = "2026-12-05T10:00:00.000Z";
@@ -52,4 +56,13 @@ export async function secondProject(s: Awaited<ReturnType<typeof seedProject>>, 
     templateKey: o.templateKey, templateVersion: o.templateKey ? 1 : null, careDeferred: false, startedAt: "2026-12-03T10:00:00.000Z",
   });
   return project;
+}
+
+/**
+ * Signing drafts the order's invoice. Marking the order paid BY HAND is refused while that invoice can still be paid, so a test that marks one paid by hand first discards the draft, as Logan
+ * must. Nothing happens when the order has no invoice.
+ */
+export async function discardOrderInvoice(e: Env, changeOrderId: string): Promise<void> {
+  const inv = await getInvoiceByRef(e.DB, changeOrderRef(changeOrderId));
+  if (inv && inv.status === "draft") await discardInvoice(e, inv.id);
 }

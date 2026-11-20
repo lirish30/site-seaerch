@@ -6,7 +6,8 @@ import { listChangeOrders } from "../db/changeOrders";
 import { getBusiness } from "../db/businesses";
 import { getDeal } from "../db/deals";
 import { getDocument } from "../db/documents";
-import { paidTotalForDeal } from "../db/invoices";
+import { isOnHold } from "../db/holds";
+import { paidTotalForDocument } from "../db/invoices";
 import { createProject, getProject, listMilestones, listProjects, PROJECT_STATUSES, projectIsLive, setProjectStatus, type Project, type ProjectStatus } from "../db/projects";
 import { getSettings } from "../db/settings";
 import { getTemplate, saveTemplate } from "../db/sops";
@@ -16,7 +17,7 @@ import {
 import { listEntriesForTask, minutesByTask, timeTotals } from "../db/time";
 import type { Env } from "../env";
 import { cleanText, looksLikeCredential } from "../onboarding/templates";
-import { dispatchReady, requestClaudeStep } from "../projects/dispatch";
+import { dispatchReady, HELD_REFUSAL, requestClaudeStep } from "../projects/dispatch";
 import { cancelTasksFor } from "../queue/db";
 import { bodyOf, isDomainError, NOT_FOUND, ownerOnError, type Ctx } from "../projects/http";
 import { runTasksChanged } from "../projects/hooks";
@@ -59,7 +60,7 @@ projectRoutes.get("/projects", async (c) => {
 });
 
 /**
- * What the project was sold for and what has been paid on it. The sale is the proposal's one-time money (its payment schedule's milestones); the money paid is the deal's paid invoices.
+ * What the project was sold for and what has been paid on it. The sale is the proposal's one-time money (its payment schedule's milestones); the money paid is what the proposal's own deposit and milestone invoices have paid (a change order's money is counted through the order, never here).
  * A Care project that follows a build on the same proposal carries neither (the build has the one-time money), a Care project on its own does, and a project made by hand has none.
  * A signed change order adds its price to what was sold, and to what was paid once it is paid.
  */
@@ -69,7 +70,7 @@ async function soldAndPaid(env: Env, p: Project, orders: { status: string; paidA
   const followsBuild = p.kind === "care_onboarding" && !!doc && (await listProjects(env.DB, { businessId: p.businessId })).some((x) => x.documentId === doc.id && x.kind !== "care_onboarding");
   if (doc && !followsBuild) {
     soldCents = doc.content.schedule.milestones.reduce((sum, m) => sum + m.amountCents, 0);
-    paidCents = p.dealId ? await paidTotalForDeal(env.DB, p.dealId) : 0;
+    paidCents = await paidTotalForDocument(env.DB, doc.id, ["deposit", "milestone"]);
   }
   for (const o of orders) {
     if (o.status !== "signed") continue;
@@ -307,6 +308,7 @@ projectRoutes.post("/tasks/:id/send-back", onTask(async (c, task) => {
   if (task.status !== "in_review") return c.json({ error: "Only a step that is in review can be sent back." }, 409);
   const project = await getProject(c.env.DB, task.projectId);
   if (!project || !projectIsLive(project)) return c.json({ error: `This project is ${project?.status ?? "gone"}, so Claude cannot start on it.` }, 409);
+  if (await isOnHold(c.env.DB, project.businessId)) return c.json({ error: HELD_REFUSAL }, 409);
   if (body.note !== undefined && looksLikeCredential(cleanText(body.note, body.note.length))) throw new TaskInputError(CREDENTIAL_REFUSED);
   const { queued } = await requestClaudeStep(c.env, task.id, { note: body.note });
   // Claude has the step again; now the old card goes. Each part is best effort: a card left waiting is no harm to the re-queue (the step has moved on from the review it asked about).

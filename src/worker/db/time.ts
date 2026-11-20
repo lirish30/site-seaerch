@@ -169,3 +169,19 @@ export async function commitTimer(db: D1Database, o: { stop: StopPlan | null; st
     started: o.start ? await getEntry(db, startId) : null,
   };
 }
+
+/** The time that can still be billed: finished, billable, worth at least a minute, and not yet on an invoice. The one definition both the reading and the claiming statements use. */
+export const UNBILLED_SQL = "billable = 1 AND ended_at IS NOT NULL AND minutes > 0 AND invoiced_ref IS NULL";
+
+/** The billable, finished, un-invoiced time on a project: the entries (oldest first) and their minutes in total. A running timer, an unbillable entry and an invoiced one are left out. */
+export async function unbilledBillableMinutes(db: D1Database, projectId: string): Promise<{ entryIds: string[]; minutes: number }> {
+  const rows = (await db.prepare(`SELECT id, minutes FROM time_entries WHERE project_id = ? AND ${UNBILLED_SQL} ORDER BY started_at, rowid`).bind(projectId).all<{ id: string; minutes: number }>()).results;
+  return { entryIds: rows.map((r) => r.id), minutes: rows.reduce((sum, r) => sum + r.minutes, 0) };
+}
+
+/** Frees the entries an invoice billed (it was discarded or voided), so they can go on another. Returns how many it freed. */
+export async function releaseTimeEntries(db: D1Database, ref: string): Promise<number> {
+  const res = await db.prepare(`UPDATE time_entries SET invoiced_ref = NULL WHERE invoiced_ref = ?`).bind(ref).run();
+  return res.meta.changes ?? 0;
+}
+

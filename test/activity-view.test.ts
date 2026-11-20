@@ -38,7 +38,7 @@ describe("activityView", () => {
   it("the project and change-order kinds read as such", () => {
     const titles = {
       project_started: "Project started", project_milestone: "Project milestone", project_done: "Project finished",
-      change_order_sent: "Change order sent", change_order_signed: "Change order signed", change_order_paid: "Change order paid", change_order_void: "Change order voided", change_order_declined: "Change order declined",
+      change_order_sent: "Change order sent", change_order_signed: "Change order signed", change_order_paid: "Change order paid", change_order_void: "Change order voided", change_order_declined: "Change order declined", invoice_sent: "Invoice sent", invoice_paid: "Invoice paid", billing_hold_placed: "Work paused: invoice overdue",
     } as const;
     for (const [kind, title] of Object.entries(titles)) expect(describeActivity({ kind: kind as keyof typeof titles, detail: null }).title, kind).toBe(title);
     expect(describeActivity({ kind: "change_order_void", detail: "client changed their mind" })).toMatchObject({ tone: "warning", detail: "client changed their mind" });

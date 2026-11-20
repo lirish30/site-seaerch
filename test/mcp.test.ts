@@ -99,6 +99,18 @@ describe("mcp", () => {
     expect(unknown.result.content[0].text).not.toContain("proposal.send");
   });
 
+  it("mcp cannot propose any of the five billing approval kinds with its own card text", async () => {
+    for (const kind of ["invoice.send", "invoice.reminder", "invoice.pause_notice", "subscription.start", "subscription.term_notice"]) {
+      const count = async () => (await env.DB.prepare(`SELECT COUNT(*) AS n FROM approvals WHERE kind = ?`).bind(kind).first<{ n: number }>())!.n;
+      const before = await count();
+      const j = await call("propose_approval", { kind, title: "Looks harmless", preview: "Harmless text", payload: {}, record_type: "lead", record_id: "b1" });
+      expect(j.result.isError, kind).toBe(true);
+      expect(j.result.content[0].text, kind).toContain("the app proposes it itself");
+      expect(await count(), kind).toBe(before);
+      expect((await listAgentActions(env.DB, { limit: 500 })).some((a) => a.tool === "propose_approval" && a.summary.includes(`refused ${kind}`)), kind).toBe(true);
+    }
+  });
+
   it("propose lead.note creates pending approval and logs action", async () => {
     const before = (await listAgentActions(env.DB, { limit: 500 })).length;
     const j = await call("propose_approval", { kind: "lead.note", title: "Note", preview: "Add note", payload: { businessId: "b1", text: "hi" } });

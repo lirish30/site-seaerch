@@ -2,9 +2,9 @@ import { STATUSES, type LeadRow, type LeadStatus } from "./types";
 
 export type Section = "home" | "leads" | "find" | "outreach" | "work" | "settings";
 
-const isWork = (p: string) => p === "/projects" || p.startsWith("/projects/") || p === "/timesheet" || p.startsWith("/tasks/");
+const isWork = (p: string) => p === "/projects" || p.startsWith("/projects/") || p === "/timesheet" || p === "/billing" || p.startsWith("/tasks/");
 
-/** Which rail section a path belongs to. Today is Home; lists, Promising and a lead are Leads; New search, searches, Radar, Niche test and Import are Find; Outreach, Campaigns and the Pipeline are Outreach; projects, a task's redirect and the timesheet are Projects ("work"). */
+/** Which rail section a path belongs to. Today is Home; lists, Promising and a lead are Leads; New search, searches, Radar, Niche test and Import are Find; Outreach, Campaigns and the Pipeline are Outreach; projects, a task's redirect, the timesheet and Billing are Projects ("work"). */
 export function sectionOf(pathname: string): Section {
   if (pathname === "/today") return "home";
   if (pathname === "/leads" || pathname.startsWith("/leads/") || pathname === "/promising") return "leads";

@@ -8,6 +8,7 @@ import type { SettingsDoc, UsageRow } from "../../settingsData";
 import {
   bookingSummary, documentsSummary, hasBuiltSignature, profileMissing, samplesNeeded, setupItems, setupSentence, suppressionWord, voiceSummary, workSummary,
 } from "../../settingsPagesView";
+import { billingTermsSummary } from "../../billingView";
 import type { HelperStatus } from "../../helperView";
 import type { FitProfile, Service, Suppression } from "../../types";
 
@@ -53,6 +54,7 @@ function chips(d: Data): Record<string, Chip | null> {
     packages: { tone: "", text: "Price catalog" },
     booking: wait(d.doc, () => bookingSummary(String(doc.booking_config ?? ""))),
     documents: wait(d.doc, () => documentsSummary(String(doc.documents_config ?? ""))),
+    billing: wait(d.doc, () => billingTermsSummary(String(doc.billing_config ?? ""))),
     sops: { tone: "", text: "Templates" },
     work: wait(d.doc, () => workSummary(String(doc.work_config ?? ""))),
     security: { tone: "", text: "Passkeys" },
@@ -98,6 +100,7 @@ const SECTIONS: { name: string; tint: "signal" | "info" | "positive" | "plain"; 
     { slug: "packages", title: "Packages", icon: "card", text: "What you sell and what it costs. A price change saves as a new version." },
     { slug: "booking", title: "Booking", icon: "calendar", text: "The hours people can book a call, notice, buffer and the budget choices on the form." },
     { slug: "documents", title: "Documents", icon: "pen", text: "The clause library, the lawyer-review record, the late fee and how long a proposal stays open." },
+    { slug: "billing", title: "Billing", icon: "card", text: "Days to pay an invoice, the reminder schedule, when work pauses, and what to switch on in Stripe." },
   ] },
 ];
 

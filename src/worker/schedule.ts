@@ -13,6 +13,7 @@ import { expireDue } from "./db/documents";
 import { activityStmt } from "./db/activity";
 import { sweepOnboardings } from "./onboarding/sweep";
 import { sweepProjects } from "./projects/sweep";
+import { sweepBilling } from "./billing/sweep";
 
 /** The cron strings in wrangler.jsonc. The daily one MUST stay first there: test/radar-info.test.ts reads the first entry. */
 export const DAILY_CRON = "17 13 * * *";
@@ -45,8 +46,9 @@ async function expireProposals(env: Env, now: Date): Promise<number> {
  * starts due radars, scans for due sequence steps, gives up on Claude tasks and Mac helper jobs nobody picked up in 14 days, expires proposals past their date,
  * re-queues CRO roadmaps that were never handed over, sweeps the open client onboardings (drafts the reminder or Friday update that is due, as an approval,
  * and notes 14 days of silence), and sweeps the projects (makes this period's recurring tasks, starts the projects a paid proposal never got, sends the Claude steps that are
- * ready, expires change orders past their date, and saves a timer left running past its cap). This is unattended work: it can only start searches, create approvals,
- * queue Claude steps and close queue tasks, never send, and it never throws.
+ * ready, expires change orders past their date, and saves a timer left running past its cap), and last sweeps the billing (drafts the milestone invoices a hook never made, plans and
+ * proposes subscriptions, drafts the reminders and pause notices that are due and places the holds, notices or converts the terms that end, and settles the open invoices whose webhook never
+ * came). This is unattended work: it can only start searches, create approvals and holds, queue Claude steps and close queue tasks, never send, and it never throws.
  */
 export async function runScheduled(env: Env, cron: string, now: Date): Promise<void> {
   if (cron === MAIL_SYNC_CRON) {
@@ -66,4 +68,5 @@ export async function runScheduled(env: Env, cron: string, now: Date): Promise<v
   await part("cro heal", () => healCroHandovers(env));
   await part("onboarding sweep", () => sweepOnboardings(env, now));
   await part("project sweep", () => sweepProjects(env, now));
+  await part("billing sweep", () => sweepBilling(env, now));
 }

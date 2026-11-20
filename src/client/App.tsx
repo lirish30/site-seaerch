@@ -9,6 +9,7 @@ import Report from "./pages/Report";
 import Proposal from "./pages/Proposal";
 import Onboard from "./pages/Onboard";
 import ChangeOrder from "./pages/ChangeOrder";
+import Subscribe from "./pages/Subscribe";
 import Radar from "./pages/Radar";
 import Promising from "./pages/Promising";
 import Import from "./pages/Import";
@@ -43,6 +44,8 @@ import Scores from "./pages/settings/Scores";
 import Packages from "./pages/settings/Packages";
 import Booking from "./pages/settings/Booking";
 import Documents from "./pages/settings/Documents";
+import BillingSettings from "./pages/settings/Billing";
+import Billing from "./pages/Billing";
 import Sops from "./pages/settings/Sops";
 import Work from "./pages/settings/Work";
 import Shell from "./components/Shell";
@@ -56,6 +59,7 @@ export default function App() {
       <Route path="/p/*" element={<Proposal />} />
       <Route path="/o/*" element={<Onboard />} />
       <Route path="/c/*" element={<ChangeOrder />} />
+      <Route path="/s/*" element={<Subscribe />} />
       <Route path="*" element={
         <Shell>
           <Routes>
@@ -76,6 +80,7 @@ export default function App() {
             <Route path="/projects" element={<Projects />} />
             <Route path="/projects/:id" element={<ProjectPage />} />
             <Route path="/timesheet" element={<Timesheet />} />
+            <Route path="/billing" element={<Billing />} />
             <Route path="/tasks/:id" element={<TaskRedirect />} />
             <Route path="/radar" element={<Radar />} />
             <Route path="/niche-test" element={<NicheTest />} />
@@ -98,6 +103,7 @@ export default function App() {
             <Route path="/settings/packages" element={<Packages />} />
             <Route path="/settings/booking" element={<Booking />} />
             <Route path="/settings/documents" element={<Documents />} />
+            <Route path="/settings/billing" element={<BillingSettings />} />
             <Route path="/settings/sops" element={<Sops />} />
             <Route path="/settings/work" element={<Work />} />
           </Routes>

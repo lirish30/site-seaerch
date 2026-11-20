@@ -101,6 +101,10 @@ describe("canBulkApprove", () => {
   it("a step Claude did is approved on its own: Logan looks at the work first", () => {
     expect(canBulkApprove("sop.review")).toBe(false);
   });
+  it("an invoice and a subscription link go to a client with their own amount and date, so each is approved on its own", () => {
+    expect(canBulkApprove("invoice.send")).toBe(false);
+    expect(canBulkApprove("subscription.start")).toBe(false);
+  });
   it("everything else can be approved as a group", () => {
     for (const k of ["email.send", "lead.note", "lead.status"]) expect(canBulkApprove(k), k).toBe(true);
   });

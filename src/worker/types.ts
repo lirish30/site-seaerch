@@ -124,6 +124,7 @@ export const ACTIVITY_KINDS = [
   "call_recap", "followup_booked", "proposal_sent", "proposal_viewed", "proposal_signed", "proposal_void", "deposit_paid",
   "onboarding_started", "onboarding_welcome", "onboarding_submitted", "onboarding_received", "onboarding_waiting", "onboarding_resumed",
   "project_started", "project_milestone", "project_done", "change_order_sent", "change_order_signed", "change_order_paid", "change_order_void", "change_order_declined",
+  "invoice_sent", "invoice_paid", "billing_hold_placed",
 ] as const;
 export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
 export interface Activity { id: string; business_id: string; kind: ActivityKind; detail: string | null; created_at: string; }
@@ -206,6 +207,8 @@ export interface Settings {
   documents_config: string;
   /** JSON of a WorkConfig (cost rate, week start, timer cap), or "{}" for the defaults. */
   work_config: string;
+  /** JSON of a BillingConfig (invoice terms, reminder offsets, pause and term-notice days), or "{}" for the defaults. */
+  billing_config: string;
 }
 export type TonePreset = "friendly_local" | "consultative" | "direct" | "formal";
 export type EmailLength = "short" | "medium" | "long";

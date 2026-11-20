@@ -5,8 +5,13 @@ import { openProposalsSentBefore } from "./db/documents";
 import { listOpenItems, listOpenOnboardings } from "./db/onboardings";
 import { silentDays, stageOf } from "./onboarding/schedule";
 import { projectAttention } from "./projects/progress";
+import { calendarDateIn, calendarDaysBetween } from "./billing/dates";
+import { activeHolds } from "./db/holds";
+import { listInvoices } from "./db/invoices";
+import { getSettings } from "./db/settings";
+import { zoneOf } from "./sop/cadence";
 
-export const TODAY_KINDS = ["follow_up_due", "draft_unsent", "stalled_deal", "starred_idle", "promising_quick_scan", "proposal_follow_up", "onboarding_attention", "project_attention"] as const;
+export const TODAY_KINDS = ["follow_up_due", "draft_unsent", "stalled_deal", "starred_idle", "promising_quick_scan", "proposal_follow_up", "onboarding_attention", "project_attention", "billing_attention"] as const;
 export type TodayKind = (typeof TODAY_KINDS)[number];
 export const isTodayKind = (s: string): s is TodayKind => (TODAY_KINDS as readonly string[]).includes(s);
 
@@ -41,7 +46,35 @@ export function parseSnooze(detail: string | null): { kind: TodayKind; until: nu
 // deal_created, deal_moved, call_prep, call_recap and followup_booked are the owner filing a deal (or the queue prepping or recapping a call), not contact with the prospect.
 // video_watch is deliberately NOT in this set: a prospect watching the video is engagement and does un-stall a deal.
 const NOT_CONTACT = new Set(["today_done", "snoozed", "bulk", "starred", "unstarred", "job_found", "deal_created", "deal_moved", "call_prep", "call_recap", "followup_booked", "proposal_viewed", "proposal_signed", "proposal_void", "deposit_paid",
-  "project_started", "project_milestone", "project_done", "change_order_sent", "change_order_signed", "change_order_paid", "change_order_void", "change_order_declined"]);
+  "project_started", "project_milestone", "project_done", "change_order_sent", "change_order_signed", "change_order_paid", "change_order_void", "change_order_declined", "invoice_sent", "invoice_paid", "billing_hold_placed"]);
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** "2026-10-02" as "2 Oct". */
+const dayMonth = (ymd: string) => `${Number(ymd.slice(8, 10))} ${MONTHS[Number(ymd.slice(5, 7)) - 1]}`;
+
+/**
+ * What needs Logan about a client's money, one reason per client, the worst state first: (1) work on hold (since the day it was placed), (2) an invoice past its due date (the oldest one speaks,
+ * counted from the day a payment failed, else from the due date, as the reminders are), (3) an invoice drafted and waiting for his OK to send. Test invoices never count.
+ */
+async function billingAttention(db: D1Database, now: Date): Promise<Map<string, { reason: string; priority: number }>> {
+  const out = new Map<string, { reason: string; priority: number }>();
+  const tz = zoneOf(await getSettings(db));
+  const today = calendarDateIn(now, tz);
+  for (const h of await activeHolds(db)) {
+    if (!out.has(h.businessId)) out.set(h.businessId, { reason: `Work on hold since ${dayMonth(calendarDateIn(new Date(h.placedAt), tz))}`, priority: 90 });
+  }
+  const worst = new Map<string, number>();
+  for (const i of await listInvoices(db, { statuses: ["open", "failed"] })) {
+    const base = i.failedOn ?? i.dueOn;
+    if (i.test || !base || base >= today) continue;
+    worst.set(i.businessId, Math.max(worst.get(i.businessId) ?? 0, calendarDaysBetween(base, today)));
+  }
+  for (const [id, days] of worst) if (!out.has(id)) out.set(id, { reason: `Invoice ${plural(days, "day")} overdue`, priority: 75 });
+  for (const i of await listInvoices(db, { statuses: ["draft"] })) {
+    if (!i.test && !out.has(i.businessId)) out.set(i.businessId, { reason: "Invoice drafted: needs your OK to send", priority: 66 });
+  }
+  return out;
+}
 
 interface ActivityRow { business_id: string; kind: string; detail: string | null; created_at: string; }
 
@@ -94,6 +127,8 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
   }
   // A client's projects: what needs the owner now. One reason per lead (review, a Claude step that was given up on, a change order to be paid, tasks due); test projects never show.
   const projects = await projectAttention(db, now);
+  // A client's money: a hold, an overdue invoice or a draft waiting for the owner. Real invoices only, and the owner's own work, so it stays for a suppressed lead too.
+  const billing = await billingAttention(db, now);
   const activity = await recentActivity(db, candidates.map((b) => b.id), new Date(t - ACTIVITY_WINDOW_DAYS * DAY).toISOString());
 
   const lastContact = new Map<string, number>(), lastExport = new Map<string, number>();
@@ -141,6 +176,8 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
     // A client's project is the owner's own work too (like a stalled deal), so it stays for a suppressed lead.
     const project = projects.get(b.id);
     if (project && !hidden(b.id, "project_attention")) items.push(push("project_attention", b, project, null, 68));
+    const owed = billing.get(b.id);
+    if (owed && !hidden(b.id, "billing_attention")) items.push(push("billing_attention", b, owed.reason, null, owed.priority));
     // A paying client's onboarding is the owner's own work (like a stalled deal), so it stays for a suppressed lead.
     const attention = onboarding.get(b.id);
     if (attention && !hidden(b.id, "onboarding_attention")) items.push(push("onboarding_attention", b, attention, null, 70));

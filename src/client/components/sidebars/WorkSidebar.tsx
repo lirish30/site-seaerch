@@ -5,7 +5,7 @@ import { bucketCounts, type Bucket } from "../../projectView";
 import { PROJECTS_CHANGED, type ProjectRow } from "../../workData";
 import { SideItem, SideTitle } from "./parts";
 
-/** Projects: the lists by state (with counts) and the timesheet. The counts reload when a project is paused, resumed or cancelled, and when you move to another page. */
+/** Projects: the lists by state (with counts), Billing and the timesheet. The counts reload when a project is paused, resumed or cancelled, and when you move to another page. */
 export default function WorkSidebar() {
   const { pathname, search } = useLocation();
   const [counts, setCounts] = useState<Record<Bucket, number> | null>(null);
@@ -27,6 +27,7 @@ export default function WorkSidebar() {
       <SideItem to="/projects?view=paused" icon="ban" label="Paused" count={counts?.paused} active={onList && view === "paused"} />
       <SideItem to="/projects?view=done" icon="check" label="Done" count={counts?.done} active={onList && view === "done"} />
       <div className="side-spacer" />
+      <SideItem to="/billing" icon="card" label="Billing" active={pathname === "/billing"} />
       <SideItem to="/timesheet" icon="calendar" label="Timesheet" active={pathname === "/timesheet"} />
       <div className="side-gap" aria-hidden="true" />
     </>

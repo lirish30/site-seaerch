@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { holdFreeSql, isOnHold } from "../db/holds";
 import { getProject, liveProjectSql, projectIsLive } from "../db/projects";
 import { getTask, listTasks, setTaskStatus } from "../db/tasks";
 import { cancelTasksFor, enqueueTask } from "../queue/db";
@@ -12,6 +13,9 @@ export { MAX_AUTO_RETRIES };
 
 /** The most Claude step jobs queued or being worked at once, across every project. */
 export const MAX_IN_FLIGHT = 5;
+
+/** What Ask Claude says for a client whose overdue invoice has put the hold on: their tasks can still be worked by hand. */
+export const HELD_REFUSAL = "This client has an unpaid invoice, so Claude cannot start on this step until it is paid. You can still work it by hand.";
 
 /** Statuses a step can be handed to Claude from: any that is still open. */
 const OPEN = ["todo", "in_progress", "in_review", "waiting_client"] as const;
@@ -31,6 +35,7 @@ export async function requestClaudeStep(env: Env, taskId: string, o: { note?: st
   if (task.status === "locked") throw new TaskStateError("This task is locked, so Claude cannot start on it yet.");
   const project = await getProject(db, task.projectId);
   if (!project || !projectIsLive(project)) throw new TaskStateError(`This project is ${project?.status ?? "gone"}, so Claude cannot start on it.`);
+  if (await isOnHold(db, project.businessId)) throw new TaskStateError(HELD_REFUSAL);
 
   if (o.note !== undefined && o.note.trim()) await postComment(env, taskId, "logan", o.note, new Date()); // throws TaskInputError: nothing is queued
 
@@ -57,7 +62,7 @@ async function inFlight(db: D1Database): Promise<number> {
 /** Active, real projects that have a Claude step still to do, the oldest project first. */
 async function candidates(db: D1Database): Promise<string[]> {
   return (await db.prepare(
-    `SELECT p.id FROM projects p WHERE ${liveProjectSql("p")} AND p.test = 0
+    `SELECT p.id FROM projects p WHERE ${liveProjectSql("p")} AND ${holdFreeSql("p")} AND p.test = 0
        AND EXISTS (SELECT 1 FROM tasks t WHERE t.project_id = p.id AND t.status = 'todo' AND t.owner IN ('claude', 'claude_drafts'))
      ORDER BY p.started_at, p.created_at, p.id`,
   ).all<{ id: string }>()).results.map((r) => r.id);
@@ -79,7 +84,7 @@ async function reclaimStranded(env: Env): Promise<void> {
 }
 
 /**
- * Queues every Claude step that is ready, for real projects that are active and not waiting on the client, up to `MAX_IN_FLIGHT` jobs in flight in all (and `limit` new ones when given).
+ * Queues every Claude step that is ready, for real projects that are active, not waiting on the client and whose client has no billing hold (an invoice unpaid past the pause day), up to `MAX_IN_FLIGHT` jobs in flight in all (and `limit` new ones when given).
  * A test project is never dispatched (a rehearsal must not spend subscription time unasked): "Ask Claude" works on it. Running it twice queues once, because a step handed to Claude
  * is no longer to do. A step whose jobs have failed or expired `MAX_AUTO_RETRIES` times is skipped. Returns how many steps it handed over.
  */
@@ -93,7 +98,7 @@ export async function dispatchReady(env: Env, now: Date, o: { limit?: number } =
   for (const id of await candidates(db)) {
     if (queued >= cap) break;
     const project = await getProject(db, id);
-    if (!project || !projectIsLive(project) || project.test) continue;
+    if (!project || !projectIsLive(project) || project.test || (await isOnHold(db, project.businessId))) continue;
     if (await projectWaiting(db, project, now)) continue;
     for (const t of readyClaudeTasks(await listTasks(db, id), { projectActive: true, waiting: false })) {
       if (queued >= cap) break;

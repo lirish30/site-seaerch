@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import ChangeOrdersPanel from "../components/ChangeOrdersPanel";
+import ProjectBilling from "../components/ProjectBilling";
 import ProjectSopTab from "../components/ProjectSopTab";
 import TaskRow from "../components/TaskRow";
 import { cancelConfirm, cancelLabel, kindLabel, milestoneChips, ownerBadge, phaseGroups, profitLines, projectProgress, projectState, stopControls, timeEstimate, timeRows, type Tone } from "../projectView";
@@ -9,13 +10,13 @@ import { formatMinutes, parseDuration, varianceLabel } from "../timeView";
 import { announceProjectsChanged, TIMER_CHANGED, workError, type ProjectDetail, type RunningEntry } from "../workData";
 import type { OwnerTag } from "../../worker/sop/model";
 
-type Tab = "tasks" | "sop" | "time" | "change-orders" | "profit";
-const TABS: [Tab, string][] = [["tasks", "Tasks"], ["sop", "SOP"], ["time", "Time"], ["change-orders", "Change orders"], ["profit", "Profit"]];
+type Tab = "tasks" | "sop" | "time" | "change-orders" | "billing" | "profit";
+const TABS: [Tab, string][] = [["tasks", "Tasks"], ["sop", "SOP"], ["time", "Time"], ["change-orders", "Change orders"], ["billing", "Billing"], ["profit", "Profit"]];
 const POLL_MS = 20_000;
 const TONE: Record<Tone, string> = { neutral: "outline", good: "positive", warn: "warning", muted: "" };
 const isTab = (s: string | null): s is Tab => TABS.some(([k]) => k === s);
 
-/** A project: its state and milestones, then Tasks, the SOP it came from (editable here), Time, Change orders and Profit. */
+/** A project: its state and milestones, then Tasks, the SOP it came from (editable here), Time, Change orders, Billing and Profit. */
 export default function ProjectPage() {
   const { id = "" } = useParams();
   const [params, setParams] = useSearchParams();
@@ -115,6 +116,7 @@ export default function ProjectPage() {
         {tab === "sop" && <ProjectSopTab data={data} onChanged={load} />}
         {tab === "time" && <TimeTab data={data} />}
         {tab === "change-orders" && <ChangeOrdersPanel projectId={project.id} changeOrders={data.changeOrders} projectStatus={project.status} onChanged={load} />}
+        {tab === "billing" && <ProjectBilling projectId={project.id} changeOrders={data.changeOrders} />}
         {tab === "profit" && (
           <section className="card wk-profit" aria-label="Profit">
             <h3>Profit</h3>

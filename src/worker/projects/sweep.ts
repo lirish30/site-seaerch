@@ -1,6 +1,7 @@
 import { shortId } from "../changeorders/service";
 import { activityStmt } from "../db/activity";
 import { expireDue } from "../db/changeOrders";
+import { isOnHold } from "../db/holds";
 import { getProject, listCadences, projectIsLive } from "../db/projects";
 import { getSettings } from "../db/settings";
 import { getTemplate } from "../db/sops";
@@ -38,7 +39,7 @@ function recurringTask(o: { projectId: string; businessId: string; template: Sop
 
 /**
  * For every recurring template attached to a live, real project (active, or a finished Care onboarding; a paused, cancelled or test project, or a finished build, gets nothing), makes the task for the period `now` falls in (a week,
- * month, quarter or year in the booking time zone) if it is not there yet. A template that is switched off or missing makes nothing. The unique index on (project, cadence, period) is what keeps
+ * month, quarter or year in the booking time zone; a client with a billing hold gets nothing either, which is also what stops a finished Care project, one that cannot be paused) if it is not there yet. A template that is switched off or missing makes nothing. The unique index on (project, cadence, period) is what keeps
  * it to one: a rerun, or a second sweep at the same moment, adds nothing. Each cadence is tried on its own. Returns how many tasks it made.
  */
 export async function generateRecurring(env: Env, now: Date): Promise<number> {
@@ -49,7 +50,7 @@ export async function generateRecurring(env: Env, now: Date): Promise<number> {
   for (const c of await listCadences(db, { liveProjectsOnly: true })) {
     try {
       const project = await getProject(db, c.projectId);
-      if (!project || !projectIsLive(project) || project.test) continue;
+      if (!project || !projectIsLive(project) || project.test || (await isOnHold(db, project.businessId))) continue; // a held client gets none, a finished Care project's too
       if (!templates.has(c.templateKey)) templates.set(c.templateKey, await getTemplate(db, c.templateKey));
       const template = templates.get(c.templateKey);
       if (!template || !template.active || template.kind !== "recurring" || !template.cadence) continue;

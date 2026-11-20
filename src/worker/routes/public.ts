@@ -4,6 +4,7 @@ import { verifySession } from "../auth";
 import type { Env } from "../env";
 import { z } from "zod";
 import { BookingFormSchema, bookingPage, cancelByToken, createVisitorBooking } from "../booking/create";
+import { findSubscription, startCheckout, subscriptionPage } from "../billing/checkout";
 import { changeOrderPage, declineChangeOrderPublic, signChangeOrderPublic, type ChangeOrderWriteResult } from "../changeorders/public";
 import { publicReport } from "../db/reports";
 import { ensureDepositInvoice } from "../documents/deposit";
@@ -227,6 +228,26 @@ publicRoutes.post("/c/:token/decline", async (c) => {
   // An empty or unreadable body is a no-thanks without a reason: turning an order down always works.
   try { const body: unknown = text ? JSON.parse(text) : null; reason = body && typeof body === "object" ? (body as { reason?: unknown }).reason : undefined; } catch { reason = undefined; }
   return changeOrderReply(c, await declineChangeOrderPublic(c.env, token, reason, new Date()));
+});
+
+// The client's subscription page (Plan 8) and its one write, the click that starts Stripe's Checkout. The same 404 for every link that is not live (unknown, malformed, still planned or
+// proposed), and a malformed token never reaches the database. The page's state is read from the database (or from Stripe), never from the query string. There is nothing to read from
+// the POST's body, so it is not read.
+publicRoutes.use("/s/:token", clientLimited);
+publicRoutes.use("/s/:token/checkout", clientLimited);
+
+publicRoutes.get("/s/:token", async (c) => {
+  const token = c.req.param("token");
+  if (!TOKEN.test(token)) return c.json(NOT_FOUND, 404);
+  const page = await subscriptionPage(c.env, token, { now: new Date() });
+  return page ? c.json(page) : c.json(NOT_FOUND, 404);
+});
+
+publicRoutes.post("/s/:token/checkout", async (c) => {
+  const token = c.req.param("token");
+  if (!TOKEN.test(token) || !(await findSubscription(c.env, token))) return c.json(NOT_FOUND, 404);
+  const r = await startCheckout(c.env, token, { now: new Date() });
+  return "url" in r ? c.json({ url: r.url }) : c.json({ error: r.error }, r.error === "closed" ? 409 : 503);
 });
 
 // The client's onboarding page (Plan 6): the same 404 for every link that is not live, and a malformed token never reaches the database. Only writes count as

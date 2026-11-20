@@ -26,7 +26,7 @@ export function groupApprovals(items: ApprovalItem[]): ApprovalGroup[] {
  * is sent only after he has read it (his approval is also his signature on it), an onboarding welcome asks him to add a video link first, a step Claude
  * did is marked done only after he has looked at the work, and a change order is read and checked against the legal gate before it goes to a client, so those groups have no bulk button; the individual Approve stays.
  */
-export const canBulkApprove = (kind: string): boolean => kind !== "video.publish" && kind !== "proposal.send" && kind !== "onboarding.welcome" && kind !== "sop.review" && kind !== "change_order.send";
+export const canBulkApprove = (kind: string): boolean => kind !== "video.publish" && kind !== "proposal.send" && kind !== "onboarding.welcome" && kind !== "sop.review" && kind !== "change_order.send" && kind !== "invoice.send" && kind !== "subscription.start";
 
 /** Where to open the thing an approval is about, when the inbox can show a way in: a publish approval opens the lead's video editor, a proposal opens its deal, a step Claude did opens its project and a change order opens its project's change orders. */
 export function approvalLink(a: Pick<ApprovalItem, "kind" | "record_type" | "record_id">): { to: string; label: string } | null {

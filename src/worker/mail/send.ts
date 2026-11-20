@@ -44,8 +44,8 @@ export function composeOutbound(s: Settings, p: Pick<SendInput, "mailbox" | "sub
 
 /** The main brand domain. Cold email never links it (or any subdomain, such as clients.): cold links use OUTREACH_LINK_BASE. */
 export const BRAND_HOST = "sitelineweb.com";
-/** Path prefixes of the app's public pages (report, proposal, onboarding and change-order pages). On cold email they must be served from the outreach host. */
-export const PUBLIC_PAGE_PREFIXES = ["/r/", "/p/", "/o/", "/c/"];
+/** Path prefixes of the app's public pages (report, proposal, onboarding, change-order and subscription pages). On cold email they must be served from the outreach host. */
+export const PUBLIC_PAGE_PREFIXES = ["/r/", "/p/", "/o/", "/c/", "/s/"];
 
 const URL_RE = /https?:\/\/[^\s<>"']+/gi;
 const TRAILING = /[.,;:!?)\]]+$/;

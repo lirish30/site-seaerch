@@ -10,7 +10,7 @@ import {
 } from "../src/worker/changeorders/service";
 import { clearProjectHooksForTests, onTasksChanged } from "../src/worker/projects/hooks";
 import type { Env } from "../src/worker/env";
-import { clientSig, seal, secondProject, NOW_ISO } from "./fixtures/changeorders";
+import { clientSig, discardOrderInvoice, seal, secondProject, NOW_ISO } from "./fixtures/changeorders";
 import { seedProject } from "./fixtures/projects";
 import { readyToSend } from "./fixtures/documents";
 
@@ -204,6 +204,7 @@ describe("unlocking", () => {
     onTasksChanged(async (_env, id) => { changed.push(id); });
     const s = await signedOrder();
     await afterSigned(e, s.id, NOW);
+    await discardOrderInvoice(e, s.id); // by hand only once the invoice is out of the way
     const paid = await markChangeOrderPaid(e, s.id, { via: "manual", now: NOW });
     expect(paid).toMatchObject({ status: "signed", paidAt: NOW.toISOString(), paidVia: "manual" });
     const mine = await tasksOf(s.project.id, s.id);
@@ -326,6 +327,7 @@ describe("references are unique across a sale's projects", () => {
       const sent = await seal(x);
       expect(await signChangeOrder(env.DB, sent.id, clientSig(sent.contentSha256!), NOW.toISOString())).toBe("signed");
       await afterSigned(e, sent.id, NOW);
+      await discardOrderInvoice(e, sent.id);
       await markChangeOrderPaid(e, sent.id, { via: "manual", now: NOW });
     }
     const signed = await logs(build.businessId, "change_order_signed");
