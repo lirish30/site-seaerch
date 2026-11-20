@@ -51,7 +51,8 @@ export default function TaskRow({ task, all, actualMinutes, runningTaskId, proje
   const timing = runningTaskId === task.id;
   const canWork = live && !closed && task.status !== "locked";
 
-  useEffect(() => { if (startOpen) row.current?.scrollIntoView({ block: "center" }); }, [startOpen]);
+  // A link to a task can arrive after the row is already on screen (the page polls), so opening follows the prop rather than only its first value.
+  useEffect(() => { if (startOpen) { setOpen(true); row.current?.scrollIntoView({ block: "center" }); } }, [startOpen]);
   const loadDetail = () => api.get<TaskDetail>(`/tasks/${task.id}`).then(setDetail).catch((e) => setError(workError(e, "Couldn’t load the task")));
   useEffect(() => { if (open) void loadDetail(); }, [open, task.updatedAt]);
 

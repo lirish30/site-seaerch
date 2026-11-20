@@ -509,7 +509,8 @@ a.chip-link:hover { background:var(--bg-hover); color:var(--text); } .chip-link 
 /* ---------- Narrow screens: the rail becomes a top bar, the sidebar a strip of links ---------- */
 @media (max-width: 900px) {
   .app { flex-direction:column; height:auto; min-height:100vh; padding:0 8px 8px; }
-  .rail { width:auto; flex-direction:row; align-items:center; padding:8px 4px; gap:6px; }
+  /* Wraps onto a second row rather than pushing the Account button off a narrow screen (a 375px phone fits about eight of the ten rail items on one row). */
+  .rail { width:auto; flex-direction:row; flex-wrap:wrap; align-items:center; padding:8px 4px; gap:6px; }
   .rail-logo { margin:0 8px 0 0; } .rail-spacer { flex:1; }
   .popover.rail-left { left:auto; right:0; top:44px; bottom:auto; }
   .sidebar { width:auto; flex-direction:row; align-items:center; overflow-x:auto; padding:0 0 8px; gap:4px; }

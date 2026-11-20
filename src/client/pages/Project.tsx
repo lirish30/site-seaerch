@@ -3,7 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import TaskRow from "../components/TaskRow";
 import { dollars } from "../packagesView";
-import { changeOrderChip, kindLabel, milestoneChips, ownerBadge, phaseGroups, profitLines, projectProgress, projectState, type Tone } from "../projectView";
+import { changeOrderChip, kindLabel, milestoneChips, ownerBadge, phaseGroups, profitLines, projectProgress, projectState, timeEstimate, timeRows, type Tone } from "../projectView";
 import { formatMinutes, parseDuration, varianceLabel } from "../timeView";
 import { announceProjectsChanged, TIMER_CHANGED, workError, type ProjectDetail, type RunningEntry } from "../workData";
 import type { OwnerChangeOrder } from "../../worker/changeorders/service";
@@ -137,7 +137,7 @@ export default function ProjectPage() {
         {tab === "profit" && (
           <section className="card wk-profit" aria-label="Profit">
             <h3>Profit</h3>
-            {profitLines(data.profit).map((l) => <p key={l}>{l}</p>)}
+            {profitLines(data.profit, data.costRateCentsPerHour).map((l) => <p key={l}>{l}</p>)}
             <p className="muted small">Time at your cost rate against what the client has paid. Paid change orders count.</p>
           </section>
         )}
@@ -217,12 +217,11 @@ function SopTab({ data }: { data: ProjectDetail }) {
 }
 
 function TimeTab({ data }: { data: ProjectDetail }) {
-  const counted = data.tasks.filter((t) => t.status !== "skipped");
-  const est = counted.reduce((n, t) => n + t.estMinutes, 0);
-  const rows = data.tasks.filter((t) => t.estMinutes > 0 || (data.taskMinutes[t.id] ?? 0) > 0);
+  const est = timeEstimate(data.tasks, data.taskMinutes);
+  const rows = timeRows(data.tasks, data.taskMinutes);
   return (
     <section aria-label="Time">
-      <p><b>{formatMinutes(data.time.actualMinutes)}</b> logged, {formatMinutes(data.time.billableMinutes)} billable. Estimate {est > 0 ? formatMinutes(est) : "none"}{est > 0 ? ` (${varianceLabel(est, data.time.actualMinutes)})` : ""}.</p>
+      <p><b>{formatMinutes(data.time.actualMinutes)}</b> logged, {formatMinutes(data.time.billableMinutes)} billable. Estimate for the work started: {est > 0 ? formatMinutes(est) : "none"}{est > 0 ? ` (${varianceLabel(est, data.time.actualMinutes)})` : ""}.</p>
       {rows.length === 0 ? <p className="muted">No time logged yet. Start a timer on a task, or add time on the <Link to="/timesheet">timesheet</Link>.</p> : (
         <ul className="wk-list">
           {rows.map((t) => {

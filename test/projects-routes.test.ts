@@ -16,7 +16,7 @@ import { setMailDeps } from "../src/worker/mail/deps";
 import "../src/worker/queue/kinds";
 import { clientSig as coSig, content as coContent, seal, sendOrder } from "./fixtures/changeorders";
 import { clientSig, proposal, readyToSend, seedDeal, sendDraft } from "./fixtures/documents";
-import { newTask, resetProjectWork, seedProject, seedSteps, T0 } from "./fixtures/projects";
+import { newTask, resetProjectWork, seedProject, seedSteps, T0, T1 } from "./fixtures/projects";
 
 const BASE = "https://clients.hellositeline.test";
 const FAR = "2099-01-01T00:00:00.000Z";
@@ -92,7 +92,24 @@ describe("GET /projects", () => {
   });
 });
 
+describe("GET /projects step counts", () => {
+  it("carries step counts that leave out extra tasks, so the card and the project page agree", async () => {
+    const a = await seedProject({ bare: true, name: "Steps" });
+    const steps = await seedSteps(a.project.id, a.businessId, [{ key: "1" }, { key: "2" }, { key: "3" }]);
+    await setTaskStatus(env.DB, steps[0].id, "done", { from: ["todo"], now: T1 });
+    await insertTasks(env.DB, [newTask(a.project.id, a.businessId, { isStep: false, stepKey: null, title: "Extra", phaseKey: "extra", phaseTitle: "Extra tasks" })]);
+    const row = (await json("GET", "/projects")).body.projects.find((p: any) => p.id === a.project.id);
+    expect(row).toMatchObject({ openTasks: 3, doneTasks: 1, openSteps: 2, doneSteps: 1 });
+  });
+});
+
 describe("GET /projects/:id", () => {
+  it("returns the cost rate on its own, 0 when none is set, so the page can tell no rate from no time", async () => {
+    const a = await seedProject({ bare: true });
+    expect((await json("GET", `/projects/${a.project.id}`)).body.costRateCentsPerHour).toBe(0);
+    await saveSettings(env.DB, { work_config: JSON.stringify({ costRateCentsPerHour: 4500 }) });
+    expect((await json("GET", `/projects/${a.project.id}`)).body.costRateCentsPerHour).toBe(4500);
+  });
   it("carries profit with the cost rate applied and never the token of a change order", async () => {
     // A real proposal with two milestones, a paid deposit invoice, a work rate of $60 an hour, 90 minutes logged.
     const s = await seedDeal();

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import Icon from "../components/Icon";
-import { kindLabel, projectBucket, projectState, type Bucket, type Tone } from "../projectView";
+import { kindLabel, listProgress, projectBucket, projectState, type Bucket, type Tone } from "../projectView";
 import { PROJECTS_CHANGED, type MyTasks, type ProjectRow } from "../workData";
 
 const TONE: Record<Tone, string> = { neutral: "outline", good: "positive", warn: "warning", muted: "" };
@@ -56,8 +56,7 @@ export default function Projects() {
         <ul className="wk-cards">
           {shown.map((p) => {
             const state = projectState(p);
-            const total = p.openTasks + p.doneTasks;
-            const pct = total ? Math.round((p.doneTasks / total) * 100) : 0;
+            const { done, total, pct } = listProgress(p);
             const mine = next.get(p.id);
             return (
               <li key={p.id}>
@@ -72,7 +71,7 @@ export default function Projects() {
                   <span className="muted small">{p.businessName} · {kindLabel(p.kind)}</span>
                   <span className="wk-progress">
                     <span className="wk-bar" aria-hidden="true"><i style={{ width: `${pct}%` }} /></span>
-                    <span className="small muted">{p.doneTasks} of {total} done</span>
+                    <span className="small muted">{done} of {total} done</span>
                   </span>
                   {p.status === "active" && <span className="small">{mine ? <>Next for you: {mine}</> : <span className="muted">Nothing waiting on you</span>}</span>}
                 </Link>

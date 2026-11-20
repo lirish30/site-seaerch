@@ -53,10 +53,10 @@ export async function createProject(db: D1Database, o: {
 }
 
 /**
- * Every project (newest first), with its business name and task counts: `doneTasks` counts done and skipped tasks, `openTasks` the rest (a locked change-order task is still open work).
+ * Every project (newest first), with its business name and task counts: `doneTasks` counts done and skipped tasks, `openTasks` the rest (a locked change-order task is still open work). `openSteps` and `doneSteps` count the same but only the SOP's steps (what a project's progress is measured by).
  * An empty `status` list matches nothing.
  */
-export async function listProjects(db: D1Database, o: { status?: ProjectStatus[]; businessId?: string } = {}): Promise<(Project & { businessName: string; openTasks: number; doneTasks: number })[]> {
+export async function listProjects(db: D1Database, o: { status?: ProjectStatus[]; businessId?: string } = {}): Promise<(Project & { businessName: string; openTasks: number; doneTasks: number; openSteps: number; doneSteps: number })[]> {
   const where: string[] = [];
   const binds: string[] = [];
   if (o.status) {
@@ -68,11 +68,13 @@ export async function listProjects(db: D1Database, o: { status?: ProjectStatus[]
   const rows = (await db.prepare(
     `SELECT p.*, b.name AS business_name,
        (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.status NOT IN ('done', 'skipped')) AS open_tasks,
-       (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.status IN ('done', 'skipped')) AS done_tasks
+       (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.status IN ('done', 'skipped')) AS done_tasks,
+       (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.is_step = 1 AND t.status NOT IN ('done', 'skipped')) AS open_steps,
+       (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.is_step = 1 AND t.status IN ('done', 'skipped')) AS done_steps
      FROM projects p JOIN businesses b ON b.id = p.business_id
      ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY p.started_at DESC, p.created_at DESC, p.id`,
-  ).bind(...binds).all<Row & { business_name: string; open_tasks: number; done_tasks: number }>()).results;
-  return rows.map((r) => ({ ...toProject(r), businessName: r.business_name, openTasks: r.open_tasks, doneTasks: r.done_tasks }));
+  ).bind(...binds).all<Row & { business_name: string; open_tasks: number; done_tasks: number; open_steps: number; done_steps: number }>()).results;
+  return rows.map((r) => ({ ...toProject(r), businessName: r.business_name, openTasks: r.open_tasks, doneTasks: r.done_tasks, openSteps: r.open_steps, doneSteps: r.done_steps }));
 }
 
 /** Whether the lead has a project: a lead that does is archived, never deleted. */

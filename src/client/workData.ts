@@ -9,7 +9,7 @@ import { blockedText, type ProfitData } from "./projectView";
 
 /** The shapes of the owner routes the Projects pages call (Task 9's route table). Types only; nothing from the worker is bundled. */
 
-export interface ProjectRow extends Project { businessName: string; openTasks: number; doneTasks: number; waitingOnClient: boolean }
+export interface ProjectRow extends Project { businessName: string; openTasks: number; doneTasks: number; openSteps: number; doneSteps: number; waitingOnClient: boolean }
 
 export interface ProjectDetail {
   project: Project;
@@ -18,6 +18,7 @@ export interface ProjectDetail {
   milestones: { milestone: MilestoneKey; reachedAt: string }[];
   time: { actualMinutes: number; billableMinutes: number };
   profit: ProfitData;
+  costRateCentsPerHour: number;
   waitingOnClient: boolean;
   changeOrders: OwnerChangeOrder[];
   template: { key: string; name: string; version: number } | null;

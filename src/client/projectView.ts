@@ -89,10 +89,10 @@ const money = (cents: number): string => {
 
 export interface ProfitData { soldCents: number; paidCents: number; costCents: number; marginSoldCents: number; marginPaidCents: number; effectiveHourlyCents: number | null }
 
-/** The profit card as lines of text. No cost (no cost rate in Settings, or no time yet) says so instead of showing a margin that equals the money paid. */
-export function profitLines(p: ProfitData): string[] {
+/** The profit card as lines of text. With no cost rate set it says so instead of showing a margin that equals the money paid; with a rate but no time yet the cost is $0. */
+export function profitLines(p: ProfitData, costRateCentsPerHour: number): string[] {
   const sold = `Sold ${money(p.soldCents)}`;
-  if (p.costCents === 0) return [sold, `Paid ${money(p.paidCents)}`, "Cost rate not set"];
+  if (costRateCentsPerHour === 0) return [sold, `Paid ${money(p.paidCents)}`, "Cost rate not set"];
   const hourly = p.effectiveHourlyCents === null ? "no time logged yet" : `about ${money(p.effectiveHourlyCents)} an hour`;
   return [sold, `Paid ${money(p.paidCents)}, cost ${money(p.costCents)}, margin ${money(p.marginPaidCents)}, ${hourly}`];
 }
@@ -139,4 +139,20 @@ const CO_LABEL: Record<"draft" | "sent" | "viewed" | "declined" | "void" | "expi
 export function changeOrderChip(co: { status: "draft" | "sent" | "viewed" | "signed" | "declined" | "void" | "expired"; paidAt: string | null }): { label: string; tone: Tone } {
   if (co.status === "signed") return co.paidAt ? { label: "Paid", tone: "good" } : { label: "Signed, unpaid", tone: "warn" };
   return { label: CO_LABEL[co.status], tone: co.status === "draft" || co.status === "sent" || co.status === "viewed" ? "neutral" : "muted" };
+}
+
+/** The progress a project card shows, from the counts GET /projects gives: steps only, as on the project page, or every task when the project has no steps. */
+export function listProgress(p: { openSteps: number; doneSteps: number; openTasks: number; doneTasks: number }): { done: number; total: number; pct: number } {
+  const steps = p.openSteps + p.doneSteps;
+  const done = steps ? p.doneSteps : p.doneTasks;
+  const total = steps ? steps : p.openTasks + p.doneTasks;
+  return { done, total, pct: total ? Math.round((done / total) * 100) : 0 };
+}
+
+/** The tasks that have time logged, in the order given. */
+export const timeRows = (tasks: Task[], minutes: Record<string, number>): Task[] => tasks.filter((t) => (minutes[t.id] ?? 0) > 0);
+
+/** The estimate to hold the time logged against: only tasks that have been started, finished or timed, so work not begun does not make the project look under. Skipped tasks never count. */
+export function timeEstimate(tasks: Task[], minutes: Record<string, number>): number {
+  return tasks.filter((t) => t.status !== "skipped" && (t.startedAt !== null || t.status === "done" || (minutes[t.id] ?? 0) > 0)).reduce((n, t) => n + t.estMinutes, 0);
 }

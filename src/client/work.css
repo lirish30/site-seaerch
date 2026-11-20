@@ -62,8 +62,8 @@
 .wk-profit p { margin:4px 0; font-size:15px; }
 
 /* Rail timer */
-.wk-timer-btn { width:44px; height:44px; color:var(--signal-strong); }
-.wk-timer-dot { position:absolute; top:10px; right:10px; width:7px; height:7px; border-radius:50%; background:var(--signal); animation:wk-pulse 2s ease-in-out infinite; }
+.wk-timer-btn { color:var(--signal-strong); }
+.wk-timer-dot { position:absolute; top:8px; right:9px; width:7px; height:7px; border-radius:50%; background:var(--signal); animation:wk-pulse 2s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .wk-timer-dot { animation:none; } }
 @keyframes wk-pulse { 50% { opacity:.35; } }
 .wk-timer .popover { min-width:240px; }

@@ -88,9 +88,10 @@ projectRoutes.get("/projects/:id", async (c) => {
     p.templateKey ? getTemplate(db, p.templateKey) : null,
   ]);
   const { soldCents, paidCents } = await soldAndPaid(c.env, p, orders);
-  const profit = { ...projectProfit({ soldCents, paidCents, minutes: time.actualMinutes, costRateCentsPerHour: parseWorkConfig(settings.work_config).costRateCentsPerHour }), soldCents, paidCents };
+  const costRateCentsPerHour = parseWorkConfig(settings.work_config).costRateCentsPerHour;
+  const profit = { ...projectProfit({ soldCents, paidCents, minutes: time.actualMinutes, costRateCentsPerHour }), soldCents, paidCents };
   return c.json({
-    project: p, tasks, taskMinutes, milestones, time, profit, waitingOnClient: p.status === "active" && (await projectWaiting(db, p, new Date())),
+    project: p, tasks, taskMinutes, milestones, time, profit, costRateCentsPerHour, waitingOnClient: p.status === "active" && (await projectWaiting(db, p, new Date())),
     changeOrders: orders.map((o) => ownerChangeOrder(c.env, o)), template: template && { key: template.key, name: template.name, version: template.version },
   });
 });

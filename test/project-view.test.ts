@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  blockedText, bucketCounts, changeOrderChip, dealProjects, kindLabel, milestoneChips, ownerBadge, phaseGroups, profitLines, projectBucket, projectProgress, projectState, taskState,
+  blockedText, bucketCounts, changeOrderChip, dealProjects, listProgress, timeEstimate, timeRows, kindLabel, milestoneChips, ownerBadge, phaseGroups, profitLines, projectBucket, projectProgress, projectState, taskState,
 } from "../src/client/projectView";
 import type { Task } from "../src/worker/db/tasks";
 
@@ -89,13 +89,16 @@ describe("owner, progress, milestones", () => {
 describe("profitLines", () => {
   const p = { soldCents: 400000, paidCents: 200000, costCents: 50000, marginSoldCents: 350000, marginPaidCents: 150000, effectiveHourlyCents: 8000 };
   it("with a cost rate it says paid, cost, margin and the hourly", () => {
-    expect(profitLines(p)).toEqual(["Sold $4,000", "Paid $2,000, cost $500, margin $1,500, about $80 an hour"]);
+    expect(profitLines(p, 6000)).toEqual(["Sold $4,000", "Paid $2,000, cost $500, margin $1,500, about $80 an hour"]);
   });
   it("profitLines with no cost rate", () => {
-    expect(profitLines({ ...p, costCents: 0, marginPaidCents: 200000, marginSoldCents: 400000 })).toEqual(["Sold $4,000", "Paid $2,000", "Cost rate not set"]);
+    expect(profitLines({ ...p, costCents: 0, marginPaidCents: 200000, marginSoldCents: 400000 }, 0)).toEqual(["Sold $4,000", "Paid $2,000", "Cost rate not set"]);
+  });
+  it("a rate with no time logged yet is not 'rate not set'", () => {
+    expect(profitLines({ ...p, costCents: 0, marginPaidCents: 200000, effectiveHourlyCents: null }, 6000)[1]).toBe("Paid $2,000, cost $0, margin $2,000, no time logged yet");
   });
   it("shows a negative margin with a minus and leaves the hourly off before any time is logged", () => {
-    expect(profitLines({ ...p, marginPaidCents: -4000, effectiveHourlyCents: null })[1]).toBe("Paid $2,000, cost $500, margin -$40, no time logged yet");
+    expect(profitLines({ ...p, marginPaidCents: -4000, effectiveHourlyCents: null }, 6000)[1]).toBe("Paid $2,000, cost $500, margin -$40, no time logged yet");
   });
 });
 
@@ -146,5 +149,29 @@ describe("changeOrderChip", () => {
     expect(changeOrderChip({ status: "signed", paidAt: "2026-11-02T00:00:00.000Z" })).toEqual({ label: "Paid", tone: "good" });
     for (const s of ["declined", "void", "expired"] as const) expect(changeOrderChip({ status: s, paidAt: null }).tone).toBe("muted");
     expect(changeOrderChip({ status: "declined", paidAt: null }).label).toBe("Declined");
+  });
+});
+
+describe("listProgress", () => {
+  it("counts steps only, the same as the project page, and falls back to every task when there are no steps", () => {
+    expect(listProgress({ openSteps: 2, doneSteps: 2, openTasks: 5, doneTasks: 2 })).toEqual({ done: 2, total: 4, pct: 50 });
+    expect(listProgress({ openSteps: 0, doneSteps: 0, openTasks: 1, doneTasks: 1 })).toEqual({ done: 1, total: 2, pct: 50 });
+    expect(listProgress({ openSteps: 0, doneSteps: 0, openTasks: 0, doneTasks: 0 })).toEqual({ done: 0, total: 0, pct: 0 });
+  });
+});
+
+describe("time tab helpers", () => {
+  const a = task({ title: "Started", estMinutes: 60, status: "in_progress", startedAt: "2026-11-02T00:00:00.000Z" });
+  const b = task({ title: "Done untimed", estMinutes: 30, status: "done" });
+  const c = task({ title: "Not started", estMinutes: 120, status: "todo" });
+  const d = task({ title: "Skipped", estMinutes: 45, status: "skipped" });
+  const minutes = { [a.id]: 90 };
+  it("lists only tasks with time logged", () => {
+    expect(timeRows([a, b, c, d], minutes).map((t) => t.title)).toEqual(["Started"]);
+  });
+  it("compares actual with the estimate of tasks that are started, done or timed, never unstarted or skipped ones", () => {
+    expect(timeEstimate([a, b, c, d], minutes)).toBe(90);
+    expect(timeEstimate([c, d], {})).toBe(0);
+    expect(timeEstimate([c], { [c.id]: 10 })).toBe(120);
   });
 });
