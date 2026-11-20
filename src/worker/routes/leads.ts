@@ -5,6 +5,7 @@ import type { Business, LeadStatus } from "../types";
 import { hasNonDraftDocument } from "../db/documents";
 import { hasOnboarding } from "../db/onboardings";
 import { hasProject } from "../db/projects";
+import { hasSite } from "../db/sites";
 import { getBusiness, listAllBusinesses, listQuickStageBusinesses, updateLead, domainOf, setArchived, deleteBusiness, applyBulk, undoBulk, normalizeTag, setStarred } from "../db/businesses";
 import { createFilter, deleteFilter, FilterLimit, FilterNameTaken, listFilters } from "../db/filters";
 import { listPeople, createPerson, updatePerson, deletePerson, pocsFor } from "../db/people";
@@ -300,6 +301,8 @@ leadRoutes.delete("/:id", async (c) => {
   if (await hasOnboarding(c.env.DB, id)) return c.json({ error: "this lead has an onboarding" }, 409);
   // So is a project (with its tasks, time and change orders): the lead is archived, never deleted.
   if (await hasProject(c.env.DB, id)) return c.json({ error: "this lead has a project" }, 409);
+  // And a site record (with its access checklist): the lead is archived, never deleted.
+  if (await hasSite(c.env.DB, id)) return c.json({ error: "this lead has a site record" }, 409);
   await deleteBusiness(c.env.DB, id, c.env.RAW);
   await cancelTasksFor(c.env.DB, "lead", id); // Claude work still queued for this lead (an AI review, say) is closed, so nobody does it
   return c.json({ ok: true });
