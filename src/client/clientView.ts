@@ -165,3 +165,8 @@ const STATUS_LABEL: Record<ProjectStatus, { label: string; tone: Tone }> = {
 export function projectStatusLabel(p: { status: ProjectStatus; kind: ProjectKind }): { label: string; tone: Tone } {
   return p.status === "done" && p.kind === "care_onboarding" ? { label: "Care running", tone: "good" } : STATUS_LABEL[p.status];
 }
+
+/** The path to a won lead's client record, or null when the lead is not won yet. The id is encoded so a slash or a space stays one path segment. */
+export function clientLinkFor(lead: { id: string; lead_status: string }): string | null {
+  return lead.lead_status === "won" ? `/clients/${encodeURIComponent(lead.id)}` : null;
+}

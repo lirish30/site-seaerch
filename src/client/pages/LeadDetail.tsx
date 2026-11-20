@@ -9,6 +9,7 @@ import { NicheChecklist, Scorecard, TopProblems } from "../components/LeadOvervi
 import { Badge } from "../components/Score";
 import { announceLeadsChanged } from "../components/Shell";
 import { followUpLabel, followUpTone, STAGE_LABEL } from "../leadView";
+import { clientLinkFor } from "../clientView";
 import { initials, leadTier, TIER_LABEL } from "../scoreView";
 import ActivityTab from "../components/ActivityTab";
 import PeoplePanel from "../components/PeoplePanel";
@@ -265,6 +266,7 @@ export default function LeadDetail() {
   const pickFocus = (key: string) => setFocus((s) => { const n = new Set(s); if (n.has(key)) n.delete(key); else if (n.size < 5) n.add(key); return n; });
   const socialName = (v: string) => SOCIAL_NAME.find(([re]) => re.test(v))?.[1] ?? "Social";
   const hostOf = (v: string) => v.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "");
+  const clientPath = clientLinkFor(b);
 
   return (
     <div className="lead-page">
@@ -324,6 +326,7 @@ export default function LeadDetail() {
           {maps && <a className="chip-link" href={maps} target="_blank" rel="noreferrer"><Icon name="pin" size={13} />Google Maps<Icon name="arrow-up-right" size={12} /></a>}
           {b.phone && <a className="chip-link" href={`tel:${b.phone}`}><Icon name="phone" size={13} />{b.phone}</a>}
           {links.map(([k, u]) => <a key={k} className="chip-link" href={u} target="_blank" rel="noreferrer"><Icon name={LINK_ICON[k] ?? "link"} size={13} />{LINK_LABEL[k] ?? k}</a>)}
+          {clientPath && <Link className="chip-link" to={clientPath}><Icon name="briefcase" size={13} />Open client record</Link>}
           <DealChip leadId={b.id} onChanged={() => void load()} />
         </div>
         {d.suppressed && (

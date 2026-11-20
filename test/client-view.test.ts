@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  accessActions, accessTone, addressProblem, friendlyProblem, latestOnly, problemText, projectStatusLabel, accessWords, carePastDue, moneyLabel, renewalLabel, safeHref, serverProblem, siteTitle, sortClients, vaultHint,
+  accessActions, accessTone, clientLinkFor, addressProblem, friendlyProblem, latestOnly, problemText, projectStatusLabel, accessWords, carePastDue, moneyLabel, renewalLabel, safeHref, serverProblem, siteTitle, sortClients, vaultHint,
 } from "../src/client/clientView";
 import { ACCESS_STATUSES } from "../src/worker/db/sites";
 import type { ClientRow } from "../src/worker/clients/record";
@@ -273,5 +273,20 @@ describe("projectStatusLabel", () => {
   });
   it("a finished Care setup is the client's running Care service", () => {
     expect(projectStatusLabel({ status: "done", kind: "care_onboarding" })).toEqual({ label: "Care running", tone: "good" });
+  });
+});
+
+describe("clientLinkFor", () => {
+  it("links a won lead to its client record", () => {
+    expect(clientLinkFor({ id: "abc123", lead_status: "won" })).toBe("/clients/abc123");
+  });
+  it("encodes an id with a slash or a space so it stays one path segment", () => {
+    expect(clientLinkFor({ id: "a/b", lead_status: "won" })).toBe("/clients/a%2Fb");
+    expect(clientLinkFor({ id: "Acme Co", lead_status: "won" })).toBe("/clients/Acme%20Co");
+  });
+  it("has no link for a lead that is not won", () => {
+    expect(clientLinkFor({ id: "abc123", lead_status: "new" })).toBeNull();
+    expect(clientLinkFor({ id: "abc123", lead_status: "contacted" })).toBeNull();
+    expect(clientLinkFor({ id: "abc123", lead_status: "lost" })).toBeNull();
   });
 });
