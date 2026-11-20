@@ -252,4 +252,6 @@
 .co-decline h2 { font:600 18px/26px var(--font); letter-spacing:-.3px; color:var(--text); }
 .co-decline p { font:400 14px/21px var(--font); color:var(--text-2); }
 .co-decline textarea { display:block; width:100%; margin:0; padding:12px; font-size:16px; line-height:24px; resize:vertical; }
+.co-wrap .bk-field input { font-size:16px; min-height:44px; }
+.co-wrap .pp-check { min-height:44px; align-items:center; }
 @media (min-width:641px) { .co-actions { flex-direction:row-reverse; } .co-actions .btn { flex:1; } }

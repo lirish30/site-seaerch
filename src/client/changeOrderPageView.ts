@@ -1,3 +1,4 @@
+import { CONSENT_LABEL, ESIGN_DISCLOSURE } from "../worker/documents/consent";
 import { dollars } from "./packagesView";
 import { nameProblem } from "./proposalPageView";
 import type { PublicChangeOrder } from "../worker/changeorders/public";
@@ -64,11 +65,14 @@ export function declineError(status: number): string {
 }
 
 /**
- * The stored consent text (the disclosure's paragraphs, then the two checkbox texts, blank-line separated) as what the page shows: the disclosure to read and the two labels to tick.
- * Text that is too short to hold both labels gives the whole of it as the disclosure and plain labels.
+ * The stored consent text as what the page shows: the disclosure to read and the two labels to tick. The text is the disclosure, the consent label, then the authority label (which
+ * holds the client's name, and so may hold anything), so it is matched against the constants it was built from and never guessed at by splitting: what follows the known prefix is the
+ * authority label whole. Text that does not start that way (an older version, or a different one) is shown whole as the disclosure, with plain labels.
  */
 export function splitConsent(consentText: string): { disclosure: string[]; consentLabel: string; authorityLabel: string } {
-  const parts = consentText.split(/\n{2,}/).filter((p) => p.trim());
-  if (parts.length < 3) return { disclosure: parts, consentLabel: "I agree to use electronic records and signatures.", authorityLabel: "I am authorized to sign for the business named in this document." };
-  return { disclosure: parts.slice(0, -2), consentLabel: parts[parts.length - 2], authorityLabel: parts[parts.length - 1] };
+  const prefix = `${ESIGN_DISCLOSURE}\n\n${CONSENT_LABEL}\n\n`;
+  if (consentText.startsWith(prefix) && consentText.length > prefix.length) {
+    return { disclosure: ESIGN_DISCLOSURE.split(/\n{2,}/), consentLabel: CONSENT_LABEL, authorityLabel: consentText.slice(prefix.length) };
+  }
+  return { disclosure: consentText.split(/\n{2,}/).filter((p) => p.trim()), consentLabel: "I agree to use electronic records and signatures.", authorityLabel: "I am authorized to sign for the business named in this document." };
 }

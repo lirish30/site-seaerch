@@ -131,7 +131,7 @@ export async function draftChangeOrder(env: Env, o: DraftOptions): Promise<Chang
   const content = {
     title: o.title, summary: o.summary, reason: o.reason, deliverables: o.deliverables ?? [], notIncluded: o.notIncluded ?? [], hours: o.hours, rateCents,
     priceCents: o.priceCents ?? Math.round(o.hours * rateCents), scheduleImpactDays: o.scheduleImpactDays ?? null,
-    clientName: doc?.content.header.clientName ?? business.name, contactName: doc?.content.header.contactName ?? booking?.contactName ?? "",
+    clientName: oneLine(doc?.content.header.clientName ?? business.name), contactName: doc?.content.header.contactName ?? booking?.contactName ?? "",
     contactEmail: ((e) => (isSingleAddress(e) ? e : ""))((doc?.content.header.contactEmail ?? booking?.contactEmail ?? "").replace(/[\r\n\t]/g, "").trim()),
   };
   const checked = parseContent({ ...content, reference: "CO" });

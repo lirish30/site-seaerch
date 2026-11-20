@@ -166,7 +166,7 @@ describe("stalled_deal", () => {
   });
   it("a project or change order moving along is the owner's own work, not contact with the prospect", async () => {
     const id = await lead("Project quiet", { status: "contacted", dealValue: 700 });
-    for (const kind of ["project_started", "project_milestone", "project_done", "change_order_sent", "change_order_signed", "change_order_paid", "change_order_void"] as const) {
+    for (const kind of ["project_started", "project_milestone", "project_done", "change_order_sent", "change_order_signed", "change_order_paid", "change_order_void", "change_order_declined"] as const) {
       await act(id, kind, ago(1), "x");
     }
     expect(await of("stalled_deal")).toHaveLength(1);

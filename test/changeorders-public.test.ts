@@ -342,6 +342,24 @@ describe("declining", () => {
     expect((await getChangeOrder(env.DB, co.id))!.declinedReason).toBe(saved.declinedReason);
   });
 
+  it("writes exactly one timeline line, with the reference and the short id, and a repeat writes none", async () => {
+    const a = await sent();
+    await declineChangeOrderPublic(env, a.token, `  not   now\n${"y".repeat(300)}`, NOW);
+    const lines = (await logs(a.businessId, "change_order_declined")).map((l) => l.detail!);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].startsWith(`${a.co.content.reference} (${a.co.id.slice(0, 8)}) declined: not now y`)).toBe(true);
+    expect(lines[0].length).toBeLessThanOrEqual(`${a.co.content.reference} (${a.co.id.slice(0, 8)}) declined: `.length + 80);
+    expect(lines[0]).not.toMatch(/\n/);
+    await declineChangeOrderPublic(env, a.token, "something else", NOW);
+    await post(`/public/c/${a.token}/decline`, { reason: "again" });
+    expect(await logs(a.businessId, "change_order_declined")).toHaveLength(1);
+    // A refused decline (signed order) writes nothing.
+    const b = await sent();
+    await sign(b.token, b.hash);
+    await declineChangeOrderPublic(env, b.token, "x", NOW);
+    expect(await logs(b.businessId, "change_order_declined")).toHaveLength(0);
+  });
+
   it("works through the route, with or without a reason, and a non-text reason is no reason", async () => {
     const a = await sent(), b = await sent(), c = await sent();
     const res = await post(`/public/c/${a.token}/decline`, { reason: "not now" });
@@ -371,6 +389,20 @@ describe("declining", () => {
     const a = await sent();
     expect((await post(`/public/c/${a.token}/decline`, { reason: "r".repeat(5000) })).status).toBe(413);
     expect((await getChangeOrder(env.DB, a.co.id))!.status).toBe("sent");
+  });
+});
+
+describe("public/_headers", () => {
+  it("forbids framing and indexing on /c and /c/*, with the same four lines as /p", async () => {
+    const text = await (await import("../public/_headers?raw")).default as string;
+    const blocks = text.split(/\n(?=\S)/);
+    const lines = (prefix: string) => blocks.filter((b) => b.split("\n")[0].trim() === prefix).map((b) => b.split("\n").slice(1).map((l) => l.trim()).filter(Boolean));
+    expect(lines("/c")).toHaveLength(1);
+    expect(lines("/c/*")).toHaveLength(1);
+    expect(lines("/c")[0]).toHaveLength(4);
+    expect(lines("/c")[0]).toEqual(lines("/p")[0]);
+    expect(lines("/c/*")[0]).toEqual(lines("/p/*")[0]);
+    expect(lines("/c")[0]).toEqual(["X-Robots-Tag: noindex, nofollow", "Referrer-Policy: no-referrer", "X-Frame-Options: DENY", "Content-Security-Policy: frame-ancestors 'none'"]);
   });
 });
 

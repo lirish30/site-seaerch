@@ -86,6 +86,21 @@ describe("splitConsent", () => {
     expect(r.disclosure.join("\n\n")).toBe(ESIGN_DISCLOSURE);
   });
 
+  it("a client name with a blank line in it stays inside the authority label", () => {
+    const name = "Ace\n\nPlumbing & Heating";
+    const r = splitConsent(consentTextFor(name));
+    expect(r.consentLabel).toBe(CONSENT_LABEL);
+    expect(r.authorityLabel).toBe(authorityLabel(name));
+    expect(r.disclosure.join("\n\n")).toBe(ESIGN_DISCLOSURE);
+  });
+
+  it("a text that does not start with the known disclosure and consent label is shown whole with plain labels", () => {
+    const r = splitConsent(`${ESIGN_DISCLOSURE}\n\nA different consent label\n\n${authorityLabel("X")}`);
+    expect(r.consentLabel).toMatch(/electronic/i);
+    expect(r.authorityLabel).toMatch(/authorized/i);
+    expect(r.disclosure.length).toBeGreaterThan(5);
+  });
+
   it("a text too short to hold both labels is all disclosure, with plain labels", () => {
     const r = splitConsent("Only one paragraph.");
     expect(r.disclosure).toEqual(["Only one paragraph."]);

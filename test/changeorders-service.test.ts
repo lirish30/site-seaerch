@@ -48,6 +48,13 @@ describe("draftChangeOrder", () => {
     expect((await draftChangeOrder(e, { ...base, projectId: s.project.id, hours: 1 })).content.rateCents).toBe(hourly.priceCents + 1000);
   });
 
+  it("a client name with line breaks is one line on the order", async () => {
+    const s = await seedProject({ bare: true });
+    await env.DB.prepare(`UPDATE businesses SET name = ? WHERE id = ?`).bind("Ace\n\n  Plumbing\r\nCo", s.businessId).run();
+    const co = await draftChangeOrder(e, { ...base, projectId: s.project.id, hours: 1 });
+    expect(co.content.clientName).toBe("Ace Plumbing Co");
+  });
+
   it("a custom price is kept", async () => {
     const s = await seedProject();
     const co = await draftChangeOrder(e, { ...base, projectId: s.project.id, hours: 3, priceCents: 20000 });

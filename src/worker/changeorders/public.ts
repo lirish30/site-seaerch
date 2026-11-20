@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { parseConfig } from "../booking/config";
 import { getChangeOrder, getChangeOrderByToken, declineChangeOrder, recordView, signChangeOrder, type ChangeOrder } from "../db/changeOrders";
+import { logActivityOnce } from "../db/activity";
 import { getProject } from "../db/projects";
 import { getSettings } from "../db/settings";
 import { ESIGN_VERSION } from "../documents/consent";
@@ -8,7 +9,7 @@ import { SignFormSchema, consentTextFor } from "../documents/public";
 import { isClientToken } from "../documents/token";
 import type { Env } from "../env";
 import { cleanText } from "../onboarding/templates";
-import { afterSigned } from "./service";
+import { afterSigned, shortId } from "./service";
 
 /** Stored with a signature: what a hostile client sends is cut to this, never refused. */
 const USER_AGENT_MAX = 300;
@@ -175,5 +176,12 @@ export async function declineChangeOrderPublic(env: Env, token: string, reason: 
     if ((await declineChangeOrder(env.DB, co.id, text, now.toISOString())) === "not_open") return CLOSED;
   }
   const after = await getChangeOrder(env.DB, co.id);
-  return after ? { ok: true, page: await pageFor(env, after, now, null) } : NOT_FOUND;
+  if (!after) return NOT_FOUND;
+  // One timeline line per order (an insert-if-absent on the same text, so a repeat or a retry adds none); a failed log never undoes the decline. The reason is the client's own
+  // words: one line, cut to 80 characters.
+  try {
+    const why = (after.declinedReason ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+    await logActivityOnce(env.DB, after.businessId, "change_order_declined", `${after.content.reference} (${shortId(after)}) declined${why ? `: ${why}` : ""}`);
+  } catch (e) { console.error("change order: could not log the decline", e instanceof Error ? e.message : "unknown error"); }
+  return { ok: true, page: await pageFor(env, after, now, null) };
 }
