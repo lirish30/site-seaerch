@@ -198,7 +198,7 @@ async function convert(env: Env, sub: Subscription): Promise<boolean> {
 
 /**
  * The daily term step (wired into the billing sweep by a later task). For every active subscription set to convert to Care: one whose term ends within the notice window (30 days by default)
- * and has not been noticed gets a `subscription.term_notice` approval, stamped first so two sweeps draft one; one whose term end is today or past is converted (see `convert`). A failure of one
+ * and has not been noticed gets a `subscription.term_notice` approval, stamped first so two sweeps draft one; one whose term end is tomorrow, today or past is converted (see `convert`). A failure of one
  * subscription is logged and does not stop the others. Safe to run again. Returns how many notices were drafted and subscriptions converted by this call.
  */
 export async function sweepTerms(env: Env, now: Date): Promise<{ notices: number; converted: number }> {
@@ -211,7 +211,8 @@ export async function sweepTerms(env: Env, now: Date): Promise<{ notices: number
     if (sub.endAction !== "convert_to_care" || !sub.termEndsOn) continue;
     try {
       const days = calendarDaysBetween(today, sub.termEndsOn);
-      if (days <= 0) { if (await convert(env, sub)) out.converted++; }
+      // Stripe bills at noon UTC of the term's last day and the daily cron runs at 13:17 UTC, so "tomorrow" is already after that month's charge: converting then is the last chance before month 25 is billed.
+      if (days <= 1) { if (await convert(env, sub)) out.converted++; }
       else if (days <= noticeDays && sub.termNoticeSentAt === null && (await draftNotice(env, sub, now))) out.notices++;
     } catch (e) {
       console.error(`terms: could not ${e instanceof StripeError ? "reach Stripe for" : "handle"} a subscription`, safe(e, env.STRIPE_SECRET_KEY));

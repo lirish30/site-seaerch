@@ -90,19 +90,20 @@ async function part<T>(name: string, fallback: T, run: () => Promise<T>, key: st
 }
 
 /**
- * The daily billing run (the cron reaches it through `runScheduled`). In order, each part contained and logged so one failing never stops another: the milestone invoices a hook never made are
- * drafted and proposed, the subscriptions nobody planned are planned, the due subscriptions are proposed, the reminders and pause holds that are due are drafted and placed, the terms that end
- * soon are noticed or converted, and the stale open invoices are settled from Stripe. It sends no mail and makes nothing at Stripe: it creates approvals and holds (and the draft invoices and
+ * The daily billing run (the cron reaches it through `runScheduled`). In order, each part contained and logged so one failing never stops another: the stale open invoices are settled from
+ * Stripe FIRST (so what was paid there is never reminded or held), the milestone invoices a hook never made are drafted and proposed, the subscriptions nobody planned are planned, the due
+ * subscriptions are proposed, the reminders and pause holds that are due are drafted and placed, and the terms that end soon are noticed or converted. It sends no mail and makes nothing at Stripe: it creates approvals and holds (and the draft invoices and
  * planned rows they hang off), and every step is idempotent, so a second run at the same moment adds nothing.
  */
 export async function sweepBilling(env: Env, now: Date): Promise<BillingSweepResult> {
   const key = env.STRIPE_SECRET_KEY;
+  // Settle first: an invoice that was paid (or voided) at Stripe with its webhook missed must not be reminded, noticed or held in this same run.
+  await part("settling open invoices", 0, () => settleStale(env, now), key);
   const drafted = await part("milestone invoices", 0, () => reconcileMilestones(env), key);
   const planned = await part("subscription planning", 0, () => planMissing(env), key);
   const started = await part("subscription starts", 0, () => startDueSubscriptions(env, now), key);
   const reminders = await part("reminders", 0, () => sweepReminders(env, now), key);
   const holds = await part("holds", 0, () => sweepHolds(env, now), key);
   const terms = await part("terms", { notices: 0, converted: 0 }, () => sweepTerms(env, now), key);
-  await part("settling open invoices", 0, () => settleStale(env, now), key);
   return { drafted, reminders, holds, started, converted: terms.converted, notices: terms.notices, planned };
 }

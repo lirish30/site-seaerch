@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { approve } from "../src/worker/approvals/decide";
+import { approve, reject } from "../src/worker/approvals/decide";
 import { renderSubscriptionLink } from "../src/worker/billing/mail";
 import { planSubscriptions, proposeSubscription } from "../src/worker/billing/subscriptions";
 import { listActivity } from "../src/worker/db/activity";
@@ -125,6 +125,39 @@ describe("subscription.start approval", () => {
     const { sub, a } = await proposed();
     expect(await approve(withEnv({ STRIPE_SECRET_KEY: LIVE }), a.id)).toEqual({ ok: true });
     expect((await getSubscription(env.DB, sub.id))!.status).toBe("link_sent");
+  });
+});
+
+describe("a link that never reached the client can be put up again", () => {
+  it("a failed mail then a rejected approval leaves link_sent with no way back, until it is proposed again", async () => {
+    const { sub, a } = await proposed();
+    mail.failures.push(new Error("smtp is down"));
+    expect(await approve(E_TEST, a.id)).toMatchObject({ ok: false, error: expect.stringContaining("smtp is down") });
+    expect((await getSubscription(env.DB, sub.id))!.status).toBe("link_sent"); // the move comes before the mail
+    expect(await reject(env.DB, a.id, "not now")).toBe(true);
+    expect(mail.sent).toHaveLength(0);
+
+    const again = await proposeSubscription(E_TEST, sub.id, "2027-01-09");
+    expect(again.id).not.toBe(a.id);
+    expect(again.status).toBe("pending");
+    expect(await getSubscription(env.DB, sub.id)).toMatchObject({ status: "proposed", firstChargeOn: "2027-01-09" });
+    expect(await approve(E_TEST, again.id)).toEqual({ ok: true });
+    expect(mail.sent).toHaveLength(1);
+    expect(mail.sent[0].text).toContain("January 9, 2027");
+    expect((await getSubscription(env.DB, sub.id))!.status).toBe("link_sent");
+  });
+
+  it("a link that was mailed, or has a Checkout on record, is not put up again", async () => {
+    const mailed = await proposed();
+    expect(await approve(E_TEST, mailed.a.id)).toEqual({ ok: true });
+    await expect(proposeSubscription(E_TEST, mailed.sub.id, "2027-01-09")).rejects.toThrow(/link_sent/);
+
+    const started = await proposed();
+    mail.failures.push(new Error("smtp is down"));
+    await approve(E_TEST, started.a.id);
+    await reject(env.DB, started.a.id, "no");
+    await env.DB.prepare(`UPDATE subscriptions SET stripe_checkout_session_id = 'cs_1' WHERE id = ?`).bind(started.sub.id).run();
+    await expect(proposeSubscription(E_TEST, started.sub.id, "2027-01-09")).rejects.toThrow(/link_sent/);
   });
 });
 

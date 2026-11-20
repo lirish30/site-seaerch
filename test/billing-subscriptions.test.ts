@@ -197,6 +197,20 @@ describe("starting subscriptions", () => {
     expect((await getSubscription(env.DB, s.subs[0].id))!.firstChargeOn).toBe("2027-01-20");
   });
 
+  it("Start billing puts a rejected signing or launch proposal up again, which the sweep never does", async () => {
+    for (const keys of [["care"], ["website_subscription"]] as const) {
+      const s = await planned([...keys], { build: keys[0] === "website_subscription" });
+      const id = s.subs[0].id;
+      await expect(startKickoff(e, id, NOW)).rejects.toThrow(/kickoff/); // planned: the sweep's, not Logan's
+      const a = await proposeSubscription(e, id, "2026-12-25");
+      expect(await reject(env.DB, a.id, "not yet")).toBe(true);
+      const b = await startKickoff(e, id, NOW);
+      expect(b.id).not.toBe(a.id);
+      expect(b).toMatchObject({ kind: "subscription.start", status: "pending" });
+      expect(await getSubscription(env.DB, id)).toMatchObject({ status: "proposed" });
+    }
+  });
+
   it("Start billing refuses what is not a waiting kickoff subscription", async () => {
     const care = await planned(["care"]);
     await expect(startKickoff(e, care.subs[0].id, NOW)).rejects.toThrow(/kickoff/);
@@ -246,7 +260,8 @@ describe("proposeSubscription", () => {
     const s = await planned(["care"]);
     await expect(proposeSubscription(e, crypto.randomUUID(), "2027-02-10")).rejects.toThrow(/no such subscription/i);
     await expect(proposeSubscription(e, s.subs[0].id, "next month")).rejects.toThrow(/date/);
-    await env.DB.prepare(`UPDATE subscriptions SET status = 'link_sent' WHERE id = ?`).bind(s.subs[0].id).run();
+    // A link that is with the client (a Checkout is on record) is not put up again.
+    await env.DB.prepare(`UPDATE subscriptions SET status = 'link_sent', stripe_checkout_session_id = 'cs_1' WHERE id = ?`).bind(s.subs[0].id).run();
     await expect(proposeSubscription(e, s.subs[0].id, "2027-02-10")).rejects.toThrow(/link_sent|already/);
   });
 

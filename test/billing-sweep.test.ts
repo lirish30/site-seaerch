@@ -128,6 +128,19 @@ describe("sweepBilling", () => {
       expect((await listActivity(env.DB, client.businessId)).filter((a) => a.kind === "invoice_paid")).toHaveLength(1);
     });
 
+    it("an invoice paid at Stripe whose webhook never came is settled FIRST: no reminder, pause notice or hold in the same run", async () => {
+      const client = await seedProject();
+      const inv = await sentInvoice(client); // sent 2027-01-13, due long before NOW: a reminder and the +14 hold are both due today
+      const api = stripeApi({ invoice: (id) => (id === inv.stripeInvoiceId ? paidAtStripe(inv.amountCents)(id) : { id, status: "open", amount_due: 0, amount_paid: 0, currency: "usd" }) });
+      setStripeFetchForTests(api.f);
+      const r = await sweepBilling(E_TEST, NOW);
+      expect(await getInvoice(env.DB, inv.id)).toMatchObject({ status: "paid", mismatch: null });
+      expect(r).toMatchObject({ reminders: 0, holds: 0 });
+      expect(await approvalsByKind()).toEqual({});
+      expect(await activeHolds(env.DB, client.businessId)).toEqual([]);
+      expect(await count(`SELECT COUNT(*) AS n FROM invoice_nudges WHERE invoice_id = '${inv.id}'`)).toBe(0);
+    });
+
     it("a payment of another amount is a mismatch and changes nothing else", async () => {
       const client = await seedProject();
       const inv = await sentInvoice(client, { dueOn: "2027-03-01" });

@@ -191,11 +191,13 @@ describe("conversion to Care", () => {
     const api = stripeApi(); setStripeFetchForTests(api.f);
     const s = await active();
     const care = (await getPackage(env.DB, "care"))!;
-    expect(await sweepTerms(E_TEST, at("2028-12-19"))).toEqual({ notices: 1, converted: 0 }); // the day before: only the notice
+    expect(await sweepTerms(E_TEST, at("2028-12-18"))).toEqual({ notices: 1, converted: 0 }); // two days out: only the notice, nothing converts
     expect(stripePosts(api)).toHaveLength(0);
 
-    expect(await sweepTerms(E_TEST, at(TERM_END))).toEqual({ notices: 0, converted: 1 });
-    expect(await sweepTerms(E_TEST, at(TERM_END))).toEqual({ notices: 0, converted: 0 }); // replayed
+    // The daily cron runs at 13:17 UTC, after Stripe's noon-UTC billing anchor: a term ending tomorrow has already been billed its last month, so month 25 would be next. It converts today.
+    expect(await sweepTerms(E_TEST, at("2028-12-19"))).toEqual({ notices: 0, converted: 1 }); // the term ends tomorrow
+    expect(await sweepTerms(E_TEST, at("2028-12-19"))).toEqual({ notices: 0, converted: 0 }); // replayed
+    expect(await sweepTerms(E_TEST, at(TERM_END))).toEqual({ notices: 0, converted: 0 });
     expect(await sweepTerms(E_TEST, at("2028-12-21"))).toEqual({ notices: 0, converted: 0 });
 
     const posts = stripePosts(api);

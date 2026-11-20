@@ -45,6 +45,19 @@ export async function planSubscriptions(env: Env, doc: Document): Promise<number
   return made;
 }
 
+/**
+ * True when a `link_sent` subscription's link never reached the client and nothing is under way at Stripe: no Checkout session on record, and none of its `subscription.start` approvals has a mail
+ * that went out (or is going). That is what a failed mail followed by a rejected approval leaves: a row that says the link was sent, with nobody holding it. Such a row may be put up again.
+ */
+async function linkNeverReachedClient(db: D1Database, sub: Subscription): Promise<boolean> {
+  if (sub.status !== "link_sent" || sub.stripeCheckoutSessionId) return false;
+  const sentOrSending = await db.prepare(
+    `SELECT 1 AS x FROM approvals a JOIN messages m ON m.approval_id = a.id
+      WHERE a.kind = '${START_KIND}' AND json_extract(a.payload, '$.subscriptionId') = ? AND m.direction = 'out' AND m.status IN ('sent', 'sending') LIMIT 1`,
+  ).bind(sub.id).first();
+  return !sentOrSending;
+}
+
 /** What the mail will be, as far as it can be known before the link exists (the token is made when Logan approves). */
 async function previewOf(env: Env, sub: Subscription, firstChargeOn: string): Promise<{ title: string; preview: string }> {
   const settings = await getSettings(env.DB);
@@ -71,7 +84,7 @@ async function previewOf(env: Env, sub: Subscription, firstChargeOn: string): Pr
 
 /**
  * Puts a subscription up for approval: the plan, the monthly price, the first charge date, the term and the exact mail. Moves it from `planned` to `proposed` and records the date (a
- * `proposed` one can be put up again, with another date, after its approval was rejected). One waiting approval per subscription: a second call returns the first. Approving it makes the
+ * `proposed` one can be put up again, with another date, after its approval was rejected; so can a `link_sent` one whose link never reached the client, see `linkNeverReachedClient`). One waiting approval per subscription: a second call returns the first. Approving it makes the
  * client's link and mails it (`approvals/subscriptionStart.ts`). `moved` says whether this call was the one that took it out of `planned`.
  */
 async function propose(env: Env, id: string, firstChargeOn: string): Promise<{ approval: Approval; moved: boolean }> {
@@ -79,7 +92,8 @@ async function propose(env: Env, id: string, firstChargeOn: string): Promise<{ a
   if (!isDate(firstChargeOn)) throw new RangeError("The first charge must be a calendar date (YYYY-MM-DD).");
   const sub = await getSubscription(db, id);
   if (!sub) throw new Error("There is no such subscription.");
-  if (sub.status !== "planned" && sub.status !== "proposed") throw new Error(`This subscription is ${sub.status}, not planned or proposed: it is already with the client or finished.`);
+  const stranded = await linkNeverReachedClient(db, sub);
+  if (sub.status !== "planned" && sub.status !== "proposed" && !stranded) throw new Error(`This subscription is ${sub.status}, not planned or proposed: it is already with the client or finished.`);
   const first = (await waiting(db, id))[0];
   if (first) return { approval: first, moved: false };
 
@@ -94,7 +108,9 @@ async function propose(env: Env, id: string, firstChargeOn: string): Promise<{ a
     return { approval: winner, moved: false };
   }
   const moved = await markSubscription(db, id, { status: "proposed", firstChargeOn }, { from: ["planned"] });
-  if (!moved && !(await markSubscription(db, id, { firstChargeOn }, { from: ["proposed"] }))) {
+  // A proposed one only takes the new date; a stranded link_sent one goes back to proposed (its stored token is kept: the approval reuses it, and a proposed row's link is not live).
+  const again = moved || await markSubscription(db, id, { firstChargeOn }, { from: ["proposed"] }) || (stranded && await markSubscription(db, id, { status: "proposed", firstChargeOn }, { from: ["link_sent"] }));
+  if (!again) {
     await db.prepare(`DELETE FROM approvals WHERE id = ? AND status = 'pending'`).bind(a.id).run();
     throw new Error("This subscription changed while it was being proposed. Look at it again.");
   }
@@ -162,14 +178,15 @@ export async function startDueSubscriptions(env: Env, now: Date): Promise<number
 
 /**
  * Logan's "Start billing" for a Local SEO (kickoff) subscription: puts it up for approval with its first charge on today's date in his calendar, or a month later when its first month was
- * paid in the deposit. Returns the waiting approval. Refuses a subscription that does not start at kickoff, one whose deposit is not paid, and one that has gone past `proposed`.
+ * paid in the deposit. Returns the waiting approval. Refuses a planned subscription that does not start at kickoff, one whose deposit is not paid, and one that has gone past `proposed` (a `link_sent` one only when its link never reached the client). A signing or launch one that was proposed and rejected may be put up again here.
  */
 export async function startKickoff(env: Env, id: string, now: Date): Promise<Approval> {
   const db = env.DB;
   const sub = await getSubscription(db, id);
   if (!sub) throw new Error("There is no such subscription.");
-  if (sub.startsWhen !== "kickoff") throw new Error(`Only a subscription that starts at kickoff is started by hand; this one starts at ${sub.startsWhen}.`);
-  if (sub.status !== "planned" && sub.status !== "proposed") throw new Error(`This subscription is ${sub.status}, not waiting to start.`);
+  // A signing or launch one is started by the sweep, never by hand while it is planned; but once it has been put up (proposed) or its link was lost (link_sent, see `proposeSubscription`), Logan may put it up again here.
+  if (sub.startsWhen !== "kickoff" && sub.status === "planned") throw new Error(`Only a subscription that starts at kickoff is started by hand; this one starts at ${sub.startsWhen}.`);
+  if (sub.status !== "planned" && sub.status !== "proposed" && sub.status !== "link_sent") throw new Error(`This subscription is ${sub.status}, not waiting to start.`);
   const doc = await getDocument(db, sub.documentId);
   if (!doc || doc.status !== "signed" || !doc.paidAt) throw new Error("The deposit for this client is not paid yet, so billing cannot start.");
   const today = calendarDateIn(now, zoneOf(await getSettings(db)));
