@@ -269,8 +269,9 @@ export async function sendProblems(env: Env, co: ChangeOrder, o: { approvalId?: 
     if (!settings.contact_email.trim()) problems.push("Add your contact email in Settings first: the test goes to it.");
   } else if (!co.content.contactEmail.includes("@")) problems.push("This change order has no contact email.");
   else {
+    // A change order goes to a client who has paid (payment marks the lead won), so the gate's "existing client" rule does not apply; a do-not-contact or suppression hit still blocks.
     const conflict = await checkConflict(db, { email: co.content.contactEmail, businessId: co.businessId });
-    if (conflict.blocked) problems.push(`Blocked: ${conflict.reason}`);
+    if (conflict.blocked && conflict.source !== "client") problems.push(`Blocked: ${conflict.reason}`);
   }
   return problems;
 }

@@ -196,6 +196,22 @@ describe("change_order.send approval", () => {
     expect(mail.sent).toEqual([]);
   });
 
+  it("a real order goes to a client who is marked won (payment does that), while a do-not-contact hit still blocks", async () => {
+    const { co, businessId } = await ready();
+    await env.DB.prepare(`UPDATE businesses SET lead_status = 'won' WHERE id = ?`).bind(businessId).run();
+    const a = await createChangeOrderSendApproval(e, co);
+    expect(await approve(e, a.id)).toEqual({ ok: true });
+    expect(mail.sent.map((m) => m.to)).toEqual(["pat@ace.test"]);
+
+    const other = await ready();
+    await env.DB.prepare(`UPDATE businesses SET lead_status = 'won' WHERE id = ?`).bind(other.businessId).run();
+    const listed = await addDoNotContact(env.DB, { kind: "email", value: "pat@ace.test", reason: "opt_out" });
+    const b = await createChangeOrderSendApproval(e, other.co);
+    expect((await approve(e, b.id) as { error: string }).error).toMatch(/Blocked: .*do-not-contact/);
+    expect(mail.sent).toHaveLength(1);
+    await removeDoNotContact(env.DB, listed.id);
+  });
+
   it("a real send needs the owner's name and contact email, like a proposal does", async () => {
     const { co } = await ready();
     await saveSettings(env.DB, { your_name: " " });
