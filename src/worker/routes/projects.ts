@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { reject } from "../approvals/decide";
-import { ownerChangeOrder } from "../changeorders/service";
+import { ownerChangeOrder, withdrawSendApprovals } from "../changeorders/service";
 import { listChangeOrders } from "../db/changeOrders";
 import { getBusiness } from "../db/businesses";
 import { getDeal } from "../db/deals";
@@ -17,6 +17,7 @@ import { listEntriesForTask, minutesByTask, timeTotals } from "../db/time";
 import type { Env } from "../env";
 import { cleanText, looksLikeCredential } from "../onboarding/templates";
 import { dispatchReady, requestClaudeStep } from "../projects/dispatch";
+import { cancelTasksFor } from "../queue/db";
 import { bodyOf, isDomainError, NOT_FOUND, ownerOnError, type Ctx } from "../projects/http";
 import { runTasksChanged } from "../projects/hooks";
 import { addAdhocTask, completeTask, postComment, reopenTask, setWaitingClient, skipTask, startTask, updateTask } from "../projects/service";
@@ -96,7 +97,7 @@ projectRoutes.get("/projects/:id", async (c) => {
 
 const NewProjectBody = z.object({
   businessId: z.string().min(1).max(100),
-  name: TEXT(2000).transform(oneLine).pipe(z.string().min(1, "A project needs a name.").max(120, "A project name is at most 120 characters.")),
+  name: TEXT(2000).transform(oneLine).pipe(z.string().min(1, "A project needs a name.").max(120, "A project name is at most 120 characters.").refine((n) => !looksLikeCredential(n), CREDENTIAL_REFUSED)),
 }).strict();
 
 /** A project of Logan's own, with no proposal and no template: an empty task list to fill. */
@@ -128,6 +129,7 @@ projectRoutes.patch("/projects/:id", async (c) => {
   if (next === p.status && next !== "paused") return c.json({ project: p });
   const saved = await setProjectStatus(c.env.DB, p.id, next, { reason });
   if (saved.status !== next) return c.json({ error: `This project is ${saved.status}, so it cannot be changed.` }, 409);
+  if (saved.status === "cancelled") await tidyCancelled(c.env, saved);
   if (p.status === "paused" && saved.status === "active") {
     // The change is saved: a failure to hand out steps now is picked up by the next change or sweep, never a reason to say the resume failed.
     try { await dispatchReady(c.env, new Date()); }
@@ -135,6 +137,28 @@ projectRoutes.patch("/projects/:id", async (c) => {
   }
   return c.json({ project: saved });
 });
+
+/**
+ * After a cancel: the project's open Claude jobs are closed and the approvals waiting on it (review cards for its steps, the send approvals of its change orders) are rejected, so
+ * nothing is applied, approved or mailed for a project that is gone. The cancel is saved first and each item is tried on its own: a failure is logged and the rest go on, and
+ * what is missed is still refused later (a job is stale when its result arrives, a review card is refused for a project that is not active).
+ */
+async function tidyCancelled(env: Env, p: Project): Promise<void> {
+  const log = (what: string, e: unknown) => console.error(`projects: could not ${what} after a cancel`, e instanceof Error ? e.message : "unknown error");
+  let tasks: Task[] = [];
+  let orderIds: string[] = [];
+  try { tasks = await listTasks(env.DB, p.id); orderIds = (await listChangeOrders(env.DB, p.id)).map((o) => o.id); }
+  catch (e) { log("list the project's work", e); return; }
+  for (const t of tasks) {
+    try { await cancelTasksFor(env.DB, "task", t.id); } catch (e) { log("close a Claude job", e); }
+    if (t.reviewApprovalId) {
+      try { await reject(env.DB, t.reviewApprovalId, "the project was cancelled"); } catch (e) { log("reject a review card", e); }
+    }
+  }
+  for (const id of orderIds) {
+    try { await withdrawSendApprovals(env.DB, [id], "the project was cancelled"); } catch (e) { log("withdraw a send approval", e); }
+  }
+}
 
 const AdhocBody = z.object({
   title: TEXT(1000), owner: z.enum(OWNER_TAGS).optional(), estMinutes: z.number().optional(), dueOn: TEXT(40).nullable().optional(), billable: z.boolean().optional(),
@@ -264,8 +288,8 @@ projectRoutes.post("/tasks/:id/ask-claude", onTask(async (c, task) => {
 }));
 
 /**
- * Sends Claude's work on a step back with a note. The review card Claude's work was waiting on is rejected first ("sent back") and its link cleared, so it can never be approved
- * after the step has gone back to Claude; then Claude is asked again. The note and the step are checked before the card is touched, so a refusal leaves the card waiting.
+ * Sends Claude's work on a step back with a note. Claude is asked again first; then the review card the work was waiting on is rejected ("sent back") and its link cleared. The note
+ * and the step are checked before anything changes, so a refusal leaves the card waiting.
  */
 projectRoutes.post("/tasks/:id/send-back", onTask(async (c, task) => {
   const body = await bodyOf(c, NoteBody);
@@ -274,9 +298,13 @@ projectRoutes.post("/tasks/:id/send-back", onTask(async (c, task) => {
   const project = await getProject(c.env.DB, task.projectId);
   if (!project || project.status !== "active") return c.json({ error: `This project is ${project?.status ?? "gone"}, so Claude cannot start on it.` }, 409);
   if (body.note !== undefined && looksLikeCredential(cleanText(body.note, body.note.length))) throw new TaskInputError(CREDENTIAL_REFUSED);
-  if (task.reviewApprovalId) await reject(c.env.DB, task.reviewApprovalId, "sent back");
-  await setTaskStatus(c.env.DB, task.id, "in_review", { from: ["in_review"], now: new Date().toISOString(), reviewApprovalId: null });
   const { queued } = await requestClaudeStep(c.env, task.id, { note: body.note });
+  // Claude has the step again; now the old card goes. Each part is best effort: a card left waiting is no harm to the re-queue (the step has moved on from the review it asked about).
+  if (task.reviewApprovalId) {
+    try { await reject(c.env.DB, task.reviewApprovalId, "sent back"); } catch (e) { console.error("projects: could not reject the old review card", e instanceof Error ? e.message : "unknown error"); }
+    try { await setTaskStatus(c.env.DB, task.id, "in_progress", { from: ["in_progress"], now: new Date().toISOString(), reviewApprovalId: null }); }
+    catch (e) { console.error("projects: could not clear the old review link", e instanceof Error ? e.message : "unknown error"); }
+  }
   return c.json({ queued, task: await taskOf(c, task.id) });
 }));
 

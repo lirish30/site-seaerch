@@ -202,6 +202,13 @@ const sopStep: TaskKindDef<SopStepPayload, SopStepResult> = {
     const task = await getTask(db, p.taskId);
     if (!task) return { stale: "the step no longer exists" };
     if (task.status !== "in_progress" || task.claudeTaskId !== job.id) return { stale: "the step is no longer in progress for this job" };
+    // A job claimed before the project was paused or cancelled: nothing of its result is applied (no comment, no finish, no milestone, no review card), and the step goes back
+    // to to-do like `build` does, so it is not stranded. A stale job is not a failed one, so this never counts toward the retry cap.
+    const project = await getProject(db, task.projectId);
+    if (!project || project.status !== "active") {
+      await giveBack(env, task.id, { jobId: job.id, paused: true });
+      return { stale: `the project is ${project?.status ?? "gone"}` };
+    }
 
     const summary = cleanText(r.summary, COMMENT_MAX);
     const links = (r.links ?? []).map((l) => cleanText(l, 300));

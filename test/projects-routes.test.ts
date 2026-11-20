@@ -4,7 +4,7 @@ import { createReviewApproval } from "../src/worker/approvals/sopReview";
 import { listActivity } from "../src/worker/db/activity";
 import { createDraft, getDocument, setPaid, signDocument } from "../src/worker/db/documents";
 import { insertInvoice, markInvoice } from "../src/worker/db/invoices";
-import { markSent, signChangeOrder } from "../src/worker/db/changeOrders";
+import { getChangeOrder, markSent, signChangeOrder } from "../src/worker/db/changeOrders";
 import { getProject, markProjectDone, setProjectStatus } from "../src/worker/db/projects";
 import { ensureSeedSops, getTemplate, saveTemplate } from "../src/worker/db/sops";
 import { getSettings, saveSettings } from "../src/worker/db/settings";
@@ -14,8 +14,8 @@ import type { ProposalContent } from "../src/worker/documents/proposal";
 import { SOP_STEP_KIND } from "../src/worker/queue/sopStep";
 import { setMailDeps } from "../src/worker/mail/deps";
 import "../src/worker/queue/kinds";
-import { clientSig as coSig, content as coContent, sendOrder } from "./fixtures/changeorders";
-import { clientSig, proposal, seedDeal, sendDraft } from "./fixtures/documents";
+import { clientSig as coSig, content as coContent, seal, sendOrder } from "./fixtures/changeorders";
+import { clientSig, proposal, readyToSend, seedDeal, sendDraft } from "./fixtures/documents";
 import { newTask, resetProjectWork, seedProject, seedSteps, T0 } from "./fixtures/projects";
 
 const BASE = "https://clients.hellositeline.test";
@@ -166,6 +166,9 @@ describe("creating and changing a project", () => {
     expect((await json("POST", "/projects", { businessId: s.businessId, name: "" })).status).toBe(400);
     expect((await json("POST", "/projects", { businessId: s.businessId, name: "x".repeat(121) })).status).toBe(400);
     expect((await json("POST", "/projects", { businessId: s.businessId, name: "ok", extra: 1 })).status).toBe(400);
+    const cred = await json("POST", "/projects", { businessId: s.businessId, name: "Site login: admin password: hunter2hunter2" });
+    expect(cred.status).toBe(400);
+    expect(JSON.stringify(cred.body)).not.toContain("hunter2");
 
     const paused = await json("PATCH", `/projects/${id}`, { status: "paused", pausedReason: "Waiting for the client's logo" });
     expect(paused.status).toBe(200);
@@ -409,6 +412,16 @@ describe("Claude from the task routes", () => {
     expect((await json("POST", `/tasks/${s.t.id}/send-back`)).status).toBe(409);
   });
 
+  it("send-back queues Claude first, so a failing card rejection does not lose the re-queue", async () => {
+    const s = await inReview();
+    const r = await failing(`BEFORE UPDATE ON approvals BEGIN SELECT RAISE(ABORT, 'disk hiccup'); END`, () => json("POST", `/tasks/${s.t.id}/send-back`, { note: "Try again" }));
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ queued: true, task: { status: "in_progress" } });
+    expect((await jobs()).map((j) => j.target_id)).toEqual([s.t.id]);
+    // the leftover card is still pending (rejecting it failed), but the step is Claude's again
+    expect((await getApproval(s.approval.id))!.status).toBe("pending");
+  });
+
   it("send-back with a note that is a login leaves the review card waiting", async () => {
     const s = await inReview();
     const r = await json("POST", `/tasks/${s.t.id}/send-back`, { note: "password: hunter2hunter2" });
@@ -561,12 +574,105 @@ describe("GET /me/tasks", () => {
     await seedSteps(paused.project.id, paused.businessId, [{ key: "1", title: "Hidden" }]);
     await setProjectStatus(env.DB, paused.project.id, "paused");
 
+    const rehearsal = await seedProject({ bare: true, test: true, name: "Rehearsal" });
+    await seedSteps(rehearsal.project.id, rehearsal.businessId, [{ key: "1", title: "Practice step" }]);
+
     const r = await json("GET", "/me/tasks");
     expect(r.status).toBe(200);
+    expect(r.body.projects.find((p: any) => p.projectId === rehearsal.project.id)).toMatchObject({ test: true, tasks: [{ title: "Practice step" }] });
     const group = (id: string) => r.body.projects.find((p: any) => p.projectId === id);
     expect(group(a.project.id)).toMatchObject({ projectName: "Alpha", businessId: a.businessId, test: false });
     expect(group(a.project.id).tasks.map((t: any) => t.title).sort()).toEqual(["Drafted", "Ready one"]);
     expect(group(b.project.id).tasks.map((t: any) => t.title)).toEqual(["Under way"]);
     expect(group(paused.project.id)).toBeUndefined();
+  });
+});
+
+describe("change-order tasks cannot be opened by any route but the change order's own", () => {
+  const order = async (o: { test?: boolean } = {}) => {
+    const s = await seedProject({ test: o.test });
+    const made = await json("POST", `/projects/${s.project.id}/change-orders`, { title: "Add a gallery page", hours: 2, deliverables: ["Build the page"] });
+    const co = made.body.changeOrder;
+    const [task] = (await listTasks(env.DB, s.project.id)).filter((t) => t.changeOrderId === co.id);
+    return { ...s, co, task };
+  };
+  /** Every way the owner has to move or work a task, tried on a task that must stay as it is. */
+  async function pokeAll(id: string) {
+    const calls: [string, string, unknown?][] = [
+      ["POST", `/tasks/${id}/start`], ["POST", `/tasks/${id}/complete`], ["POST", `/tasks/${id}/skip`, { reason: "No reason at all" }], ["POST", `/tasks/${id}/reopen`],
+      ["POST", `/tasks/${id}/waiting`, { on: true }], ["POST", `/tasks/${id}/waiting`, { on: false }], ["POST", `/tasks/${id}/ask-claude`], ["POST", `/tasks/${id}/send-back`],
+      ["POST", `/tasks/${id}/timer/start`], ["PATCH", `/tasks/${id}`, { title: "Renamed", requires: [] }], ["POST", `/tasks/${id}/move`, { toPosition: 0 }],
+    ];
+    for (const [m, p, b] of calls) {
+      const r = await owner(m, p, b);
+      expect(r.status, `${m} ${p}`).not.toBe(500);
+    }
+  }
+
+  it("a task of a voided order stays skipped: reopen is 409 and no other route moves it", async () => {
+    const s = await order();
+    expect((await json("POST", `/change-orders/${s.co.id}/void`, { reason: "The client changed their mind" })).status).toBe(200);
+    expect((await getTask(env.DB, s.task.id))!.status).toBe("skipped");
+    const r = await json("POST", `/tasks/${s.task.id}/reopen`);
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatch(/change order/);
+    await pokeAll(s.task.id);
+    expect((await getTask(env.DB, s.task.id))!.status).toBe("skipped");
+    expect(await jobs()).toEqual([]);
+  });
+
+  it("a locked task of a draft, sent or declined order stays locked under every route", async () => {
+    const draft = await order();
+    await pokeAll(draft.task.id);
+    expect((await getTask(env.DB, draft.task.id))!.status).toBe("locked");
+    const sent = await order();
+    await seal((await getChangeOrder(env.DB, sent.co.id))!);
+    await pokeAll(sent.task.id);
+    expect((await getTask(env.DB, sent.task.id))!.status).toBe("locked");
+    expect(await jobs()).toEqual([]);
+  });
+
+  it("a signed order that is not paid keeps its task locked, and paying it is what unlocks it", async () => {
+    const s = await order();
+    const sealed = await seal((await getChangeOrder(env.DB, s.co.id))!);
+    expect(await signChangeOrder(env.DB, sealed.id, coSig(sealed.contentSha256!), "2026-12-06T09:00:00.000Z")).toBe("signed");
+    await pokeAll(s.task.id);
+    expect((await getTask(env.DB, s.task.id))!.status).toBe("locked");
+    expect((await json("POST", `/change-orders/${s.co.id}/mark-paid`, { confirm: true })).status).toBe(200);
+    expect((await getTask(env.DB, s.task.id))!.status).toBe("todo");
+    // once unlocked by a paid order, the owner can skip and reopen it as with any task
+    expect((await json("POST", `/tasks/${s.task.id}/skip`, { reason: "Handled in the main build" })).body.task.status).toBe("skipped");
+    expect((await json("POST", `/tasks/${s.task.id}/reopen`)).body.task.status).toBe("todo");
+  });
+});
+
+describe("cancelling a project", () => {
+  it("cancels its open Claude jobs and rejects its waiting review and send approvals", async () => {
+    await readyToSend();
+    const s = await seedProject({ test: true });
+    const [work, review] = await seedSteps(s.project.id, s.businessId, [{ key: "1", owner: "claude" }, { key: "2", owner: "claude_drafts" }]);
+    await json("POST", `/tasks/${work.id}/ask-claude`);
+    await setTaskStatus(env.DB, review.id, "in_progress", { now: T0 });
+    const card = await createReviewApproval(env as never, (await getTask(env.DB, review.id))!, { summary: "Brief." });
+    await setTaskStatus(env.DB, review.id, "in_review", { from: ["in_progress"], now: T0, reviewApprovalId: card.id });
+    const made = await json("POST", `/projects/${s.project.id}/change-orders`, { title: "Add a page", hours: 1 });
+    const send = (await json("POST", `/change-orders/${made.body.changeOrder.id}/send`)).body.approval;
+    expect((await jobs())[0].status).toBe("pending");
+
+    const r = await json("PATCH", `/projects/${s.project.id}`, { status: "cancelled" });
+    expect(r.status).toBe(200);
+    expect((await jobs()).map((j) => j.status)).toEqual(["stale"]);
+    expect(await getApproval(card.id)).toMatchObject({ status: "rejected", decision_note: "the project was cancelled" });
+    expect(await getApproval(send.id)).toMatchObject({ status: "rejected" });
+  });
+
+  it("a failure while tidying up does not undo the cancel", async () => {
+    const s = await seedProject({ bare: true, test: true });
+    const [t] = await seedSteps(s.project.id, s.businessId, [{ key: "1", owner: "claude" }]);
+    await json("POST", `/tasks/${t.id}/ask-claude`);
+    const r = await failing(`BEFORE UPDATE ON claude_tasks BEGIN SELECT RAISE(ABORT, 'disk hiccup'); END`, () => json("PATCH", `/projects/${s.project.id}`, { status: "cancelled" }));
+    expect(r.status).toBe(200);
+    expect(r.body.project.status).toBe("cancelled");
+    expect(JSON.stringify(r.body)).not.toContain("hiccup");
   });
 });

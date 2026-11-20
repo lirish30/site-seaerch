@@ -1,3 +1,4 @@
+import { getChangeOrder } from "../db/changeOrders";
 import { addCadence, getProject, markProjectDone, reachMilestone } from "../db/projects";
 import {
   addComment, CREDENTIAL_REFUSED, getTask, insertTasks, listTasks, parseTaskPatch, patchTask, setTaskStatus, TaskInputError,
@@ -160,6 +161,11 @@ export async function reopenTask(env: Env, id: string, now: Date): Promise<Task>
   const task = await need(env, id);
   if (task.status === "todo") return task;
   if (task.status !== "done" && task.status !== "skipped") throw new TaskStateError("Only a finished or skipped step can be reopened.");
+  // A change order's task is unlocked only by its order being signed AND paid (the change-order service does that). A voided order skips its tasks: they must not come back as work.
+  if (task.changeOrderId) {
+    const order = await getChangeOrder(env.DB, task.changeOrderId);
+    if (!order || order.status !== "signed" || order.paidAt === null) throw new TaskStateError("This task belongs to a change order that is not signed and paid, so it cannot be reopened.");
+  }
   // The job and review links are cleared with the status, so a Claude job still open for this step can no longer apply its result to it.
   if (!(await setTaskStatus(env.DB, id, "todo", { from: ["done", "skipped"], now: now.toISOString(), claudeTaskId: null, reviewApprovalId: null }))) return lostRace(env, id, "todo");
   await runTasksChanged(env, task.projectId);

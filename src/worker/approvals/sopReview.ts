@@ -83,6 +83,9 @@ registerHandler({
     const t = await getTask(env.DB, p.taskId);
     if (!t) throw new Error("This step no longer exists.");
     if (t.status !== "done" && t.status !== "in_review" && t.status !== "in_progress") throw new Error("This step is no longer waiting for your review.");
+    // A paused or cancelled project finishes nothing (a finished one may: a retry of an approval that already finished the step must still be able to repair what was left half-done).
+    const project = await getProject(env.DB, t.projectId);
+    if (!project || project.status === "paused" || project.status === "cancelled") throw new Error("This project is not active, so this step cannot be finished from here.");
     await completeTask(env, t.id, { by: "logan", now: new Date() });
   },
 });

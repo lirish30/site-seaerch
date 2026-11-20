@@ -6,7 +6,7 @@ import { createReviewApproval } from "../src/worker/approvals/sopReview";
 import { setProjectStatus } from "../src/worker/db/projects";
 import { getTask, insertTasks, listComments, setTaskStatus, type NewTask, type Task } from "../src/worker/db/tasks";
 import type { Env } from "../src/worker/env";
-import { clearProjectHooksForTests, onTasksChanged } from "../src/worker/projects/hooks";
+import { clearProjectHooksForTests, onMilestone, onProjectDone, onTasksChanged } from "../src/worker/projects/hooks";
 import { dispatchReady, requestClaudeStep } from "../src/worker/projects/dispatch";
 import { completeTask as finishStep, reopenTask, startTask } from "../src/worker/projects/service";
 import { buildBundle } from "../src/worker/queue/bundle";
@@ -462,4 +462,44 @@ describe("sop.review and change_order.send through the MCP tool", () => {
       expect(await count(kind)).toBe(before);
     });
   }
+});
+
+describe("a project that is no longer active", () => {
+  for (const status of ["cancelled", "paused"] as const) {
+    it(`a job claimed before the project was ${status} is stale when its result arrives, and nothing is applied`, async () => {
+      const c = await claimed({ extra: { milestone: "design_approved" } });
+      const seen: string[] = [];
+      onMilestone(async () => { seen.push("milestone"); });
+      onProjectDone(async () => { seen.push("done"); });
+      onTasksChanged(async () => { seen.push("changed"); });
+      await env.DB.prepare(`UPDATE projects SET status = ? WHERE id = ?`).bind(status, c.project.id).run();
+
+      expect(await finish(c.job.id, result())).toEqual({ ok: true });
+      expect((await getJob(env.DB, c.job.id))!.status).toBe("stale");
+      // given back (not Claude's failure), no claude comment, no milestone, no review card, no hook
+      expect(await getTask(env.DB, c.task.id)).toMatchObject({ status: "todo", claudeTaskId: null, reviewApprovalId: null });
+      expect((await comments(c.task.id)).map(([a]) => a)).toEqual(["system"]);
+      expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM project_milestones WHERE project_id = ?`).bind(c.project.id).first<{ n: number }>())!.n).toBe(0);
+      expect(await reviews()).toEqual([]);
+      expect(seen).toEqual([]);
+      const { failedJobCount } = await import("../src/worker/queue/sopStep");
+      expect(await failedJobCount(env.DB, c.task.id)).toBe(0);
+    });
+  }
+
+  it("a waiting review card on a cancelled project cannot be approved, and the step is not finished", async () => {
+    const c = await claimed({ owner: "claude_drafts" });
+    expect(await finish(c.job.id, result())).toEqual({ ok: true });
+    const [card] = await reviews();
+    expect((await getTask(env.DB, c.task.id))!.status).toBe("in_review");
+    await env.DB.prepare(`UPDATE projects SET status = 'cancelled' WHERE id = ?`).bind(c.project.id).run();
+    const r = await approve(e, card.id);
+    expect(r).toMatchObject({ ok: false, status: 502 });
+    expect((r as { error: string }).error).toMatch(/not active/);
+    expect((await getTask(env.DB, c.task.id))!.status).toBe("in_review");
+    // the same card works while the project is active (a paused project that is resumed)
+    await env.DB.prepare(`UPDATE projects SET status = 'active' WHERE id = ?`).bind(c.project.id).run();
+    expect(await approve(e, card.id)).toEqual({ ok: true });
+    expect((await getTask(env.DB, c.task.id))!.status).toBe("done");
+  });
 });
