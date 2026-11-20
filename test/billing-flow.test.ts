@@ -374,7 +374,7 @@ describe("billing, end to end", () => {
     const sessionCall = stripe.creates().find((x) => new URL(x.url).pathname === "/v1/checkout/sessions")!;
     expect(sessionCall.form.get("mode")).toBe("subscription");
     expect(sessionCall.form.get("client_reference_id")).toBe(careSub.id);
-    expect(sessionCall.headers["idempotency-key"]).toBe(`checkout:${careSub.id}:2027-01-04`);
+    expect(sessionCall.headers["idempotency-key"]).toBe(`checkout:${careSub.id}:2027-01-04:2`);
     expect(sessionCall.form.has("subscription_data[trial_end]")).toBe(false); // the first charge date is past, so the card is charged at Checkout
     expect(await subsOf(a.businessId)).toMatchObject([{ status: "link_sent" }]);
 
