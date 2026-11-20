@@ -1,4 +1,4 @@
-import { ACCESS_KEYS, type AccessItem, type AccessKey, type Site } from "../db/sites";
+import { ACCESS_KEYS, type AccessItem, type AccessKey, type AccessStatus, type Site } from "../db/sites";
 import { cleanText, looksLikeCredential } from "../onboarding/templates";
 
 const VAULT = "Name the password manager item, never the login.";
@@ -66,7 +66,7 @@ export function cleanVaultName(raw: string): string | null {
 }
 
 /** Items that are not yet received, verified or not applicable. */
-export const unresolved = (items: AccessItem[]): AccessItem[] =>
+export const unresolved = <T extends { status: AccessStatus }>(items: T[]): T[] =>
   items.filter((i) => i.status !== "received" && i.status !== "verified" && i.status !== "not_applicable");
 
 /** True for an absolute http or https URL and nothing else (no javascript:, data:, ftp:). */

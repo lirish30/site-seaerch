@@ -23,7 +23,7 @@ const CARE_NAMES: Record<(typeof CARE_KEYS)[number], string> = { care: "Care", c
  * A business with no real record of any kind (site, project or subscription) and at least one test one is a rehearsal. Test records never count in the client list, MRR or Today.
  * A business with nothing at all (a won lead that has not been set up yet) is real. An archived site says nothing either way. SQL for a businesses row with this alias.
  */
-const testClientSql = (a: string): string => `(
+export const testClientSql = (a: string): string => `(
   (EXISTS (SELECT 1 FROM sites s WHERE s.business_id = ${a}.id AND s.archived_at IS NULL AND s.test = 1)
     OR EXISTS (SELECT 1 FROM projects p WHERE p.business_id = ${a}.id AND p.test = 1)
     OR EXISTS (SELECT 1 FROM subscriptions u WHERE u.business_id = ${a}.id AND u.test = 1))
@@ -33,7 +33,7 @@ const testClientSql = (a: string): string => `(
 )`;
 
 /** A client is a business that was won, or has at least one project. SQL for a businesses row with this alias. */
-const clientSql = (a: string): string => `(${a}.lead_status = 'won' OR EXISTS (SELECT 1 FROM projects cp WHERE cp.business_id = ${a}.id))`;
+export const clientSql = (a: string): string => `(${a}.lead_status = 'won' OR EXISTS (SELECT 1 FROM projects cp WHERE cp.business_id = ${a}.id))`;
 
 export async function isClient(db: D1Database, businessId: string): Promise<boolean> {
   return !!(await db.prepare(`SELECT 1 AS x FROM businesses b WHERE b.id = ? AND ${clientSql("b")}`).bind(businessId).first());

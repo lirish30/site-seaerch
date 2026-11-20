@@ -10,8 +10,12 @@ import { activeHolds } from "./db/holds";
 import { listInvoices } from "./db/invoices";
 import { getSettings } from "./db/settings";
 import { zoneOf } from "./sop/cadence";
+import { ACCESS_KEYS, type AccessStatus } from "./db/sites";
+import { liveProjectSql } from "./db/projects";
+import { clientSql, testClientSql } from "./clients/record";
+import { ACCESS_LABELS, unresolved } from "./sites/access";
 
-export const TODAY_KINDS = ["follow_up_due", "draft_unsent", "stalled_deal", "starred_idle", "promising_quick_scan", "proposal_follow_up", "onboarding_attention", "project_attention", "billing_attention"] as const;
+export const TODAY_KINDS = ["follow_up_due", "draft_unsent", "stalled_deal", "starred_idle", "promising_quick_scan", "proposal_follow_up", "onboarding_attention", "project_attention", "billing_attention", "access_missing"] as const;
 export type TodayKind = (typeof TODAY_KINDS)[number];
 export const isTodayKind = (s: string): s is TodayKind => (TODAY_KINDS as readonly string[]).includes(s);
 
@@ -23,7 +27,7 @@ export interface TodayItem {
 }
 
 const DAY = 86_400_000;
-export const DONE_HIDES_DAYS = 7, STALLED_DAYS = 14, DRAFT_UNSENT_DAYS = 2, STARRED_IDLE_DAYS = 7, PROPOSAL_FOLLOW_UP_DAYS = 3, WELCOME_WAITING_DAYS = 1, MIN_QUICK_SCORE = 50, MAX_QUICK_ITEMS = 5, MAX_OVERDUE_BONUS = 30;
+export const DONE_HIDES_DAYS = 7, STALLED_DAYS = 14, DRAFT_UNSENT_DAYS = 2, ACCESS_WAIT_DAYS = 3, STARRED_IDLE_DAYS = 7, PROPOSAL_FOLLOW_UP_DAYS = 3, WELCOME_WAITING_DAYS = 1, MIN_QUICK_SCORE = 50, MAX_QUICK_ITEMS = 5, MAX_OVERDUE_BONUS = 30;
 // Activity older than this can no longer affect a result (done 7d, stalled 14d, snooze at most 30d), except `export`, which has no age limit.
 const ACTIVITY_WINDOW_DAYS = 30;
 
@@ -73,6 +77,28 @@ async function billingAttention(db: D1Database, now: Date): Promise<Map<string, 
   for (const i of await listInvoices(db, { statuses: ["draft"] })) {
     if (!i.test && !out.has(i.businessId)) out.set(i.businessId, { reason: "Invoice drafted: needs your OK to send", priority: 66 });
   }
+  return out;
+}
+
+/**
+ * A client whose site access is still not in, one reason per client: a client (not a test one) with a live, real project that started at least ACCESS_WAIT_DAYS ago and a live, real site
+ * with items not yet received, verified or not applicable. Two sites with gaps give one row naming every missing label once, in checklist order. Only the fixed labels are named, never a
+ * vault name, note or answer. One join; instants compare as UTC ISO text, so no calendar zone is involved.
+ */
+async function accessAttention(db: D1Database, now: Date): Promise<Map<string, { reason: string; priority: number }>> {
+  const cutoff = new Date(now.getTime() - ACCESS_WAIT_DAYS * DAY).toISOString();
+  const rows = (await db.prepare(
+    `SELECT DISTINCT s.business_id AS business_id, i.key AS key, i.status AS status
+     FROM sites s
+     JOIN site_access_items i ON i.site_id = s.id
+     JOIN businesses b ON b.id = s.business_id
+     WHERE s.archived_at IS NULL AND s.test = 0 AND ${clientSql("b")} AND NOT ${testClientSql("b")}
+       AND EXISTS (SELECT 1 FROM projects p WHERE p.business_id = s.business_id AND p.test = 0 AND ${liveProjectSql("p")} AND p.started_at <= ?)`,
+  ).bind(cutoff).all<{ business_id: string; key: (typeof ACCESS_KEYS)[number]; status: AccessStatus }>()).results;
+  const missing = new Map<string, Set<string>>();
+  for (const r of unresolved(rows)) (missing.get(r.business_id) ?? missing.set(r.business_id, new Set()).get(r.business_id)!).add(r.key);
+  const out = new Map<string, { reason: string; priority: number }>();
+  for (const [id, keys] of missing) out.set(id, { reason: `Access still missing: ${ACCESS_KEYS.filter((k) => keys.has(k)).map((k) => ACCESS_LABELS[k].label).join(", ")}`, priority: 65 });
   return out;
 }
 
@@ -129,6 +155,8 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
   const projects = await projectAttention(db, now);
   // A client's money: a hold, an overdue invoice or a draft waiting for the owner. Real invoices only, and the owner's own work, so it stays for a suppressed lead too.
   const billing = await billingAttention(db, now);
+  // A client's site access still missing: the owner's own work (like a project), so it stays for a suppressed lead.
+  const access = await accessAttention(db, now);
   const activity = await recentActivity(db, candidates.map((b) => b.id), new Date(t - ACTIVITY_WINDOW_DAYS * DAY).toISOString());
 
   const lastContact = new Map<string, number>(), lastExport = new Map<string, number>();
@@ -178,6 +206,8 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
     if (project && !hidden(b.id, "project_attention")) items.push(push("project_attention", b, project, null, 68));
     const owed = billing.get(b.id);
     if (owed && !hidden(b.id, "billing_attention")) items.push(push("billing_attention", b, owed.reason, null, owed.priority));
+    const noAccess = access.get(b.id);
+    if (noAccess && !hidden(b.id, "access_missing")) items.push(push("access_missing", b, noAccess.reason, null, noAccess.priority));
     // A paying client's onboarding is the owner's own work (like a stalled deal), so it stays for a suppressed lead.
     const attention = onboarding.get(b.id);
     if (attention && !hidden(b.id, "onboarding_attention")) items.push(push("onboarding_attention", b, attention, null, 70));

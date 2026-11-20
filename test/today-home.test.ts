@@ -22,6 +22,8 @@ describe("Home rows", () => {
     expect(itemLink(item("project_attention", "abc-1"))).toBe("/projects?businessId=abc-1");
     expect(itemLink(item("project_attention", "a b/c"))).toBe("/projects?businessId=a%20b%2Fc");
     expect(itemLink(item("billing_attention", "abc-1"))).toBe("/billing?businessId=abc-1");
+    expect(itemLink(item("access_missing", "abc-1"))).toBe("/clients/abc-1");
+    expect(itemLink(item("access_missing", "a b/c"))).toBe("/clients/a%20b%2Fc");
     expect(itemLink(item("onboarding_attention", "x"))).toBe("/leads/x");
   });
   it("counts each filter pill, hiding Saved until something is saved", () => {
@@ -39,7 +41,7 @@ describe("Home rows", () => {
     expect(filterPills([...items, item("proposal_follow_up"), item("onboarding_attention"), item("project_attention")]).map((p) => `${p.label} ${p.count}`)).toEqual(["All 8", "Follow-ups 2", "Drafts 1", "Deals 1", "Proposals 1", "Onboarding 1", "Projects 1", "Scans 1"]);
     expect(filterPills(items).map((p) => p.label)).not.toContain("Projects");
     // The Billing pill follows the same rule, and sits after Projects.
-    expect(filterPills([...items, item("project_attention"), item("billing_attention")]).map((p) => `${p.label} ${p.count}`)).toEqual(["All 7", "Follow-ups 2", "Drafts 1", "Deals 1", "Projects 1", "Billing 1", "Scans 1"]);
+    expect(filterPills([...items, item("project_attention"), item("billing_attention"), item("access_missing")]).map((p) => `${p.label} ${p.count}`)).toEqual(["All 8", "Follow-ups 2", "Drafts 1", "Deals 1", "Projects 1", "Billing 1", "Access 1", "Scans 1"]);
     expect(filterPills(items).map((p) => p.label)).not.toContain("Billing");
   });
   it("badges a follow-up as N days late (red) or due today (amber), and nothing else", () => {
