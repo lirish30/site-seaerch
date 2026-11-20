@@ -183,9 +183,13 @@ export async function createSubscriptionCheckout(
 /** An id that Stripe may send as a bare string or as an expanded object. */
 const refId = (v: unknown): string | null => (typeof v === "string" && v ? v : v && typeof v === "object" && typeof (v as { id?: unknown }).id === "string" ? (v as { id: string }).id : null);
 
-export async function retrieveCheckoutSession(f: Fetch, key: string, id: string): Promise<{ id: string; status: string; paymentStatus: string; subscriptionId: string | null; customerId: string | null }> {
-  const s = await call<{ id?: unknown; status?: unknown; payment_status?: unknown; subscription?: unknown; customer?: unknown }>(f, key, "GET", `/v1/checkout/sessions/${encodeURIComponent(id)}`);
-  return { id: idOf(s), status: String(s.status ?? ""), paymentStatus: String(s.payment_status ?? ""), subscriptionId: refId(s.subscription), customerId: refId(s.customer) };
+/** An open Checkout session carries the page's `url`; it is handed to a client, so only Stripe's https page counts (anything else is null). */
+export async function retrieveCheckoutSession(f: Fetch, key: string, id: string): Promise<{ id: string; status: string; paymentStatus: string; subscriptionId: string | null; customerId: string | null; url: string | null }> {
+  const s = await call<{ id?: unknown; status?: unknown; payment_status?: unknown; subscription?: unknown; customer?: unknown; url?: unknown }>(f, key, "GET", `/v1/checkout/sessions/${encodeURIComponent(id)}`);
+  return {
+    id: idOf(s), status: String(s.status ?? ""), paymentStatus: String(s.payment_status ?? ""), subscriptionId: refId(s.subscription), customerId: refId(s.customer),
+    url: typeof s.url === "string" && s.url.startsWith("https://") ? s.url : null,
+  };
 }
 
 type SubscriptionObject = { id?: unknown; status?: unknown; cancel_at_period_end?: unknown; current_period_end?: unknown; items?: { data?: { id?: unknown; current_period_end?: unknown }[] } };

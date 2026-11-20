@@ -137,32 +137,84 @@ describe("startCheckout", () => {
     expect(await closed.json()).toEqual({ error: "closed" });
   });
 
-  it("a second click makes a new session but an active subscription is refused", async () => {
-    // The first Checkout is open and unpaid when the client clicks again.
-    const api = stripeApi({ session: (id) => ({ id, status: "open", payment_status: "unpaid", subscription: null, customer: null }) });
-    setStripeFetchForTests(api.f);
+  const OPEN = (id: string) => ({ id, status: "open", payment_status: "unpaid", subscription: null, customer: null });
+  const DAY = 86_400_000;
+
+  it("a second click, the same day or a later one, returns the same open Checkout and makes no second session", async () => {
+    const api = stripeApi({ session: OPEN }); setStripeFetchForTests(api.f);
     const s = await seed();
     const first = await startCheckout(E_TEST, s.token, { now: NOW });
     const firstId = (await getSubscription(env.DB, s.id))!.stripeCheckoutSessionId;
-    // The same day, the same key: Stripe answers with the same session, and nothing new is made.
+    expect(first).toEqual({ url: `https://checkout.stripe.com/c/pay/${firstId}` });
     expect(await startCheckout(E_TEST, s.token, { now: new Date(NOW.getTime() + 3_600_000) })).toEqual(first);
+    // A later UTC day, the first still open: the same url, not a second session that could be paid beside it.
+    expect(await startCheckout(E_TEST, s.token, { now: new Date(NOW.getTime() + DAY) })).toEqual(first);
+    expect(await startCheckout(E_TEST, s.token, { now: new Date(NOW.getTime() + 3 * DAY) })).toEqual(first);
     expect(api.more.sessions).toBe(1);
-    // The next day a click makes a fresh session (the mail link outlives a Checkout page), and that one is the one kept.
-    const next = await startCheckout(E_TEST, s.token, { now: new Date(NOW.getTime() + 86_400_000) });
-    expect(next).toEqual({ url: expect.stringContaining("https://checkout.stripe.com/") });
-    expect(api.more.sessions).toBe(2);
-    expect((await getSubscription(env.DB, s.id))!.stripeCheckoutSessionId).not.toBe(firstId);
+    expect((await getSubscription(env.DB, s.id))!.stripeCheckoutSessionId).toBe(firstId);
     expect(api.made.customers).toBe(1);
     expect(api.more.products).toBe(1);
+  });
 
-    // Once it is active a second Checkout would make a second subscription: refused, and Stripe is not asked.
-    await markSubscription(env.DB, s.id, { status: "active" });
+  it("a stored session that Stripe says is complete but unpaid (a bank debit clearing) is closed, never a new Checkout", async () => {
+    const api = stripeApi({ session: (id) => ({ id, status: "complete", payment_status: "unpaid", subscription: `sub_${id}`, customer: "cus_1" }) });
+    setStripeFetchForTests(api.f);
+    const s = await seed();
+    await startCheckout(E_TEST, s.token, { now: NOW });
+    expect(await startCheckout(E_TEST, s.token, { now: new Date(NOW.getTime() + DAY) })).toEqual({ error: "closed" });
+    expect(await startCheckout(E_TEST, s.token, { now: new Date(NOW.getTime() + 5 * DAY) })).toEqual({ error: "closed" });
+    expect(api.more.sessions).toBe(1);
+    expect((await getSubscription(env.DB, s.id))!.status).toBe("link_sent"); // not active until the money is
+  });
+
+  it("an expired stored session is replaced by a new one, whose id is stored", async () => {
+    let expired = false;
+    const api = stripeApi({ session: (id) => (expired ? { id, status: "expired", payment_status: "unpaid", subscription: null, customer: null, url: null } : OPEN(id)) });
+    setStripeFetchForTests(api.f);
+    const s = await seed();
+    await startCheckout(E_TEST, s.token, { now: NOW });
+    const firstId = (await getSubscription(env.DB, s.id))!.stripeCheckoutSessionId;
+    expired = true;
+    const next = await startCheckout(E_TEST, s.token, { now: new Date(NOW.getTime() + DAY) });
+    const secondId = (await getSubscription(env.DB, s.id))!.stripeCheckoutSessionId;
+    expect(secondId).not.toBe(firstId);
+    expect(next).toEqual({ url: `https://checkout.stripe.com/c/pay/${secondId}` });
+    expect(api.more.sessions).toBe(2);
+  });
+
+  it("a stored session Stripe no longer knows (404) is replaced too", async () => {
+    let gone = false;
+    const api = stripeApi({ session: OPEN, fail: (c) => (gone && c.method === "GET" && c.url.includes("/v1/checkout/sessions/") ? stripeError("No such checkout.session", 404) : null) });
+    setStripeFetchForTests(api.f);
+    const s = await seed();
+    await startCheckout(E_TEST, s.token, { now: NOW });
+    gone = true;
+    expect(await startCheckout(E_TEST, s.token, { now: new Date(NOW.getTime() + DAY) })).toEqual({ url: expect.stringContaining("https://checkout.stripe.com/") });
+    expect(api.more.sessions).toBe(2);
+  });
+
+  it("Stripe unreachable when the stored session is read is unavailable, and no session is made", async () => {
+    let down = false;
+    const api = stripeApi({ session: OPEN, fail: (c) => (down && c.method === "GET" ? stripeError("down", 500) : null) });
+    setStripeFetchForTests(api.f);
+    const s = await seed();
+    await startCheckout(E_TEST, s.token, { now: NOW });
+    const firstId = (await getSubscription(env.DB, s.id))!.stripeCheckoutSessionId;
+    down = true;
+    expect(await startCheckout(E_TEST, s.token, { now: new Date(NOW.getTime() + DAY) })).toEqual({ error: "unavailable" });
+    expect(api.more.sessions).toBe(1);
+    expect((await getSubscription(env.DB, s.id))!.stripeCheckoutSessionId).toBe(firstId);
+  });
+
+  it("an active, past-due, cancelled or ended subscription is refused, and Stripe is not asked", async () => {
+    const api = stripeApi({ session: OPEN }); setStripeFetchForTests(api.f);
+    const s = await seed();
+    await startCheckout(E_TEST, s.token, { now: NOW });
     const before = api.calls.length;
-    expect(await startCheckout(E_TEST, s.token, { now: NOW })).toEqual({ error: "closed" });
-    await markSubscription(env.DB, s.id, { status: "past_due" });
-    expect(await startCheckout(E_TEST, s.token, { now: NOW })).toEqual({ error: "closed" });
-    await markSubscription(env.DB, s.id, { status: "cancelled" });
-    expect(await startCheckout(E_TEST, s.token, { now: NOW })).toEqual({ error: "closed" });
+    for (const status of ["active", "past_due", "cancelled", "ended"] as const) {
+      await markSubscription(env.DB, s.id, { status });
+      expect(await startCheckout(E_TEST, s.token, { now: NOW }), status).toEqual({ error: "closed" });
+    }
     expect(api.calls).toHaveLength(before);
   });
 

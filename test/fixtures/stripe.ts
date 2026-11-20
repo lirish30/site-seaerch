@@ -75,7 +75,7 @@ export function stripeApi(o: {
     const path = new URL(c.url).pathname;
     const id = decodeURIComponent(path.split("/").pop()!);
     if (c.method === "GET") {
-      if (path.startsWith("/v1/checkout/sessions/")) return stripeJson(o.session?.(id) ?? { id, status: "complete", payment_status: "paid", subscription: `sub_${id}`, customer: "cus_1" });
+      if (path.startsWith("/v1/checkout/sessions/")) return stripeJson({ url: `https://checkout.stripe.com/c/pay/${id}`, ...(o.session?.(id) ?? { id, status: "complete", payment_status: "paid", subscription: `sub_${id}`, customer: "cus_1" }) });
       if (path.startsWith("/v1/subscriptions/")) return stripeJson(subscriptionOf(id));
       return stripeJson(o.invoice?.(id) ?? { id, status: "open", amount_due: 0, amount_paid: 0, currency: "usd", hosted_invoice_url: "https://invoice.stripe.com/i/x" });
     }

@@ -6,7 +6,7 @@ import { clientBase } from "../documents/mail";
 import { isClientToken } from "../documents/token";
 import type { Env } from "../env";
 import type { Fetch } from "../google/oauth";
-import { createSubscriptionCheckout, ensureProduct, retrieveCheckoutSession, stripeMode } from "../stripe/client";
+import { StripeError, createSubscriptionCheckout, ensureProduct, retrieveCheckoutSession, stripeMode } from "../stripe/client";
 import { ensureStripeCustomer } from "./customer";
 import { invoiceRecipient, subscriptionPlanName } from "./mail";
 import { subscriptionCheckoutCompleted } from "./mirror";
@@ -83,9 +83,9 @@ export async function subscriptionPage(env: Env, token: string, deps: Deps = {})
 
 /**
  * The client's click on "Set up payment": a Stripe Checkout page for this subscription. Makes the customer and the product (each once, by its idempotency key), then a Checkout session whose
- * key is `checkout:<id>:<UTC date>` (the same day's click replays the same session; a later day makes a new one, since a Checkout lives a day at most and the mailed link must outlive it),
- * and stores the session's id on the subscription BEFORE the url is given out: the webhook and the page both activate only for the stored session. A subscription that is active, past
- * due, cancelled or ended is refused (`closed`), and so is one whose stored Checkout turns out to be finished: a second Checkout would make a second subscription. `unavailable` when Stripe is
+ * key is `checkout:<id>:<UTC date>`, and stores the session's id on the subscription BEFORE the url is given out: the webhook and the page both activate only for the stored session. A subscription that is active, past
+ * due, cancelled or ended is refused (`closed`), and so is one whose stored Checkout is complete (paid, or a bank debit still clearing). A stored Checkout that is still open is returned
+ * again, not replaced; only an expired (or unknown) one is replaced by a new session, so there is never more than one Checkout a client can pay: a second would make a second subscription. `unavailable` when Stripe is
  * not set up, the client link base is not https, a live key would touch a test subscription, or Stripe fails.
  */
 export async function startCheckout(env: Env, token: string, deps: Deps = {}): Promise<CheckoutResult> {
@@ -102,6 +102,15 @@ export async function startCheckout(env: Env, token: string, deps: Deps = {}): P
   if (!base || !base.startsWith("https://")) return { error: "unavailable" };
 
   try {
+    // One Checkout at a time: a second session beside an open one could be paid as well, and only the stored one activates anything. So the stored session decides first.
+    if (sub.stripeCheckoutSessionId) {
+      let stored: Awaited<ReturnType<typeof retrieveCheckoutSession>> | null = null;
+      try { stored = await retrieveCheckoutSession(f, key, sub.stripeCheckoutSessionId); }
+      catch (e) { if (!(e instanceof StripeError && e.status === 404)) throw e; } // Stripe does not know it any more: there is nothing open, so a new one is made
+      // Complete is paid or still clearing (a bank debit is complete while unpaid): never a second Checkout. Open is still the client's to finish: the same page again.
+      if (stored?.status === "complete") return { error: "closed" };
+      if (stored?.status === "open") return stored.url ? { url: stored.url } : { error: "unavailable" };
+    }
     const who = await invoiceRecipient(env, sub);
     const customerId = await ensureStripeCustomer(env, { businessId: sub.businessId, name: who.clientName, email: who.to }, f);
     const plan = await subscriptionPlanName(env, sub);

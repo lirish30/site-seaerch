@@ -316,10 +316,15 @@ describe("subscriptions", () => {
 
   it("retrieveCheckoutSession reads status and the ids, whether Stripe sends them bare or expanded", async () => {
     const api = stripeApi({ session: (id) => ({ id, status: "complete", payment_status: "paid", subscription: { id: "sub_9", object: "subscription" }, customer: "cus_9" }) });
-    expect(await retrieveCheckoutSession(api.f, KEY, "cs_1")).toEqual({ id: "cs_1", status: "complete", paymentStatus: "paid", subscriptionId: "sub_9", customerId: "cus_9" });
+    expect(await retrieveCheckoutSession(api.f, KEY, "cs_1")).toEqual({ id: "cs_1", status: "complete", paymentStatus: "paid", subscriptionId: "sub_9", customerId: "cus_9", url: "https://checkout.stripe.com/c/pay/cs_1" });
     expect(api.calls[0]).toMatchObject({ method: "GET", url: "https://api.stripe.com/v1/checkout/sessions/cs_1" });
     const open = stripeApi({ session: (id) => ({ id, status: "open", payment_status: "unpaid", subscription: null, customer: null }) });
-    expect(await retrieveCheckoutSession(open.f, KEY, "cs_2")).toEqual({ id: "cs_2", status: "open", paymentStatus: "unpaid", subscriptionId: null, customerId: null });
+    expect(await retrieveCheckoutSession(open.f, KEY, "cs_2")).toEqual({ id: "cs_2", status: "open", paymentStatus: "unpaid", subscriptionId: null, customerId: null, url: "https://checkout.stripe.com/c/pay/cs_2" });
+    // The url is handed to a client: only an https one is returned.
+    const odd = stripeApi({ session: (id) => ({ id, status: "open", payment_status: "unpaid", url: "http://evil.test/pay" }) });
+    expect((await retrieveCheckoutSession(odd.f, KEY, "cs_3")).url).toBeNull();
+    const none = stripeApi({ session: (id) => ({ id, status: "expired", payment_status: "unpaid", url: null }) });
+    expect((await retrieveCheckoutSession(none.f, KEY, "cs_4")).url).toBeNull();
   });
 
   it("retrieveSubscription reads the period end from the subscription or from its item", async () => {
