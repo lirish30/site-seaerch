@@ -77,6 +77,16 @@ export async function listProjects(db: D1Database, o: { status?: ProjectStatus[]
   return rows.map((r) => ({ ...toProject(r), businessName: r.business_name, openTasks: r.open_tasks, doneTasks: r.done_tasks, openSteps: r.open_steps, doneSteps: r.done_steps }));
 }
 
+/**
+ * Whether work may be done on the project: it is active, or it is a finished Care onboarding project. A finished Care onboarding is the client's ongoing Care service (its recurring
+ * weekly and monthly tasks start only once it is done, and `done` is final), so it must keep generating, dispatching and being worked. A paused or cancelled project, and a finished
+ * build or quick fix, are not live. Test projects are not told apart here; callers that exclude them say so themselves.
+ */
+export const projectIsLive = (p: { status: ProjectStatus; kind: ProjectKind }): boolean => p.status === "active" || (p.status === "done" && p.kind === "care_onboarding");
+
+/** The same rule as `projectIsLive`, as SQL for a projects table with this alias. */
+export const liveProjectSql = (alias: string): string => `(${alias}.status = 'active' OR (${alias}.status = 'done' AND ${alias}.kind = 'care_onboarding'))`;
+
 /** Whether the lead has a project: a lead that does is archived, never deleted. */
 export async function hasProject(db: D1Database, businessId: string): Promise<boolean> {
   return !!(await db.prepare(`SELECT 1 AS x FROM projects WHERE business_id = ? LIMIT 1`).bind(businessId).first());
@@ -140,9 +150,9 @@ export async function addCadence(db: D1Database, projectId: string, templateKey:
   return (res.meta.changes ?? 0) === 1;
 }
 
-export async function listCadences(db: D1Database, o: { activeProjectsOnly?: boolean } = {}): Promise<{ id: string; projectId: string; templateKey: string }[]> {
+export async function listCadences(db: D1Database, o: { liveProjectsOnly?: boolean } = {}): Promise<{ id: string; projectId: string; templateKey: string }[]> {
   const rows = (await db.prepare(
-    `SELECT c.id, c.project_id, c.template_key FROM project_cadences c ${o.activeProjectsOnly ? `JOIN projects p ON p.id = c.project_id AND p.status = 'active'` : ""} ORDER BY c.created_at, c.rowid`,
+    `SELECT c.id, c.project_id, c.template_key FROM project_cadences c ${o.liveProjectsOnly ? `JOIN projects p ON p.id = c.project_id AND ${liveProjectSql("p")}` : ""} ORDER BY c.created_at, c.rowid`,
   ).all<{ id: string; project_id: string; template_key: string }>()).results;
   return rows.map((r) => ({ id: r.id, projectId: r.project_id, templateKey: r.template_key }));
 }

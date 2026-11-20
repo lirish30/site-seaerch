@@ -42,6 +42,9 @@ describe("activityView", () => {
     } as const;
     for (const [kind, title] of Object.entries(titles)) expect(describeActivity({ kind: kind as keyof typeof titles, detail: null }).title, kind).toBe(title);
     expect(describeActivity({ kind: "change_order_void", detail: "client changed their mind" })).toMatchObject({ tone: "warning", detail: "client changed their mind" });
+    // The daily sweep's line reads as an expiry; an owner's void keeps its title, even when the reason is the word "expired".
+    expect(describeActivity({ kind: "change_order_void", detail: "SL-ABC-CO1 (1a2b3c4d): expired" })).toMatchObject({ title: "Change order expired", detail: "SL-ABC-CO1 (1a2b3c4d): expired" });
+    expect(describeActivity({ kind: "change_order_void", detail: "SL-ABC-CO1 (1a2b3c4d) voided: expired" }).title).toBe("Change order voided");
     expect(describeActivity({ kind: "project_milestone", detail: "design_approved" }).detail).toBe("design_approved");
   });
 });

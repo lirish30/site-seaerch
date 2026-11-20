@@ -242,7 +242,7 @@ describe("the Friday email", () => {
     expect(sent[0]).not.toContain("Internal");
   });
 
-  it("omits both sections when there is nothing client-visible, and a test project adds none", async () => {
+  it("omits both sections when nothing in the project is client-visible", async () => {
     await readyToSend();
     const s = await seedProjectWithOnboarding({ sentAt: "2026-11-12T17:00:00.000Z" });
     await touchClient(env.DB, s.onboarding.id, "2026-11-19T22:00:00.000Z");

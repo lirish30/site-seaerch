@@ -1,7 +1,7 @@
 import { shortId } from "../changeorders/service";
 import { activityStmt } from "../db/activity";
 import { expireDue } from "../db/changeOrders";
-import { getProject, listCadences } from "../db/projects";
+import { getProject, listCadences, projectIsLive } from "../db/projects";
 import { getSettings } from "../db/settings";
 import { getTemplate } from "../db/sops";
 import { insertTasks, listTasks, type NewTask } from "../db/tasks";
@@ -21,19 +21,23 @@ function ownerOf(t: SopTemplate): OwnerTag {
   return owners.has("logan") ? "logan" : owners.has("claude_drafts") ? "claude_drafts" : "claude";
 }
 
+/** What each step is done when, so whoever works the task (Claude or Logan) can tell when a checklist item is really finished. */
+const descriptionOf = (t: SopTemplate): string =>
+  cleanText(t.steps.filter((s) => s.doneWhen.trim()).map((s) => `${s.title}: ${s.doneWhen.trim()}`).join("\n"), 2000);
+
 /** The task for one period of a recurring template: its steps become the checklist, so a weekly update is one task to tick through, not a dozen. */
 function recurringTask(o: { projectId: string; businessId: string; template: SopTemplate; period: string; label: string; dueOn: string; position: number }): NewTask {
   const { template } = o;
   return {
     projectId: o.projectId, businessId: o.businessId, isStep: false, stepKey: null, phaseKey: "recurring", phaseTitle: "Recurring", position: o.position,
-    title: cleanText(`${template.name}: ${o.label}`, 120), description: "", owner: ownerOf(template), status: "todo", doneWhen: "", estMinutes: template.steps.reduce((n, s) => n + s.estMinutes, 0),
+    title: cleanText(`${template.name}: ${o.label}`, 120), description: descriptionOf(template), owner: ownerOf(template), status: "todo", doneWhen: "", estMinutes: template.steps.reduce((n, s) => n + s.estMinutes, 0),
     dueOn: o.dueOn, billable: false, skippable: false, requires: [], milestone: null, clientSummary: null, docTemplate: null, emailTemplate: null,
     checklist: template.steps.map((s) => ({ text: `${s.title} (${OWNER_LABEL[s.owner]})`, done: false })), changeOrderId: null, cadenceKey: template.key, periodKey: o.period,
   };
 }
 
 /**
- * For every recurring template attached to an active, real project (a paused, finished, cancelled or test project gets nothing), makes the task for the period `now` falls in (a week,
+ * For every recurring template attached to a live, real project (active, or a finished Care onboarding; a paused, cancelled or test project, or a finished build, gets nothing), makes the task for the period `now` falls in (a week,
  * month, quarter or year in the booking time zone) if it is not there yet. A template that is switched off or missing makes nothing. The unique index on (project, cadence, period) is what keeps
  * it to one: a rerun, or a second sweep at the same moment, adds nothing. Each cadence is tried on its own. Returns how many tasks it made.
  */
@@ -42,10 +46,10 @@ export async function generateRecurring(env: Env, now: Date): Promise<number> {
   const tz = zoneOf(await getSettings(db));
   const templates = new Map<string, SopTemplate | null>();
   let made = 0;
-  for (const c of await listCadences(db, { activeProjectsOnly: true })) {
+  for (const c of await listCadences(db, { liveProjectsOnly: true })) {
     try {
       const project = await getProject(db, c.projectId);
-      if (!project || project.status !== "active" || project.test) continue;
+      if (!project || !projectIsLive(project) || project.test) continue;
       if (!templates.has(c.templateKey)) templates.set(c.templateKey, await getTemplate(db, c.templateKey));
       const template = templates.get(c.templateKey);
       if (!template || !template.active || template.kind !== "recurring" || !template.cadence) continue;
@@ -67,7 +71,7 @@ export async function generateRecurring(env: Env, now: Date): Promise<number> {
 /** Expires the change orders whose time has run out and notes each one once on its lead (an order expires only once, so a second sweep notes nothing). Returns how many. */
 async function expireChangeOrders(env: Env, now: Date): Promise<number> {
   const expired = await expireDue(env.DB, now.toISOString());
-  if (expired.length) await env.DB.batch(expired.map((co) => activityStmt(env.DB, co.businessId, "change_order_void", `${co.content.reference} (${shortId(co)}) expired`.slice(0, 300))));
+  if (expired.length) await env.DB.batch(expired.map((co) => activityStmt(env.DB, co.businessId, "change_order_void", `${co.content.reference} (${shortId(co)}): expired`.slice(0, 300))));
   return expired.length;
 }
 

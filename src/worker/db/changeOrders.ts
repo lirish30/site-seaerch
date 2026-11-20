@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { cleanText } from "../onboarding/templates";
 import { activityIfChangedStmt } from "./activity";
+import { liveProjectSql } from "./projects";
 
 export const CHANGE_ORDER_STATUSES = ["draft", "sent", "viewed", "signed", "declined", "void", "expired"] as const;
 export type ChangeOrderStatus = (typeof CHANGE_ORDER_STATUSES)[number];
@@ -256,7 +257,7 @@ export async function expireDue(db: D1Database, now: string): Promise<ChangeOrde
 export async function businessesAwaitingChangeOrderPayment(db: D1Database): Promise<Set<string>> {
   const rows = (await db.prepare(
     `SELECT DISTINCT c.business_id FROM change_orders c JOIN projects p ON p.id = c.project_id
-     WHERE c.status = 'signed' AND c.paid_at IS NULL AND c.test = 0 AND p.test = 0 AND p.status = 'active'`,
+     WHERE c.status = 'signed' AND c.paid_at IS NULL AND c.test = 0 AND p.test = 0 AND ${liveProjectSql("p")}`,
   ).all<{ business_id: string }>()).results;
   return new Set(rows.map((r) => r.business_id));
 }

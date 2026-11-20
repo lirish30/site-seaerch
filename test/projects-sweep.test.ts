@@ -3,8 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { listActivity } from "../src/worker/db/activity";
 import { createDraft, setPaid, signDocument } from "../src/worker/db/documents";
 import { addCadence, setProjectStatus } from "../src/worker/db/projects";
+import { buildToday } from "../src/worker/today";
+import { claimById } from "./fixtures/draftTask";
+import { completeTask } from "../src/worker/projects/service";
+import { getTaskKind } from "../src/worker/queue/registry";
 import { ensureSeedSops, saveTemplate } from "../src/worker/db/sops";
-import { insertTasks, listTasks } from "../src/worker/db/tasks";
+import { getTask, insertTasks, listTasks, setTaskStatus } from "../src/worker/db/tasks";
 import type { Env } from "../src/worker/env";
 import { setMailDeps } from "../src/worker/mail/deps";
 import { clearProjectHooksForTests } from "../src/worker/projects/hooks";
@@ -160,7 +164,7 @@ describe("sweepProjects", () => {
     expect(await sweepProjects(e, now)).toEqual({ started: 0, recurring: 1, dispatched: 2, expired: 1, stopped: 1 });
     expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM claude_tasks WHERE kind = ?`).bind(SOP_STEP_KIND).first<{ n: number }>())!.n).toBe(2);
     expect((await env.DB.prepare(`SELECT status FROM change_orders WHERE id = ?`).bind(o.co.id).first<{ status: string }>())!.status).toBe("expired");
-    expect((await listActivity(env.DB, o.businessId)).some((x) => x.kind === "change_order_void" && /expired/.test(x.detail ?? ""))).toBe(true);
+    expect((await listActivity(env.DB, o.businessId)).some((x) => x.kind === "change_order_void" && /\): expired$/.test(x.detail ?? ""))).toBe(true);
     expect(await env.DB.prepare(`SELECT 1 FROM time_entries WHERE ended_at IS NULL`).first()).toBeNull();
     expect(await cadenceTasks(c.project.id)).toHaveLength(1);
 
@@ -239,5 +243,84 @@ describe("the daily cron", () => {
       },
     }) } as Env;
     await expect(runScheduled(broken, DAILY_CRON, NOW)).resolves.toBeUndefined();
+  });
+});
+
+describe("Care cadences on a finished onboarding project", () => {
+  /** A Care onboarding project with two Logan steps, both finished through the service the way Logan would (which attaches the Care cadences and finishes the project). */
+  async function finishedCare(o: { test?: boolean } = {}) {
+    const s = await seedProject({ bare: true, kind: "care_onboarding", templateKey: "CARE-0", test: o.test });
+    const [a, b] = await insertTasks(env.DB, [
+      newTask(s.project.id, s.businessId, { stepKey: "a", position: 0, owner: "logan", title: "Open the account" }),
+      newTask(s.project.id, s.businessId, { stepKey: "b", position: 1, owner: "logan", title: "Say hello", requires: ["a"] }),
+    ]);
+    await completeTask(e, a.id, { by: "logan", now: NOW });
+    await completeTask(e, b.id, { by: "logan", now: NOW });
+    return s;
+  }
+  const projectStatus = async (id: string) => (await env.DB.prepare(`SELECT status FROM projects WHERE id = ?`).bind(id).first<{ status: string }>())!.status;
+
+  it("a Care project finished through completeTask then gets one weekly and one monthly task, once", async () => {
+    const s = await finishedCare();
+    expect(await projectStatus(s.project.id)).toBe("done");
+    expect((await env.DB.prepare(`SELECT template_key FROM project_cadences WHERE project_id = ? ORDER BY template_key`).bind(s.project.id).all<{ template_key: string }>()).results.map((r) => r.template_key)).toEqual(["CARE-1", "CARE-4"]);
+    expect((await sweepProjects(e, NOW)).recurring).toBe(2);
+    expect((await cadenceTasks(s.project.id)).map((t) => [t.cadenceKey, t.periodKey]).sort()).toEqual([["CARE-1", "2026-W47"], ["CARE-4", "2026-11"]]);
+    expect((await sweepProjects(e, NOW)).recurring).toBe(0);
+    expect(await cadenceTasks(s.project.id)).toHaveLength(2);
+    expect((await sweepProjects(e, new Date(NOW.getTime() + 7 * DAY))).recurring).toBe(1); // the next ISO week; the month is the same
+  });
+
+  it("a finished build project with a cadence row generates nothing", async () => {
+    const s = await withCadence("CARE-1");
+    await setProjectStatus(env.DB, s.project.id, "done");
+    expect(await generateRecurring(e, NOW)).toBe(0);
+    expect(await cadenceTasks(s.project.id)).toEqual([]);
+  });
+
+  it("a paused, cancelled or test Care project generates and dispatches nothing", async () => {
+    const paused = await seedProject({ bare: true, kind: "care_onboarding", templateKey: "CARE-0" });
+    const cancelled = await seedProject({ bare: true, kind: "care_onboarding", templateKey: "CARE-0" });
+    const test = await seedProject({ bare: true, kind: "care_onboarding", templateKey: "CARE-0", test: true });
+    await setProjectStatus(env.DB, paused.project.id, "paused", { reason: "overdue" });
+    await setProjectStatus(env.DB, cancelled.project.id, "cancelled");
+    await setProjectStatus(env.DB, test.project.id, "done");
+    for (const s of [paused, cancelled, test]) {
+      await addCadence(env.DB, s.project.id, "CARE-4");
+      // A Claude task that is ready, so only the project's state keeps it from going out.
+      await insertTasks(env.DB, [newTask(s.project.id, s.businessId, { stepKey: "c", owner: "claude", isStep: false })]);
+    }
+    expect(await sweepProjects(e, NOW)).toEqual({ started: 0, recurring: 0, dispatched: 0, expired: 0, stopped: 0 });
+    for (const s of [paused, cancelled, test]) expect(await cadenceTasks(s.project.id)).toEqual([]);
+  });
+
+  it("a Claude-owned recurring task on a finished Care project is dispatched, and its step job is not stale", async () => {
+    const s = await finishedCare();
+    expect((await sweepProjects(e, NOW)).dispatched).toBe(1); // the monthly report is Claude drafting; the weekly update is Logan's
+    const monthly = (await cadenceTasks(s.project.id)).find((t) => t.cadenceKey === "CARE-4")!;
+    const live = (await getTask(env.DB, monthly.id))!;
+    expect(live).toMatchObject({ status: "in_progress", owner: "claude_drafts" });
+    const job = await claimById(live.claudeTaskId!);
+    const built = await getTaskKind(SOP_STEP_KIND)!.build(e, { taskId: monthly.id }, job);
+    expect(built).not.toHaveProperty("stale");
+    expect(await getTask(env.DB, monthly.id)).toMatchObject({ status: "in_progress", claudeTaskId: live.claudeTaskId }); // not given back
+  });
+
+  it("Today shows project_attention for an in_review recurring task on a finished Care project", async () => {
+    const s = await finishedCare();
+    await generateRecurring(e, NOW);
+    const monthly = (await cadenceTasks(s.project.id)).find((t) => t.cadenceKey === "CARE-4")!;
+    await setTaskStatus(env.DB, monthly.id, "in_review", { now: NOW.toISOString() });
+    const items = (await buildToday(env.DB, NOW)).filter((i) => i.kind === "project_attention" && i.businessId === s.businessId);
+    expect(items).toMatchObject([{ reason: "1 Claude step to review", priority: 68 }]);
+  });
+
+  it("the recurring task's description carries each step's done-when", async () => {
+    const s = await withCadence("CARE-1");
+    await generateRecurring(e, NOW);
+    const [t] = await cadenceTasks(s.project.id);
+    expect(t.description).toContain("Pull the update list and sort it by risk: Every update is sorted");
+    expect(t.description.length).toBeLessThanOrEqual(2000);
+    expect(t.checklist[0].text).toBe("Pull the update list and sort it by risk (Claude)");
   });
 });

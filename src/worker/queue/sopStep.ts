@@ -3,7 +3,7 @@ import type { Env } from "../env";
 import { createReviewApproval, discardReviewApproval } from "../approvals/sopReview";
 import { getDocument } from "../db/documents";
 import { getAnswers, getOnboarding, listFiles, listItems } from "../db/onboardings";
-import { getProject, type ProjectKind } from "../db/projects";
+import { getProject, projectIsLive, type ProjectKind } from "../db/projects";
 import {
   addComment, CREDENTIAL_REFUSED, getTask, listComments, listTasks, patchTask, setTaskStatus, TaskInputError, type ChecklistItem, type Task,
 } from "../db/tasks";
@@ -171,14 +171,14 @@ const sopStep: TaskKindDef<SopStepPayload, SopStepResult> = {
   /**
    * The fixed instructions hold only what the app wrote (the step, its done-when, the owner mode, the project and package names) and Logan's own notes. The client's
    * questionnaire answers and what they sent are untrusted, one part each, and never reach the instructions. Stale when the step is finished, skipped or locked, was taken back
-   * from this job, or its project is not active.
+   * from this job, or its project is not live (paused, cancelled, or finished other than a Care onboarding).
    */
   async build(env, p, job) {
     const t = await target(env, p, job);
     if ("stale" in t) return t;
     const project = await getProject(env.DB, t.task.projectId);
     if (!project) return { stale: "the project no longer exists" };
-    if (project.status !== "active") {
+    if (!projectIsLive(project)) {
       // The step would stay in progress under a dead job: give it back now (not Claude's failure), so it is to do again when the project is.
       await giveBack(env, t.task.id, { jobId: job.id, paused: true });
       return { stale: `the project is ${project.status}` };
@@ -205,7 +205,7 @@ const sopStep: TaskKindDef<SopStepPayload, SopStepResult> = {
     // A job claimed before the project was paused or cancelled: nothing of its result is applied (no comment, no finish, no milestone, no review card), and the step goes back
     // to to-do like `build` does, so it is not stranded. A stale job is not a failed one, so this never counts toward the retry cap.
     const project = await getProject(db, task.projectId);
-    if (!project || project.status !== "active") {
+    if (!project || !projectIsLive(project)) {
       await giveBack(env, task.id, { jobId: job.id, paused: true });
       return { stale: `the project is ${project?.status ?? "gone"}` };
     }

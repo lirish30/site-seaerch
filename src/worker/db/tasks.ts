@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { cleanText, looksLikeCredential } from "../onboarding/templates";
+import { liveProjectSql } from "./projects";
 import { OWNER_TAGS, TASK_STATUSES, type MilestoneKey, type OwnerTag, type TaskStatus } from "../sop/model";
 
 export interface ChecklistItem { text: string; done: boolean }
@@ -85,7 +86,7 @@ export async function insertTasks(db: D1Database, rows: NewTask[], o: { ignoreDu
 export async function listOpenTasksForLogan(db: D1Database, o: { realOnly?: boolean } = {}): Promise<(Task & { projectName: string; businessName: string })[]> {
   const rows = (await db.prepare(
     `SELECT t.*, p.name AS project_name, b.name AS business_name FROM tasks t JOIN projects p ON p.id = t.project_id JOIN businesses b ON b.id = t.business_id
-     WHERE p.status = 'active' ${o.realOnly ? "AND p.test = 0" : ""} AND ((t.owner = 'logan' AND t.status IN ('todo', 'in_progress')) OR (t.owner = 'claude_drafts' AND t.status = 'in_review'))
+     WHERE ${liveProjectSql("p")} ${o.realOnly ? "AND p.test = 0" : ""} AND ((t.owner = 'logan' AND t.status IN ('todo', 'in_progress')) OR (t.owner = 'claude_drafts' AND t.status = 'in_review'))
      ORDER BY t.due_on IS NULL, t.due_on, p.started_at, p.id, t.position, t.rowid`,
   ).all<Row & { project_name: string; business_name: string }>()).results;
   return rows.map((r) => ({ ...toTask(r), projectName: r.project_name, businessName: r.business_name }));
@@ -94,7 +95,7 @@ export async function listOpenTasksForLogan(db: D1Database, o: { realOnly?: bool
 /** How many tasks wait for Logan's review, by lead, across real (not test) active projects. */
 export async function reviewCountsByBusiness(db: D1Database): Promise<Map<string, number>> {
   const rows = (await db.prepare(
-    `SELECT t.business_id, COUNT(*) AS n FROM tasks t JOIN projects p ON p.id = t.project_id WHERE p.status = 'active' AND p.test = 0 AND t.status = 'in_review' GROUP BY t.business_id`,
+    `SELECT t.business_id, COUNT(*) AS n FROM tasks t JOIN projects p ON p.id = t.project_id WHERE ${liveProjectSql("p")} AND p.test = 0 AND t.status = 'in_review' GROUP BY t.business_id`,
   ).all<{ business_id: string; n: number }>()).results;
   return new Map(rows.map((r) => [r.business_id, r.n]));
 }
@@ -106,7 +107,7 @@ export async function reviewCountsByBusiness(db: D1Database): Promise<Map<string
 export async function cappedStepCountsByBusiness(db: D1Database, jobKind: string, maxFailures: number): Promise<Map<string, number>> {
   const rows = (await db.prepare(
     `SELECT t.business_id, COUNT(*) AS n FROM tasks t JOIN projects p ON p.id = t.project_id
-     WHERE p.status = 'active' AND p.test = 0 AND t.status = 'todo' AND t.owner IN ('claude', 'claude_drafts')
+     WHERE ${liveProjectSql("p")} AND p.test = 0 AND t.status = 'todo' AND t.owner IN ('claude', 'claude_drafts')
        AND (SELECT COUNT(*) FROM claude_tasks c WHERE c.kind = ?1 AND c.target_id = t.id AND c.status IN ('failed', 'expired')) >= ?2
        AND NOT EXISTS (SELECT 1 FROM claude_tasks c WHERE c.kind = ?1 AND c.target_id = t.id AND c.status IN ('pending', 'claimed'))
      GROUP BY t.business_id`,

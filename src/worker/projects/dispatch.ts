@@ -1,5 +1,5 @@
 import type { Env } from "../env";
-import { getProject } from "../db/projects";
+import { getProject, liveProjectSql, projectIsLive } from "../db/projects";
 import { getTask, listTasks, setTaskStatus } from "../db/tasks";
 import { cancelTasksFor, enqueueTask } from "../queue/db";
 import { failedJobCount, giveBack, MAX_AUTO_RETRIES, SOP_STEP_KIND } from "../queue/sopStep";
@@ -30,7 +30,7 @@ export async function requestClaudeStep(env: Env, taskId: string, o: { note?: st
   if (task.status === "skipped") throw new TaskStateError("This step was skipped. Reopen it to ask Claude to work on it.");
   if (task.status === "locked") throw new TaskStateError("This task is locked, so Claude cannot start on it yet.");
   const project = await getProject(db, task.projectId);
-  if (!project || project.status !== "active") throw new TaskStateError(`This project is ${project?.status ?? "gone"}, so Claude cannot start on it.`);
+  if (!project || !projectIsLive(project)) throw new TaskStateError(`This project is ${project?.status ?? "gone"}, so Claude cannot start on it.`);
 
   if (o.note !== undefined && o.note.trim()) await postComment(env, taskId, "logan", o.note, new Date()); // throws TaskInputError: nothing is queued
 
@@ -57,7 +57,7 @@ async function inFlight(db: D1Database): Promise<number> {
 /** Active, real projects that have a Claude step still to do, the oldest project first. */
 async function candidates(db: D1Database): Promise<string[]> {
   return (await db.prepare(
-    `SELECT p.id FROM projects p WHERE p.status = 'active' AND p.test = 0
+    `SELECT p.id FROM projects p WHERE ${liveProjectSql("p")} AND p.test = 0
        AND EXISTS (SELECT 1 FROM tasks t WHERE t.project_id = p.id AND t.status = 'todo' AND t.owner IN ('claude', 'claude_drafts'))
      ORDER BY p.started_at, p.created_at, p.id`,
   ).all<{ id: string }>()).results.map((r) => r.id);
@@ -93,7 +93,7 @@ export async function dispatchReady(env: Env, now: Date, o: { limit?: number } =
   for (const id of await candidates(db)) {
     if (queued >= cap) break;
     const project = await getProject(db, id);
-    if (!project || project.status !== "active" || project.test) continue;
+    if (!project || !projectIsLive(project) || project.test) continue;
     if (await projectWaiting(db, project, now)) continue;
     for (const t of readyClaudeTasks(await listTasks(db, id), { projectActive: true, waiting: false })) {
       if (queued >= cap) break;

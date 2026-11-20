@@ -7,7 +7,7 @@ import { getBusiness } from "../db/businesses";
 import { getDeal } from "../db/deals";
 import { getDocument } from "../db/documents";
 import { paidTotalForDeal } from "../db/invoices";
-import { createProject, getProject, listMilestones, listProjects, PROJECT_STATUSES, setProjectStatus, type Project, type ProjectStatus } from "../db/projects";
+import { createProject, getProject, listMilestones, listProjects, PROJECT_STATUSES, projectIsLive, setProjectStatus, type Project, type ProjectStatus } from "../db/projects";
 import { getSettings } from "../db/settings";
 import { getTemplate, saveTemplate } from "../db/sops";
 import {
@@ -297,7 +297,7 @@ projectRoutes.post("/tasks/:id/send-back", onTask(async (c, task) => {
   if (body instanceof Response) return body;
   if (task.status !== "in_review") return c.json({ error: "Only a step that is in review can be sent back." }, 409);
   const project = await getProject(c.env.DB, task.projectId);
-  if (!project || project.status !== "active") return c.json({ error: `This project is ${project?.status ?? "gone"}, so Claude cannot start on it.` }, 409);
+  if (!project || !projectIsLive(project)) return c.json({ error: `This project is ${project?.status ?? "gone"}, so Claude cannot start on it.` }, 409);
   if (body.note !== undefined && looksLikeCredential(cleanText(body.note, body.note.length))) throw new TaskInputError(CREDENTIAL_REFUSED);
   const { queued } = await requestClaudeStep(c.env, task.id, { note: body.note });
   // Claude has the step again; now the old card goes. Each part is best effort: a card left waiting is no harm to the re-queue (the step has moved on from the review it asked about).

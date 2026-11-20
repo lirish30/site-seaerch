@@ -196,17 +196,23 @@ describe("milestones and cadences", () => {
     expect(mine[0].id).toBeTruthy();
   });
 
-  it("listCadences can be limited to active projects", async () => {
+  it("listCadences can be limited to live projects: active ones and finished Care onboarding, not paused, cancelled or finished builds", async () => {
     const live = await seedProject();
+    const care = await seedProject({ kind: "care_onboarding", templateKey: "CARE-0" });
+    const build = await seedProject();
     const stopped = await seedProject();
-    await addCadence(env.DB, live.project.id, "CARE-1");
-    await addCadence(env.DB, stopped.project.id, "CARE-1");
+    const paused = await seedProject();
+    for (const s of [live, care, build, stopped, paused]) await addCadence(env.DB, s.project.id, "CARE-1");
     await setProjectStatus(env.DB, stopped.project.id, "cancelled", { now: T1 });
-    const ids = (o?: { activeProjectsOnly?: boolean }) => listCadences(env.DB, o).then((l) => l.map((c) => c.projectId));
-    expect(await ids()).toEqual(expect.arrayContaining([live.project.id, stopped.project.id]));
-    const active = await ids({ activeProjectsOnly: true });
-    expect(active).toContain(live.project.id);
-    expect(active).not.toContain(stopped.project.id);
+    await setProjectStatus(env.DB, paused.project.id, "paused", { now: T1 });
+    await setProjectStatus(env.DB, care.project.id, "done", { now: T1 });
+    await setProjectStatus(env.DB, build.project.id, "done", { now: T1 });
+    const ids = (o?: { liveProjectsOnly?: boolean }) => listCadences(env.DB, o).then((l) => l.map((c) => c.projectId));
+    expect(await ids()).toEqual(expect.arrayContaining([live.project.id, care.project.id, build.project.id, stopped.project.id, paused.project.id]));
+    const found = await ids({ liveProjectsOnly: true });
+    expect(found).toContain(live.project.id);
+    expect(found).toContain(care.project.id);
+    for (const s of [build, stopped, paused]) expect(found).not.toContain(s.project.id);
   });
 });
 

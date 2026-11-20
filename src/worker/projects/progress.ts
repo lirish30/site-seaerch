@@ -1,6 +1,6 @@
 import { dayKey } from "../booking/slots";
 import { businessesAwaitingChangeOrderPayment } from "../db/changeOrders";
-import { listProjects } from "../db/projects";
+import { listProjects, projectIsLive } from "../db/projects";
 import { getSettings } from "../db/settings";
 import { cappedStepCountsByBusiness, listOpenTasksForLogan, listTasks, reviewCountsByBusiness, type Task } from "../db/tasks";
 import { cleanText } from "../onboarding/templates";
@@ -35,7 +35,7 @@ export async function projectDoneNext(db: D1Database, businessId: string, now: D
       const at = t.doneAt ? Date.parse(t.doneAt) : NaN;
       if (t.status === "done" && Number.isFinite(at) && at >= since && summaryOf(t)) done.push({ at, line: summaryOf(t) });
     }
-    if (p.status !== "active") continue;
+    if (!projectIsLive(p)) continue;
     const phase = currentPhase(tasks), order = phaseOrder(tasks);
     if (phase === null) continue;
     for (const t of tasks) if (t.isStep && !finished(t) && t.status !== "locked" && order.get(t.phaseKey) === phase && summaryOf(t)) next.push(summaryOf(t));
