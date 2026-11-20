@@ -69,7 +69,7 @@ let slotN = 0;
 /** A free half hour for each seeded call: a booking never overlaps another. */
 const nextSlot = () => { const start = new Date(Date.parse("2027-03-01T18:00:00.000Z") + slotN++ * 3_600_000); return { startAt: start.toISOString(), endAt: new Date(start.getTime() + 20 * 60_000).toISOString() }; };
 
-export async function seedProposalDeal(o: { name?: string; booking?: boolean; stage?: DealStage; skipCall?: boolean } = {}) {
+export async function seedProposalDeal(o: { name?: string; booking?: boolean; stage?: DealStage; skipCall?: boolean; options?: Option[] } = {}) {
   const b = await seedBusiness({ name: o.name ?? "Ace Plumbing" });
   await insertTestAudit(b.id);
   let deal = await createDeal(env.DB, { businessId: b.id, source: o.booking === false ? "manual" : "booking", skipCall: o.skipCall });
@@ -80,7 +80,7 @@ export async function seedProposalDeal(o: { name?: string; booking?: boolean; st
     });
   }
   await saveNotes(env.DB, deal.id, NOTES);
-  await saveOptions(env.DB, deal.id, offerOf(PROPOSAL_OPTIONS, await listCurrentPackages(env.DB)));
+  await saveOptions(env.DB, deal.id, offerOf(o.options ?? PROPOSAL_OPTIONS, await listCurrentPackages(env.DB)));
   deal = await moveDeal(env.DB, deal.id, o.stage ?? "recommended");
   return { businessId: b.id, dealId: deal.id, deal };
 }

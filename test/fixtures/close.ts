@@ -9,6 +9,7 @@ import { setStripeFetchForTests } from "../../src/worker/documents/deposit";
 import { proposalPage, signProposal } from "../../src/worker/documents/public";
 import { draftProposal } from "../../src/worker/documents/service";
 import type { Env } from "../../src/worker/env";
+import type { Option } from "../../src/worker/sales/options";
 import { seedProposalDeal } from "./documents";
 import { KEY, SECRET, sign, stripeApi } from "./stripe";
 
@@ -26,11 +27,11 @@ export async function deliver(event: unknown): Promise<number> {
 }
 
 /** A deal at `recommended`, drafted, approved for sending, opened by the client and signed by them: everything up to the payment. */
-export async function signedDeal(o: { name?: string } = {}) {
+export async function signedDeal(o: { name?: string; optionId?: "a" | "b" | "c"; options?: Option[] } = {}) {
   const api = stripeApi();
   setStripeFetchForTests(api.f);
-  const s = await seedProposalDeal({ name: o.name });
-  const draft = await draftProposal(E, s.dealId, { optionId: "b", edits: { scopeNotes: "A new site." } }, NOW);
+  const s = await seedProposalDeal({ name: o.name, options: o.options });
+  const draft = await draftProposal(E, s.dealId, { optionId: o.optionId ?? "b", edits: { scopeNotes: "A new site." } }, NOW);
   const approval = await createSendApproval(E, draft);
   expect(await approve(E, approval.id)).toEqual({ ok: true });
   const sent = (await getDocument(env.DB, draft.id))!;
