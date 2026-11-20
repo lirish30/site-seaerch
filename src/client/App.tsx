@@ -9,6 +9,7 @@ import Report from "./pages/Report";
 import Proposal from "./pages/Proposal";
 import Onboard from "./pages/Onboard";
 import ChangeOrder from "./pages/ChangeOrder";
+import Subscribe from "./pages/Subscribe";
 import Radar from "./pages/Radar";
 import Promising from "./pages/Promising";
 import Import from "./pages/Import";
@@ -58,6 +59,7 @@ export default function App() {
       <Route path="/p/*" element={<Proposal />} />
       <Route path="/o/*" element={<Onboard />} />
       <Route path="/c/*" element={<ChangeOrder />} />
+      <Route path="/s/*" element={<Subscribe />} />
       <Route path="*" element={
         <Shell>
           <Routes>

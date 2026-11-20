@@ -255,3 +255,15 @@
 .co-wrap .bk-field input { font-size:16px; min-height:44px; }
 .co-wrap .pp-check { min-height:44px; align-items:center; }
 @media (min-width:641px) { .co-actions { flex-direction:row-reverse; } .co-actions .btn { flex:1; } }
+
+/* ---------- Client subscription page (.sb) ---------- */
+.sb-lines { margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:10px; font:400 16px/24px var(--font); color:var(--text); }
+.sb-lines li { overflow-wrap:anywhere; }
+.sb-lines li:first-child { font-weight:600; }
+.sb-lines li:nth-child(2) { font:600 28px/36px var(--font); letter-spacing:-.8px; font-variant-numeric:tabular-nums; }
+.sb-wait { display:flex; flex-direction:column; gap:12px; padding:14px; border-radius:12px; background:var(--bg-muted); font:400 14px/21px var(--font); color:var(--text-2); }
+.sb-wait p { margin:0; }
+.sb-note { font:400 13px/19px var(--font); color:var(--text-2); }
+.sb .btn { min-height:44px; font-size:16px; }
+.sb .pp-submit { height:auto; min-height:48px; }
+.sb .rp-card h1 { overflow-wrap:anywhere; }

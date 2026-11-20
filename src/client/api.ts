@@ -1,3 +1,4 @@
+import type { PublicSubscription } from "../worker/billing/checkout";
 export class ApiError extends Error { constructor(public status: number, message: string, public fields: string[] = [], public code = "", public body: unknown = undefined) { super(message); } }
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -29,3 +30,22 @@ export const api = {
   put: <T,>(p: string, b: unknown) => req<T>("PUT", p, b),
   del: <T,>(p: string) => req<T>("DELETE", p),
 };
+
+// The client's subscription page (`/s/<token>`). Public: it deliberately bypasses `req`, whose 401 handling sends the visitor to the owner's login. No cookie is sent.
+
+/** The page's state as the server reports it now: `{ status, page }`, `page` only for a 200. A dropped connection is `status` 0. */
+export async function publicSubscription(token: string): Promise<{ status: number; page: PublicSubscription | null }> {
+  try {
+    const res = await fetch(`/api/public/s/${token}`, { credentials: "omit", cache: "no-store" });
+    return { status: res.status, page: res.ok ? ((await res.json()) as PublicSubscription) : null };
+  } catch { return { status: 0, page: null }; }
+}
+
+/** The click on "Set up payment": the payment page's address for this subscription, or the status that refused it. */
+export async function startSubscriptionCheckout(token: string): Promise<{ status: number; url: unknown }> {
+  try {
+    const res = await fetch(`/api/public/s/${token}/checkout`, { method: "POST", credentials: "omit", cache: "no-store" });
+    const data = (await res.json().catch(() => ({}))) as { url?: unknown };
+    return { status: res.status, url: res.ok ? data.url : undefined };
+  } catch { return { status: 0, url: undefined }; }
+}
