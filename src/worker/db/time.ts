@@ -124,6 +124,12 @@ export async function timeTotals(db: D1Database, o: { taskId?: string; projectId
   return { actualMinutes: r?.actual ?? 0, billableMinutes: r?.billable ?? 0 };
 }
 
+/** Minutes logged on each task of a project (a task with no time is left out). A running timer counts for 0 until it stops. */
+export async function minutesByTask(db: D1Database, projectId: string): Promise<Record<string, number>> {
+  const rows = (await db.prepare(`SELECT task_id, SUM(minutes) AS minutes FROM time_entries WHERE project_id = ? GROUP BY task_id HAVING SUM(minutes) > 0`).bind(projectId).all<{ task_id: string; minutes: number }>()).results;
+  return Object.fromEntries(rows.map((r) => [r.task_id, r.minutes]));
+}
+
 /** How the running timer ends: saved with its length, or dropped (too short to count). */
 export type StopPlan = { id: string; endedAt: string; minutes: number; note: string } | { id: string; drop: true };
 

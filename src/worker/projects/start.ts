@@ -132,6 +132,17 @@ export const startCareWhenDone = async (env: Env, primary: Project): Promise<voi
 onProjectDone(startCareWhenDone);
 
 /**
+ * The document the owner's "Start projects" button works from: the deal's latest signed, real (not a test copy) proposal whose deposit is paid, or the plain sentence that says why there
+ * is none. The payment normally starts the projects by itself; this is the retry for when it could not.
+ */
+export async function paidSignedDocument(db: D1Database, dealId: string): Promise<{ doc: Document } | { problem: string }> {
+  const signed = (await listForDeal(db, dealId)).filter((d) => d.status === "signed" && !d.test);
+  if (!signed.length) return { problem: "There is no signed proposal for this deal yet (a test copy does not count)." };
+  const paid = signed.find((d) => d.paidAt);
+  return paid ? { doc: paid } : { problem: "The deposit has not been paid yet. Projects start when it is." };
+}
+
+/**
  * Rehearses the start for a deal whose latest signed proposal is a test copy: the same projects, marked test, that queue nothing for Claude (dispatch skips them).
  * Refuses, with a plain sentence, a deal with no signed proposal or whose latest signed one is real.
  */

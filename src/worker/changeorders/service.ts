@@ -232,6 +232,15 @@ export function changeOrderLink(env: Env, co: ChangeOrder): string | null {
   return base && co.token ? `${base}/c/${co.token}` : null;
 }
 
+/** A change order as the owner's screens get it: the client's link in place of the bare token, and none of what the signer's browser sent (address, browser, consent text). */
+export type OwnerChangeOrder = Omit<ChangeOrder, "token" | "signerIp" | "signerUserAgent" | "consentText"> & { link: string | null };
+
+/** The owner's view of an order. `link` is the full client URL for a sent or viewed order (the one the owner can copy), null for any other. */
+export function ownerChangeOrder(env: Env, co: ChangeOrder): OwnerChangeOrder {
+  const { token: _token, signerIp: _ip, signerUserAgent: _userAgent, consentText: _consent, ...rest } = co;
+  return { ...rest, link: co.status === "sent" || co.status === "viewed" ? changeOrderLink(env, co) : null };
+}
+
 /**
  * Why a send is refused, in the order Logan would fix them. A REAL order needs the lawyer's review recorded (`legalGate`, exactly as a proposal does), a contact the conflict gate allows
  * and a contact email; a TEST order goes to the owner only and needs the owner's email instead. Always: the order is a draft (or this same approval's retry), the main mailbox can send,

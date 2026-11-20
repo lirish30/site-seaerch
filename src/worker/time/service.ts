@@ -76,7 +76,7 @@ export async function capStaleTimers(env: Pick<Env, "DB">, now: Date): Promise<n
 }
 
 /** A real calendar date: "2026-13-01" and "2026-02-30" are not (the second would roll into March). */
-const isCalendarDate = (s: string) => {
+export const isCalendarDate = (s: string) => {
   if (!/^\d{4}-\d\d-\d\d$/.test(s)) return false;
   const t = Date.parse(`${s}T00:00:00.000Z`);
   return Number.isFinite(t) && new Date(t).toISOString().startsWith(s);

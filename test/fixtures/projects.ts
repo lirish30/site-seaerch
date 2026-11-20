@@ -63,8 +63,8 @@ export async function seedProjectWithOnboarding(o: { test?: boolean; sentAt?: st
   return { ...s, project, onboarding };
 }
 
-/** Empties the project tables, the Claude queue and the review approvals, for a test that counts them or dispatches across every project. */
+/** Empties the project tables (change orders too), the Claude queue and the review and change-order approvals, for a test that counts them or dispatches across every project. */
 export async function resetProjectWork() {
-  await env.DB.batch(["task_comments", "time_entries", "tasks", "project_milestones", "project_cadences", "projects", "claude_tasks", "agent_actions"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
-  await env.DB.prepare(`DELETE FROM approvals WHERE kind = 'sop.review'`).run();
+  await env.DB.batch(["task_comments", "time_entries", "tasks", "change_order_views", "change_orders", "project_milestones", "project_cadences", "projects", "claude_tasks", "agent_actions"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+  await env.DB.prepare(`DELETE FROM approvals WHERE kind IN ('sop.review', 'change_order.send')`).run();
 }
