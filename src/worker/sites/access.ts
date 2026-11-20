@@ -18,13 +18,19 @@ const LINK_SENTENCE = "A password manager item name is a name, not a link.";
 const NAME_MAX = 80;
 const NOTE_MAX = 500;
 
-/** Shapes that are secrets whatever the spacing: link with a login in it, cloud and payment keys, private keys, long hex strings, "password: ...". */
+/** Shapes that are secrets whatever the spacing: "password: ..." (also pw, passwd, = or a fullwidth colon), a link with a login in it, cloud, payment, GitHub, Slack, OpenAI-style and Google keys, JWTs, private keys, long hex strings. */
 function looksSecret(s: string): boolean {
   return looksLikeCredential(s)
+    || /\b(?:pw|passwd|pwd|pass(?:word|code|phrase)?|login|api[ _-]?key|secret|token)\s*[:=\uFF1A\uFF1D]/i.test(s)
     || /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@]*@/i.test(s)
     || /-----BEGIN/i.test(s)
     || /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/.test(s)
     || /\b(?:sk|pk|rk)_(?:live|test)_/i.test(s)
+    || /\beyJ[\w-]{5,}\.[\w-]{5,}\./.test(s)
+    || /\bgh[pous]_[A-Za-z0-9]{20,}/.test(s)
+    || /\bxox[abprs]-[A-Za-z0-9-]{8,}/.test(s)
+    || /\bsk-[\w-]{20,}/.test(s)
+    || /\bAIza[\w-]{30,}/.test(s)
     || /\b[0-9a-f]{32,}\b/i.test(s);
 }
 

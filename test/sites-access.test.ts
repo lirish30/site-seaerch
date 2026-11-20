@@ -73,6 +73,32 @@ describe("noteProblem", () => {
   });
 });
 
+describe("secret shapes are refused in names and notes alike", () => {
+  const secrets: Array<[string, string]> = [
+    ["eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abc", "eyJzdWIiOiIx"],
+    ["ghp_" + "Zq8Lm2Xv9Rt4Wk7Bn3Yc5Hd1Jf6Ps0", "Zq8Lm2Xv9Rt4"],
+    ["xoxb-1234567890-AbCdEfGhIjKl", "AbCdEfGhIjKl"],
+    ["sk-" + "Qw3Er5Ty7Ui9Op1As2Df4Gh6", "Qw3Er5Ty7Ui9"],
+    ["AIza" + "SyD4e5F6g7H8i9J0kLmNoPqRsTuVwXyZ12", "SyD4e5F6g7H8"],
+    ["pw: hunter2", "hunter2"],
+    ["passwd=abc", "passwd=abc"],
+    ["password\uFF1Ax", "password\uFF1Ax"],
+    ["note ghp_" + "Zq8Lm2Xv9Rt4Wk7Bn3Yc5Hd1Jf6Ps0 more words", "Zq8Lm2Xv9Rt4"],
+  ];
+  it.each(secrets)("refuses %s in a note and a name without repeating it", (input, fragment) => {
+    for (const p of [noteProblem(input), vaultNameProblem(input)]) {
+      expect(p, input).toBeTypeOf("string");
+      expect(p!).not.toContain(fragment);
+    }
+  });
+  it("still accepts ordinary names", () => {
+    for (const ok of ["Hostgator login (Dana)", "Acme Token Vault", "Passcode Vault", "Cloudflare acme-plumbing.com"]) {
+      expect(vaultNameProblem(ok), ok).toBeNull();
+      expect(noteProblem(ok), ok).toBeNull();
+    }
+  });
+});
+
 describe("unresolved", () => {
   it("keeps needed and requested only", () => {
     const items = [item("hosting", "needed"), item("dns", "requested"), item("registrar", "received"), item("admin", "verified"), item("gbp", "not_applicable"), item("analytics", "needed")];
