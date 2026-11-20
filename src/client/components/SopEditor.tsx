@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api";
 import { ownerBadge } from "../projectView";
 import { unsaved } from "../settingsData";
-import { addPhase, addStep, movePhase, moveStep, parseEstimate, removePhase, removeStep, requiresChoices, setPhaseTitle, stepRows, templateProblems, totalEstimate } from "../sopView";
+import { addPhase, addStep, keyProblem, movePhase, moveStep, parseEstimate, removePhase, removeStep, requiresChoices, setPhaseTitle, stepRows, templateProblems, totalEstimate } from "../sopView";
 import { formatMinutes } from "../timeView";
 import { PACKAGE_KEYS } from "../../worker/db/packages";
 import { CADENCES, MILESTONE_KEYS, OWNER_LABEL, OWNER_TAGS, type Cadence, type MilestoneKey, type OwnerTag, type SopStep, type SopTemplate, type SopTemplateInput } from "../../worker/sop/model";
@@ -16,11 +16,16 @@ const toInput = (t: SopTemplate): SopTemplateInput => ({ key: t.key, name: t.nam
 const blank = (): SopTemplateInput => ({ key: "", name: "", kind: "project", cadence: null, cadenceDay: null, appliesTo: [], active: true, steps: addPhase([]) });
 
 /** One step: a row that opens into its fields. Everything typed here is text (a title, a done-when, a name); nothing is read as HTML. */
-function StepCard({ step, others, first, last, onChange, onMove, onRemove }: {
+function StepCard({ step, others, first, last, onChange, onMove, onRemove, onBadEstimate }: {
   step: SopStep; others: SopStep[]; first: boolean; last: boolean; onChange: (patch: Partial<SopStep>) => void; onMove: (dir: -1 | 1) => void; onRemove: () => void;
+  /** Tells the editor whether this step's estimate box holds text that is not a valid estimate (the draft then still has the old value). */
+  onBadEstimate: (key: string, bad: boolean) => void;
 }) {
   const [est, setEst] = useState(() => (step.estMinutes > 0 ? formatMinutes(step.estMinutes) : "0"));
   const parsed = parseEstimate(est);
+  const bad = parsed === null;
+  useEffect(() => { onBadEstimate(step.key, bad); }, [step.key, bad]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => onBadEstimate(step.key, false), [step.key]); // eslint-disable-line react-hooks/exhaustive-deps
   const id = `sp-${step.key}`;
   const nullable = (v: string) => (v.trim() === "" ? null : v);
   return (
@@ -85,15 +90,21 @@ function StepCard({ step, others, first, last, onChange, onMove, onRemove }: {
  * The editor for one template: its name and kind, and its phases of steps. The problems the save would refuse are listed as you edit, so the Save button explains itself;
  * the server checks them again. Saving makes the next version, and a project already running keeps the steps it was started with.
  */
-export default function SopEditor({ template, active, onSaved, onClose }: { template: SopTemplate | null; active: boolean; onSaved: (t: SopTemplate) => void; onClose: () => void }) {
+export default function SopEditor({ template, active, existingKeys, onSaved, onClose }: { template: SopTemplate | null; active: boolean; existingKeys: string[]; onSaved: (t: SopTemplate) => void; onClose: () => void }) {
   const [draft, setDraft] = useState<SopTemplateInput>(() => (template ? toInput(template) : blank()));
   const baseline = useRef(JSON.stringify(draft));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [serverProblems, setServerProblems] = useState<string[]>([]);
+  const [badEstimates, setBadEstimates] = useState<string[]>([]);
   const isNew = template === null;
   const dirty = JSON.stringify(draft) !== baseline.current;
-  const problems = templateProblems({ ...draft, active });
+  // A new template under a key another template has would replace that one, so it is refused here. An estimate box holding text that is not an estimate would save the old value.
+  const problems = [
+    ...(isNew ? [keyProblem(draft.key, existingKeys)] : []).filter((p): p is string => p !== null),
+    ...templateProblems({ ...draft, active }),
+    ...badEstimates.map((k) => `Step ${k}: the estimate is not a length of time. Use minutes or hours up to 10 hours, like 45m or 1h 30m.`),
+  ];
   const rows = stepRows(draft);
 
   // The Settings sidebar asks before leaving a page with edits that are not saved.
@@ -190,6 +201,7 @@ export default function SopEditor({ template, active, onSaved, onClose }: { temp
             {r.steps.map((s, si) => (
               <StepCard key={s.key} step={s} others={requiresChoices(draft, s.key)} first={si === 0} last={si === r.steps.length - 1}
                 onChange={(patch) => patchStep(s.key, patch)} onMove={(dir) => editSteps((all) => moveStep(all, s.key, dir))}
+                onBadEstimate={(k, bad) => setBadEstimates((all) => (bad ? (all.includes(k) ? all : [...all, k]) : all.filter((x) => x !== k)))}
                 onRemove={() => {
                   const waiting = draft.steps.filter((x) => x.requires.includes(s.key)).length;
                   if (waiting === 0 || window.confirm(`${waiting} other ${waiting === 1 ? "step waits" : "steps wait"} on this one. Remove it anyway? They will stop waiting on it.`)) editSteps((all) => removeStep(all, s.key));

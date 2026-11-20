@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  blockedText, bucketCounts, changeOrderChip, dealProjects, startOffers, listProgress, timeEstimate, timeRows, kindLabel, milestoneChips, ownerBadge, phaseGroups, profitLines, projectBucket, projectProgress, projectState, taskState,
+  blockedText, bucketCounts, dealProjects, startOffers, listProgress, timeEstimate, timeRows, kindLabel, milestoneChips, ownerBadge, phaseGroups, profitLines, projectBucket, projectProgress, projectState, taskState,
 } from "../src/client/projectView";
 import type { Task } from "../src/worker/db/tasks";
 
@@ -137,18 +137,6 @@ describe("dealProjects", () => {
   it("keeps only the projects of that deal, newest first as given", () => {
     const rows = [{ id: "a", dealId: "d1" }, { id: "b", dealId: "d2" }, { id: "c", dealId: null }, { id: "d", dealId: "d1" }];
     expect(dealProjects(rows, "d1").map((r) => r.id)).toEqual(["a", "d"]);
-  });
-});
-
-describe("changeOrderChip", () => {
-  it("says where a change order stands", () => {
-    expect(changeOrderChip({ status: "draft", paidAt: null })).toEqual({ label: "Draft", tone: "neutral" });
-    expect(changeOrderChip({ status: "sent", paidAt: null })).toEqual({ label: "Sent", tone: "neutral" });
-    expect(changeOrderChip({ status: "viewed", paidAt: null })).toEqual({ label: "Viewed", tone: "neutral" });
-    expect(changeOrderChip({ status: "signed", paidAt: null })).toEqual({ label: "Signed, unpaid", tone: "warn" });
-    expect(changeOrderChip({ status: "signed", paidAt: "2026-11-02T00:00:00.000Z" })).toEqual({ label: "Paid", tone: "good" });
-    for (const s of ["declined", "void", "expired"] as const) expect(changeOrderChip({ status: s, paidAt: null }).tone).toBe("muted");
-    expect(changeOrderChip({ status: "declined", paidAt: null }).label).toBe("Declined");
   });
 });
 

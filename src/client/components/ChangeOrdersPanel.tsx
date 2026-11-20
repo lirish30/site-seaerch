@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
-import { careRateHint, hoursText, linesOf, parseDaysInput, parseHoursInput, pricePreview, signedRecord, statusLabel, statusTone, voidable } from "../changeOrderView";
+import { careRateHint, hoursText, linesOf, listProblem, parseDaysInput, parseHoursInput, pricePreview, signedRecord, statusLabel, statusTone, voidable } from "../changeOrderView";
 import { dollars, parseDollars, type Package } from "../packagesView";
 import type { Tone } from "../projectView";
 import { workError } from "../workData";
@@ -122,7 +122,7 @@ function NewForm({ projectId, rates, onDone, onCancel }: { projectId: string; ra
     : rateTyped && rateCents === null ? "Enter the rate in dollars, like 95."
     : priceText.trim() !== "" && price === null ? "Enter the price in dollars, like 300."
     : days === undefined ? "Schedule impact is a whole number of days from 0 to 180, or blank."
-    : null;
+    : listProblem("what is not included", linesOf(notIncluded)) ?? listProblem("what gets delivered", linesOf(deliverables));
 
   const create = async () => {
     if (problem || hours === null || days === undefined) return;
@@ -158,7 +158,7 @@ function NewForm({ projectId, rates, onDone, onCancel }: { projectId: string; ra
         <button type="submit" className="btn primary" disabled={busy || !!problem}>{busy ? "Saving…" : "Save the draft"}</button>
         <button type="button" className="btn" disabled={busy} onClick={onCancel}>Cancel</button>
       </div>
-      {problem && (title.trim() || hoursRaw.trim()) && <p className="muted small">{problem}</p>}
+      {problem && (title.trim() || hoursRaw.trim()) && <p className="warn small" role="alert">{problem}</p>}
       <p className="muted small">Saving makes a draft only. Nothing reaches the client until you send it for approval and approve it.</p>
     </form>
   );

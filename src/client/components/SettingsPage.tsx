@@ -6,10 +6,10 @@ import type { SettingsDocState } from "../settingsData";
 
 /**
  * The frame every Settings page shares: breadcrumb (Settings > group), title and subtitle (with an optional badge and header action),
- * the page body, and, when `doc` is passed, the sticky "Unsaved changes" bar with Discard and Save. `width` is the form column (default 720).
+ * the page body, and, when `doc` is passed, the sticky "Unsaved changes" bar with Discard and Save. `width` is the form column (default 720). `blocked` is a reason Save cannot go ahead (a field holds text that is not a valid value): it is shown in the bar and Save is disabled.
  */
-export default function SettingsPage({ title, sub, badge, action, doc, width, children }: {
-  title: string; sub?: ReactNode; badge?: ReactNode; action?: ReactNode; doc?: SettingsDocState; width?: number; children: ReactNode;
+export default function SettingsPage({ title, sub, badge, action, doc, width, blocked, children }: {
+  title: string; sub?: ReactNode; badge?: ReactNode; action?: ReactNode; doc?: SettingsDocState; width?: number; blocked?: string; children: ReactNode;
 }) {
   const { pathname } = useLocation();
   const group = SETTINGS_PAGES.find((p) => pathname === `/settings/${p.slug}`)?.group;
@@ -32,11 +32,11 @@ export default function SettingsPage({ title, sub, badge, action, doc, width, ch
       {doc && showBar && (
         <div className="st-bar" role="status">
           {doc.dirty || doc.error
-            ? <><i className={`st-dot${doc.error ? " bad" : ""}`} /><span className={`st-msg${doc.error ? " bad" : ""}`}>{doc.error || "You have unsaved changes"}</span></>
+            ? <><i className={`st-dot${doc.error || blocked ? " bad" : ""}`} /><span className={`st-msg${doc.error || blocked ? " bad" : ""}`}>{doc.error || (doc.dirty && blocked) || "You have unsaved changes"}</span></>
             : <><Icon name="check" size={14} /><span className="st-msg ok">Saved</span></>}
           {doc.dirty && <>
             <button type="button" className="btn-plain" onClick={doc.discard} disabled={doc.saving}>Discard</button>
-            <button type="button" className="btn primary" onClick={() => void doc.save()} disabled={doc.saving}>{doc.saving ? "Saving…" : "Save changes"}</button>
+            <button type="button" className="btn primary" onClick={() => void doc.save()} disabled={doc.saving || !!blocked}>{doc.saving ? "Saving…" : "Save changes"}</button>
           </>}
         </div>
       )}

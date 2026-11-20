@@ -133,14 +133,6 @@ export function blockedText(body: unknown): string | null {
 /** The projects that came from one deal. */
 export const dealProjects = <T extends Pick<Project, "dealId">>(projects: T[], dealId: string): T[] => projects.filter((p) => p.dealId === dealId);
 
-const CO_LABEL: Record<"draft" | "sent" | "viewed" | "declined" | "void" | "expired", string> = { draft: "Draft", sent: "Sent", viewed: "Viewed", declined: "Declined", void: "Void", expired: "Expired" };
-
-/** The chip on a change order. A signed one is "Signed, unpaid" (its tasks stay locked) until it is paid. */
-export function changeOrderChip(co: { status: "draft" | "sent" | "viewed" | "signed" | "declined" | "void" | "expired"; paidAt: string | null }): { label: string; tone: Tone } {
-  if (co.status === "signed") return co.paidAt ? { label: "Paid", tone: "good" } : { label: "Signed, unpaid", tone: "warn" };
-  return { label: CO_LABEL[co.status], tone: co.status === "draft" || co.status === "sent" || co.status === "viewed" ? "neutral" : "muted" };
-}
-
 /** The progress a project card shows, from the counts GET /projects gives: steps only, as on the project page, or every task when the project has no steps. */
 export function listProgress(p: { openSteps: number; doneSteps: number; openTasks: number; doneTasks: number }): { done: number; total: number; pct: number } {
   const steps = p.openSteps + p.doneSteps;

@@ -64,3 +64,11 @@ export function parseDaysInput(raw: string): number | null | undefined {
 
 /** A list typed one item per line: trimmed, blank lines dropped. */
 export const linesOf = (text: string): string[] => text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+
+/** What the server would refuse about a typed list (the same limits): at most 10 items, each at most 200 characters. `label` names the list ("deliverables"). Null when it is fine. */
+export function listProblem(label: string, items: string[]): string | null {
+  const name = label.charAt(0).toUpperCase() + label.slice(1);
+  if (items.length > 10) return `${name} has at most 10 items (this has ${items.length}).`;
+  const long = items.findIndex((i) => i.length > 200);
+  return long >= 0 ? `${name}: line ${long + 1} is ${items[long].length} characters, and each is at most 200.` : null;
+}

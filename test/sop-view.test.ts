@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  addPhase, addStep, diffDetails, diffSummary, flattenPhases, movePhase, moveStep, nextStepKey, parseEstimate, removePhase, removeStep, requiresChoices, setPhaseTitle, stepRows, stepsFromTaskRows, templateProblems, totalEstimate,
+  addPhase, addStep, diffDetails, diffSummary, flattenPhases, keyProblem, movePhase, moveStep, nextStepKey, parseEstimate, removePhase, removeStep, requiresChoices, setPhaseTitle, stepRows, stepsFromTaskRows, templateProblems, totalEstimate,
 } from "../src/client/sopView";
 import type { SopStep, SopTemplate, SopTemplateInput } from "../src/worker/sop/model";
 import { stepsFromTasks } from "../src/worker/sop/instantiate";
@@ -145,4 +145,13 @@ describe("parseEstimate", () => {
   it("refuses blanks, nonsense and more than the 600 minutes a step can have", () => {
     expect(["", "abc", "-5", "601", "11h"].map(parseEstimate)).toEqual([null, null, null, null, null]);
   });
+});
+
+describe("keyProblem", () => {
+  it("is null for a free key", () => expect(keyProblem("NEW1", ["BUILD", "QUICKFIX"])).toBeNull());
+  it("names a key that is taken, whatever its case", () => {
+    expect(keyProblem("BUILD", ["BUILD"])).toBe("A template with the key BUILD already exists. Open it from the list to edit it.");
+    expect(keyProblem("build", ["BUILD"])).toBe("A template with the key BUILD already exists. Open it from the list to edit it.");
+  });
+  it("is null for a blank key (the other checks say so)", () => expect(keyProblem("  ", ["BUILD"])).toBeNull());
 });

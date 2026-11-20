@@ -65,8 +65,8 @@ export default function Sops() {
             )}
           </Card>
         )}
-        {editing === "new" && <SopEditor key="new" template={null} active onSaved={saved} onClose={() => setEditing(null)} />}
-        {current && <SopEditor key={current.key} template={current} active={current.active} onSaved={saved} onClose={() => setEditing(null)} />}
+        {editing === "new" && <SopEditor key="new" template={null} active existingKeys={list.map((t) => t.key)} onSaved={saved} onClose={() => setEditing(null)} />}
+        {current && <SopEditor key={current.key} template={current} active={current.active} existingKeys={list.map((t) => t.key)} onSaved={saved} onClose={() => setEditing(null)} />}
       </div>
     </SettingsPage>
   );

@@ -176,3 +176,11 @@ export function parseEstimate(text: string): number | null {
   const m = /^\s*0\s*(m|min|mins|minutes)?\s*$/i.test(text) ? 0 : parseDuration(text);
   return m !== null && m <= 600 ? m : null;
 }
+
+/** Why a new template's key cannot be used: another template already has it (BUILD and build count as the same, to avoid confusion). Saving under a taken key would replace that template. Null when the key is free or blank. */
+export function keyProblem(key: string, existingKeys: string[]): string | null {
+  const wanted = key.trim().toLowerCase();
+  if (!wanted) return null;
+  const clash = existingKeys.find((k) => k.toLowerCase() === wanted);
+  return clash ? `A template with the key ${clash} already exists. Open it from the list to edit it.` : null;
+}

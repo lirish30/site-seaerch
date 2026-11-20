@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { careRateHint, hoursText, linesOf, parseDaysInput, parseHoursInput, pricePreview, signedRecord, statusLabel, statusTone, voidable } from "../src/client/changeOrderView";
+import { careRateHint, hoursText, linesOf, listProblem, parseDaysInput, parseHoursInput, pricePreview, signedRecord, statusLabel, statusTone, voidable } from "../src/client/changeOrderView";
 
 describe("statusLabel", () => {
   it("statusLabel for signed unpaid and signed paid", () => {
@@ -28,7 +28,7 @@ describe("pricePreview", () => {
     expect(pricePreview(2, 9500, 15000)).toEqual({ priceCents: 15000, custom: true, line: "2 hours at $95 an hour would be $190; your price is $150 (custom)" });
   });
   it("an override equal to the computed price is not custom", () => expect(pricePreview(2, 9500, 19000).custom).toBe(false));
-  it("rounds half a cent up", () => expect(pricePreview(0.25, 9995, null).priceCents).toBe(2499));
+  it("rounds half a cent up", () => expect(pricePreview(0.25, 9998, null).priceCents).toBe(2500));
 });
 
 describe("careRateHint", () => {
@@ -68,5 +68,16 @@ describe("form inputs", () => {
   it("linesOf is one item per line, trimmed, blanks dropped", () => {
     expect(linesOf("  a \n\n b\r\n   \nc")).toEqual(["a", "b", "c"]);
     expect(linesOf("")).toEqual([]);
+  });
+});
+
+describe("listProblem", () => {
+  it("is null for up to 10 items of up to 200 characters", () => {
+    expect(listProblem("deliverables", Array.from({ length: 10 }, () => "x".repeat(200)))).toBeNull();
+    expect(listProblem("deliverables", [])).toBeNull();
+  });
+  it("names more than 10 items and an item over 200 characters", () => {
+    expect(listProblem("deliverables", Array.from({ length: 11 }, (_, i) => `a${i}`))).toBe("Deliverables has at most 10 items (this has 11).");
+    expect(listProblem("not-included items", ["ok", "y".repeat(201)])).toBe("Not-included items: line 2 is 201 characters, and each is at most 200.");
   });
 });
