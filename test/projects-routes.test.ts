@@ -645,6 +645,19 @@ describe("change-order tasks cannot be opened by any route but the change order'
     }
   }
 
+  it("deleting a locked change-order task says to void its change order (a locked task cannot be skipped), a plain task says to skip it (M7)", async () => {
+    const s = await order();
+    const locked = await json("DELETE", `/tasks/${s.task.id}`);
+    expect(locked.status).toBe(409);
+    expect(locked.body.error).toMatch(/Void its change order instead/);
+    expect(locked.body.error).not.toMatch(/Skip it/);
+    expect((await json("POST", `/tasks/${s.task.id}/skip`, { reason: "No reason at all" })).status).toBe(409); // why skipping is no way out
+    const plain = await seedProject({ bare: true });
+    const [t] = await seedSteps(plain.project.id, plain.businessId, [{ key: "1" }]);
+    await json("POST", `/tasks/${t.id}/start`);
+    expect((await json("DELETE", `/tasks/${t.id}`)).body.error).toMatch(/Skip it instead/);
+  });
+
   it("a task of a voided order stays skipped: reopen is 409 and no other route moves it", async () => {
     const s = await order();
     expect((await json("POST", `/change-orders/${s.co.id}/void`, { reason: "The client changed their mind" })).status).toBe(200);

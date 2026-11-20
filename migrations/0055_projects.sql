@@ -2,7 +2,7 @@
 -- Times are UTC ISO strings with milliseconds, so comparing them as text compares them in time. Money is integer cents; time is integer minutes. `due_on` is a calendar date (YYYY-MM-DD) in the booking timezone.
 -- JSON columns (applies_to, requires, checklist, content) hold what the app writes; the app reads them defensively and falls back to an empty value.
 -- Text that came from a client (change-order names, signer fields) or from Claude (task comments, results) is untrusted: the callers clean and cap it, this layer stores it as given.
--- No ON DELETE CASCADE on business_id, deal_id or document_id: a project, a time entry and a change order are records the app never deletes (a lead that has a project is archived, never deleted; the app refuses first).
+-- No ON DELETE CASCADE on business_id, deal_id or document_id: a project and a change order are records the app never deletes, and a time entry is deleted only while it has not been invoiced (`deleteEntry`); a lead that has a project is archived, never deleted (the app refuses first).
 
 -- A template says which steps a job has. kind 'project' templates are copied into a project when a package is sold; kind 'recurring' templates are copied into one checklist task per period.
 -- applies_to is a JSON array of package keys. version goes up each time the steps are saved; an existing project keeps the steps it was started with.

@@ -329,7 +329,9 @@ projectRoutes.post("/tasks/:id/move", onTask(async (c, task) => {
 
 projectRoutes.delete("/tasks/:id", onTask(async (c, task) => {
   if (!(await deleteTask(c.env.DB, task.id))) {
-    return c.json({ error: "This task cannot be deleted: only a task that is still to do, was never started, has no time on it and that no other step waits on can go. Skip it instead." }, 409);
+    // A locked task (a change order's, until it is signed and paid) refuses a skip too: the way out is to void its change order, which skips it.
+    const way = task.status === "locked" ? "Void its change order instead." : "Skip it instead.";
+    return c.json({ error: `This task cannot be deleted: only a task that is still to do, was never started, has no time on it and that no other step waits on can go. ${way}` }, 409);
   }
   await runTasksChanged(c.env, task.projectId);
   return c.json({ ok: true });
