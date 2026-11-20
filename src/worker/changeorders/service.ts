@@ -4,7 +4,7 @@ import { lastBookingFor } from "../db/bookings";
 import { logActivityOnce } from "../db/activity";
 import { getBusiness } from "../db/businesses";
 import {
-  ChangeOrderInputError, ChangeOrderStateError, deleteLockedTasks, getChangeOrder, getChangeOrderByOrigin, markPaid, markSent, parseContent, createChangeOrderDraft, updateDraftContent, voidChangeOrder,
+  ChangeOrderInputError, ChangeOrderStateError, deleteLockedTasks, isSingleAddress, getChangeOrder, getChangeOrderByOrigin, markPaid, markSent, parseContent, createChangeOrderDraft, updateDraftContent, voidChangeOrder,
   type ChangeOrder, type ChangeOrderContent, type ChangeOrderSource,
 } from "../db/changeOrders";
 import { getDeal } from "../db/deals";
@@ -86,6 +86,16 @@ async function syncTasks(env: Env, co: ChangeOrder): Promise<void> {
   await insertTasks(db, rows);
 }
 
+/**
+ * The reference without its number: the proposal's reference, then the project's template key (or its kind, for a project made by hand) cut down to letters and digits, so every project
+ * of one sale has its own (SL-XXXX-BUILD-CO1, SL-XXXX-CARE0-CO1). A change order's reference is what the client reads and what the timeline lines name it by.
+ */
+const referenceBase = (p: { templateKey: string | null; kind: string }, proposalReference: string): string =>
+  `${proposalReference}-${(p.templateKey ?? p.kind).toUpperCase().replace(/[^A-Z0-9]/g, "") || "PROJECT"}`;
+
+/** The first eight characters of the order's id, named on every timeline line about it so two orders can never read as one (`logActivityOnce` merges identical lines). */
+export const shortId = (co: { id: string }): string => co.id.slice(0, 8);
+
 export interface DraftOptions {
   projectId: string; title: string; summary: string; reason: string; hours: number; deliverables?: string[]; notIncluded?: string[]; scheduleImpactDays?: number | null;
   priceCents?: number; rateCents?: number; sourceType: ChangeOrderSource; originApprovalId?: string;
@@ -122,13 +132,13 @@ export async function draftChangeOrder(env: Env, o: DraftOptions): Promise<Chang
     title: o.title, summary: o.summary, reason: o.reason, deliverables: o.deliverables ?? [], notIncluded: o.notIncluded ?? [], hours: o.hours, rateCents,
     priceCents: o.priceCents ?? Math.round(o.hours * rateCents), scheduleImpactDays: o.scheduleImpactDays ?? null,
     clientName: doc?.content.header.clientName ?? business.name, contactName: doc?.content.header.contactName ?? booking?.contactName ?? "",
-    contactEmail: doc?.content.header.contactEmail ?? booking?.contactEmail ?? "",
+    contactEmail: ((e) => (isSingleAddress(e) ? e : ""))((doc?.content.header.contactEmail ?? booking?.contactEmail ?? "").replace(/[\r\n\t]/g, "").trim()),
   };
   const checked = parseContent({ ...content, reference: "CO" });
   refuseCredentials(contentTexts(checked));
   const { changeOrder } = await createChangeOrderDraft(db, {
     projectId: project.id, businessId: project.businessId, dealId: project.dealId, test: project.test, sourceType: o.sourceType, originApprovalId: o.originApprovalId ?? null,
-    referenceBase: doc?.content.header.reference ?? `SL-${project.id.replace(/-/g, "").slice(0, 6).toUpperCase()}`, content,
+    referenceBase: referenceBase(project, doc?.content.header.reference ?? `SL-${project.id.replace(/-/g, "").slice(0, 6).toUpperCase()}`), content,
   });
   if (changeOrder.status === "draft") await syncTasks(env, changeOrder);
   return changeOrder;
@@ -167,7 +177,7 @@ export async function voidDraftOrSent(env: Env, id: string, reason: string, now:
   refuseCredentials([why]);
   const co = await need(env, id);
   await withdrawSendApprovals(env.DB, [id], "the change order was voided");
-  const voided = await voidChangeOrder(env.DB, id, why, { log: { businessId: co.businessId, detail: `${co.content.reference} voided: ${why}`.slice(0, 300) } });
+  const voided = await voidChangeOrder(env.DB, id, why, { log: { businessId: co.businessId, detail: `${co.content.reference} (${shortId(co)}) voided: ${why}`.slice(0, 300) } });
   let skipped = 0;
   for (const t of (await listTasks(env.DB, co.projectId)).filter((x) => x.changeOrderId === id && (x.status === "locked" || x.status === "todo"))) {
     if (await setTaskStatus(env.DB, t.id, "skipped", { from: ["locked", "todo"], now: now.toISOString(), comment: { author: "system", body: `Skipped: the change order was voided (${why})` } })) skipped++;
@@ -200,7 +210,7 @@ export async function unlockIfReady(env: Env, id: string, now: Date): Promise<nu
 export async function markChangeOrderPaid(env: Env, id: string, o: { via: "stripe" | "manual"; now: Date }): Promise<ChangeOrder> {
   const co = await need(env, id);
   if (co.status !== "signed") throw new ChangeOrderStateError(co.status === "draft" || co.status === "sent" || co.status === "viewed" ? "This change order has not been signed yet, so it cannot be marked paid." : `A ${co.status} change order cannot be marked paid.`);
-  await markPaid(env.DB, id, { at: o.now.toISOString(), via: o.via, log: { businessId: co.businessId, detail: `${co.content.reference} paid (${o.via === "stripe" ? "Stripe" : "outside Stripe"})` } });
+  await markPaid(env.DB, id, { at: o.now.toISOString(), via: o.via, log: { businessId: co.businessId, detail: `${co.content.reference} (${shortId(co)}) paid (${o.via === "stripe" ? "Stripe" : "outside Stripe"})` } });
   await unlockIfReady(env, id, o.now);
   return need(env, id);
 }
@@ -212,7 +222,7 @@ export async function markChangeOrderPaid(env: Env, id: string, o: { via: "strip
 export async function afterSigned(env: Env, id: string, now: Date): Promise<void> {
   const co = await getChangeOrder(env.DB, id);
   if (!co || co.status !== "signed") return;
-  await logActivityOnce(env.DB, co.businessId, "change_order_signed", `${co.content.reference} signed by ${oneLine(co.signerName ?? "").slice(0, 80)}`);
+  await logActivityOnce(env.DB, co.businessId, "change_order_signed", `${co.content.reference} (${shortId(co)}) signed by ${oneLine(co.signerName ?? "").slice(0, 80)}`);
   await unlockIfReady(env, id, now);
 }
 
@@ -234,6 +244,9 @@ export async function sendProblems(env: Env, co: ChangeOrder, o: { approvalId?: 
   if (!co.test) {
     const gate = legalGate(parseDocumentsConfig(settings.documents_config));
     if (gate) problems.push(gate);
+    // The owner's approval countersigns the order in these names, so neither may be blank.
+    if (!settings.your_name.trim()) problems.push("Add your name in Settings before sending: it is your signature on the change order.");
+    if (!settings.contact_email.trim()) problems.push("Add your contact email in Settings before sending: it is your signature on the change order.");
   }
   const retry = !!o.approvalId && co.approvalId === o.approvalId && (co.status === "sent" || co.status === "viewed" || co.status === "signed");
   if (co.status !== "draft" && !retry) problems.push(`This change order is ${co.status}, not a draft.`);
@@ -266,7 +279,7 @@ export async function sealChangeOrder(env: Env, co: ChangeOrder, o: { now: Date;
 export function mailFor(env: Env, co: ChangeOrder, settings: Settings): { to: string; subject: string; body: string; link: string } {
   const link = changeOrderLink(env, co) ?? `${clientBase(env) ?? "(set CLIENT_LINK_BASE first)"}/c/(the link is made when you approve)`;
   const m = renderChangeOrderMail(co, link, settings);
-  return { to: co.test ? settings.contact_email.trim() : co.content.contactEmail.trim(), subject: co.test ? `[Test] ${m.subject}` : m.subject, body: m.body, link };
+  return { to: (co.test ? settings.contact_email : co.content.contactEmail).replace(/[\r\n\t]/g, "").trim(), subject: co.test ? `[Test] ${m.subject}` : m.subject, body: m.body, link };
 }
 
 /**

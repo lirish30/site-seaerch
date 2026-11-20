@@ -16,6 +16,10 @@ export interface ChangeOrderContent {
 const text = (label: string, max: number, o: { required?: boolean } = {}) =>
   z.string(`${label} must be text.`).transform((s) => cleanText(s, s.length))
     .pipe(z.string().max(max, `${label} is at most ${max} characters.`).refine((s) => !o.required || s.length > 0, `${label} cannot be empty.`));
+/** An email as one address on one line: newlines and tabs are removed before anything else, so a header cannot be smuggled in with it. */
+const cleanEmail = (s: string) => cleanText(s, s.length).replace(/[\r\n\t]/g, "");
+/** One address (no spaces, commas, semicolons or angle brackets), or nothing. */
+export const isSingleAddress = (s: string): boolean => s === "" || /^[^\s@,;<>]+@[^\s@,;<>]+$/.test(s);
 const list = (label: string) => z.array(text(label, 200, { required: true })).max(10, `${label} has at most 10 items.`);
 
 export const ChangeOrderContentSchema = z.object({
@@ -31,7 +35,8 @@ export const ChangeOrderContentSchema = z.object({
   scheduleImpactDays: z.number("Schedule impact must be a number of days.").int("Schedule impact must be whole days.").min(0, "Schedule impact cannot be negative.").max(180, "Schedule impact is at most 180 days.").nullable(),
   clientName: text("The client name", 120),
   contactName: text("The contact name", 120),
-  contactEmail: text("The contact email", 254),
+  contactEmail: z.string("The contact email must be text.").transform(cleanEmail)
+    .pipe(z.string().max(254, "The contact email is at most 254 characters.").refine(isSingleAddress, "The contact email must be one address.")),
 }).strict() satisfies z.ZodType<ChangeOrderContent>;
 
 /** The text or numbers were refused (a 400). The message is a plain sentence; nothing was saved. */
@@ -178,7 +183,7 @@ export async function markSent(db: D1Database, id: string, o: { token: string; c
 
 /**
  * Records that the client opened the link: one row, and not again within ten minutes of the last one. The first view moves `sent` to `viewed` and answers true;
- * every other call answers false. A draft has no link, so it records nothing.
+ * every other call answers false. A draft has no link, and a signed, declined, void or expired order has nothing to read for, so those record nothing.
  */
 export async function recordView(db: D1Database, id: string, o: { now: string; userAgent: string | null }): Promise<boolean> {
   const since = new Date(Date.parse(o.now) - VIEW_GAP_MS).toISOString();
@@ -186,7 +191,7 @@ export async function recordView(db: D1Database, id: string, o: { now: string; u
     db.prepare(
       `INSERT INTO change_order_views (id, change_order_id, viewed_at, user_agent)
        SELECT ?, ?, ?, ?
-       WHERE EXISTS (SELECT 1 FROM change_orders WHERE id = ? AND status != 'draft')
+       WHERE EXISTS (SELECT 1 FROM change_orders WHERE id = ? AND status IN ('sent', 'viewed'))
          AND NOT EXISTS (SELECT 1 FROM change_order_views WHERE change_order_id = ? AND viewed_at > ?)`,
     ).bind(crypto.randomUUID(), id, o.now, o.userAgent, id, id, since),
     db.prepare(`UPDATE change_orders SET status = 'viewed', first_viewed_at = ?, updated_at = ? WHERE id = ? AND status = 'sent'`).bind(o.now, o.now, id),
@@ -217,11 +222,11 @@ export async function declineChangeOrder(db: D1Database, id: string, reason: str
 }
 
 /**
- * Voids a draft, sent or viewed change order with the reason; a void one is returned as it is. A signed (or declined or expired) one refuses: a signed order is a record.
+ * Voids a draft, sent, viewed, declined or expired change order with the reason; a void one is returned as it is. A declined or expired one can be voided too (a dead end, whose locked tasks then need clearing). A signed one refuses: a signed order is a record.
  * With `log`, the timeline line is written in the same batch and only when this call is the one that voided it.
  */
 export async function voidChangeOrder(db: D1Database, id: string, reason: string, o: { log?: { businessId: string; detail: string } } = {}): Promise<ChangeOrder> {
-  const update = db.prepare(`UPDATE change_orders SET status = 'void', void_reason = ?, updated_at = ? WHERE id = ? AND status IN ('draft', 'sent', 'viewed')`).bind(reason, new Date().toISOString(), id);
+  const update = db.prepare(`UPDATE change_orders SET status = 'void', void_reason = ?, updated_at = ? WHERE id = ? AND status IN ('draft', 'sent', 'viewed', 'declined', 'expired')`).bind(reason, new Date().toISOString(), id);
   if (o.log) await db.batch([update, activityIfChangedStmt(db, o.log.businessId, "change_order_void", o.log.detail)]);
   else await update.run();
   const co = await getChangeOrder(db, id);

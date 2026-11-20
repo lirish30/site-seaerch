@@ -104,6 +104,36 @@ describe("recordView", () => {
   });
 });
 
+describe("recordView on an order that is not open", () => {
+  it("records nothing for a signed, void, declined or expired order", async () => {
+    const count = async (id: string) => (await env.DB.prepare(`SELECT COUNT(*) AS n FROM change_order_views WHERE change_order_id = ?`).bind(id).first<{ n: number }>())!.n;
+    const signed = await sendOrder((await seedOrder()).co);
+    await signChangeOrder(env.DB, signed.co.id, clientSig(signed.hash), NOW_ISO);
+    const voided = await sendOrder((await seedOrder()).co);
+    await voidChangeOrder(env.DB, voided.co.id, "not needed");
+    const declined = await sendOrder((await seedOrder()).co);
+    await declineChangeOrder(env.DB, declined.co.id, "no", NOW_ISO);
+    const expired = await sendOrder((await seedOrder()).co, { expiresAt: "2026-12-06T00:00:00.000Z" });
+    await expireDue(env.DB, "2026-12-07T00:00:00.000Z");
+    for (const o of [signed, voided, declined, expired]) {
+      expect(await recordView(env.DB, o.co.id, { now: "2026-12-08T00:00:00.000Z", userAgent: "ua" })).toBe(false);
+      expect(await count(o.co.id)).toBe(0);
+    }
+    expect((await getChangeOrder(env.DB, signed.co.id))!.status).toBe("signed");
+  });
+});
+
+describe("the contact email", () => {
+  const ok = { reference: "R", ...content() };
+  it("is one address on one line: newlines and tabs are removed, and anything else is refused", () => {
+    expect(parseContent({ ...ok, contactEmail: " pat@ace.test\r\n\t" }).contactEmail).toBe("pat@ace.test");
+    expect(parseContent({ ...ok, contactEmail: "" }).contactEmail).toBe("");
+    for (const bad of ["pat@ace.test\nBcc: evil@x.test", "a@b.test, c@d.test", "a@b.test;c@d.test", "Pat <pat@ace.test>", "no-at-sign", "a b@c.test"]) {
+      expect(() => parseContent({ ...ok, contactEmail: bad }), bad).toThrow(ChangeOrderInputError);
+    }
+  });
+});
+
 describe("signChangeOrder", () => {
   it("signs a sent order once and stores the signature", async () => {
     const { co } = await seedOrder();
@@ -179,7 +209,17 @@ describe("voidChangeOrder", () => {
     }
   });
 
-  it("refuses a signed, a declined and an expired order, and a missing one", async () => {
+  it("voids a declined and an expired order too (a dead end), but never a signed one", async () => {
+    const d = await sendOrder((await seedOrder()).co);
+    await declineChangeOrder(env.DB, d.co.id, "too much", NOW_ISO);
+    expect((await voidChangeOrder(env.DB, d.co.id, "cleaning up")).status).toBe("void");
+    const x = await sendOrder((await seedOrder()).co, { expiresAt: "2026-12-06T00:00:00.000Z" });
+    await expireDue(env.DB, "2026-12-07T00:00:00.000Z");
+    expect((await getChangeOrder(env.DB, x.co.id))!.status).toBe("expired");
+    expect((await voidChangeOrder(env.DB, x.co.id, "cleaning up")).status).toBe("void");
+  });
+
+  it("refuses a signed order, and a missing one", async () => {
     const { co } = await seedOrder();
     const { co: sent, hash } = await sendOrder(co);
     await signChangeOrder(env.DB, sent.id, clientSig(hash), NOW_ISO);

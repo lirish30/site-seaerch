@@ -7,7 +7,7 @@ import { getChangeOrder, type ChangeOrder } from "../db/changeOrders";
 import { getSettings } from "../db/settings";
 import { dollars } from "../../client/packagesView";
 import { hoursText } from "../changeorders/mail";
-import { mailChangeOrderLink, mailFor, sealChangeOrder, sendProblems } from "../changeorders/service";
+import { mailChangeOrderLink, mailFor, sealChangeOrder, sendProblems, shortId } from "../changeorders/service";
 import { getMailDeps } from "../mail/deps";
 
 const Payload = z.object({ changeOrderId: z.string().min(1) });
@@ -75,6 +75,6 @@ registerHandler({
     const sent = co.status === "draft" ? await sealChangeOrder(env, co, { now: getMailDeps().now(), approvalId: a.id, settings }) : co;
 
     const to = await mailChangeOrderLink(env, sent, settings, a.id);
-    await logActivityOnce(env.DB, sent.businessId, "change_order_sent", `${sent.content.reference} ${sent.test ? "(test) " : ""}to ${to}, expires ${sent.expiresAt?.slice(0, 10)}`);
+    await logActivityOnce(env.DB, sent.businessId, "change_order_sent", `${sent.content.reference} (${shortId(sent)}) ${sent.test ? "(test) " : ""}to ${to}, expires ${sent.expiresAt?.slice(0, 10)}`);
   },
 });

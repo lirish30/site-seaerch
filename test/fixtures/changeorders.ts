@@ -43,3 +43,13 @@ export const clientSig = (hash: string, o: { signedAt?: string } = {}) => ({
 export async function seal(co: ChangeOrder, now = new Date(NOW_ISO)) {
   return sealChangeOrder(env as never, co, { now, approvalId: null, settings: await getSettings(env.DB) });
 }
+
+/** A second project from the SAME proposal (the way a Care project follows a build one): same lead, deal and document, another template. */
+export async function secondProject(s: Awaited<ReturnType<typeof seedProject>>, o: { templateKey: string | null; kind: "care_onboarding" | "custom" | "build" }) {
+  const { createProject } = await import("../../src/worker/db/projects");
+  const { project } = await createProject(env.DB, {
+    businessId: s.businessId, dealId: s.dealId, documentId: s.documentId, onboardingId: null, kind: o.kind, name: "Second project", test: false,
+    templateKey: o.templateKey, templateVersion: o.templateKey ? 1 : null, careDeferred: false, startedAt: "2026-12-03T10:00:00.000Z",
+  });
+  return project;
+}

@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { listActivity } from "../src/worker/db/activity";
-import { ChangeOrderInputError, ChangeOrderStateError, getChangeOrder, signChangeOrder, expireDue } from "../src/worker/db/changeOrders";
+import { ChangeOrderInputError, ChangeOrderStateError, declineChangeOrder, getChangeOrder, signChangeOrder, expireDue } from "../src/worker/db/changeOrders";
 import { getPackage, savePackage } from "../src/worker/db/packages";
 import { setProjectStatus } from "../src/worker/db/projects";
 import { listComments, listTasks } from "../src/worker/db/tasks";
@@ -10,7 +10,7 @@ import {
 } from "../src/worker/changeorders/service";
 import { clearProjectHooksForTests, onTasksChanged } from "../src/worker/projects/hooks";
 import type { Env } from "../src/worker/env";
-import { clientSig, seal, NOW_ISO } from "./fixtures/changeorders";
+import { clientSig, seal, secondProject, NOW_ISO } from "./fixtures/changeorders";
 import { seedProject } from "./fixtures/projects";
 import { readyToSend } from "./fixtures/documents";
 
@@ -58,7 +58,7 @@ describe("draftChangeOrder", () => {
     const real = await seedProject();
     const co = await draftChangeOrder(e, { ...base, projectId: real.project.id, hours: 1 });
     expect(co).toMatchObject({ status: "draft", projectId: real.project.id, businessId: real.businessId, dealId: real.dealId, test: false, seq: 1, sourceType: "logan", originApprovalId: null });
-    expect(co.content).toMatchObject({ reference: "SL-ABCDEF-CO1", clientName: "Ace Plumbing", contactName: "Pat Jones", contactEmail: "pat@ace.test", scheduleImpactDays: null });
+    expect(co.content).toMatchObject({ reference: "SL-ABCDEF-BUILD-CO1", clientName: "Ace Plumbing", contactName: "Pat Jones", contactEmail: "pat@ace.test", scheduleImpactDays: null });
     const test = await seedProject({ test: true });
     expect((await draftChangeOrder(e, { ...base, projectId: test.project.id, hours: 1 })).test).toBe(true);
   });
@@ -150,7 +150,7 @@ describe("unlocking", () => {
     await afterSigned(e, s.id, NOW);
     expect((await tasksOf(s.project.id, s.id)).map((t) => t.status)).toEqual(["locked", "locked"]);
     expect(await unlockIfReady(e, s.id, NOW)).toBe(0);
-    expect(await logs(s.businessId, "change_order_signed")).toEqual(["SL-ABCDEF-CO1 signed by Pat Jones"]);
+    expect(await logs(s.businessId, "change_order_signed")).toEqual([`SL-ABCDEF-BUILD-CO1 (${s.id.slice(0, 8)}) signed by Pat Jones`]);
   });
 
   it("afterSigned logs once however often it runs", async () => {
@@ -196,7 +196,7 @@ describe("unlocking", () => {
     expect(again).toMatchObject({ paidAt: NOW.toISOString(), paidVia: "manual" });
     expect(await unlockIfReady(e, s.id, NOW)).toBe(0);
     expect(changed).toEqual([s.project.id]);
-    expect(await logs(s.businessId, "change_order_paid")).toEqual(["SL-ABCDEF-CO1 paid (outside Stripe)"]);
+    expect(await logs(s.businessId, "change_order_paid")).toEqual([`SL-ABCDEF-BUILD-CO1 (${s.id.slice(0, 8)}) paid (outside Stripe)`]);
     expect((await listComments(env.DB, mine[0].id))).toHaveLength(1);
   });
 
@@ -242,7 +242,7 @@ describe("voiding", () => {
     const mine = await tasksOf(s.project.id, sent.id);
     expect(mine.map((t) => t.status)).toEqual(["skipped", "skipped"]);
     expect((await listComments(env.DB, mine[0].id)).map((c) => [c.author, c.body])).toEqual([["system", "Skipped: the change order was voided (client changed their mind)"]]);
-    expect(await logs(s.businessId, "change_order_void")).toEqual(["SL-ABCDEF-CO1 voided: client changed their mind"]);
+    expect(await logs(s.businessId, "change_order_void")).toEqual([`SL-ABCDEF-BUILD-CO1 (${sent.id.slice(0, 8)}) voided: client changed their mind`]);
     // repeating it changes and logs nothing more
     await voidDraftOrSent(e, sent.id, "client changed their mind", NOW);
     expect(await logs(s.businessId, "change_order_void")).toHaveLength(1);
@@ -289,5 +289,65 @@ describe("changeOrderLink", () => {
     expect(changeOrderLink(e, sent)).toBe(`https://clients.hellositeline.test/c/${sent.token}`);
     expect(changeOrderLink({ ...e, CLIENT_LINK_BASE: "" } as Env, sent)).toBeNull();
     expect(changeOrderLink({ ...e, CLIENT_LINK_BASE: "https://x.workers.dev" } as Env, sent)).toBeNull();
+  });
+});
+
+describe("references are unique across a sale's projects", () => {
+  it("two projects from one proposal each draft an order with their own reference, and both signed lines survive", async () => {
+    const build = await seedProject();
+    const care = await secondProject(build, { templateKey: "CARE-0", kind: "care_onboarding" });
+    const custom = await secondProject(build, { templateKey: null, kind: "custom" });
+    const a = await draftChangeOrder(e, { ...base, projectId: build.project.id, hours: 1 });
+    const b = await draftChangeOrder(e, { ...base, projectId: care.id, hours: 1 });
+    const c = await draftChangeOrder(e, { ...base, projectId: custom.id, hours: 1 });
+    expect([a, b, c].map((x) => x.content.reference)).toEqual(["SL-ABCDEF-BUILD-CO1", "SL-ABCDEF-CARE0-CO1", "SL-ABCDEF-CUSTOM-CO1"]);
+    expect([a, b, c].map((x) => x.seq)).toEqual([1, 1, 1]);
+    for (const x of [a, b]) {
+      const sent = await seal(x);
+      expect(await signChangeOrder(env.DB, sent.id, clientSig(sent.contentSha256!), NOW.toISOString())).toBe("signed");
+      await afterSigned(e, sent.id, NOW);
+      await markChangeOrderPaid(e, sent.id, { via: "manual", now: NOW });
+    }
+    const signed = await logs(build.businessId, "change_order_signed");
+    expect(signed.filter((l) => l.startsWith("SL-ABCDEF-BUILD-CO1"))).toHaveLength(1);
+    expect(signed.filter((l) => l.startsWith("SL-ABCDEF-CARE0-CO1"))).toHaveLength(1);
+    const paid = await logs(build.businessId, "change_order_paid");
+    expect(paid.filter((l) => /CARE0-CO1|BUILD-CO1/.test(l))).toHaveLength(2);
+  });
+
+  it("two orders with the same reference text can still not merge: the order's id is in every line", async () => {
+    const s = await seedProject();
+    const a = await draftChangeOrder(e, { ...base, projectId: s.project.id, hours: 1 });
+    const b = await draftChangeOrder(e, { ...base, projectId: s.project.id, hours: 1 });
+    expect(a.content.reference).not.toBe(b.content.reference);
+    await env.DB.prepare(`UPDATE change_orders SET content = ? WHERE id = ?`).bind(JSON.stringify(a.content), b.id).run(); // force the same reference text
+    for (const x of [a, b]) {
+      const sent = await seal((await getChangeOrder(env.DB, x.id))!);
+      await signChangeOrder(env.DB, sent.id, clientSig(sent.contentSha256!), NOW.toISOString());
+      await afterSigned(e, sent.id, NOW);
+    }
+    expect(await logs(s.businessId, "change_order_signed")).toHaveLength(2);
+  });
+});
+
+describe("voiding a dead end", () => {
+  it("a declined order can be voided and its locked tasks are skipped with a note", async () => {
+    const s = await seedProject();
+    const sent = await seal(await draftChangeOrder(e, { ...base, projectId: s.project.id, hours: 1, deliverables: ["One", "Two"] }));
+    expect(await declineChangeOrder(env.DB, sent.id, "too much", NOW.toISOString())).toBe("declined");
+    expect((await tasksOf(s.project.id, sent.id)).map((t) => t.status)).toEqual(["locked", "locked"]);
+    expect((await voidDraftOrSent(e, sent.id, "client said no", NOW)).status).toBe("void");
+    const mine = await tasksOf(s.project.id, sent.id);
+    expect(mine.map((t) => t.status)).toEqual(["skipped", "skipped"]);
+    expect((await listComments(env.DB, mine[0].id)).map((c) => c.body)).toEqual(["Skipped: the change order was voided (client said no)"]);
+  });
+
+  it("an expired order can be voided, and until then its tasks stay locked", async () => {
+    const s = await seedProject();
+    const sent = await seal(await draftChangeOrder(e, { ...base, projectId: s.project.id, hours: 1 }), new Date(NOW_ISO));
+    await expireDue(env.DB, "2027-02-01T00:00:00.000Z");
+    expect((await tasksOf(s.project.id, sent.id)).map((t) => t.status)).toEqual(["locked"]);
+    expect((await voidDraftOrSent(e, sent.id, "it lapsed", NOW)).status).toBe("void");
+    expect((await tasksOf(s.project.id, sent.id)).map((t) => t.status)).toEqual(["skipped"]);
   });
 });

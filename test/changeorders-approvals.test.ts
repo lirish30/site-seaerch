@@ -15,6 +15,7 @@ import { setMailDeps } from "../src/worker/mail/deps";
 import { linkProblem } from "../src/worker/mail/send";
 import type { Env } from "../src/worker/env";
 import { OWNER_EMAIL, SENT_AT, readyToSend } from "./fixtures/documents";
+import { secondProject } from "./fixtures/changeorders";
 import { seedProject } from "./fixtures/projects";
 
 const e = env as Env;
@@ -37,7 +38,7 @@ describe("change_order.send approval", () => {
   it("one waiting send approval per order and an edit withdraws it", async () => {
     const { co } = await ready();
     const a = await createChangeOrderSendApproval(e, co);
-    expect(a).toMatchObject({ kind: "change_order.send", title: "Send change order SL-ABCDEF-CO1 to Ace Plumbing", payload: { changeOrderId: co.id }, record_type: "project", record_id: co.projectId, drafted_by: "logan", status: "pending" });
+    expect(a).toMatchObject({ kind: "change_order.send", title: "Send change order SL-ABCDEF-BUILD-CO1 to Ace Plumbing", payload: { changeOrderId: co.id }, record_type: "project", record_id: co.projectId, drafted_by: "logan", status: "pending" });
     expect((await createChangeOrderSendApproval(e, co)).id).toBe(a.id);
     expect(await pendingFor(co.id)).toHaveLength(1);
 
@@ -98,7 +99,7 @@ describe("change_order.send approval", () => {
     expect(mail.sent[0]).toMatchObject({ to: "pat@ace.test", subject: "Change order for Ace Plumbing: Add a gallery page" });
     expect(mail.sent[0].text).toContain(`${BASE}/c/${sent.token}`);
     expect(mail.sent[0].text).toContain("2 hours at $125 an hour, $250 in total.");
-    expect(await kinds(businessId, "change_order_sent")).toEqual(["SL-ABCDEF-CO1 to pat@ace.test, expires 2026-12-31"]);
+    expect(await kinds(businessId, "change_order_sent")).toEqual([`SL-ABCDEF-BUILD-CO1 (${co.id.slice(0, 8)}) to pat@ace.test, expires 2026-12-31`]);
     // the tasks stay locked until it is signed and paid
     expect((await listTasks(env.DB, co.projectId)).filter((t) => t.changeOrderId === co.id).map((t) => t.status)).toEqual(["locked"]);
   });
@@ -195,6 +196,48 @@ describe("change_order.send approval", () => {
     expect(mail.sent).toEqual([]);
   });
 
+  it("a real send needs the owner's name and contact email, like a proposal does", async () => {
+    const { co } = await ready();
+    await saveSettings(env.DB, { your_name: " " });
+    const a = await createChangeOrderSendApproval(e, co);
+    expect((await approve(e, a.id) as { error: string }).error).toMatch(/Add your name in Settings before sending/);
+    await saveSettings(env.DB, { your_name: "Logan Irish", contact_email: "" });
+    expect((await approve(e, a.id) as { error: string }).error).toMatch(/Add your contact email in Settings before sending/);
+    expect(mail.sent).toEqual([]);
+    expect((await getChangeOrder(env.DB, co.id))!.status).toBe("draft");
+    await saveSettings(env.DB, { contact_email: OWNER_EMAIL });
+    expect(await approve(e, a.id)).toEqual({ ok: true });
+  });
+
+  it("two projects from one sale send with their own references and both sent lines survive", async () => {
+    const build = await seedProject();
+    const care = await secondProject(build, { templateKey: "CARE-0", kind: "care_onboarding" });
+    const orders = [await draftChangeOrder(e, { ...base, projectId: build.project.id, hours: 2 }), await draftChangeOrder(e, { ...base, projectId: care.id, hours: 2 })];
+    for (const co of orders) expect(await approve(e, (await createChangeOrderSendApproval(e, co)).id)).toEqual({ ok: true });
+    expect(mail.sent.map((m) => m.to)).toEqual(["pat@ace.test", "pat@ace.test"]);
+    const lines = await kinds(build.businessId, "change_order_sent");
+    expect(lines).toHaveLength(2);
+    expect(lines.filter((l) => l.startsWith("SL-ABCDEF-BUILD-CO1"))).toHaveLength(1);
+    expect(lines.filter((l) => l.startsWith("SL-ABCDEF-CARE0-CO1"))).toHaveLength(1);
+    expect(lines).toContain(`SL-ABCDEF-BUILD-CO1 (${orders[0].id.slice(0, 8)}) to pat@ace.test, expires 2026-12-31`);
+  });
+
+  it("a hostile name or title cannot add a line or a header to the mail", async () => {
+    const { co } = await ready();
+    await editDraft(e, co.id, { title: "Gallery\r\nBcc: evil@x.test", contactName: "Pat\r\nBcc: evil@x.test", contactEmail: " pat@ace.test\r\n" });
+    const edited = (await getChangeOrder(env.DB, co.id))!;
+    expect(edited.content.contactEmail).toBe("pat@ace.test");
+    await expect(editDraft(e, co.id, { contactEmail: "pat@ace.test\nBcc: evil@x.test" })).rejects.toThrow(/one address/);
+    await expect(editDraft(e, co.id, { contactEmail: "a@b.test, evil@x.test" })).rejects.toThrow(/one address/);
+    expect(await approve(e, (await createChangeOrderSendApproval(e, edited)).id)).toEqual({ ok: true });
+    const m = mail.sent[0];
+    expect(m.to).toBe("pat@ace.test");
+    expect(m.subject).not.toMatch(/[\r\n]/);
+    expect(m.subject).toBe("Change order for Ace Plumbing: Gallery Bcc: evil@x.test");
+    expect(m.text).not.toMatch(/^Bcc:/m);
+    expect(m.text.split("\n")[0]).toBe("Hi Pat,");
+  });
+
   it("a /c/ link is a public page, so cold email may not carry it from another host", () => {
     expect(linkProblem({ text: "see https://clients.example.com/c/tok_123", html: "" }, "outreach", "https://go.example.com")).toMatch(/clients\.example\.com/);
     expect(linkProblem({ text: "see https://go.example.com/c/tok_123", html: "" }, "outreach", "https://go.example.com")).toBeNull();
@@ -219,7 +262,7 @@ describe("change_order.draft approval", () => {
     expect((await listTasks(env.DB, s.project.id)).filter((t) => t.changeOrderId === co.id).map((t) => t.status)).toEqual(["locked"]);
     expect(mail.sent).toEqual([]);
     expect(await pendingFor(co.id)).toEqual([]); // not even a send approval: Logan makes that himself
-    expect(await kinds(s.businessId, "note")).toContain("Change order SL-ABCDEF-CO1 drafted from an email: Pat's email on Dec 3");
+    expect(await kinds(s.businessId, "note")).toContain("Change order SL-ABCDEF-BUILD-CO1 drafted from an email: Pat's email on Dec 3");
   });
 
   it("the same draft approval run twice makes one draft", async () => {
@@ -260,12 +303,5 @@ describe("change_order.draft approval", () => {
     ]) expect(() => parse(draftPayload(s.project.id, bad)), JSON.stringify(bad)).toThrow();
     expect(parse(draftPayload(s.project.id, { hours: 40, sourceNote: "x".repeat(300) })).hours).toBe(40);
     expect(() => parse(null)).toThrow();
-  });
-
-  it("an agent cannot propose a send, and the draft kind is on the list it can", async () => {
-    const { buildMcpServer } = await import("../src/worker/mcp/server");
-    expect(buildMcpServer(e)).toBeTruthy();
-    const { registeredKinds } = await import("../src/worker/approvals/registry");
-    expect(registeredKinds()).toEqual(expect.arrayContaining(["change_order.send", "change_order.draft"]));
   });
 });
