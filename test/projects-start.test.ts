@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { listActivity } from "../src/worker/db/activity";
-import { createDraft, getDocument, signDocument } from "../src/worker/db/documents";
+import { createDraft, getDocument, setPaid, signDocument } from "../src/worker/db/documents";
 import { insertInvoice, type InvoiceRow } from "../src/worker/db/invoices";
 import { getOnboardingForDeal } from "../src/worker/db/onboardings";
 import { listProjects, setProjectStatus, type Project } from "../src/worker/db/projects";
@@ -12,7 +12,7 @@ import type { ProposalContent } from "../src/worker/documents/proposal";
 import type { Env } from "../src/worker/env";
 import { clearProjectHooksForTests, onProjectDone, onTasksChanged, runProjectDone } from "../src/worker/projects/hooks";
 import { dispatchOnTasksChanged } from "../src/worker/projects/dispatch";
-import { ProjectStartError, startCareWhenDone, startDeferredCare, startProjects, startTestProject } from "../src/worker/projects/start";
+import { ProjectStartError, startCareWhenDone, startDeferredCare, startProjects, startProjectsForPaidDocuments, startTestProject } from "../src/worker/projects/start";
 import { SOP_STEP_KIND } from "../src/worker/queue/sopStep";
 import "../src/worker/queue/kinds";
 import { clientSig, proposal, seedDeal, sendDraft } from "./fixtures/documents";
@@ -223,6 +223,26 @@ describe("starting projects at payment", () => {
     expect(logged).toContain("projects were not started");
     expect(logged).toContain("boom [key]");
     expect(logged).not.toContain(KEY);
+    // Logan sees it on the lead's timeline, with the next step, and without the key.
+    const notes = (await lines(s.businessId, "note")).filter((n) => /projects were not started/.test(n));
+    expect(notes).toEqual(["SL-ABCDEF v1: projects were not started: boom [key]. Use Start projects on the deal, or wait for the daily sweep."]);
+  });
+
+  it("a failed note about a failed start still lets the payment be recorded", async () => {
+    const s = await seed({ packages: [STARTER] });
+    const db = new Proxy(env.DB, {
+      get(target, prop) {
+        if (prop === "prepare") return (sql: string) => {
+          if (/INSERT INTO projects/.test(sql)) throw new Error("boom");
+          if (/INSERT INTO activity/.test(sql)) return { bind: (...a: unknown[]) => { if (a.some((x) => typeof x === "string" && x.includes("projects were not started"))) throw new Error("no notes today"); return target.prepare(sql).bind(...a); } };
+          return target.prepare(sql);
+        };
+        const v = Reflect.get(target, prop);
+        return typeof v === "function" ? v.bind(target) : v;
+      },
+    }) as D1Database;
+    await pay(s, { ...e, DB: db } as Env);
+    expect((await getDocument(env.DB, s.doc.id))!.paidAt).toBeTruthy();
   });
 
   it("no onboarding for the deal still starts the project with onboardingId null", async () => {
@@ -273,5 +293,97 @@ describe("starting projects at payment", () => {
     expect(care.templateKey).toBe("CARE-0");
     expect((await startDeferredCare(e, done))!.id).toBe(care.id);
     expect(await projectsOf(s.businessId)).toHaveLength(2);
+  });
+
+  it("a replay after the primary is already done hands over Care once", async () => {
+    const s = await seed();
+    const [build] = await startProjects(e, s.doc);
+    expect(build.careDeferred).toBe(true);
+    await setProjectStatus(env.DB, build.id, "done"); // finished, but the done hook never ran
+    expect(await keysOf(s.businessId)).toEqual(["BUILD"]);
+    const again = await startProjects(e, s.doc);
+    expect(again.map((p) => p.templateKey)).toEqual(["BUILD", "CARE-0"]);
+    await startProjects(e, s.doc);
+    expect(await keysOf(s.businessId)).toEqual(["BUILD", "CARE-0"]);
+  });
+
+  it("two starts at the same moment leave one project with one set of steps", async () => {
+    const s = await seed({ packages: [STARTER] });
+    const [a, b] = await Promise.all([startProjects(e, s.doc), startProjects(e, s.doc)]);
+    expect(a[0].id).toBe(b[0].id);
+    const ps = await projectsOf(s.businessId);
+    expect(ps).toHaveLength(1);
+    const tasks = await listTasks(env.DB, ps[0].id);
+    expect(new Set(tasks.map((t) => t.stepKey)).size).toBe(tasks.length);
+    expect(tasks.length).toBeGreaterThan(10);
+    expect(await lines(s.businessId, "project_started")).toHaveLength(1);
+  });
+
+  it("the seeds are not inserted again on every start", async () => {
+    const s = await seed({ packages: [QUICK] });
+    await startProjects(e, s.doc);
+    await env.DB.prepare(`UPDATE sop_templates SET name = 'Edited' WHERE key = 'CARE-4'`).run();
+    await startProjects(e, s.doc);
+    expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM sop_templates`).first<{ n: number }>())!.n).toBe(5);
+    await env.DB.prepare(`UPDATE sop_templates SET name = 'Care monthly report' WHERE key = 'CARE-4'`).run();
+  });
+});
+
+describe("startProjectsForPaidDocuments", () => {
+  it("starts projects for real paid documents with none, ignoring test, unpaid and started ones, and a replay creates nothing", async () => {
+    await startProjectsForPaidDocuments(e, NOW); // clear any paid document an earlier test left without a project
+    const stuck = await seed({ packages: [STARTER, CARE] });
+    await setPaid(env.DB, stuck.doc.id, "2026-12-03T09:00:00.000Z");
+    const stuckQuick = await seed({ packages: [QUICK] });
+    await setPaid(env.DB, stuckQuick.doc.id, "2026-12-03T09:00:00.000Z");
+    const unpaid = await seed({ packages: [QUICK] });
+    const testDoc = await seed({ test: true, packages: [QUICK] });
+    await setPaid(env.DB, testDoc.doc.id, "2026-12-03T09:00:00.000Z");
+    const started = await seed({ packages: [QUICK] });
+    await setPaid(env.DB, started.doc.id, "2026-12-03T09:00:00.000Z");
+    await startProjects(e, started.doc);
+    const startedBefore = await projectsOf(started.businessId);
+    const seoOnly = await seed({ packages: [SEO] });
+    await setPaid(env.DB, seoOnly.doc.id, "2026-12-03T09:00:00.000Z");
+
+    expect(await startProjectsForPaidDocuments(e, NOW)).toBe(2);
+    expect(await keysOf(stuck.businessId)).toEqual(["BUILD"]);
+    expect(await keysOf(stuckQuick.businessId)).toEqual(["QUICKFIX"]);
+    expect(await projectsOf(unpaid.businessId)).toEqual([]);
+    expect(await projectsOf(testDoc.businessId)).toEqual([]);
+    expect(await projectsOf(seoOnly.businessId)).toEqual([]);
+    expect((await projectsOf(started.businessId)).map((p) => p.id)).toEqual(startedBefore.map((p) => p.id));
+    expect((await projectsOf(stuck.businessId))[0].careDeferred).toBe(true);
+
+    // A replay finds nothing new (the Local SEO sale is looked at again but starts nothing and notes nothing twice).
+    expect(await startProjectsForPaidDocuments(e, NOW)).toBe(0);
+    expect(await projectsOf(stuck.businessId)).toHaveLength(1);
+    expect(await lines(stuck.businessId, "project_started")).toHaveLength(1);
+    expect(await seoNotes(seoOnly.businessId)).toHaveLength(1);
+  });
+
+  it("one document that fails does not stop the others, and says so on its timeline", async () => {
+    await startProjectsForPaidDocuments(e, NOW);
+    const bad = await seed({ packages: [QUICK] });
+    await setPaid(env.DB, bad.doc.id, "2026-12-03T09:00:00.000Z");
+    const good = await seed({ packages: [QUICK] });
+    await setPaid(env.DB, good.doc.id, "2026-12-03T09:01:00.000Z");
+    const db = new Proxy(env.DB, {
+      get(target, prop) {
+        if (prop === "prepare") return (sql: string) => {
+          if (/INSERT INTO projects/.test(sql)) return { bind: (...a: unknown[]) => { if (a[1] === bad.businessId) throw new Error("boom"); return target.prepare(sql).bind(...a); } };
+          return target.prepare(sql);
+        };
+        const v = Reflect.get(target, prop);
+        return typeof v === "function" ? v.bind(target) : v;
+      },
+    }) as D1Database;
+    expect(await startProjectsForPaidDocuments({ ...e, DB: db } as Env, NOW)).toBe(1);
+    expect(await projectsOf(bad.businessId)).toEqual([]);
+    expect(await keysOf(good.businessId)).toEqual(["QUICKFIX"]);
+    expect((await lines(bad.businessId, "note")).some((n) => /projects were not started: boom/.test(n))).toBe(true);
+    // The next call, with the database well again, starts it.
+    expect(await startProjectsForPaidDocuments(e, NOW)).toBe(1);
+    expect(await keysOf(bad.businessId)).toEqual(["QUICKFIX"]);
   });
 });

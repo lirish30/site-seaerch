@@ -4,6 +4,7 @@ import { getOnboardingForDeal } from "../db/onboardings";
 import type { PackageKey } from "../db/packages";
 import { createProject, getProject, type Project, type ProjectKind } from "../db/projects";
 import { ensureSeedSops, templatesForPackages } from "../db/sops";
+import { SEED_SOPS } from "../sop/seeds";
 import { listTasks } from "../db/tasks";
 import { BUILD_KEYS } from "../documents/schedule";
 import type { Env } from "../env";
@@ -61,6 +62,13 @@ async function noteMissing(env: Env, doc: Document, names: string[]): Promise<vo
     .catch((e) => console.error("projects: could not note the missing SOP", e instanceof Error ? e.message : "unknown error"));
 }
 
+/** One cheap read: whether every built-in template is already in the database, so the 14 insert batches of `ensureSeedSops` are skipped on every later start. */
+async function seedsPresent(db: D1Database): Promise<boolean> {
+  const keys = SEED_SOPS.map((t) => t.key);
+  const row = await db.prepare(`SELECT COUNT(*) AS n FROM sop_templates WHERE key IN (${keys.map(() => "?").join(", ")})`).bind(...keys).first<{ n: number }>();
+  return (row?.n ?? 0) >= keys.length;
+}
+
 /**
  * Starts the projects for a signed proposal, from the packages the document froze: one primary project (BUILD for a site, else QUICKFIX) and a Care project (CARE-0) unless Care was
  * declined or is not sold. When there is a primary, Care waits (`careDeferred` on the primary) and starts when the primary is done; otherwise Care starts now. A package with no
@@ -71,7 +79,7 @@ async function noteMissing(env: Env, doc: Document, names: string[]): Promise<vo
 export async function startProjects(env: Env, doc: Document, o: { now?: Date } = {}): Promise<Project[]> {
   if (doc.status !== "signed") return [];
   const now = o.now ?? new Date();
-  await ensureSeedSops(env.DB);
+  if (!(await seedsPresent(env.DB))) await ensureSeedSops(env.DB);
   const keys = doc.content.packages.map((p) => p.key);
   const templates = await templatesForPackages(env.DB, keys);
 
@@ -132,4 +140,36 @@ export async function startTestProject(env: Env, dealId: string, o: { now?: Date
   if (!latest) throw new ProjectStartError("There is no signed proposal for this deal yet, so there is nothing to start a project from.");
   if (!latest.test) throw new ProjectStartError("This deal's signed proposal is a real one, so a test project cannot be started from it. Rehearse on a test lead instead.");
   return startProjects(env, latest, o);
+}
+
+/** The most documents one call takes, so a long backlog cannot run a request or a sweep out of time; the rest wait for the next call. */
+const SWEEP_LIMIT = 25;
+
+/**
+ * Starts projects for real, signed documents whose deposit is paid and that have no project at all: the retry for a payment whose start failed (it is never replayed, because the
+ * document is marked paid). Each document is tried on its own, so one failure leaves the rest to go on (it is noted on the lead's timeline and tried again next time). Returns how many
+ * documents got a project. A document that has none to start (a Local SEO sale, whose note is written once) is not counted. Safe to repeat: it finds nothing new the second time.
+ */
+export async function startProjectsForPaidDocuments(env: Env, now: Date = new Date()): Promise<number> {
+  const ids = (await env.DB.prepare(
+    `SELECT d.id FROM documents d WHERE d.status = 'signed' AND d.test = 0 AND d.paid_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM projects p WHERE p.document_id = d.id)
+     ORDER BY d.paid_at, d.id LIMIT ?`,
+  ).bind(SWEEP_LIMIT).all<{ id: string }>()).results;
+  let started = 0;
+  for (const { id } of ids) {
+    try {
+      const doc = await getDocument(env.DB, id);
+      if (doc && (await startProjects(env, doc, { now })).length) started++;
+    } catch (e) {
+      const raw = e instanceof Error ? e.message : "unknown error";
+      const key = env.STRIPE_SECRET_KEY;
+      const reason = (key ? raw.split(key).join("[key]") : raw).replace(/\s+/g, " ").trim().slice(0, 200);
+      console.error("projects: could not start the projects for a paid document", reason);
+      try {
+        const doc = await getDocument(env.DB, id);
+        if (doc) await logActivityOnce(env.DB, doc.businessId, "note", `${doc.content.header.reference} v${doc.version}: projects were not started: ${reason}. Use Start projects on the deal, or wait for the daily sweep.`);
+      } catch { /* the note is best effort */ }
+    }
+  }
+  return started;
 }

@@ -216,7 +216,14 @@ export async function onInvoicePaid(env: Env, inv: InvoiceRow): Promise<void> {
     catch (e) { console.error("deposit: onboarding was not started", safeReason(e, env.STRIPE_SECRET_KEY)); }
     // The projects come from the same signed document. Their own try: a failure here neither stops the payment nor the onboarding that has already started.
     try { await startProjects(env, doc); }
-    catch (e) { console.error("deposit: projects were not started", safeReason(e, env.STRIPE_SECRET_KEY)); }
+    catch (e) {
+      const reason = safeReason(e, env.STRIPE_SECRET_KEY);
+      console.error("deposit: projects were not started", reason);
+      // The payment is recorded below and never replayed, so Logan must be told on the lead's timeline, where the next step is. Its own try: a note that cannot be written changes nothing.
+      try {
+        await logActivityOnce(env.DB, doc.businessId, "note", `${doc.content.header.reference} v${doc.version}: projects were not started: ${reason}. Use Start projects on the deal, or wait for the daily sweep.`);
+      } catch (e2) { console.error("deposit: could not note that projects were not started", safeReason(e2, env.STRIPE_SECRET_KEY)); }
+    }
   }
   await setPaid(env.DB, doc.id, inv.paidAt ?? new Date().toISOString());
 }
