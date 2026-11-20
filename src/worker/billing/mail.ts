@@ -6,7 +6,9 @@ import { getDocument, type Document } from "../db/documents";
 import type { InvoiceRow } from "../db/invoices";
 import { getOnboarding } from "../db/onboardings";
 import { pocFor } from "../db/people";
+import { getPackage } from "../db/packages";
 import { getProject } from "../db/projects";
+import type { Subscription } from "../db/subscriptions";
 import { parseSignature } from "../email/signature";
 import type { Env } from "../env";
 import type { Settings } from "../types";
@@ -16,7 +18,7 @@ export interface InvoiceMail { subject: string; body: string }
 const oneLine = (s: string) => s.replace(/\s+/g, " ").trim();
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 /** "2026-12-10" -> "December 10, 2026" (the date is a calendar date: no time zone moves it). */
-const longDate = (d: string): string => {
+export const longDate = (d: string): string => {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d);
   return m ? `${MONTHS[Number(m[2]) - 1]} ${Number(m[3])}, ${m[1]}` : d;
 };
@@ -48,6 +50,44 @@ export function renderInvoiceMail(inv: InvoiceRow, link: string, c: { clientName
   return { subject: `Invoice for ${client}: ${what}`.slice(0, 200), body };
 }
 
+export interface SubscriptionLinkMail { subject: string; body: string }
+
+/**
+ * The mail that carries a subscription's link (the client's own page, where they start the monthly payment through Stripe's Checkout): the same words for every client, a fixed template,
+ * nothing written by a model. It says the plan, the monthly price, the date of the first payment and the term when there is one. What a person typed (the client's and the contact's names,
+ * the plan's name) is shown as typed, on one line and capped; the sender escapes it.
+ */
+export function renderSubscriptionLink(
+  sub: Pick<Subscription, "monthlyCents" | "firstChargeOn" | "termMonths">, link: string,
+  c: { clientName: string; contactName: string; yourName: string; planName: string },
+): SubscriptionLinkMail {
+  const first = oneLine(c.contactName).split(" ")[0].slice(0, 60);
+  const client = oneLine(c.clientName).slice(0, 120);
+  const plan = oneLine(c.planName).slice(0, 120);
+  const amount = [
+    `Amount: ${dollars(sub.monthlyCents)} a month.`,
+    sub.firstChargeOn ? `The first payment is on ${longDate(sub.firstChargeOn)}.` : "",
+    sub.termMonths ? `The term is ${sub.termMonths} months.` : "",
+  ].filter(Boolean).join(" ");
+  const body = [
+    first ? `Hi ${first},` : "Hi,",
+    `Here is the link to set up the monthly payment for ${client}: ${plan}.`,
+    amount,
+    "You can set it up online, by card or bank transfer, here:",
+    link,
+    "Reply to this email if you have a question.",
+    ["Thanks,", oneLine(c.yourName)].filter(Boolean).join("\n"),
+  ].join("\n\n");
+  return { subject: `Your monthly ${plan} plan for ${client}`.slice(0, 200), body };
+}
+
+/** The name of the plan as the client signed it (the frozen schedule line), else the catalog's name for that version, else a plain word. */
+export async function subscriptionPlanName(env: Env, sub: Pick<Subscription, "documentId" | "packageKey" | "packageVersion">): Promise<string> {
+  const doc = await getDocument(env.DB, sub.documentId);
+  const line = doc?.content.schedule.recurring.find((r) => r.key === sub.packageKey);
+  return oneLine(line?.name ?? (await getPackage(env.DB, sub.packageKey, sub.packageVersion))?.name ?? "Subscription");
+}
+
 /** Who an invoice goes to. `to` is a single, plain address. */
 export interface Recipient { to: string; clientName: string; contactName: string }
 
@@ -65,7 +105,7 @@ export const NO_RECIPIENT = "This invoice has nobody to go to: add a contact ema
  * Where an invoice goes: the contact on the invoice's signed document, else on the document the project's onboarding was made from, else the contact from the discovery call booking,
  * else the lead's point of contact. Throws a plain sentence when there is none. Nothing is sent here.
  */
-export async function invoiceRecipient(env: Env, inv: InvoiceRow): Promise<Recipient> {
+export async function invoiceRecipient(env: Env, inv: Pick<InvoiceRow, "documentId" | "projectId" | "businessId">): Promise<Recipient> {
   const db = env.DB;
   const hit = fromDocument(inv.documentId ? await getDocument(db, inv.documentId) : null);
   if (hit) return hit;

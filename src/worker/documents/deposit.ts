@@ -10,6 +10,7 @@ import { startProjects } from "../projects/start";
 import { stopOutreach } from "../sequence/stop";
 import { StripeError, createDepositInvoice, retrieveInvoice, stripeMode } from "../stripe/client";
 import { ensureStripeCustomer } from "../billing/customer";
+import { planSubscriptions } from "../billing/subscriptions";
 import { paidProblem } from "../stripe/webhook";
 
 /** What the client's page says about the deposit. */
@@ -230,6 +231,14 @@ export async function onInvoicePaid(env: Env, inv: InvoiceRow): Promise<void> {
       try {
         await logActivityOnce(env.DB, doc.businessId, "note", `${doc.content.header.reference} v${doc.version}: projects were not started: ${reason}. Use Start projects on the deal, or wait for the daily sweep.`);
       } catch (e2) { console.error("deposit: could not note that projects were not started", safeReason(e2, env.STRIPE_SECRET_KEY)); }
+    }
+    // The subscriptions the document sold are planned (one row each, nothing proposed or made at Stripe). Their own try, like the projects': a failure here neither stops the payment nor the rest.
+    try { await planSubscriptions(env, doc); }
+    catch (e) {
+      const reason = safeReason(e, env.STRIPE_SECRET_KEY);
+      console.error("deposit: subscriptions were not planned", reason);
+      try { await logActivityOnce(env.DB, doc.businessId, "note", `${doc.content.header.reference} v${doc.version}: subscriptions were not planned: ${reason}. The monthly plans for this client need planning by hand.`); }
+      catch (e2) { console.error("deposit: could not note that subscriptions were not planned", safeReason(e2, env.STRIPE_SECRET_KEY)); }
     }
   }
   await setPaid(env.DB, doc.id, inv.paidAt ?? new Date().toISOString());

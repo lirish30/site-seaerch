@@ -2,9 +2,10 @@ import { env } from "cloudflare:test";
 import { expect } from "vitest";
 import { createDraft, setPaid, signDocument } from "../../src/worker/db/documents";
 import { attachStripeInvoice, getInvoice, insertDraftInvoice, type InvoiceKind, type InvoiceLine, type InvoiceRow } from "../../src/worker/db/invoices";
-import { listCurrentPackages, snapshotOf } from "../../src/worker/db/packages";
+import { listCurrentPackages, snapshotOf, type PackageKey } from "../../src/worker/db/packages";
 import { createProject } from "../../src/worker/db/projects";
 import { paymentSchedule } from "../../src/worker/documents/schedule";
+import type { Option } from "../../src/worker/sales/options";
 import { PROPOSAL_OPTIONS, clientSig, proposal, seedDeal, sendDraft } from "./documents";
 import { invoiceEvent } from "./stripe";
 
@@ -65,4 +66,30 @@ export async function openInvoice(draft: InvoiceRow): Promise<InvoiceRow> {
 /** An invoice.* event for a billing invoice: Stripe echoes back the metadata we set (ref, kind, document). */
 export function refEvent(type: string, inv: InvoiceRow, object: Record<string, unknown> = {}) {
   return invoiceEvent(type, inv, { object: { metadata: { ref: inv.ref, kind: inv.kind, document_id: inv.documentId ?? undefined }, ...object } });
+}
+
+// ---- Task 6: signed documents that sell a subscription ----
+
+/**
+ * A signed document selling exactly these packages (the payment schedule is the catalog's own), paid at `paidAt` unless `paid` is false, with its build project (active) when `build` is set.
+ * `test` makes the document a test copy. The subscriptions are NOT planned: a test calls `planSubscriptions` (or `insertPlanned`) itself.
+ */
+export async function seedSubscriptionDoc(o: { keys: PackageKey[]; test?: boolean; paid?: boolean; paidAt?: string; build?: boolean }) {
+  const s = await seedDeal();
+  const catalog = await listCurrentPackages(env.DB);
+  const option: Option = { id: "b", label: "Plan", tagline: "", items: o.keys.map((key) => ({ key })), recommended: true };
+  const schedule = paymentSchedule(option, catalog.map(snapshotOf));
+  const packages = o.keys.map((key) => { const p = catalog.find((c) => c.key === key)!; return { key, version: p.version, name: p.name, priceLine: "", includes: [] as string[] }; });
+  const content = { ...proposal(), optionId: "b" as const, packages, schedule };
+  const draft = await createDraft(env.DB, { dealId: s.dealId, businessId: s.businessId, optionId: "b", content, test: o.test });
+  const { doc, hash } = await sendDraft(draft.id, content, { expiresAt: FAR });
+  expect(await signDocument(env.DB, doc.id, clientSig(hash), SIGNED_AT)).toBe("signed");
+  if (o.paid !== false) await setPaid(env.DB, doc.id, o.paidAt ?? SIGNED_AT);
+  const project = o.build
+    ? (await createProject(env.DB, {
+      businessId: s.businessId, dealId: s.dealId, documentId: doc.id, onboardingId: null, kind: "build", name: "Ace Plumbing: Website build", test: o.test ?? false,
+      templateKey: "BUILD", templateVersion: 1, careDeferred: false, startedAt: SIGNED_AT,
+    })).project
+    : null;
+  return { ...s, documentId: doc.id, project, schedule };
 }
