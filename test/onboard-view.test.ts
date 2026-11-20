@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  canSubmit, checkFile, createPacer, dueLabel, formatBytes, groupByPhase, itemLocked, itemStateLabel, progressLabel, progressPercent, SETTLED_MESSAGE, writeOutcome,
+  canSubmit, checkFile, createPacer, dueLabel, formatBytes, groupByPhase, itemLocked, itemStateLabel, progressLabel, progressPercent, SETTLED_MESSAGE, writeOutcome, LOGIN_MESSAGE,
 } from "../src/client/onboardView";
 
 const LA = "America/Los_Angeles";
@@ -230,5 +230,16 @@ describe("createPacer", () => {
     await clock.sleep(5000);
     expect(await paced(async () => "later")).toBe("later");
     expect(clock.sleeps).toEqual([2500, 5000]);
+  });
+});
+
+describe("a refused secret-shaped answer", () => {
+  it("tells the client plainly to leave out any password or key and just name the provider", () => {
+    const o = writeOutcome(422, { error: "invalid body", fields: ["item1"] }, null, "text");
+    expect(o).toEqual({ kind: "rejected", message: LOGIN_MESSAGE, fields: ["item1"] });
+    expect(LOGIN_MESSAGE).toMatch(/password/);
+    expect(LOGIN_MESSAGE).toMatch(/key/);
+    expect(LOGIN_MESSAGE).toMatch(/name of the company|name the company|just the name/i);
+    expect(LOGIN_MESSAGE).not.toMatch(/DNS|token|payload/i);
   });
 });

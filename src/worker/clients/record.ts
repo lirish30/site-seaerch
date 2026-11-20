@@ -8,11 +8,11 @@ import { listInvoices } from "../db/invoices";
 import { listPeople } from "../db/people";
 import { listProjects } from "../db/projects";
 import { getSettings } from "../db/settings";
-import { latestOnboardingForBusiness, listItems } from "../db/onboardings";
+import { listItems, listRealOnboardingsForBusiness } from "../db/onboardings";
 import { listAccess, listSites, type AccessItem, type Site } from "../db/sites";
 import { listSubscriptions, type Subscription } from "../db/subscriptions";
 import { zoneOf } from "../sop/cadence";
-import { ACCESS_ITEM_PREFIX } from "../onboarding/templates";
+import { ACCESS_ITEM_PREFIX, cleanText } from "../onboarding/templates";
 import { siteFlags, type SiteFlag } from "../sites/access";
 import type { Activity, Business, Person } from "../types";
 
@@ -144,6 +144,25 @@ const toChangeOrder = (c: ChangeOrder): ClientChangeOrder => ({
   sentAt: c.sentAt, signedAt: c.signedAt, paidAt: c.paidAt, createdAt: c.createdAt,
 });
 
+/** The most the owner's record shows of what a client typed. */
+const ANSWER_MAX = 400;
+
+/**
+ * What the client wrote for each access question, by item key (`access_hosting`...): walking the business's real onboardings (never a rehearsal) newest first, the first
+ * non-empty answer for each key wins, so a newer onboarding without the item does not hide an older answer. Untrusted text, trimmed and cut to `ANSWER_MAX`.
+ */
+async function clientAnswers(db: D1Database, businessId: string): Promise<Map<string, string>> {
+  const found = new Map<string, string>();
+  for (const o of await listRealOnboardingsForBusiness(db, businessId)) {
+    for (const i of await listItems(db, o.id)) {
+      if (i.kind !== "text" || !i.key.startsWith(ACCESS_ITEM_PREFIX) || found.has(i.key)) continue;
+      const text = cleanText(i.textValue ?? "", ANSWER_MAX);
+      if (text) found.set(i.key, text);
+    }
+  }
+  return found;
+}
+
 /** The whole client in one object, or null for an unknown id or a lead that is not (yet) a client. `now` decides which open invoices are overdue, by date in the booking time zone. */
 export async function getClientRecord(db: D1Database, businessId: string, now: Date): Promise<ClientRecord | null> {
   const [business, client] = await Promise.all([getBusiness(db, businessId), isClient(db, businessId)]);
@@ -155,9 +174,7 @@ export async function getClientRecord(db: D1Database, businessId: string, now: D
     listChangeOrdersForBusiness(db, businessId), isOnHold(db, businessId), listActivity(db, businessId), listSites(db, { businessId }),
   ]);
   const care = careLabel(subs);
-  // What the client wrote for each access question, from the business's newest onboarding: one read, shared by every site.
-  const onboarding = sites.length > 0 ? await latestOnboardingForBusiness(db, businessId) : null;
-  const answers = new Map((onboarding ? await listItems(db, onboarding.id) : []).filter((i) => i.kind === "text").map((i) => [i.key, i.textValue?.trim() || null] as const));
+  const answers = sites.length > 0 ? await clientAnswers(db, businessId) : new Map<string, string>();
   const withAccess = await Promise.all(sites.map(async (site) => {
     const items = await listAccess(db, site.id);
     const access = items.map((i) => ({ ...i, clientAnswer: answers.get(`${ACCESS_ITEM_PREFIX}${i.key}`) ?? null }));

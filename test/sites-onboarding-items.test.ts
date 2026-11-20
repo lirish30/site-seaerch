@@ -130,7 +130,9 @@ describe("the client record", () => {
     const s = await seed();
     await putText(s.token, await itemId(s.onboardingId, "access_dns"), "old answer");
     // A later onboarding for the same business (one per deal, so a second deal).
+    await env.DB.prepare(`UPDATE deals SET stage = 'lost' WHERE business_id = ?`).bind(s.businessId).run();
     const deal2 = await createDeal(env.DB, { businessId: s.businessId, source: "manual" });
+    expect(deal2.id).not.toBe(s.dealId);
     const { onboarding: later } = await createOnboarding(env.DB, { businessId: s.businessId, dealId: deal2.id, documentId: s.documentId, kind: "light", test: false, items: itemsFor(["care"]) });
     await env.DB.prepare(`UPDATE onboardings SET created_at = '2999-01-01T00:00:00.000Z' WHERE id = ?`).bind(later.id).run();
     await env.DB.prepare(`UPDATE onboarding_items SET text_value = 'new answer' WHERE onboarding_id = ? AND key = 'access_dns'`).bind(later.id).run();
@@ -144,6 +146,59 @@ describe("the client record", () => {
     await setAccess(env.DB, s.site!.id, "dns", { vaultItem: "Cloudflare - ace", note: "n" }, NOW.toISOString());
     const dns = (await getClientRecord(env.DB, s.businessId, NOW))!.sites[0].access.find((a) => a.key === "dns")!;
     expect(dns).toMatchObject({ clientAnswer: null, vaultItem: "Cloudflare - ace", note: "n", status: "needed" });
+  });
+});
+
+/** Another onboarding for the same business (one per deal), created at `createdAt`, with `answers` stored on its access items by key. */
+async function another(s: { businessId: string; documentId: string }, o: { test: boolean; createdAt: string; keys: PackageKey[]; answers?: Record<string, string> }) {
+  // createDeal hands back the business's open deal, and a deal has one onboarding: close the earlier deals so this one is new.
+  await env.DB.prepare(`UPDATE deals SET stage = 'lost' WHERE business_id = ?`).bind(s.businessId).run();
+  const deal = await createDeal(env.DB, { businessId: s.businessId, source: "manual" });
+  const { onboarding, created } = await createOnboarding(env.DB, { businessId: s.businessId, dealId: deal.id, documentId: s.documentId, kind: "light", test: o.test, items: itemsFor(o.keys) });
+  expect(created).toBe(true);
+  await env.DB.prepare(`UPDATE onboardings SET created_at = ? WHERE id = ?`).bind(o.createdAt, onboarding.id).run();
+  for (const [key, text] of Object.entries(o.answers ?? {})) {
+    await env.DB.prepare(`UPDATE onboarding_items SET text_value = ? WHERE onboarding_id = ? AND key = ?`).bind(text, onboarding.id, key).run();
+  }
+  return onboarding;
+}
+const answerOf = async (businessId: string, key: string) => (await getClientRecord(env.DB, businessId, NOW))!.sites[0].access.find((a) => a.key === key)!.clientAnswer;
+
+describe("which onboarding the answers come from", () => {
+  it("a newer rehearsal (test) onboarding never shadows the real client's answer", async () => {
+    const s = await seed();
+    await putText(s.token, await itemId(s.onboardingId, "access_hosting"), "Real: Bluehost");
+    await another(s, { test: true, createdAt: "2999-01-01T00:00:00.000Z", keys: ["care"], answers: { access_hosting: "Rehearsal: Logan typed this", access_dns: "Rehearsal DNS" } });
+    expect(await answerOf(s.businessId, "hosting")).toBe("Real: Bluehost");
+    expect(await answerOf(s.businessId, "dns")).toBeNull();
+  });
+
+  it("a client whose only onboardings are rehearsals has no answers", async () => {
+    const s = await seedClient();
+    await another(s, { test: true, createdAt: "2027-01-01T00:00:00.000Z", keys: ["care"], answers: { access_hosting: "Rehearsal" } });
+    expect(await answerOf(s.businessId, "hosting")).toBeNull();
+  });
+
+  it("walks real onboardings newest first and takes the first non-empty answer for each key", async () => {
+    const s = await seedClient();
+    await another(s, { test: false, createdAt: "2027-01-01T00:00:00.000Z", keys: ["care"], answers: { access_hosting: "old host", access_dns: "old dns" } });
+    await another(s, { test: false, createdAt: "2027-01-10T00:00:00.000Z", keys: ["care"], answers: { access_hosting: "new host", access_dns: "   " } });
+    // The newest real onboarding is hourly-only: it has no access items at all.
+    await another(s, { test: false, createdAt: "2027-01-20T00:00:00.000Z", keys: ["hourly"] });
+    expect(await answerOf(s.businessId, "hosting")).toBe("new host");
+    expect(await answerOf(s.businessId, "dns")).toBe("old dns");
+    expect(await answerOf(s.businessId, "admin")).toBeNull();
+  });
+
+  it("caps the answer at 400 characters without splitting a surrogate pair", async () => {
+    const s = await seed();
+    const id = await itemId(s.onboardingId, "access_hosting");
+    await env.DB.prepare(`UPDATE onboarding_items SET text_value = ? WHERE id = ?`).bind(`${"a".repeat(399)}\u{1F600}${"b".repeat(50)}`, id).run();
+    const got = (await answerOf(s.businessId, "hosting"))!;
+    expect(got).toBe("a".repeat(399));
+    expect(got.length).toBeLessThanOrEqual(400);
+    await env.DB.prepare(`UPDATE onboarding_items SET text_value = ? WHERE id = ?`).bind("c".repeat(5000), id).run();
+    expect((await answerOf(s.businessId, "hosting"))!.length).toBe(400);
   });
 });
 

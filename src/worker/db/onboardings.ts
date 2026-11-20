@@ -74,10 +74,9 @@ export async function listItems(db: D1Database, id: string): Promise<OnboardingI
   return (await db.prepare(`SELECT * FROM onboarding_items WHERE onboarding_id = ? ORDER BY position, id`).bind(id).all<ItemRow>()).results.map(toItem);
 }
 
-/** The business's most recent onboarding (by creation, newest id breaking a tie), or null. */
-export async function latestOnboardingForBusiness(db: D1Database, businessId: string): Promise<Onboarding | null> {
-  const r = await db.prepare(`SELECT * FROM onboardings WHERE business_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`).bind(businessId).first<Row>();
-  return r ? toOnboarding(r) : null;
+/** The business's real onboardings (rehearsals, `test = 1`, left out), newest first. */
+export async function listRealOnboardingsForBusiness(db: D1Database, businessId: string): Promise<Onboarding[]> {
+  return (await db.prepare(`SELECT * FROM onboardings WHERE business_id = ? AND test = 0 ORDER BY created_at DESC, id DESC`).bind(businessId).all<Row>()).results.map(toOnboarding);
 }
 
 /** The items of every open onboarding, in one query, keyed by onboarding id (each list in checklist order). For a view that reads them all at once. */

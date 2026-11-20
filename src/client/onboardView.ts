@@ -125,7 +125,7 @@ export type Outcome =
 /** What a client is told when they type into an item that was accepted or marked not needed since the page loaded. */
 export const SETTLED_MESSAGE = "This item was already reviewed, so it can't be changed here. Reply to the email if something needs to change.";
 
-const LOGIN_MESSAGE = "This looks like a login or password. Please remove it. We'll ask for access a safer way.";
+export const LOGIN_MESSAGE = "This looks like it has a password, key or login in it. Please take that part out and just write the name of the company or service. We'll ask for access a safer way.";
 
 /** Reads how long a 429 asks us to wait: whole seconds from `Retry-After`, kept between 5 and 60 seconds, 15 when it says nothing usable. */
 function waitFrom(retryAfter: string | null): number {
