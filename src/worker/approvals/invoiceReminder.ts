@@ -2,7 +2,7 @@ import { z } from "zod";
 import { dollars } from "../../client/packagesView";
 import { mainMailboxProblem } from "../booking/mail";
 import { parseBillingConfig } from "../billing/config";
-import { addDays } from "../billing/dates";
+import { addDays, calendarDateIn } from "../billing/dates";
 import { invoiceRecipient, renderReminder, signOff, type ReminderMail } from "../billing/mail";
 import { checkConflict } from "../conflict";
 import { logActivityOnce } from "../db/activity";
@@ -11,7 +11,9 @@ import { getInvoice, type InvoiceRow } from "../db/invoices";
 import { getByApproval } from "../db/messages";
 import { getSettings } from "../db/settings";
 import type { Env } from "../env";
+import { getMailDeps } from "../mail/deps";
 import { sendEmail } from "../mail/send";
+import { zoneOf } from "../sop/cadence";
 import type { Settings } from "../types";
 import { registerHandler } from "./registry";
 
@@ -33,7 +35,8 @@ export function reminderMail(settings: Settings, inv: InvoiceRow, step: number, 
   const cfg = parseBillingConfig(settings.billing_config);
   const pauseOn = addDays(base, cfg.pauseAfterDays);
   const offset = cfg.reminderOffsets[step - 1];
-  const mail = renderReminder(step, Math.max(step, cfg.reminderOffsets.length), inv, link, { contactName, yourName: signOff(settings), pauseOn, ...(offset !== undefined ? { offset } : {}) });
+  const today = calendarDateIn(getMailDeps().now(), zoneOf(settings)); // the mail clock, for the preview and the send alike, so both say the same
+  const mail = renderReminder(step, Math.max(step, cfg.reminderOffsets.length), inv, link, { contactName, yourName: signOff(settings), pauseOn, today, ...(offset !== undefined ? { offset } : {}) });
   return { ...mail, pauseOn };
 }
 

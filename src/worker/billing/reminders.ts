@@ -43,7 +43,7 @@ async function previewOf(env: Env, inv: InvoiceRow, step: number, total: number)
   const preview = [
     toLine, `Subject: ${inv.test ? "[Test] " : ""}${mail.subject}`, "", mail.body, "",
     `Invoice: ${inv.description} (${dollars(inv.amountCents)}), ${inv.status === "failed" ? `payment failed ${inv.failedOn}` : `due ${inv.dueOn}`}`,
-    `Reminder ${step} of ${Math.max(step, total)}; work pauses on ${mail.pauseOn} if it is still unpaid.`,
+    `Reminder ${step} of ${Math.max(step, total)}.`,
     "", "Nothing is mailed until you approve. If the invoice is paid first, approving sends nothing.",
   ].join("\n");
   return { title: `Send reminder ${step} for ${inv.description} to ${clientName}`.replace(/\s+/g, " ").slice(0, 200), preview };

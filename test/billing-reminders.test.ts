@@ -329,6 +329,82 @@ describe("approving a reminder", () => {
   });
 });
 
+describe("the pause sentence", () => {
+  const NOW = "Work on your project cannot continue until this invoice is paid.";
+  /** The mail clock (what a reminder's preview and send read as today), with the same recording sender. */
+  const clock = (day: string) => setMailDeps({ smtp: async (_mb, _pw, msg) => { mail.sent.push(msg); }, now: () => at(day) });
+  async function lastStep() {
+    const s = await sent();
+    expect(await sweepReminders(e, at("2027-01-27"))).toBe(1); // step 4, the last; its pause date is 2027-02-03
+    const [a] = await remindersFor(s.invoice.id);
+    expect(JSON.parse(a.payload).step).toBe(4);
+    return { ...s, approvalId: a.id as string, preview: a.preview as string };
+  }
+
+  it("approving the last step after the pause date says work cannot continue, with no past date", async () => {
+    const s = await lastStep();
+    clock("2027-02-05");
+    expect(await approve(e, s.approvalId)).toEqual({ ok: true });
+    expect(mail.sent[0].text).toContain(NOW);
+    expect(mail.sent[0].text).not.toContain("February 3");
+    expect(mail.sent[0].text).not.toContain("pauses on");
+  });
+
+  it("on the pause date itself it is already present tense", async () => {
+    const s = await lastStep();
+    clock("2027-02-03");
+    expect(await approve(e, s.approvalId)).toEqual({ ok: true });
+    expect(mail.sent[0].text).toContain(NOW);
+    expect(mail.sent[0].text).not.toContain("February 3");
+  });
+
+  it("approving the last step before the pause date still names it", async () => {
+    const s = await lastStep();
+    clock("2027-02-02");
+    expect(await approve(e, s.approvalId)).toEqual({ ok: true });
+    expect(mail.sent[0].text).toContain("pauses on that date");
+    expect(mail.sent[0].text).toContain("February 3, 2027");
+    expect(mail.sent[0].text).not.toContain(NOW);
+  });
+
+  it("the draft preview and the sent mail say the same on the same day, before and after the pause date", async () => {
+    for (const day of ["2027-02-02", "2027-02-05"]) {
+      mail.sent.length = 0;
+      const s = await sent();
+      clock(day);
+      expect(await sweepReminders(e, at(day))).toBe(1);
+      const [a] = await remindersFor(s.invoice.id);
+      expect(JSON.parse(a.payload).step).toBe(4);
+      expect(await approve(e, a.id)).toEqual({ ok: true });
+      const m = mail.sent[0];
+      expect(a.preview).toContain(m.text.split("\n\nThanks,")[0]); // everything up to the sign-off (the sender adds the saved signature after it)
+      expect(a.preview).toContain(`Subject: ${m.subject}`);
+      expect(m.text.includes(NOW)).toBe(day === "2027-02-05");
+    }
+  });
+
+  it("a one-offset ladder of a heads-up never says the project pauses", async () => {
+    await saveSettings(env.DB, { billing_config: JSON.stringify({ reminderOffsets: [-3] }) });
+    const s = await sent();
+    clock("2027-01-17");
+    expect(await sweepReminders(e, at("2027-01-17"))).toBe(1);
+    const [a] = await remindersFor(s.invoice.id);
+    expect(a.preview).not.toMatch(/pause|cannot continue/);
+    expect(await approve(e, a.id)).toEqual({ ok: true });
+    expect(mail.sent[0].text).toContain("coming up");
+    expect(mail.sent[0].text).not.toMatch(/pause|cannot continue/);
+  });
+
+  it("renderReminder: today decides the tense, and a heads-up or due-date step has no pause sentence at all", () => {
+    const i = { id: "i", businessId: "b", dealId: null, documentId: null, projectId: null, changeOrderId: null, subscriptionId: null, kind: "milestone", ref: "r", test: false, description: "Design", lines: [], stripeCustomerId: null, stripeInvoiceId: null, amountCents: 5000, status: "open", hostedUrl: LINK, dueOn: DUE, sentAt: null, failedOn: null, mismatch: null, createdAt: "", paidAt: null } as InvoiceRow;
+    const c = { contactName: "Pat", yourName: "Logan", pauseOn: "2027-02-03", offset: 7 };
+    expect(renderReminder(4, 4, i, LINK, { ...c, today: "2027-02-02" }).body).toContain("pauses on that date");
+    expect(renderReminder(4, 4, i, LINK, { ...c, today: "2027-02-03" }).body).toContain(NOW);
+    expect(renderReminder(4, 4, i, LINK, c).body).toContain("pauses on that date"); // no clock given: the future tense, as before
+    for (const offset of [-3, 0]) expect(renderReminder(1, 1, i, LINK, { ...c, offset, today: "2027-03-01" }).body).not.toMatch(/pause|cannot continue/);
+  });
+});
+
 describe("renderReminder", () => {
   const inv = (o: Partial<InvoiceRow> = {}): InvoiceRow => ({
     id: "i", businessId: "b", dealId: null, documentId: null, projectId: null, changeOrderId: null, subscriptionId: null, kind: "milestone", ref: "r", test: false,
