@@ -13,7 +13,9 @@ import { listTasks } from "../src/worker/db/tasks";
 import type { Env } from "../src/worker/env";
 import { clearProjectHooksForTests } from "../src/worker/projects/hooks";
 import { handleStripeEvent, paidProblem } from "../src/worker/stripe/webhook";
-import { openInvoice, refEvent, seedDoc, seedSignedProject } from "./fixtures/billing";
+import { getTask } from "../src/worker/db/tasks";
+import * as dispatch from "../src/worker/projects/dispatch";
+import { heldClient, openInvoice, prepareDispatch, refEvent, seedDoc, seedSignedProject } from "./fixtures/billing";
 import { clientSig, seal } from "./fixtures/changeorders";
 import { readyToSend } from "./fixtures/documents";
 import { seedProject } from "./fixtures/projects";
@@ -190,6 +192,34 @@ describe("paid invoices of every kind", () => {
     expect(await handleStripeEvent(env, refEvent("invoice.voided", a.invoice), deps)).toBe("applied");
     expect((await byStripe(a.invoice.stripeInvoiceId)).status).toBe("void");
     expect((await activeHolds(env.DB)).map((h) => h.invoiceId)).not.toContain(a.invoice.id);
+  });
+
+  it("a voided invoice at Stripe sends the Claude step that was waiting on its hold at once, and a dispatch failure does not fail the event", async () => {
+    await prepareDispatch();
+    const c = await heldClient();
+    expect((await getTask(env.DB, c.step.id))!.status).toBe("todo");
+    expect(await handleStripeEvent(env, refEvent("invoice.voided", c.invoice), deps)).toBe("applied");
+    expect((await getTask(env.DB, c.step.id))!.status).toBe("in_progress");
+
+    const failing = await heldClient();
+    const spy = vi.spyOn(dispatch, "dispatchReady").mockRejectedValue(new Error("the queue is down"));
+    try { expect(await handleStripeEvent(env, refEvent("invoice.voided", failing.invoice), deps)).toBe("applied"); } finally { spy.mockRestore(); }
+    expect((await byStripe(failing.invoice.stripeInvoiceId)).status).toBe("void");
+    expect((await activeHolds(env.DB)).map((h) => h.invoiceId)).not.toContain(failing.invoice.id);
+    expect(String(errors.mock.calls.at(-1))).toContain("the queue is down");
+  });
+
+  it("an invoice Stripe marks uncollectible lifts its hold and sends the waiting Claude step", async () => {
+    await prepareDispatch();
+    const c = await heldClient();
+    expect(await handleStripeEvent(env, refEvent("invoice.marked_uncollectible", c.invoice), deps)).toBe("applied");
+    expect((await byStripe(c.invoice.stripeInvoiceId)).status).toBe("uncollectible");
+    expect((await activeHolds(env.DB)).map((h) => h.invoiceId)).not.toContain(c.invoice.id);
+    expect((await env.DB.prepare(`SELECT lifted_by FROM billing_holds WHERE invoice_id = ?`).bind(c.invoice.id).first<{ lifted_by: string }>())!.lifted_by).toBe("void");
+    expect((await getTask(env.DB, c.step.id))!.status).toBe("in_progress");
+    // A second delivery changes nothing more.
+    await handleStripeEvent(env, refEvent("invoice.marked_uncollectible", c.invoice), deps);
+    expect((await byStripe(c.invoice.stripeInvoiceId)).status).toBe("uncollectible");
   });
 
   it("a deposit still goes through the deposit's own paid handler", async () => {

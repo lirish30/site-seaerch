@@ -425,7 +425,9 @@ describe("lifting the hold", () => {
     const { invoice } = await held(c);
     await voidSentInvoice(E_TEST, invoice.id);
     expect(await isOnHold(env.DB, c.businessId)).toBe(false);
-    expect(await dispatchReady(e, NOW)).toEqual({ queued: 1 });
+    expect((await getTask(env.DB, c.step.id))!.status).toBe("in_progress"); // the void dispatched it: no sweep needed
+    expect(await jobs()).toHaveLength(1);
+    expect(await dispatchReady(e, NOW)).toEqual({ queued: 0 }); // and a sweep after it finds nothing more to send
   });
 
   it("Logan lifting a hold resumes dispatch", async () => {

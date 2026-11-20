@@ -11,7 +11,9 @@ import { insertEntry, listEntriesForTask } from "../src/worker/db/time";
 import { setStripeFetchForTests } from "../src/worker/documents/deposit";
 import type { Env } from "../src/worker/env";
 import { setMailDeps } from "../src/worker/mail/deps";
-import { openInvoice, seedSignedProject } from "./fixtures/billing";
+import * as dispatch from "../src/worker/projects/dispatch";
+import { getTask } from "../src/worker/db/tasks";
+import { heldClient, openInvoice, prepareDispatch, seedSignedProject } from "./fixtures/billing";
 import { readyToSend } from "./fixtures/documents";
 import { newTask } from "./fixtures/projects";
 import { KEY, stripeApi, stripeError } from "./fixtures/stripe";
@@ -51,6 +53,26 @@ describe("discarding and voiding invoices", () => {
     const ma = await proposeInvoice(E, m.id);
     expect((await discardInvoice(E, m.id)).status).toBe("void");
     expect((await approvalStatus(ma.id)).status).toBe("rejected");
+  });
+
+  it("voiding the invoice that held a client's work lifts the hold and sends the waiting Claude step at once", async () => {
+    await prepareDispatch();
+    const api = stripeApi(); setStripeFetchForTests(api.f);
+    const c = await heldClient();
+    expect((await getTask(env.DB, c.step.id))!.status).toBe("todo");
+    await voidSentInvoice(E, c.invoice.id);
+    expect(await isOnHold(env.DB, c.businessId)).toBe(false);
+    expect((await getTask(env.DB, c.step.id))!.status).toBe("in_progress"); // no sweep ran: the void dispatched it
+  });
+
+  it("a failure dispatching after a void is logged and the void stands", async () => {
+    await prepareDispatch();
+    const api = stripeApi(); setStripeFetchForTests(api.f);
+    const c = await heldClient();
+    const spy = vi.spyOn(dispatch, "dispatchReady").mockRejectedValue(new Error("the queue is down"));
+    try { expect((await voidSentInvoice(E, c.invoice.id)).status).toBe("void"); } finally { spy.mockRestore(); }
+    expect(await isOnHold(env.DB, c.businessId)).toBe(false);
+    expect(String(errors.mock.calls.at(-1))).toContain("the queue is down");
   });
 
   it("voiding an open invoice calls Stripe once and lifts its hold", async () => {

@@ -98,6 +98,21 @@ describe("milestone invoices", () => {
     for (const i of all) expect(await pending(i.id)).toHaveLength(1);
   });
 
+  it("one broken project is logged and the others still get their invoices", async () => {
+    const bad = await seedSignedProject({ option: "c" });
+    const good = await seedSignedProject({ option: "c" });
+    for (const p of [bad, good]) await reachMilestone(env.DB, p.project.id, "site_finished", "2027-01-05T10:00:00.000Z");
+    await env.DB.prepare(`UPDATE documents SET content = 'not json' WHERE id = ?`).bind(bad.documentId).run(); // reading this project's document throws
+    expect(await reconcileMilestones(e)).toBe(1);
+    expect(await forDocument(good.documentId)).toHaveLength(1);
+    expect(await forDocument(bad.documentId)).toHaveLength(0);
+    expect(String(errors.mock.calls.at(-1))).toContain(bad.project.id);
+    // Run again: still one (the good one is not made twice), and the broken one is tried and logged again, never thrown.
+    expect(await reconcileMilestones(e)).toBe(0);
+    expect(await forDocument(good.documentId)).toHaveLength(1);
+    await setProjectStatus(env.DB, bad.project.id, "cancelled"); // the shared storage must not keep a project that cannot be read
+  });
+
   it("the amount is the signed document's even after the catalog price changed", async () => {
     const s = await seedSignedProject();
     const frozen = s.schedule.milestones.find((m) => m.dueOn === "site_finished")!.amountCents;

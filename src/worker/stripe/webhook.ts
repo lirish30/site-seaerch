@@ -1,6 +1,6 @@
 import { mirrorSubscriptionInvoice, subscriptionCheckoutCompleted, subscriptionUpdated } from "../billing/mirror";
 import { calendarDateIn } from "../billing/dates";
-import { liftHoldsForInvoice } from "../db/holds";
+import { liftHoldOfDeadInvoice } from "../billing/lift";
 import { claimEvent, finishEvent, getInvoiceByStripeId, markInvoice, releaseEvent, type InvoiceRow, type InvoiceStatus } from "../db/invoices";
 import { getSettings } from "../db/settings";
 import { markSubscription } from "../db/subscriptions";
@@ -93,8 +93,8 @@ async function applyInvoice(env: Env, event: StripeEvent, deps: StripeDeps, now:
     const failedOn = autopay && event.type === "invoice.payment_failed" ? calendarDateIn(now, zoneOf(await getSettings(env.DB))) : undefined;
     if (!(await markInvoice(env.DB, inv.id, { status: move.to, failedOn }, { notFrom: move.notFrom, failedOnOnce: true }))) return "ignored";
     if (autopay && inv.subscriptionId && event.type === "invoice.payment_failed") await markSubscription(env.DB, inv.subscriptionId, { status: "past_due" }, { from: ["active"] });
-    // A voided invoice can no longer be paid, so it holds nobody's work back.
-    if (event.type === "invoice.voided") await liftHoldsForInvoice(env.DB, inv.id, "void", now.toISOString());
+    // A voided or written-off invoice can no longer be paid, so it holds nobody's work back: the work that was waiting is sent now.
+    if (event.type === "invoice.voided" || event.type === "invoice.marked_uncollectible") await liftHoldOfDeadInvoice(env, inv.id, now);
     return "applied";
   }
 

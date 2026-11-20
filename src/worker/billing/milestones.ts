@@ -41,17 +41,21 @@ export async function milestoneHook(env: Env, p: Project, m: MilestoneKey): Prom
 
 /**
  * The safety net for a hook that never ran or failed: every real, not-cancelled project with a reached milestone and no invoice of that ref gets one (drafted and proposed).
- * A draft that exists, even one whose approval was rejected, is left alone. Returns how many were made.
+ * A draft that exists, even one whose approval was rejected, is left alone. Each project is contained on its own: a failure is logged and the rest go on. Returns how many were made.
  */
 export async function reconcileMilestones(env: Env): Promise<number> {
   let made = 0;
   for (const p of await listProjects(env.DB, { status: ["active", "paused", "done"] })) {
     if (p.test || !p.documentId) continue;
-    for (const { milestone } of await listMilestones(env.DB, p.id)) {
-      const input = await milestoneInput(env, p, milestone);
-      if (!input || (await getInvoiceByRef(env.DB, input.ref))) continue;
-      await draftAndPropose(env, input);
-      made++;
+    // One project that cannot be read or drafted never stops the rest: it is logged (by id only) and tried again at the next sweep.
+    try {
+      for (const { milestone } of await listMilestones(env.DB, p.id)) {
+        const input = await milestoneInput(env, p, milestone);
+        if (!input || (await getInvoiceByRef(env.DB, input.ref))) continue;
+        if ((await draftAndPropose(env, input)).created) made++; // two sweeps at once: only the one that made the draft counts it
+      }
+    } catch (e) {
+      console.error("milestones: could not reconcile project", p.id, e instanceof Error ? e.message : "unknown error");
     }
   }
   return made;

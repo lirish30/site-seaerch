@@ -81,6 +81,7 @@ describe("proposing an invoice", () => {
     const second = await draftAndPropose(e, o);
     expect(first.invoice.id).toBe(second.invoice.id);
     expect(first.approval!.id).toBe(second.approval!.id);
+    expect([first.created, second.created]).toEqual([true, false]); // only the call that made the draft says so
     expect(await waiting(first.invoice.id)).toHaveLength(1);
     await discardDraftInvoice(env.DB, first.invoice.id);
     expect(await draftAndPropose(e, o)).toMatchObject({ invoice: { id: first.invoice.id, status: "void" }, approval: null });

@@ -10,6 +10,7 @@ import { startProjects } from "../projects/start";
 import { stopOutreach } from "../sequence/stop";
 import { StripeError, createDepositInvoice, retrieveInvoice, stripeMode } from "../stripe/client";
 import { ensureStripeCustomer } from "../billing/customer";
+import { liftHoldOfDeadInvoice } from "../billing/lift";
 import { planSubscriptions } from "../billing/subscriptions";
 import { paidProblem } from "../stripe/webhook";
 
@@ -86,8 +87,11 @@ async function settle(env: Env, doc: Document, inv: InvoiceRow, f: Fetch): Promi
         await onInvoicePaid(env, paid);
         return paid;
       }
-    } else if (s.status === "void") await markInvoice(env.DB, inv.id, { status: "void" }, { notFrom: ["paid"] });
-    else if (s.status === "uncollectible") await markInvoice(env.DB, inv.id, { status: "uncollectible" }, { notFrom: ["paid", "void"] });
+    } else if (s.status === "void") {
+      if (await markInvoice(env.DB, inv.id, { status: "void" }, { notFrom: ["paid"] })) await liftHoldOfDeadInvoice(env, inv.id, new Date());
+    } else if (s.status === "uncollectible") {
+      if (await markInvoice(env.DB, inv.id, { status: "uncollectible" }, { notFrom: ["paid", "void"] })) await liftHoldOfDeadInvoice(env, inv.id, new Date());
+    }
   } catch (e) {
     console.error("deposit: could not bring the invoice up to date", safeReason(e, key));
   }

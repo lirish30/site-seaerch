@@ -1,11 +1,11 @@
 import { getInvoice, markInvoice, discardDraftInvoice, type InvoiceRow } from "../db/invoices";
-import { liftHoldsForInvoice } from "../db/holds";
 import { releaseTimeEntries } from "../db/time";
 import { stripeFetch } from "../documents/deposit";
 import type { Env } from "../env";
 import { getMailDeps } from "../mail/deps";
 import { stripeMode, voidInvoice } from "../stripe/client";
 import { SEND_KIND } from "./draft";
+import { liftHoldOfDeadInvoice } from "./lift";
 
 async function need(env: Env, id: string): Promise<InvoiceRow> {
   const inv = await getInvoice(env.DB, id);
@@ -41,7 +41,7 @@ export async function discardInvoice(env: Env, id: string): Promise<InvoiceRow> 
 
 /**
  * Cancels an invoice that was sent and not paid (open or failed): Stripe voids it (one idempotency key per invoice, so a retry replays), then the row becomes void, the time entries it
- * billed are released and its hold, if any, is lifted. A paid invoice is refused with a plain sentence, and a draft is not voided (it is discarded). A Stripe failure changes nothing here,
+ * billed are released and its hold, if any, is lifted (the Claude steps waiting on it are sent at once, best effort). A paid invoice is refused with a plain sentence, and a draft is not voided (it is discarded). A Stripe failure changes nothing here,
  * so the same call can be made again. Repeating it on a void invoice repairs a void that died half-way, without calling Stripe again.
  */
 export async function voidSentInvoice(env: Env, id: string): Promise<InvoiceRow> {
@@ -64,6 +64,6 @@ export async function voidSentInvoice(env: Env, id: string): Promise<InvoiceRow>
     }
   }
   await releaseTimeEntries(db, inv.ref);
-  await liftHoldsForInvoice(db, id, "void", getMailDeps().now().toISOString());
+  await liftHoldOfDeadInvoice(env, id, getMailDeps().now());
   return need(env, id);
 }

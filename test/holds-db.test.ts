@@ -1,14 +1,39 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { activeHolds, holdFreeSql, isOnHold, liftHold, liftHoldsForInvoice, placeHold } from "../src/worker/db/holds";
-import { seedDraft } from "./fixtures/billing";
+import { markInvoice } from "../src/worker/db/invoices";
+import { openInvoice, seedDraft } from "./fixtures/billing";
 
 const NOW = "2026-12-10T10:00:00.000Z";
 const LATER = "2026-12-12T10:00:00.000Z";
 
+/** A real invoice that was sent and is unpaid: the only kind that can be held. */
+const seedOpen = async (o: Parameters<typeof seedDraft>[0] = {}) => { const s = await seedDraft(o); return { ...s, invoice: await openInvoice(s.invoice) }; };
+
 describe("billing holds", () => {
+  it("placeHold for a draft, paid, void or uncollectible invoice makes no row, and for an open or failed one it does", async () => {
+    const rows = async (id: string) => (await env.DB.prepare(`SELECT COUNT(*) AS n FROM billing_holds WHERE invoice_id = ?`).bind(id).first<{ n: number }>())!.n;
+    const draft = await seedDraft();
+    expect(await placeHold(env.DB, { businessId: draft.businessId, invoiceId: draft.invoice.id, now: NOW }), "draft").toBe(false);
+    expect(await rows(draft.invoice.id)).toBe(0);
+    for (const status of ["paid", "void", "uncollectible"] as const) {
+      const s = await seedDraft();
+      const inv = await openInvoice(s.invoice);
+      await markInvoice(env.DB, inv.id, { status }); // a payment or a void that landed after the sweep read its list
+      expect(await placeHold(env.DB, { businessId: s.businessId, invoiceId: inv.id, now: NOW }), status).toBe(false);
+      expect(await rows(inv.id), status).toBe(0);
+    }
+    for (const status of ["open", "failed"] as const) {
+      const s = await seedDraft();
+      const inv = await openInvoice(s.invoice);
+      if (status === "failed") await markInvoice(env.DB, inv.id, { status });
+      expect(await placeHold(env.DB, { businessId: s.businessId, invoiceId: inv.id, now: NOW }), status).toBe(true);
+      expect(await rows(inv.id), status).toBe(1);
+    }
+  });
+
   it("placeHold twice for one invoice makes one", async () => {
-    const s = await seedDraft();
+    const s = await seedOpen();
     expect(await placeHold(env.DB, { businessId: s.businessId, invoiceId: s.invoice.id, now: NOW })).toBe(true);
     expect(await placeHold(env.DB, { businessId: s.businessId, invoiceId: s.invoice.id, now: LATER })).toBe(false);
     const rows = (await env.DB.prepare(`SELECT COUNT(*) AS n FROM billing_holds WHERE invoice_id = ?`).bind(s.invoice.id).first<{ n: number }>())!;
@@ -19,8 +44,8 @@ describe("billing holds", () => {
   });
 
   it("lifting by payment lifts only that invoice's hold", async () => {
-    const a = await seedDraft();
-    const b = await seedDraft({ seed: a });
+    const a = await seedOpen();
+    const b = await seedOpen({ seed: a });
     await placeHold(env.DB, { businessId: a.businessId, invoiceId: a.invoice.id, now: NOW });
     await placeHold(env.DB, { businessId: a.businessId, invoiceId: b.invoice.id, now: NOW });
     expect(await liftHoldsForInvoice(env.DB, a.invoice.id, "payment", LATER)).toBe(1);
@@ -37,8 +62,8 @@ describe("billing holds", () => {
   });
 
   it("isOnHold is true while any hold is open", async () => {
-    const a = await seedDraft();
-    const b = await seedDraft({ seed: a });
+    const a = await seedOpen();
+    const b = await seedOpen({ seed: a });
     expect(await isOnHold(env.DB, a.businessId)).toBe(false);
     await placeHold(env.DB, { businessId: a.businessId, invoiceId: a.invoice.id, now: NOW });
     await placeHold(env.DB, { businessId: a.businessId, invoiceId: b.invoice.id, now: NOW });
@@ -52,8 +77,8 @@ describe("billing holds", () => {
   });
 
   it("activeHolds without a business lists every open hold, oldest first", async () => {
-    const a = await seedDraft();
-    const b = await seedDraft();
+    const a = await seedOpen();
+    const b = await seedOpen();
     await placeHold(env.DB, { businessId: b.businessId, invoiceId: b.invoice.id, now: LATER });
     await placeHold(env.DB, { businessId: a.businessId, invoiceId: a.invoice.id, now: NOW });
     const all = (await activeHolds(env.DB)).filter((h) => h.invoiceId === a.invoice.id || h.invoiceId === b.invoice.id);
@@ -61,8 +86,8 @@ describe("billing holds", () => {
   });
 
   it("holdFreeSql filters a projects query", async () => {
-    const held = await seedDraft();
-    const free = await seedDraft();
+    const held = await seedOpen();
+    const free = await seedOpen();
     const mk = async (businessId: string) => {
       const id = crypto.randomUUID();
       await env.DB.prepare(

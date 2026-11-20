@@ -67,10 +67,10 @@ export async function proposeInvoice(env: Env, invoiceId: string): Promise<Appro
 
 /**
  * Makes the draft invoice (once per `ref`) and puts it up for approval. A second call for the same ref finds the first. `approval` is null when the invoice already existed and is no
- * longer a draft (it has been sent, paid or voided), so there is nothing left to approve.
+ * longer a draft (it has been sent, paid or voided), so there is nothing left to approve. `created` is true only for the call that made the draft.
  */
-export async function draftAndPropose(env: Env, o: Parameters<typeof insertDraftInvoice>[1]): Promise<{ invoice: InvoiceRow; approval: Approval | null }> {
-  const { invoice } = await insertDraftInvoice(env.DB, o);
-  if (invoice.status !== "draft") return { invoice, approval: null };
-  return { invoice, approval: await proposeInvoice(env, invoice.id) };
+export async function draftAndPropose(env: Env, o: Parameters<typeof insertDraftInvoice>[1]): Promise<{ invoice: InvoiceRow; approval: Approval | null; created: boolean }> {
+  const { invoice, created } = await insertDraftInvoice(env.DB, o);
+  if (invoice.status !== "draft") return { invoice, approval: null, created };
+  return { invoice, approval: await proposeInvoice(env, invoice.id), created };
 }

@@ -3,6 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import worker from "../src/worker/index";
 import { listActivity } from "../src/worker/db/activity";
 import { createDraft, getDocument, signDocument, voidDocument } from "../src/worker/db/documents";
+import { isOnHold, placeHold } from "../src/worker/db/holds";
 import { getInvoiceForDocument } from "../src/worker/db/invoices";
 import { ensureDepositInvoice, setStripeFetchForTests } from "../src/worker/documents/deposit";
 import { afterSign, signProposal } from "../src/worker/documents/public";
@@ -309,6 +310,21 @@ describe("POST /api/public/p/:token/pay", () => {
     mode = "void";
     expect(await (await pay(s.token)).json()).toEqual({ state: "unavailable" });
     expect(await getInvoiceForDocument(env.DB, s.doc.id)).toMatchObject({ status: "void" });
+  });
+
+  it("an invoice Stripe reports uncollectible or void lifts its hold when the page brings it up to date", async () => {
+    for (const status of ["uncollectible", "void"] as const) {
+      const api = stripeApi({ invoice: (id) => ({ id, status, amount_due: 0, amount_paid: 0, currency: "usd" }) });
+      setStripeFetchForTests(api.f);
+      const s = await seed();
+      await pay(s.token);
+      const inv = (await getInvoiceForDocument(env.DB, s.doc.id))!;
+      expect(await placeHold(env.DB, { businessId: s.businessId, invoiceId: inv.id, now: "2027-02-03T18:00:00.000Z" }), status).toBe(true);
+      await ageInvoice(s.doc.id);
+      await pay(s.token);
+      expect(await getInvoiceForDocument(env.DB, s.doc.id), status).toMatchObject({ status });
+      expect(await isOnHold(env.DB, s.businessId), status).toBe(false);
+    }
   });
 
   it("is a 404 for anything that is not a signed document, with the same headers as the other public routes", async () => {
