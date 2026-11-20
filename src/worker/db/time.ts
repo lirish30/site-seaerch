@@ -1,4 +1,5 @@
-import { cleanText } from "../onboarding/templates";
+import { cleanText, looksLikeCredential } from "../onboarding/templates";
+import { TaskInputError } from "./tasks";
 
 /** The request cannot be done in the state time is in: a timer already running, a task that is closed, an invoiced entry, a number out of range. The message is a plain sentence. */
 export class TimeStateError extends Error {
@@ -27,7 +28,15 @@ const toEntry = (r: Row): TimeEntry => ({
 
 /** The longest note kept. */
 export const NOTE_MAX = 500;
-const cleanNote = (s: string) => cleanText(s, NOTE_MAX);
+/** Said when a note reads like a login or password; the text itself is never repeated. */
+export const NOTE_CREDENTIAL_REFUSED = "This note looks like a login or password. Never put those in a time note; say where they are stored instead.";
+
+/** The note as it is saved: cleaned and cut to length. A note that reads like a login or password is refused (TaskInputError, a plain 400), whoever wrote it, before anything is written. */
+const cleanNote = (s: string) => {
+  const clean = cleanText(s, NOTE_MAX);
+  if (looksLikeCredential(clean)) throw new TaskInputError(NOTE_CREDENTIAL_REFUSED);
+  return clean;
+};
 
 export async function getEntry(db: D1Database, id: string): Promise<TimeEntry | null> {
   const r = await db.prepare(`SELECT * FROM time_entries WHERE id = ?`).bind(id).first<Row>();

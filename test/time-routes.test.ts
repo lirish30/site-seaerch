@@ -92,6 +92,34 @@ describe("time routes", () => {
     expect(await listEntriesForTask(env.DB, s.task.id)).toHaveLength(2);
   });
 
+  it("a note that reads like a login or password is refused with a plain 400 on every route that takes a note, never echoed, and nothing is saved (M1)", async () => {
+    const s = await seed();
+    const secret = "admin password: hunter2hunter2";
+    const textOf = (r: { body: unknown }) => JSON.stringify(r.body);
+    // a manual entry
+    const add = await json("POST", `/tasks/${s.task.id}/time`, { day: yesterday(), minutes: 5, note: `Site login: ${secret}` });
+    expect(add.status).toBe(400);
+    expect(add.body.error).toMatch(/login or password/);
+    expect(textOf(add)).not.toContain("hunter2");
+    expect(await listEntriesForTask(env.DB, s.task.id)).toEqual([]);
+    // stopping a timer: the timer keeps running
+    await json("POST", `/tasks/${s.task.id}/timer/start`);
+    await env.DB.prepare(`UPDATE time_entries SET started_at = ? WHERE ended_at IS NULL`).bind(new Date(Date.now() - 20 * 60_000).toISOString()).run();
+    const stop = await json("POST", "/timer/stop", { note: secret });
+    expect(stop.status).toBe(400);
+    expect(textOf(stop)).not.toContain("hunter2");
+    expect(await runningEntry(env.DB)).not.toBeNull();
+    expect((await json("POST", "/timer/stop", { note: "wrapped up" })).status).toBe(200);
+    // an edit to a saved entry
+    const [saved] = await listEntriesForTask(env.DB, s.task.id);
+    const patch = await json("PATCH", `/time/${saved.id}`, { note: secret });
+    expect(patch.status).toBe(400);
+    expect(textOf(patch)).not.toContain("hunter2");
+    expect((await getEntry(env.DB, saved.id))!.note).toBe("wrapped up");
+    // a harmless note still saves
+    expect((await json("PATCH", `/time/${saved.id}`, { note: "Where the login is kept: the 1Password item Ace hosting" })).status).toBe(200);
+  });
+
   it("PATCH changes an entry, DELETE removes it, and an invoiced entry cannot be deleted (409)", async () => {
     const s = await seed();
     const mk = (o: { minutes: number }) => insertEntry(env.DB, { taskId: s.task.id, projectId: s.project.id, businessId: s.businessId, startedAt: "2026-12-03T17:00:00.000Z", endedAt: `2026-12-03T17:${String(o.minutes).padStart(2, "0")}:00.000Z`, minutes: o.minutes, billable: true, note: "", source: "manual" });
