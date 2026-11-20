@@ -27,6 +27,7 @@ export default function WorkSidebar() {
       <SideItem to="/projects?view=paused" icon="ban" label="Paused" count={counts?.paused} active={onList && view === "paused"} />
       <SideItem to="/projects?view=done" icon="check" label="Done" count={counts?.done} active={onList && view === "done"} />
       <div className="side-spacer" />
+      <SideItem to="/clients" icon="users" label="Clients" active={pathname === "/clients"} />
       <SideItem to="/billing" icon="card" label="Billing" active={pathname === "/billing"} />
       <SideItem to="/timesheet" icon="calendar" label="Timesheet" active={pathname === "/timesheet"} />
       <div className="side-gap" aria-hidden="true" />

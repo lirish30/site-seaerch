@@ -13,5 +13,6 @@ import "./settings-b.css";
 import "./public.css";
 import "./video.css";
 import "./work.css";
+import "./clients.css";
 
 createRoot(document.getElementById("root")!).render(<BrowserRouter><App /></BrowserRouter>);

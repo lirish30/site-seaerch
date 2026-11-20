@@ -1,0 +1,110 @@
+/* Clients: the list and one client's page. Everything sits under .cl, so nothing here leaks into other pages. */
+.cl { display:flex; flex-direction:column; min-width:0; }
+.cl-body { display:flex; flex-direction:column; gap:14px; padding:16px 28px 32px; min-width:0; }
+.cl h2 { margin:0 0 8px; font-size:15px; line-height:21px; font-weight:600; }
+.cl h3 { margin:0; font-size:15px; line-height:21px; font-weight:600; }
+.cl h4 { margin:0 0 8px; font-size:13px; line-height:19px; font-weight:600; color:var(--text-2); }
+.cl p { overflow-wrap:anywhere; }
+/* Touch targets are at least 44px, and fields are 16px so iOS does not zoom into them. */
+.cl .btn, .cl .btn.sm { min-height:44px; height:auto; padding:0 14px; font-size:14px; line-height:20px; }
+.cl .btn-plain { min-height:44px; }
+.cl input, .cl select, .cl textarea { font-size:16px; min-height:44px; max-width:100%; min-width:0; }
+.cl input[type=checkbox].cb { width:20px; min-height:20px; height:20px; flex:none; margin:0; }
+.cl .seg-pills { flex-wrap:wrap; }
+.cl .seg-pills button { min-height:44px; height:auto; padding:0 14px; font-size:14px; cursor:pointer; }
+.cl .header-actions { display:flex; gap:8px; flex-wrap:wrap; }
+.cl .page-header > div:first-child { flex:1 1 220px; }
+.cl a { overflow-wrap:anywhere; }
+
+/* The list */
+.cl-sum { margin-bottom:2px; }
+.cl-tools { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px 16px; }
+.cl-toggle { display:inline-flex; align-items:center; gap:10px; min-height:44px; font-size:14px; cursor:pointer; }
+.cl-table { width:100%; border-collapse:collapse; background:var(--bg-surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; font-size:14px; }
+.cl-table th, .cl-table td { padding:10px 12px; text-align:left; vertical-align:middle; border-bottom:1px solid var(--border); overflow-wrap:break-word; }
+.cl-table a { overflow-wrap:break-word; }
+.cl-table thead th { white-space:nowrap; font:500 12px/16px var(--font); color:var(--text-3); text-transform:uppercase; letter-spacing:.04em; background:var(--bg-muted); }
+.cl-table tbody tr:last-child > * { border-bottom:0; }
+.cl-table .num { text-align:right; white-space:nowrap; }
+.cl-table tbody th { font-weight:600; }
+.cl-table .cl-name a { display:inline-flex; align-items:center; min-height:44px; color:var(--text); }
+.cl-table .cl-name .badge2 { margin-left:8px; }
+
+/* The header strip of one client */
+.cl-strip { display:flex; flex-wrap:wrap; gap:10px 12px; }
+.cl-chip { display:flex; flex-direction:column; gap:4px; min-width:0; padding:10px 14px; border:1px solid var(--border); border-radius:10px; background:var(--bg-surface); }
+.cl-chip-label { font:500 12px/16px var(--font); color:var(--text-3); text-transform:uppercase; letter-spacing:.04em; }
+.cl-chip-value { display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px; font:600 16px/22px var(--font); overflow-wrap:anywhere; }
+.cl-chip-value .muted { font-weight:400; }
+
+/* Three columns on a desktop, one on anything narrower */
+.cl-cols { display:grid; grid-template-columns:minmax(0, 1.25fr) minmax(0, 1fr) minmax(0, .8fr); gap:16px; align-items:start; }
+.cl-col { display:flex; flex-direction:column; gap:14px; min-width:0; }
+.cl-card { padding:14px; border:1px solid var(--border); border-radius:10px; background:var(--bg-surface); min-width:0; }
+.cl-card > :last-child { margin-bottom:0; }
+.cl-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
+.cl-list li { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; font-size:14px; min-width:0; }
+.cl-list li > a { display:inline-flex; align-items:center; min-height:44px; }
+.cl-linked { display:flex; flex-direction:column; gap:14px; }
+.cl-big { margin:0; font:600 28px/34px var(--font); letter-spacing:-.4px; }
+.cl-people { list-style:none; margin:0 0 10px; padding:0; display:flex; flex-direction:column; gap:10px; }
+.cl-people li { display:flex; flex-wrap:wrap; align-items:center; gap:0 8px; min-width:0; }
+.cl-people-meta { display:flex; flex-wrap:wrap; gap:4px 14px; flex-basis:100%; }
+.cl-people-meta a { display:inline-flex; align-items:center; min-height:44px; }
+
+/* Sites */
+.cl-sites { display:flex; flex-direction:column; gap:14px; min-width:0; }
+.cl-sites > h2 { margin:0; }
+.cl-site { display:flex; flex-direction:column; gap:12px; padding:14px; border:1px solid var(--border); border-radius:10px; background:var(--bg-surface); min-width:0; }
+.cl-site-head { display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px; min-width:0; }
+.cl-site-title { flex:1 1 180px; min-width:0; overflow-wrap:anywhere; }
+.cl-site-links { display:flex; flex-wrap:wrap; gap:4px 14px; flex-basis:100%; }
+.cl-site-links a { display:inline-flex; align-items:center; min-height:44px; }
+.cl-flags { padding:10px 12px; border-radius:8px; border:1px solid var(--warning); background:var(--warning-soft); }
+.cl-flags p { margin:0; color:var(--text); }
+.cl-flags p + p { margin-top:6px; }
+.cl-choices { display:grid; grid-template-columns:repeat(auto-fit, minmax(170px, 1fr)); gap:10px; }
+.cl-fields { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:10px 12px; }
+.cl-fields .deal-field.wide, .cl-fields-msg, .cl-fields-actions { grid-column:1 / -1; }
+.cl-fields-msg { margin:0; }
+.cl-fields-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.cl-fields-actions .btn:last-child { margin-left:auto; }
+.cl-add { display:flex; flex-wrap:wrap; align-items:flex-end; gap:10px; }
+.cl-add .deal-field { flex:1 1 220px; }
+.cl-add-msg { flex-basis:100%; margin:0; }
+.cl .deal-field small { color:var(--text-3); }
+.cl .deal-field small.error { color:var(--critical); }
+
+/* The access checklist */
+.cl-checklist { border-top:1px solid var(--border); padding-top:12px; }
+.cl-access-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px; }
+.cl-access { display:flex; flex-direction:column; gap:6px; padding:10px 12px; border:1px solid var(--border); border-left-width:4px; border-radius:8px; background:var(--bg-surface); min-width:0; }
+.cl-access.warn { border-left-color:var(--warning); }
+.cl-access.good { border-left-color:var(--positive); }
+.cl-access.neutral { border-left-color:var(--border-strong); background:var(--bg-muted); }
+.cl-access-head { display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; }
+.cl-access-name { flex:1 1 140px; min-width:0; }
+.cl-access-status { flex:0 1 190px; }
+.cl-access-help, .cl-access-when { margin:0; }
+.cl-access-form { display:flex; flex-direction:column; gap:10px; }
+.cl-access-save { display:flex; align-items:center; gap:10px; }
+
+/* Wide enough for three columns only on a real desktop; the panel also has a rail and a sidebar. */
+@media (max-width: 1280px) {
+  .cl-cols { grid-template-columns:minmax(0, 1fr); }
+}
+@media (max-width: 640px) {
+  .cl-body { padding:16px; }
+  .cl-chip { flex:1 1 140px; }
+  .cl-site, .cl-card { padding:12px; }
+  /* The table becomes a stack of cards: each cell says what it is. */
+  .cl-table, .cl-table tbody, .cl-table tr, .cl-table th, .cl-table td { display:block; }
+  .cl-table { border:0; background:none; }
+  .cl-table thead { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
+  .cl-table tbody tr { margin-bottom:10px; border:1px solid var(--border); border-radius:10px; background:var(--bg-surface); overflow:hidden; }
+  .cl-table th, .cl-table td { border-bottom:0; padding:6px 12px; }
+  .cl-table td { display:flex; justify-content:space-between; gap:12px; text-align:right; }
+  .cl-table td::before { content:attr(data-label); flex:none; color:var(--text-3); font-size:12px; line-height:20px; text-align:left; text-transform:uppercase; letter-spacing:.04em; }
+  .cl-table .cl-name { padding-top:10px; }
+  .cl-table .num { text-align:right; }
+}

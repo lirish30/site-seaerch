@@ -47,4 +47,13 @@ describe("activityView", () => {
     expect(describeActivity({ kind: "change_order_void", detail: "SL-ABC-CO1 (1a2b3c4d) voided: expired" }).title).toBe("Change order voided");
     expect(describeActivity({ kind: "project_milestone", detail: "design_approved" }).detail).toBe("design_approved");
   });
+
+  it("the site and access kinds read as such, with no more than the server logged", () => {
+    expect(describeActivity({ kind: "site_added", detail: "Site added: example.com" })).toMatchObject({ title: "Site added", detail: "example.com" });
+    expect(describeActivity({ kind: "site_added", detail: "Site added: no domain yet" })).toMatchObject({ title: "Site added", detail: "no domain yet" });
+    expect(describeActivity({ kind: "site_changed", detail: "Site updated: address, host" })).toMatchObject({ title: "Site changed", detail: "address, host" });
+    expect(describeActivity({ kind: "site_changed", detail: "Site archived" })).toMatchObject({ title: "Site archived", detail: null });
+    expect(describeActivity({ kind: "access_changed", detail: "Hosting: requested" })).toMatchObject({ title: "Access changed", detail: "Hosting: requested" });
+    expect(describeActivity({ kind: "access_changed", detail: "DNS: details updated" }).detail).toBe("DNS: details updated");
+  });
 });

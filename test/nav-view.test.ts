@@ -15,3 +15,12 @@ describe("the Projects section", () => {
     expect(sidebarOf("/leads/abc")).toBeNull();
   });
 });
+
+describe("the Clients pages", () => {
+  it("sit in the Projects section: the list has its sidebar, one client's page uses the full width", () => {
+    for (const p of ["/clients", "/clients/abc"]) expect(sectionOf(p), p).toBe("work");
+    expect(sidebarOf("/clients")).toBe("work");
+    expect(sidebarOf("/clients/abc")).toBeNull();
+    expect(sectionOf("/clientsfoo")).toBe("find");
+  });
+});

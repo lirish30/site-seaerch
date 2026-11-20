@@ -81,6 +81,12 @@ export function describeActivity(a: Pick<Activity, "kind" | "detail">): Activity
     case "invoice_sent": return { icon: "send", tone: "info", title: "Invoice sent", detail: d, bubble: false };
     case "invoice_paid": return { icon: "card", tone: "positive", title: "Invoice paid", detail: d, bubble: false };
     case "billing_hold_placed": return { icon: "ban", tone: "warning", title: "Work paused: invoice overdue", detail: d, bubble: false };
+    // The server logs only the words (which field, which status), never an address, a vault item name or a note.
+    case "site_added": return { icon: "globe", tone: "info", title: "Site added", detail: d?.replace(/^Site added:\s*/, "") || null, bubble: false };
+    case "site_changed":
+      if (d === "Site archived") return { icon: "globe", tone: "neutral", title: "Site archived", detail: null, bubble: false };
+      return { icon: "globe", tone: "neutral", title: "Site changed", detail: d?.replace(/^Site updated:\s*/, "") || null, bubble: false };
+    case "access_changed": return { icon: "key", tone: "info", title: "Access changed", detail: d, bubble: false };
     case "snoozed": return { icon: "clock", tone: "neutral", title: "Snoozed", detail: d, bubble: false };
     default: return { icon: "info", tone: "neutral", title: upperFirst(a.kind.replace(/_/g, " ")), detail: d, bubble: false };
   }
