@@ -28,6 +28,10 @@ import Campaigns from "./pages/Campaigns";
 import Pipeline from "./pages/Pipeline";
 import DealPage from "./pages/Deal";
 import DeckPage from "./pages/Deck";
+import Projects from "./pages/Projects";
+import ProjectPage from "./pages/Project";
+import Timesheet from "./pages/Timesheet";
+import TaskRedirect from "./pages/TaskRedirect";
 import NicheTest from "./pages/NicheTest";
 import Google from "./pages/settings/Google";
 import Usage from "./pages/settings/Usage";
@@ -67,6 +71,10 @@ export default function App() {
             <Route path="/pipeline" element={<Pipeline />} />
             <Route path="/deals/:id" element={<DealPage />} />
             <Route path="/deals/:id/deck" element={<DeckPage />} />
+            <Route path="/projects" element={<Projects />} />
+            <Route path="/projects/:id" element={<ProjectPage />} />
+            <Route path="/timesheet" element={<Timesheet />} />
+            <Route path="/tasks/:id" element={<TaskRedirect />} />
             <Route path="/radar" element={<Radar />} />
             <Route path="/niche-test" element={<NicheTest />} />
             <Route path="/settings" element={<SettingsHome />} />

@@ -10,6 +10,8 @@ import { formOf as proposalFormOf, isProposalDirty, type ProposalForm } from "..
 import OnboardingTab from "./OnboardingTab";
 import ProposalTab, { type ProposalData } from "./ProposalTab";
 import { STAGE_LABEL } from "../pipelineView";
+import { dealProjects } from "../projectView";
+import type { ProjectRow } from "../workData";
 import type { Document } from "../../worker/db/documents";
 import type { Deal } from "../../worker/db/deals";
 import type { OnboardingState } from "../../worker/onboarding/owner";
@@ -36,15 +38,18 @@ export default function DealPage() {
   // The onboarding is loaded with the deal so the tab can be offered only when there is something to show (an onboarding, a won deal, or a signed proposal to test with).
   const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
   const [onboardingFailed, setOnboardingFailed] = useState(false);
+  const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [tab, setTab] = useState<Tab | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let live = true;
-    setDeal(null); setLead(null); setForm(null); setProposal(null); setPform(null); setProposalFailed(false); setOnboarding(null); setOnboardingFailed(false); setTab(null); setFailed(false);
+    setDeal(null); setLead(null); setForm(null); setProposal(null); setPform(null); setProposalFailed(false); setOnboarding(null); setOnboardingFailed(false); setProjects([]); setTab(null); setFailed(false);
     api.get<Deal>(`/deals/${id}`).then((d) => {
       if (!live) return;
       setDeal(d);
+      // Projects started from this deal (by its paid deposit, or a test); the link is only offered when there is one.
+      api.get<{ projects: ProjectRow[] }>(`/projects?businessId=${encodeURIComponent(d.businessId)}`).then((r) => { if (live) setProjects(dealProjects(r.projects, d.id)); }).catch(() => {});
       setTab(d.recap ? "recap" : d.stage === "booked" ? "prep" : "notes");
       const ready = (name: string, platform: string | null, findings: { code: string; evidence: string }[]) => {
         if (!live) return;
@@ -98,6 +103,7 @@ export default function DealPage() {
           <p><Link to="/pipeline">Pipeline</Link></p>
           <h1>{lead ? <Link to={`/leads/${deal.businessId}`}>{lead.name}</Link> : "Deal"}</h1>
           <p><span className="badge2 info"><i className="dot" />{STAGE_LABEL[deal.stage]}</span>{deal.lostReason && <> Lost: {deal.lostReason}</>}</p>
+          {projects.length > 0 && <p>{projects.length > 1 && "Projects: "}{projects.map((p, i) => <span key={p.id}>{i > 0 && ", "}<Link to={`/projects/${p.id}`}>{projects.length === 1 ? "Project" : p.name}</Link>{p.test ? " (test)" : ""}</span>)}</p>}
         </div>
       </header>
       <div className="deal-body">

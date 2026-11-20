@@ -68,7 +68,29 @@ describe("approvalLink for a reminder", () => {
   });
 });
 
+describe("approvalLink for projects", () => {
+  it("a step Claude did opens the project that holds it, whether the approval points at the task or the project", () => {
+    const a = { ...item("s", "sop.review", "2026-11-01T00:00:00Z"), record_type: "task", record_id: "task-1" };
+    expect(approvalLink(a)).toEqual({ to: "/tasks/task-1", label: "Open the step" });
+    expect(approvalLink({ ...a, record_type: "project", record_id: "p-1" })).toEqual({ to: "/projects/p-1", label: "Open the project" });
+    expect(approvalLink({ ...a, record_type: "deal" })).toBeNull();
+    expect(approvalLink({ ...a, record_id: null })).toBeNull();
+  });
+  it("a change order to send opens its project on the change orders tab", () => {
+    const a = { ...item("c", "change_order.send", "2026-11-01T00:00:00Z"), record_type: "project", record_id: "p-2" };
+    expect(approvalLink(a)).toEqual({ to: "/projects/p-2?tab=change-orders", label: "Open the change order" });
+    expect(approvalLink({ ...a, record_type: "lead" })).toBeNull();
+    expect(approvalLink({ ...a, record_id: null })).toBeNull();
+  });
+  it("the id is escaped in the path", () => {
+    expect(approvalLink({ ...item("c", "change_order.send", "2026-11-01T00:00:00Z"), record_type: "project", record_id: "a/b" })?.to).toBe("/projects/a%2Fb?tab=change-orders");
+  });
+});
+
 describe("canBulkApprove", () => {
+  it("a change order is sent on its own: he has read it and the legal gate has passed", () => {
+    expect(canBulkApprove("change_order.send")).toBe(false);
+  });
   it("a video is never published by an approve-all: it is watched and approved on its own", () => {
     expect(canBulkApprove("video.publish")).toBe(false);
     expect(canBulkApprove("proposal.send")).toBe(false);

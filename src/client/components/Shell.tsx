@@ -12,6 +12,8 @@ import { SideGroup, SideItem, SideTitle, SidebarCollapse } from "./sidebars/part
 import FindSidebar from "./sidebars/FindSidebar";
 import HomeSidebar from "./sidebars/HomeSidebar";
 import SettingsSidebar from "./sidebars/SettingsSidebar";
+import WorkSidebar from "./sidebars/WorkSidebar";
+import TimerWidget from "./TimerWidget";
 
 /** Anything that changes a lead (a bulk edit, a star, a stage) fires this so the sidebar's counts refresh. */
 export const LEADS_CHANGED = "leads:changed";
@@ -22,6 +24,7 @@ const RAIL: { section: Section; to: string; label: string; icon: IconName }[] = 
   { section: "leads", to: "/leads", label: "Leads", icon: "users" },
   { section: "find", to: "/", label: "Find", icon: "radar" },
   { section: "outreach", to: "/outreach", label: "Outreach", icon: "mail" },
+  { section: "work", to: "/projects", label: "Projects", icon: "briefcase" },
 ];
 
 const STAGES: { key: "new" | "reviewed" | "contacted" | "replied" | "won" | "lost"; label: string; icon: IconName }[] = [
@@ -190,7 +193,7 @@ function useSidebarCollapse() {
   return { collapsed, toggle };
 }
 
-const SIDEBAR_LABEL = { leads: "Leads views", outreach: "Outreach", find: "Find", home: "Home", settings: "Settings" } as const;
+const SIDEBAR_LABEL = { leads: "Leads views", outreach: "Outreach", find: "Find", home: "Home", work: "Projects", settings: "Settings" } as const;
 
 /** Icon rail, the section's sidebar (where it has one) and the floating white content panel. */
 export default function Shell({ children }: { children: ReactNode }) {
@@ -208,6 +211,7 @@ export default function Shell({ children }: { children: ReactNode }) {
           </NavLink>
         ))}
         <div className="rail-spacer" />
+        <TimerWidget />
         <Bell />
         <NavLink to="/settings" className={`rail-btn${section === "settings" ? " active" : ""}`} aria-label="Settings" title="Settings" aria-current={section === "settings" ? "page" : undefined}>
           <Icon name="sliders" size={18} />
@@ -217,7 +221,7 @@ export default function Shell({ children }: { children: ReactNode }) {
       {sidebar && (
         <SidebarCollapse.Provider value={collapse}>
           <div className="sb-wrap">
-            <aside className="sidebar" aria-label={SIDEBAR_LABEL[sidebar]}>{sidebar === "leads" ? <LeadsSidebar /> : sidebar === "outreach" ? <OutreachSidebar /> : sidebar === "home" ? <HomeSidebar /> : sidebar === "settings" ? <SettingsSidebar /> : <FindSidebar />}</aside>
+            <aside className="sidebar" aria-label={SIDEBAR_LABEL[sidebar]}>{sidebar === "leads" ? <LeadsSidebar /> : sidebar === "outreach" ? <OutreachSidebar /> : sidebar === "home" ? <HomeSidebar /> : sidebar === "work" ? <WorkSidebar /> : sidebar === "settings" ? <SettingsSidebar /> : <FindSidebar />}</aside>
             <button type="button" className="sb-edge" tabIndex={-1} aria-hidden="true" title={collapse.collapsed ? "Expand sidebar" : "Collapse sidebar"} onClick={collapse.toggle} />
           </div>
         </SidebarCollapse.Provider>
