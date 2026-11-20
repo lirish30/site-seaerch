@@ -81,6 +81,31 @@ export function renderSubscriptionLink(
   return { subject: `Your monthly ${plan} plan for ${client}`.slice(0, 200), body };
 }
 
+export interface TermNoticeMail { subject: string; body: string }
+
+/**
+ * The mail that tells a client their fixed term is ending: the same words for every client, a fixed template, nothing written by a model. It says the date the term ends, that the site then
+ * moves to Care at the Care monthly price, and that a reply asks for a refresh instead. What a person typed (the client's and the contact's names, the plan's name) is shown as typed, on one
+ * line and capped; the sender escapes it.
+ */
+export function renderTermNotice(
+  sub: Pick<Subscription, "termEndsOn">,
+  c: { clientName: string; contactName: string; yourName: string; planName: string; careMonthlyCents: number },
+): TermNoticeMail {
+  const first = oneLine(c.contactName).split(" ")[0].slice(0, 60);
+  const client = oneLine(c.clientName).slice(0, 120);
+  const plan = oneLine(c.planName).slice(0, 120);
+  const ends = sub.termEndsOn ? longDate(sub.termEndsOn) : "soon";
+  const body = [
+    first ? `Hi ${first},` : "Hi,",
+    `The ${plan} term for ${client} ends on ${ends}.`,
+    `After that it moves to Care, at ${dollars(c.careMonthlyCents)} a month.`,
+    "If you would like a refresh of the site instead, reply to this email and we will talk it through.",
+    ["Thanks,", oneLine(c.yourName)].filter(Boolean).join("\n"),
+  ].join("\n\n");
+  return { subject: `Your ${plan} term for ${client} ends on ${ends}`.slice(0, 200), body };
+}
+
 /** The name of the plan as the client signed it (the frozen schedule line), else the catalog's name for that version, else a plain word. */
 export async function subscriptionPlanName(env: Env, sub: Pick<Subscription, "documentId" | "packageKey" | "packageVersion">): Promise<string> {
   const doc = await getDocument(env.DB, sub.documentId);
