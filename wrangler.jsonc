@@ -24,6 +24,10 @@
     { "name": "BOOKING_LIMITER", "namespace_id": "1002", "simple": { "limit": 30, "period": 60 } },
     { "name": "CLIENT_LIMITER", "namespace_id": "1003", "simple": { "limit": 30, "period": 60 } }
   ],
+  "workers_dev": true,
+  "preview_urls": false,
+  "routes": [{ "pattern": "portal.sitelineweb.com", "custom_domain": true }],
+  "vars": { "CLIENT_LINK_BASE": "https://portal.sitelineweb.com" },
   "triggers": { "crons": ["17 13 * * *", "*/15 * * * *", "*/5 * * * *"] },
   "observability": { "enabled": true }
 }
