@@ -1,3 +1,5 @@
+import { UNBILLED_SQL } from "./time";
+
 export const INVOICE_KINDS = ["deposit", "milestone", "change_order", "hourly", "subscription", "early_exit"] as const;
 export type InvoiceKind = (typeof INVOICE_KINDS)[number];
 /** draft: made but not yet approved, so no Stripe object exists. open: sent through Stripe and unpaid. failed: a payment attempt did not go through (it can still be paid later). */
@@ -115,6 +117,35 @@ export async function insertDraftInvoice(db: D1Database, o: {
   const existing = await getInvoiceByRef(db, o.ref);
   if (!existing) throw new Error(`invoice ${o.ref} was neither created nor found`);
   return { invoice: existing, created: false };
+}
+
+/**
+ * A new draft invoice for a project's un-invoiced billable time, and that time tagged with the invoice's ref, in ONE batch (one transaction). `expect` is what the caller read and priced:
+ * the number of entries and their minutes. The tagging claims every un-invoiced billable entry of the project or none, and only while `expect` still holds and no invoice has the ref yet
+ * (all checked in the statement itself); the invoice is made only when the whole time was claimed. So two requests racing for the same time cannot both bill it. Returns the invoice, or null
+ * when the claim was lost (someone else billed the time, or it changed since it was read: read it again).
+ */
+export async function insertDraftInvoiceClaimingTime(db: D1Database, o: {
+  businessId: string; dealId: string | null; documentId: string | null; projectId: string; kind: "hourly"; ref: string; test: boolean; description: string; lines: InvoiceLine[];
+  expect: { entries: number; minutes: number };
+}): Promise<InvoiceRow | null> {
+  if (o.lines.length === 0 || !o.lines.every((l) => wholeCents(l.amountCents))) throw new RangeError("an invoice line is for a whole, positive number of cents");
+  const amountCents = o.lines.reduce((sum, l) => sum + l.amountCents, 0);
+  if (!wholeCents(amountCents)) throw new RangeError("an invoice is for a whole, positive number of cents");
+  const id = crypto.randomUUID();
+  const mine = `project_id = ? AND ${UNBILLED_SQL}`;
+  const [claim] = await db.batch([
+    db.prepare(
+      `UPDATE time_entries SET invoiced_ref = ? WHERE ${mine} AND NOT EXISTS (SELECT 1 FROM invoices WHERE ref = ?)
+         AND (SELECT COUNT(*) FROM time_entries WHERE ${mine}) = ? AND (SELECT COALESCE(SUM(minutes), 0) FROM time_entries WHERE ${mine}) = ?`,
+    ).bind(o.ref, o.projectId, o.ref, o.projectId, o.expect.entries, o.projectId, o.expect.minutes),
+    db.prepare(
+      `INSERT INTO invoices (id, business_id, deal_id, document_id, project_id, kind, ref, test, description, lines, amount_cents, status, created_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ? WHERE (SELECT COUNT(*) FROM time_entries WHERE invoiced_ref = ?) = ? ON CONFLICT (ref) DO NOTHING`,
+    ).bind(id, o.businessId, o.dealId, o.documentId, o.projectId, o.kind, o.ref, o.test ? 1 : 0, o.description, JSON.stringify(o.lines), amountCents, new Date().toISOString(), o.ref, o.expect.entries),
+  ]);
+  if ((claim.meta.changes ?? 0) !== o.expect.entries) return null;
+  return getInvoice(db, id);
 }
 
 /**

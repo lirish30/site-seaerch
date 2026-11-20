@@ -1,4 +1,5 @@
 import { mainMailboxProblem } from "../booking/mail";
+import { changeOrderRef, invoiceChangeOrder } from "../billing/changeOrderInvoice";
 import { checkConflict } from "../conflict";
 import { lastBookingFor } from "../db/bookings";
 import { logActivityOnce } from "../db/activity";
@@ -9,6 +10,7 @@ import {
 } from "../db/changeOrders";
 import { getDeal } from "../db/deals";
 import { getDocument } from "../db/documents";
+import { getInvoiceByRef } from "../db/invoices";
 import { getPackage } from "../db/packages";
 import { getProject } from "../db/projects";
 import { getSettings } from "../db/settings";
@@ -227,6 +229,22 @@ export async function afterSigned(env: Env, id: string, now: Date): Promise<void
   if (!co || co.status !== "signed") return;
   await logActivityOnce(env.DB, co.businessId, "change_order_signed", `${co.content.reference} (${shortId(co)}) signed by ${oneLine(co.signerName ?? "").slice(0, 80)}`);
   await unlockIfReady(env, id, now);
+  await draftInvoice(env, co.id);
+}
+
+/**
+ * Drafts the signed order's invoice and puts it up for approval, once: a replay (the signing is retried) finds the invoice made and does nothing, so an approval Logan rejected is never
+ * proposed again behind his back. It has its own try, so a failure is logged and never undoes the signature (the invoice can be made by hand later). A refusal (a test order, one paid by
+ * hand, a cancelled project) is the normal answer and is not logged.
+ */
+async function draftInvoice(env: Env, id: string): Promise<void> {
+  try {
+    if (await getInvoiceByRef(env.DB, changeOrderRef(id))) return;
+    await invoiceChangeOrder(env, id);
+  } catch (e) {
+    if (e instanceof ChangeOrderStateError) return;
+    console.error("change order: could not draft the invoice", id, e instanceof Error ? e.message : "unknown error");
+  }
 }
 
 /** The client's link to a sent change order, or null when it has no token yet or the client link base is not set. */
