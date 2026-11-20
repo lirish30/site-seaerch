@@ -104,6 +104,16 @@ describe("change_order.send approval", () => {
     expect((await listTasks(env.DB, co.projectId)).filter((t) => t.changeOrderId === co.id).map((t) => t.status)).toEqual(["locked"]);
   });
 
+  it("a hand-priced order's mail says the hours and the price, not a rate that would not add up (M3)", async () => {
+    const { co } = await ready({ deliverables: ["Build it"] });
+    await editDraft(e, co.id, { priceCents: 20000 });
+    const a = await createChangeOrderSendApproval(e, (await getChangeOrder(env.DB, co.id))!);
+    expect(await approve(e, a.id)).toEqual({ ok: true });
+    const text = mail.sent[0].text as string;
+    expect(text).toContain("It comes to 2 hours, $200 in total.");
+    expect(text).not.toContain("an hour");
+  });
+
   it("a test order mails only the owner with the [Test] prefix, even with the legal review not recorded", async () => {
     mail = await readyToSend({ reviewed: false });
     const { co } = await ready({ test: true });

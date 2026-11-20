@@ -1,4 +1,5 @@
 import { CONSENT_LABEL, ESIGN_DISCLOSURE } from "../worker/documents/consent";
+import { isHandPriced } from "./changeOrderView";
 import { dollars } from "./packagesView";
 import { nameProblem } from "./proposalPageView";
 import type { PublicChangeOrder } from "../worker/changeorders/public";
@@ -8,9 +9,13 @@ import type { PublicChangeOrder } from "../worker/changeorders/public";
 export type { PublicChangeOrder };
 export type ClosedReason = PublicChangeOrder["closedReason"];
 
-/** "1.5 hours × $95 an hour = $142.50". The price is the order's own (a custom price wins over hours times rate). */
+/**
+ * "1.5 hours × $95 an hour = $142.50". The price is the order's own. When it was set by hand (it is not hours times rate) the sum would not add up, so the line shows only the hours
+ * and the price: "3 hours, $200 in total".
+ */
 export function priceLine(hours: number, rateCents: number, priceCents: number): string {
-  return `${hours} ${hours === 1 ? "hour" : "hours"} × ${dollars(rateCents)} an hour = ${dollars(priceCents)}`;
+  const h = `${hours} ${hours === 1 ? "hour" : "hours"}`;
+  return isHandPriced(hours, rateCents, priceCents) ? `${h}, ${dollars(priceCents)} in total` : `${h} × ${dollars(rateCents)} an hour = ${dollars(priceCents)}`;
 }
 
 /** What the change does to the schedule, in a sentence. Nothing known is the same as no change. */

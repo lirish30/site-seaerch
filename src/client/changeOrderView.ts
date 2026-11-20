@@ -25,6 +25,9 @@ export const voidable = (s: ChangeOrderStatus): boolean => s !== "signed" && s !
 /** "1 hour", "0.25 hours", "2.5 hours". */
 export const hoursText = (h: number): string => `${h} ${h === 1 ? "hour" : "hours"}`;
 
+/** Whether the order's price was set by hand: it is not hours times rate, so showing that sum next to it would be wrong. The server's `editDraft` uses the same test. */
+export const isHandPriced = (hours: number, rateCents: number, priceCents: number): boolean => priceCents !== Math.round(hours * rateCents);
+
 /** The price the order will carry, from the hours and the rate unless a price is given, and the sentence that shows the sum. A price equal to the sum is not a custom price. */
 export function pricePreview(hours: number, rateCents: number, override: number | null): { priceCents: number; custom: boolean; line: string } {
   const computed = Math.round(hours * rateCents);

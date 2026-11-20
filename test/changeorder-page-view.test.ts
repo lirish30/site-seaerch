@@ -14,8 +14,12 @@ describe("priceLine", () => {
     expect(priceLine(2, 12500, 25000)).toBe("2 hours × $125 an hour = $250");
   });
 
-  it("shows the stored price, not a recomputed one (a custom price wins)", () => {
-    expect(priceLine(3, 12500, 20000)).toBe("3 hours × $125 an hour = $200");
+  it("shows the stored price, not a recomputed one, and drops the equation when the price was set by hand (M3)", () => {
+    expect(priceLine(3, 12500, 20000)).toBe("3 hours, $200 in total");
+    expect(priceLine(1, 12500, 9000)).toBe("1 hour, $90 in total");
+    // a price that is hours times rate, rounded to the cent, keeps the sum
+    expect(priceLine(0.25, 9999, 2500)).toBe("0.25 hours × $99.99 an hour = $25");
+    expect(priceLine(3, 12500, 37500)).toBe("3 hours × $125 an hour = $375");
   });
 });
 
