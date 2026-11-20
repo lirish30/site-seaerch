@@ -4,6 +4,7 @@ import { verifySession } from "../auth";
 import type { Env } from "../env";
 import { z } from "zod";
 import { BookingFormSchema, bookingPage, cancelByToken, createVisitorBooking } from "../booking/create";
+import { changeOrderPage, declineChangeOrderPublic, signChangeOrderPublic, type ChangeOrderWriteResult } from "../changeorders/public";
 import { publicReport } from "../db/reports";
 import { ensureDepositInvoice } from "../documents/deposit";
 import { SignFormSchema, proposalPage, signProposal, signedProposalFor } from "../documents/public";
@@ -188,6 +189,44 @@ publicRoutes.post("/p/:token/pay", async (c) => {
   if (!TOKEN.test(token)) return c.json(NOT_FOUND, 404);
   const doc = await signedProposalFor(c.env, token);
   return doc ? c.json(await ensureDepositInvoice(c.env, doc.id)) : c.json(NOT_FOUND, 404);
+});
+
+// The client's change-order page (Plan 7) and its two writes. The same 404 for every link that is not live (unknown, malformed, revoked, still a draft), and a malformed token
+// never reaches the database. The token is looked up BEFORE the form is read, so a bad form on a link that is not real is a 404 and never a 400: the body is passed on as it came
+// (not JSON is just a form that fails) and the service decides. A decline needs no body at all.
+publicRoutes.use("/c/:token", clientLimited);
+publicRoutes.use("/c/:token/sign", clientLimited);
+publicRoutes.use("/c/:token/decline", clientLimited);
+
+/** A change-order write's answer: the page, or the status and a fixed message (with the names of the fields that failed, never what was typed). */
+const changeOrderReply = (c: Context, r: ChangeOrderWriteResult) =>
+  r.ok ? c.json(r.page) : r.status === 404 ? c.json(NOT_FOUND, 404) : c.json({ error: r.error, ...(r.fields && { fields: r.fields }) }, r.status);
+
+publicRoutes.get("/c/:token", async (c) => {
+  const token = c.req.param("token");
+  if (!TOKEN.test(token)) return c.json(NOT_FOUND, 404);
+  const page = await changeOrderPage(c.env, token, { now: new Date(), userAgent: c.req.header("user-agent") ?? null });
+  return page ? c.json(page) : c.json(NOT_FOUND, 404);
+});
+
+publicRoutes.post("/c/:token/sign", async (c) => {
+  const token = c.req.param("token");
+  if (!TOKEN.test(token)) return c.json(NOT_FOUND, 404);
+  const read = await readJson(c.req.raw, MAX_SIGN_BYTES);
+  if (!read.ok && read.status === 413) return c.json({ error: "too large" }, 413);
+  const r = await signChangeOrderPublic(c.env, token, read.ok ? read.body : undefined, { now: new Date(), ip: c.req.header("cf-connecting-ip") ?? null, userAgent: c.req.header("user-agent") ?? null });
+  return changeOrderReply(c, r);
+});
+
+publicRoutes.post("/c/:token/decline", async (c) => {
+  const token = c.req.param("token");
+  if (!TOKEN.test(token)) return c.json(NOT_FOUND, 404);
+  const text = await readCapped(c.req.raw, MAX_SIGN_BYTES);
+  if (text === null) return c.json({ error: "too large" }, 413);
+  let reason: unknown;
+  // An empty or unreadable body is a no-thanks without a reason: turning an order down always works.
+  try { const body: unknown = text ? JSON.parse(text) : null; reason = body && typeof body === "object" ? (body as { reason?: unknown }).reason : undefined; } catch { reason = undefined; }
+  return changeOrderReply(c, await declineChangeOrderPublic(c.env, token, reason, new Date()));
 });
 
 // The client's onboarding page (Plan 6): the same 404 for every link that is not live, and a malformed token never reaches the database. Only writes count as
