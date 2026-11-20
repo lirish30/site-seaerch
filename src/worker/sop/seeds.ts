@@ -81,7 +81,7 @@ const BUILD: SopTemplateInput = {
       key: "initial_review", title: "Initial review", steps: [
         { key: "4.1", title: "Record the walkthrough video", owner: L, est: 15, done: "The video runs five minutes or less, explains why the design looks this way, and the link works.", requires: ["3.5"] },
         { key: "4.2", title: "Draft the preview email", owner: CL, est: 10, done: "The email is approved and sent, and it says what happens next for both sides.", requires: ["4.1"], say: "Your design preview is ready to look at" },
-        { key: "4.3", title: "Turn the client's feedback into a task list", owner: C, est: 10, done: "Every comment from the client is a task, or the client has said there are no changes.", requires: ["4.2"] },
+        { key: "4.3", title: "Turn the client's feedback into a task list", owner: L, est: 10, done: "Every comment from the client is a task, or the client has said there are no changes.", requires: ["4.2"] },
         { key: "4.4", title: "Make the revisions", owner: CL, est: 60, done: "Every revision task is closed.", requires: ["4.3"], say: "We're making the changes you asked for" },
         { key: "4.5", title: "Client OK on the design direction", owner: L, est: 10, done: "The client's written OK on the design is logged.", requires: ["4.4"], milestone: "design_approved", say: "We need your OK on the design" },
       ],

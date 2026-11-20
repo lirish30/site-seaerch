@@ -34,4 +34,14 @@ describe("activityView", () => {
     for (const [kind, title] of Object.entries(titles)) expect(describeActivity({ kind: kind as keyof typeof titles, detail: null }).title, kind).toBe(title);
     expect(describeActivity({ kind: "onboarding_waiting", detail: "10 days without a word" })).toMatchObject({ tone: "warning", detail: "10 days without a word" });
   });
+
+  it("the project and change-order kinds read as such", () => {
+    const titles = {
+      project_started: "Project started", project_milestone: "Project milestone", project_done: "Project finished",
+      change_order_sent: "Change order sent", change_order_signed: "Change order signed", change_order_paid: "Change order paid", change_order_void: "Change order voided",
+    } as const;
+    for (const [kind, title] of Object.entries(titles)) expect(describeActivity({ kind: kind as keyof typeof titles, detail: null }).title, kind).toBe(title);
+    expect(describeActivity({ kind: "change_order_void", detail: "client changed their mind" })).toMatchObject({ tone: "warning", detail: "client changed their mind" });
+    expect(describeActivity({ kind: "project_milestone", detail: "design_approved" }).detail).toBe("design_approved");
+  });
 });

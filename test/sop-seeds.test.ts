@@ -66,6 +66,10 @@ describe("SEED_SOPS", () => {
     expect(text("6.2").title).toMatch(/form/i);
   });
 
+  it("the step that turns client feedback into tasks is Logan's, since Claude must not start it before feedback exists", () => {
+    expect(build().steps.find((s) => s.key === "4.3")).toMatchObject({ owner: "logan", title: "Turn the client's feedback into a task list" });
+  });
+
   it("onboarding is one gate step, not the old collect steps", () => {
     const b = build();
     expect(b.steps[0]).toMatchObject({ key: "1.1", title: "Onboarding collected", owner: "logan" });
