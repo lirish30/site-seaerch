@@ -164,6 +164,13 @@ describe("stalled_deal", () => {
     await act(id, "proposal_sent", ago(1), "x");
     expect(await of("stalled_deal")).toEqual([]);
   });
+  it("a project or change order moving along is the owner's own work, not contact with the prospect", async () => {
+    const id = await lead("Project quiet", { status: "contacted", dealValue: 700 });
+    for (const kind of ["project_started", "project_milestone", "project_done", "change_order_sent", "change_order_signed", "change_order_paid", "change_order_void", "change_order_declined"] as const) {
+      await act(id, kind, ago(1), "x");
+    }
+    expect(await of("stalled_deal")).toHaveLength(1);
+  });
   it("a prospect watching the video is engagement, so video_watch does un-stall a deal", async () => {
     const id = await lead("Watched", { status: "contacted", dealValue: 700 });
     await act(id, "video_watch", ago(1), "Watched the video audit");

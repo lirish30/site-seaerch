@@ -24,7 +24,7 @@ const offsetAt = (ms: number, tz: string) => wall(Math.floor(ms / 1000) * 1000, 
  * A wall-clock time that happens twice (fall back) gives the first occurrence. One that never happens (spring forward) gives null,
  * unless `lenient`, which gives the instant the clocks jumped over it (used only for window edges).
  */
-function wallToUtc(dayUtc: number, minutes: number, tz: string, lenient = false): number | null {
+export function wallToUtc(dayUtc: number, minutes: number, tz: string, lenient = false): number | null {
   const guess = dayUtc + minutes * MIN;
   const before = offsetAt(guess - DAY, tz), after = offsetAt(guess + DAY, tz);
   const valid = [...new Set([before, after])].map((o) => guess - o).filter((t) => offsetAt(t, tz) === guess - t);
@@ -32,7 +32,7 @@ function wallToUtc(dayUtc: number, minutes: number, tz: string, lenient = false)
   return lenient ? guess - before : null;
 }
 
-const dayKey = (ms: number, tz: string) => { const w = wall(ms, tz); return `${w.y}-${String(w.m).padStart(2, "0")}-${String(w.d).padStart(2, "0")}`; };
+export const dayKey = (ms: number, tz: string) => { const w = wall(ms, tz); return `${w.y}-${String(w.m).padStart(2, "0")}-${String(w.d).padStart(2, "0")}`; };
 
 /**
  * Every start the booking page may offer, as ascending UTC ISO strings. A start is offered when the whole call sits inside one window

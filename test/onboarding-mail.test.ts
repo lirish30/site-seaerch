@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Onboarding } from "../src/worker/db/onboardings";
 import type { Settings } from "../src/worker/types";
-import { renderFriday, renderReminder, renderWelcome } from "../src/worker/onboarding/mail";
+import { renderFriday, renderReminder, renderWelcome, type FridayCtx } from "../src/worker/onboarding/mail";
 
 const settings = { your_name: "Logan", signature: "", signature_json: "" } as Settings;
 const LINK = "https://go.hellositeline.test/o/" + "t".repeat(43);
@@ -139,6 +139,28 @@ describe("friday", () => {
   it("when the questionnaire is done it does not ask for it", () => {
     const m = renderFriday({ ...fridayCtx, questionnaireDone: true }, LINK, settings).body;
     expect(m.toLowerCase()).not.toMatch(/questionnaire.*(still|not yet)/);
+  });
+
+  it("adds what was done and what is next from the project, and leaves both sections out when there is nothing", () => {
+    const m = renderFriday({ ...fridayCtx, done: ["Your home page is built", "Photos are in"], next: ["Testing your contact form"] }, LINK, settings).body;
+    expect(m).toContain("Done this week:\n- Your home page is built\n- Photos are in");
+    expect(m).toContain("Coming up next:\n- Testing your contact form");
+    expect(m.indexOf("Done this week")).toBeLessThan(m.indexOf("Coming up next"));
+    expect(m.indexOf("Coming up next")).toBeLessThan(m.indexOf("I have received"));
+    const variants: FridayCtx[] = [fridayCtx, { ...fridayCtx, done: [], next: [] }, { ...fridayCtx, done: ["x"], next: [] }, { ...fridayCtx, done: [], next: ["y"] }];
+    for (const c of variants) {
+      const body = renderFriday(c, LINK, settings).body;
+      expect(body.includes("Done this week")).toBe(!!c.done?.length);
+      expect(body.includes("Coming up next")).toBe(!!c.next?.length);
+    }
+  });
+
+  it("the done and next lines are cleaned like every other line, and never carry the client link", () => {
+    const m = renderFriday({ ...fridayCtx, done: [`Logo\u202e ${LINK} in\u0007`], next: ["  \n  "] }, LINK, settings).body;
+    expect(m).toContain("- Logo in");
+    expect(m).not.toContain("\u202e");
+    expect(count(m, LINK)).toBe(1);
+    expect(m).not.toContain("Coming up next");
   });
 
   it("long lists are cut with a count", () => {

@@ -69,6 +69,15 @@ export function describeActivity(a: Pick<Activity, "kind" | "detail">): Activity
     case "onboarding_received": return { icon: "inbox", tone: "positive", title: "Client sent materials", detail: d, bubble: false };
     case "onboarding_waiting": return { icon: "clock", tone: "warning", title: "Waiting on the client", detail: d, bubble: false };
     case "onboarding_resumed": return { icon: "refresh", tone: "positive", title: "Client is back", detail: d, bubble: false };
+    case "project_started": return { icon: "kanban", tone: "info", title: "Project started", detail: d, bubble: false };
+    case "project_milestone": return { icon: "target", tone: "positive", title: "Project milestone", detail: d, bubble: false };
+    case "project_done": return { icon: "check", tone: "positive", title: "Project finished", detail: d, bubble: false };
+    case "change_order_sent": return { icon: "send", tone: "info", title: "Change order sent", detail: d, bubble: false };
+    case "change_order_signed": return { icon: "check", tone: "positive", title: "Change order signed", detail: d, bubble: false };
+    case "change_order_paid": return { icon: "card", tone: "positive", title: "Change order paid", detail: d, bubble: false };
+    // The daily sweep writes "<reference> (<id>): expired"; an owner's void writes "... voided: <reason>".
+    case "change_order_void": return { icon: "ban", tone: "warning", title: d && /\): expired$/.test(d) ? "Change order expired" : "Change order voided", detail: d, bubble: false };
+    case "change_order_declined": return { icon: "ban", tone: "warning", title: "Change order declined", detail: d, bubble: false };
     case "snoozed": return { icon: "clock", tone: "neutral", title: "Snoozed", detail: d, bubble: false };
     default: return { icon: "info", tone: "neutral", title: upperFirst(a.kind.replace(/_/g, " ")), detail: d, bubble: false };
   }

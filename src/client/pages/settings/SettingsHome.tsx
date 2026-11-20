@@ -6,7 +6,7 @@ import SettingsPage from "../../components/SettingsPage";
 import type { WorkSample } from "../../emailView";
 import type { SettingsDoc, UsageRow } from "../../settingsData";
 import {
-  bookingSummary, documentsSummary, hasBuiltSignature, profileMissing, samplesNeeded, setupItems, setupSentence, suppressionWord, voiceSummary,
+  bookingSummary, documentsSummary, hasBuiltSignature, profileMissing, samplesNeeded, setupItems, setupSentence, suppressionWord, voiceSummary, workSummary,
 } from "../../settingsPagesView";
 import type { HelperStatus } from "../../helperView";
 import type { FitProfile, Service, Suppression } from "../../types";
@@ -53,6 +53,8 @@ function chips(d: Data): Record<string, Chip | null> {
     packages: { tone: "", text: "Price catalog" },
     booking: wait(d.doc, () => bookingSummary(String(doc.booking_config ?? ""))),
     documents: wait(d.doc, () => documentsSummary(String(doc.documents_config ?? ""))),
+    sops: { tone: "", text: "Templates" },
+    work: wait(d.doc, () => workSummary(String(doc.work_config ?? ""))),
     security: { tone: "", text: "Passkeys" },
     "voice-test": wait(d.doc, () => (doc.voice_engine ? { tone: "positive", text: "Voice picked" } : doc.voice_ref_key ? { tone: "warning", text: "Run the voice test" } : { tone: "", text: "Not set up" })),
     helper: wait(d.helper, () => ((d.helper as HelperStatus).online ? { tone: "positive", text: "Online" } : { tone: "", text: "Offline" })),
@@ -82,6 +84,10 @@ const SECTIONS: { name: string; tint: "signal" | "info" | "positive" | "plain"; 
     { slug: "fit-profiles", title: "Fit profiles", icon: "target", text: "Who you want to work with. Drives the Fit score." },
     { slug: "suppressions", title: "Suppressions", icon: "ban", text: "Clients, competitors and opt-outs that never get drafted." },
     { slug: "scores", title: "How scores work", icon: "zap", text: "Plain-English guide to lead score, site health, fit and urgency." },
+  ] },
+  { name: "Projects", tint: "info", cards: [
+    { slug: "sops", title: "SOPs", icon: "list", text: "The step-by-step plans a new project starts from: phases, steps, who does each and what done looks like." },
+    { slug: "work", title: "Work", icon: "clock", text: "Your cost rate, the day the timesheet week starts, and when a forgotten timer is cut off." },
   ] },
   { name: "Account", tint: "plain", cards: [
     { slug: "google", title: "Google", icon: "link", text: "Saving reports to Drive." },

@@ -104,7 +104,7 @@ async function draft(env: Env, o: Onboarding, items: OnboardingItem[], n: Nudge,
   if (!(await recordNudge(db, o.id, n.key, now.toISOString()))) return false; // another sweep has it
   let approvalId: string;
   try {
-    const d = await describeNudge(env, o, items, n.key);
+    const d = await describeNudge(env, o, items, n.key, now);
     const a = await createApproval(db, {
       kind: "onboarding.nudge", title: d.title, preview: d.preview, payload: { onboardingId: o.id, nudgeKey: n.key } satisfies OnboardingNudgePayload,
       record_type: "deal", record_id: o.dealId, drafted_by: "job",

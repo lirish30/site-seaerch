@@ -36,6 +36,10 @@ import { deckRoutes } from "./routes/deck";
 import { bookingRoutes } from "./routes/bookings";
 import { documentRoutes } from "./routes/documents";
 import { onboardingRoutes } from "./routes/onboarding";
+import { projectRoutes } from "./routes/projects";
+import { sopRoutes } from "./routes/sops";
+import { timeRoutes } from "./routes/time";
+import { changeOrderRoutes } from "./routes/changeOrders";
 import { stripeWebhookRoutes } from "./routes/stripeWebhook";
 import "./approvals/leadNote";
 import "./approvals/emailSend";
@@ -43,6 +47,11 @@ import "./approvals/videoPublish";
 import "./approvals/proposalSend";
 import "./approvals/onboardingWelcome";
 import "./approvals/onboardingNudge";
+import "./approvals/sopReview";
+import "./approvals/changeOrderSend";
+import "./approvals/changeOrderDraft";
+import "./projects/dispatch"; // registers the hook that sends the next ready Claude step when a task changes
+import "./projects/start"; // registers the hook that starts Care when the build it waited for is done
 import { mcpRoute } from "./mcp/route";
 import { runScheduled } from "./schedule";
 
@@ -87,6 +96,10 @@ app.route("/api/leads", leadDealRoutes); // /:id/deal
 app.route("/api/bookings", bookingRoutes);
 app.route("/api", documentRoutes); // /deals/:id/proposal, /documents/:id/...
 app.route("/api", onboardingRoutes); // /deals/:id/onboarding..., /onboardings/:id/..., /onboarding-items/:id, /onboarding-files/:id
+app.route("/api", projectRoutes); // /projects..., /tasks..., /me/tasks, /deals/:id/projects/...
+app.route("/api", sopRoutes); // /sops...
+app.route("/api", timeRoutes); // /time..., /timer/stop, /tasks/:id/timer/start, /tasks/:id/time
+app.route("/api", changeOrderRoutes); // /projects/:id/change-orders, /change-orders/:id/...
 // Mounted last at /api: /api/leads/:id/cro-audit(s), /api/cro-items/:id, /api/cro-audits/:id/... (all behind requireAuth).
 app.route("/api", croRoutes);
 // Also mounted at /api: /api/leads/:id/video and /api/video-audits/:id/... (behind requireAuth).

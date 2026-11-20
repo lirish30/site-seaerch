@@ -7,14 +7,15 @@ import type { Approval } from "../db/approvals";
 import { getDocument } from "../db/documents";
 import { getOnboarding, listItems, listNudgeKeys, type Onboarding, type OnboardingItem } from "../db/onboardings";
 import { getSettings } from "../db/settings";
-import { parseConfig } from "../booking/config";
 import { mainMailboxProblem } from "../booking/mail";
 import { clientBase } from "../documents/mail";
 import { getMailDeps } from "../mail/deps";
 import { sendEmail } from "../mail/send";
 import { onboardingLink } from "../onboarding/link";
+import { projectDoneNext } from "../projects/progress";
 import { renderFriday, renderReminder, type OnboardingMail } from "../onboarding/mail";
 import { stageOf } from "../onboarding/schedule";
+import { FALLBACK_ZONE, zoneOf } from "../sop/cadence";
 import { CLIENT_BASE_PROBLEM } from "./onboardingWelcome";
 
 /**
@@ -26,13 +27,10 @@ const Payload = z.object({ onboardingId: z.string().min(1), nudgeKey: z.string()
 export type OnboardingNudgePayload = z.infer<typeof Payload>;
 
 /** The zone Friday and the clause day are counted in when the settings hold one Intl does not know (the booking config's own default). */
-export const FALLBACK_TZ = "America/Los_Angeles";
+export const FALLBACK_TZ = FALLBACK_ZONE;
 
 /** The owner's IANA zone from the booking config, checked with the same Intl call `nudgesDue` uses: an unreadable one gives Los Angeles, not silence. */
-export function ownerZone(settings: Pick<Settings, "booking_config">): string {
-  const tz = parseConfig(settings.booking_config).timezone;
-  try { new Intl.DateTimeFormat("en-US", { timeZone: tz }); return tz; } catch { return FALLBACK_TZ; }
-}
+export const ownerZone = zoneOf;
 
 export type ParsedKey = { kind: "reminder"; level: 1 | 2 | 3 | 4; since: string } | { kind: "friday"; level: null; since: null };
 
@@ -56,28 +54,36 @@ export async function recipientOf(env: Env, o: Onboarding) {
   return { settings, h, to };
 }
 
+/** What the project got done this week and what is next, in the client's own words. A project that cannot be read leaves both out: the rest of the Friday mail still goes. */
+async function doneNext(env: Env, o: Onboarding, now: Date, tz: string): Promise<{ done: string[]; next: string[] }> {
+  try { return await projectDoneNext(env.DB, o.businessId, now, tz); }
+  catch (e) { console.error("onboarding nudge: could not read the project's progress", e instanceof Error ? e.message : "unknown error"); return { done: [], next: [] }; }
+}
+
 /** The mail for one nudge, from the onboarding as it is now. Throws when the client base is not set (there is no link to put in it). */
-export async function buildNudge(env: Env, o: Onboarding, items: OnboardingItem[], key: string) {
+export async function buildNudge(env: Env, o: Onboarding, items: OnboardingItem[], key: string, now: Date = getMailDeps().now()) {
   const n = parseNudgeKey(key);
   if (!n) throw new Error(`unknown nudge key ${key}`);
   const { settings, h, to } = await recipientOf(env, o);
   const link = onboardingLink(clientBase(env) ?? undefined, o.token);
   if (!link) throw new Error(CLIENT_BASE_PROBLEM);
   const names = { clientName: h.clientName, contactName: h.contactName };
+  const tz = ownerZone(settings);
   const mail: OnboardingMail = n.kind === "reminder"
-    ? renderReminder(n.level, { ...names, lastClientActivityAt: o.lastClientActivityAt ?? o.welcomeSentAt, tz: ownerZone(settings) }, link, settings)
+    ? renderReminder(n.level, { ...names, lastClientActivityAt: o.lastClientActivityAt ?? o.welcomeSentAt, tz }, link, settings)
     : renderFriday({
       ...names,
       waiting: items.filter((i) => i.status === "waiting").map((i) => i.label),
       received: items.filter((i) => i.status === "received" || i.status === "accepted").map((i) => i.label),
       questionnaireDone: !!o.questionnaireSubmittedAt,
+      ...(await doneNext(env, o, now, tz)),
     }, link, settings);
   return { settings, h, to, subject: o.test ? `[Test] ${mail.subject}` : mail.subject, body: mail.body, link };
 }
 
 /** The approval's title and preview: who it goes to, the subject and the words, as the mail reads now. */
-export async function describeNudge(env: Env, o: Onboarding, items: OnboardingItem[], key: string): Promise<{ title: string; preview: string }> {
-  const w = await buildNudge(env, o, items, key);
+export async function describeNudge(env: Env, o: Onboarding, items: OnboardingItem[], key: string, now?: Date): Promise<{ title: string; preview: string }> {
+  const w = await buildNudge(env, o, items, key, now);
   const who = o.test
     ? `${w.settings.your_name.trim() || "You"} <${w.to}> (a test: nothing goes to ${w.h.contactEmail.trim() || "the client"})`
     : `${oneLine(w.h.contactName) || w.h.clientName} <${w.to}>`;

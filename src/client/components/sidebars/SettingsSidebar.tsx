@@ -5,7 +5,7 @@ import { SETTINGS_CHANGED, unsaved } from "../../settingsData";
 import Icon, { type IconName } from "../Icon";
 import { SideItem, SideLabel, SideTitle } from "./parts";
 
-export interface SettingsPageDef { slug: string; label: string; icon: IconName; group: "You" | "Outreach" | "Lead scoring" | "Account" }
+export interface SettingsPageDef { slug: string; label: string; icon: IconName; group: "You" | "Outreach" | "Lead scoring" | "Projects" | "Account" }
 /** Every settings page, in sidebar order. `slug` is the path under /settings. */
 export const SETTINGS_PAGES: SettingsPageDef[] = [
   { slug: "profile", label: "Profile", icon: "user", group: "You" },
@@ -15,6 +15,7 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
   { slug: "mailboxes", label: "Mailboxes", icon: "inbox", group: "Outreach" },
   { slug: "fit-profiles", label: "Fit profiles", icon: "target", group: "Lead scoring" }, { slug: "suppressions", label: "Suppressions", icon: "ban", group: "Lead scoring" },
   { slug: "scores", label: "How scores work", icon: "zap", group: "Lead scoring" },
+  { slug: "sops", label: "SOPs", icon: "list", group: "Projects" }, { slug: "work", label: "Work", icon: "clock", group: "Projects" },
   { slug: "google", label: "Google", icon: "link", group: "Account" }, { slug: "usage", label: "Usage & limits", icon: "card", group: "Account" },
   { slug: "security", label: "Security", icon: "key", group: "Account" },
   { slug: "footer", label: "Mailing footer", icon: "shield", group: "Account" },
@@ -24,7 +25,7 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
   { slug: "booking", label: "Booking", icon: "calendar", group: "Account" },
   { slug: "documents", label: "Documents", icon: "pen", group: "Account" },
 ];
-const GROUPS = ["You", "Outreach", "Lead scoring", "Account"] as const;
+const GROUPS = ["You", "Outreach", "Lead scoring", "Projects", "Account"] as const;
 const COUNTED: [string, string][] = [["work-samples", "/work-samples"], ["services", "/services"], ["fit-profiles", "/fit-profiles"], ["suppressions", "/suppressions"]];
 
 /** Settings: an overview and the pages, with counts where a page holds a list. The search icon filters the list. */

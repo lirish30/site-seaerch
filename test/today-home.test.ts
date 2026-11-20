@@ -18,6 +18,11 @@ describe("Home rows", () => {
     expect(itemLink(item("draft_unsent", "x"))).toBe("/leads/x?tab=email");
     expect(itemLink(item("promising_quick_scan"))).toBeNull();
   });
+  it("sends a project row to that client's projects, not the lead page", () => {
+    expect(itemLink(item("project_attention", "abc-1"))).toBe("/projects?businessId=abc-1");
+    expect(itemLink(item("project_attention", "a b/c"))).toBe("/projects?businessId=a%20b%2Fc");
+    expect(itemLink(item("onboarding_attention", "x"))).toBe("/leads/x");
+  });
   it("counts each filter pill, hiding Saved until something is saved", () => {
     const items = [item("follow_up_due", "1"), item("follow_up_due", "2"), item("draft_unsent"), item("stalled_deal"), item("promising_quick_scan")];
     expect(filterPills(items).map((p) => `${p.label} ${p.count}`)).toEqual(["All 5", "Follow-ups 2", "Drafts 1", "Deals 1", "Scans 1"]);
@@ -29,6 +34,9 @@ describe("Home rows", () => {
     expect(filterPills([...items, item("proposal_follow_up")]).map((p) => `${p.label} ${p.count}`)).toEqual(["All 6", "Follow-ups 2", "Drafts 1", "Deals 1", "Proposals 1", "Scans 1"]);
     // The Onboarding pill follows the same rule, and sits after Proposals.
     expect(filterPills([...items, item("proposal_follow_up"), item("onboarding_attention")]).map((p) => `${p.label} ${p.count}`)).toEqual(["All 7", "Follow-ups 2", "Drafts 1", "Deals 1", "Proposals 1", "Onboarding 1", "Scans 1"]);
+    // The Projects pill follows the same rule, and sits after Onboarding.
+    expect(filterPills([...items, item("proposal_follow_up"), item("onboarding_attention"), item("project_attention")]).map((p) => `${p.label} ${p.count}`)).toEqual(["All 8", "Follow-ups 2", "Drafts 1", "Deals 1", "Proposals 1", "Onboarding 1", "Projects 1", "Scans 1"]);
+    expect(filterPills(items).map((p) => p.label)).not.toContain("Projects");
   });
   it("badges a follow-up as N days late (red) or due today (amber), and nothing else", () => {
     const now = at(9);

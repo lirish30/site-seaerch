@@ -3,6 +3,7 @@ import type { Business, LeadStatus, Listing, ScanStage } from "../types";
 import { isSocialOnlyUrl } from "../crawler/extract";
 import { namesSimilar } from "../import/names";
 import { activityStmt } from "./activity";
+import { liveProjectSql } from "./projects";
 import { deleteDraftDocumentStmts } from "./documents";
 
 export function domainOf(url: string | null): string | null {
@@ -116,7 +117,7 @@ export type TodayCandidate = Business & { latest_draft_at: string | null; latest
 
 /**
  * Non-archived leads that could produce a Today item as of `nowIso`, from one query: a due follow-up, a new/reviewed lead with a draft,
- * a contacted/replied lead with a deal value, a starred open lead, or a quick-scanned lead whose latest audit scores at least `minQuickScore`.
+ * a contacted/replied lead with a deal value, a starred open lead, a quick-scanned lead whose latest audit scores at least `minQuickScore`, a sent proposal waiting, an open real onboarding, or a real live project.
  * The draft time and latest score are sub-selects so no per-lead query is needed; the caller applies the finer rules.
  */
 export async function listTodayCandidates(db: D1Database, nowIso: string, minQuickScore: number): Promise<TodayCandidate[]> {
@@ -131,6 +132,7 @@ export async function listTodayCandidates(db: D1Database, nowIso: string, minQui
       OR (scan_stage = 'quick' AND ${open} AND ${latestScore} >= ?)
       OR EXISTS (SELECT 1 FROM deals dl JOIN documents doc ON doc.deal_id = dl.id WHERE dl.business_id = businesses.id AND dl.stage = 'proposal_sent' AND doc.status IN ('sent','viewed'))
       OR EXISTS (SELECT 1 FROM onboardings ob WHERE ob.business_id = businesses.id AND ob.closed_at IS NULL AND ob.test = 0)
+      OR EXISTS (SELECT 1 FROM projects pr WHERE pr.business_id = businesses.id AND ${liveProjectSql("pr")} AND pr.test = 0)
     ) ORDER BY created_at, id`;
   const res = (await db.prepare(sql).bind(nowIso, minQuickScore).all<BusinessRow & { latest_draft_at: string | null; latest_score: number | null }>()).results;
   return res.map((r) => ({ ...fromBusinessRow(r), latest_draft_at: r.latest_draft_at ?? null, latest_score: r.latest_score ?? null }));

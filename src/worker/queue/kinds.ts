@@ -6,3 +6,4 @@ import "./cro";
 import "./videoScript";
 import "./callPrep";
 import "./callRecap";
+import "./sopStep";

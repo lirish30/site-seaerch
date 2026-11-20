@@ -5,6 +5,14 @@ export const activityStmt = (db: D1Database, businessId: string, kind: ActivityK
   db.prepare(`INSERT INTO activity (id, business_id, kind, detail, created_at) VALUES (?,?,?,?,?)`)
     .bind(crypto.randomUUID(), businessId, kind, detail, new Date().toISOString());
 
+/**
+ * An insert for a batch that follows a statement guarded to change one row: the line is written only if that previous statement changed a row (SQLite's `changes()`),
+ * so a state change and its log line land together or not at all, and a statement that changed nothing (a replay) logs nothing.
+ */
+export const activityIfChangedStmt = (db: D1Database, businessId: string, kind: ActivityKind, detail: string) =>
+  db.prepare(`INSERT INTO activity (id, business_id, kind, detail, created_at) SELECT ?, ?, ?, ?, ? WHERE changes() = 1`)
+    .bind(crypto.randomUUID(), businessId, kind, detail, new Date().toISOString());
+
 export async function logActivity(db: D1Database, businessId: string, kind: ActivityKind, detail: string | null = null) {
   await activityStmt(db, businessId, kind, detail).run();
 }

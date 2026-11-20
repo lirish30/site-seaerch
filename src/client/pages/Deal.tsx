@@ -10,6 +10,8 @@ import { formOf as proposalFormOf, isProposalDirty, type ProposalForm } from "..
 import OnboardingTab from "./OnboardingTab";
 import ProposalTab, { type ProposalData } from "./ProposalTab";
 import { STAGE_LABEL } from "../pipelineView";
+import { dealProjects, startOffers } from "../projectView";
+import type { ProjectRow } from "../workData";
 import type { Document } from "../../worker/db/documents";
 import type { Deal } from "../../worker/db/deals";
 import type { OnboardingState } from "../../worker/onboarding/owner";
@@ -36,15 +38,21 @@ export default function DealPage() {
   // The onboarding is loaded with the deal so the tab can be offered only when there is something to show (an onboarding, a won deal, or a signed proposal to test with).
   const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
   const [onboardingFailed, setOnboardingFailed] = useState(false);
+  const [projects, setProjects] = useState<ProjectRow[]>([]);
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState("");
+  const [startNotice, setStartNotice] = useState("");
   const [tab, setTab] = useState<Tab | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let live = true;
-    setDeal(null); setLead(null); setForm(null); setProposal(null); setPform(null); setProposalFailed(false); setOnboarding(null); setOnboardingFailed(false); setTab(null); setFailed(false);
+    setDeal(null); setLead(null); setForm(null); setProposal(null); setPform(null); setProposalFailed(false); setOnboarding(null); setOnboardingFailed(false); setProjects([]); setStartError(""); setStartNotice(""); setTab(null); setFailed(false);
     api.get<Deal>(`/deals/${id}`).then((d) => {
       if (!live) return;
       setDeal(d);
+      // Projects started from this deal (by its paid deposit, or a test); the link is only offered when there is one.
+      api.get<{ projects: ProjectRow[] }>(`/projects?businessId=${encodeURIComponent(d.businessId)}`).then((r) => { if (live) setProjects(dealProjects(r.projects, d.id)); }).catch(() => {});
       setTab(d.recap ? "recap" : d.stage === "booked" ? "prep" : "notes");
       const ready = (name: string, platform: string | null, findings: { code: string; evidence: string }[]) => {
         if (!live) return;
@@ -71,6 +79,19 @@ export default function DealPage() {
     if (fresh !== undefined && deal) setPform(proposalFormOf(fresh ?? next.current, { recommendedOptionId: deal.recommendedOptionId, contact: next.defaultContact }));
   }, [id, deal]);
 
+  // "Start projects" is the retry for a paid deal whose projects did not start by themselves; "Start a test project" rehearses it from a signed test proposal.
+  const startProjects = useCallback(async (kind: "start" | "test") => {
+    if (!deal) return;
+    setStarting(true); setStartError(""); setStartNotice("");
+    try {
+      const r = await api.post<{ projects: { id: string; name: string }[] }>(`/deals/${deal.id}/projects/${kind}`);
+      setStartNotice(`${kind === "test" ? "Test project started" : "Projects started"}: ${r.projects.map((p) => p.name).join(", ")}.`);
+      const all = await api.get<{ projects: ProjectRow[] }>(`/projects?businessId=${encodeURIComponent(deal.businessId)}`);
+      setProjects(dealProjects(all.projects, deal.id));
+    } catch (e) { setStartError(errorText(e, "Couldn’t start the projects.")); }
+    finally { setStarting(false); }
+  }, [deal]);
+
   const reloadOnboarding = useCallback(async () => { setOnboarding(await api.get<OnboardingState>(`/deals/${id}/onboarding`)); }, [id]);
 
   // Every hook is called above the early returns below: a render that skips one (the failed load) would throw "Rendered fewer hooks than expected".
@@ -89,6 +110,7 @@ export default function DealPage() {
   if (!deal || !tab || !form) return <div className="deal"><p className="muted deal-body">Loading…</p></div>;
 
   const actions = nextActions(deal);
+  const offers = startOffers(deal, proposal?.history ?? [], projects);
   const TABS: [Tab, string][] = [["prep", "Prep"], ["notes", "Notes"], ["recap", "Recap"], ["deck", "Deck"], ["proposal", "Proposal"]];
   if (onboarding && (onboarding.onboarding || deal.stage === "won" || onboarding.canStartTest)) TABS.push(["onboarding", "Onboarding"]);
   return (
@@ -98,9 +120,22 @@ export default function DealPage() {
           <p><Link to="/pipeline">Pipeline</Link></p>
           <h1>{lead ? <Link to={`/leads/${deal.businessId}`}>{lead.name}</Link> : "Deal"}</h1>
           <p><span className="badge2 info"><i className="dot" />{STAGE_LABEL[deal.stage]}</span>{deal.lostReason && <> Lost: {deal.lostReason}</>}</p>
+          {projects.length > 0 && <p>{projects.length > 1 && "Projects: "}{projects.map((p, i) => <span key={p.id}>{i > 0 && ", "}<Link to={`/projects/${p.id}`}>{projects.length === 1 ? "Project" : p.name}</Link>{p.test ? " (test)" : ""}</span>)}</p>}
         </div>
       </header>
       <div className="deal-body">
+        {(offers.canStart || offers.canStartTest || startError || startNotice) && (
+          <section className="deal-form" aria-label="Projects">
+            {offers.canStart && <p className="muted small">The deal is won and has no project. Projects start by themselves when the deposit is paid; this is the retry if they did not.</p>}
+            {offers.canStartTest && <p className="muted small">The latest signed proposal is a test copy. A test project has the same steps, never sends anything to Claude unasked, and is marked Test.</p>}
+            <div className="cp-actions">
+              {offers.canStart && <button type="button" className="btn primary" disabled={starting} onClick={() => void startProjects("start")}>{starting ? "Starting…" : "Start projects"}</button>}
+              {offers.canStartTest && <button type="button" className="btn" disabled={starting} onClick={() => void startProjects("test")}>{starting ? "Starting…" : "Start a test project"}</button>}
+            </div>
+            {startError && <p className="warn small" role="alert">{startError}</p>}
+            {startNotice && <p className="small" role="status">{startNotice}</p>}
+          </section>
+        )}
         {actions.length > 0 && (
           <ul className="deal-actions" aria-label="Next steps">
             {actions.map((a) => <li key={a.label} className={a.done ? "done" : ""}>{a.done ? "Done: " : "Next: "}{a.label}</li>)}

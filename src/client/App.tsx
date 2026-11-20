@@ -8,6 +8,7 @@ import AllLeads from "./pages/AllLeads";
 import Report from "./pages/Report";
 import Proposal from "./pages/Proposal";
 import Onboard from "./pages/Onboard";
+import ChangeOrder from "./pages/ChangeOrder";
 import Radar from "./pages/Radar";
 import Promising from "./pages/Promising";
 import Import from "./pages/Import";
@@ -27,6 +28,10 @@ import Campaigns from "./pages/Campaigns";
 import Pipeline from "./pages/Pipeline";
 import DealPage from "./pages/Deal";
 import DeckPage from "./pages/Deck";
+import Projects from "./pages/Projects";
+import ProjectPage from "./pages/Project";
+import Timesheet from "./pages/Timesheet";
+import TaskRedirect from "./pages/TaskRedirect";
 import NicheTest from "./pages/NicheTest";
 import Google from "./pages/settings/Google";
 import Usage from "./pages/settings/Usage";
@@ -38,6 +43,8 @@ import Scores from "./pages/settings/Scores";
 import Packages from "./pages/settings/Packages";
 import Booking from "./pages/settings/Booking";
 import Documents from "./pages/settings/Documents";
+import Sops from "./pages/settings/Sops";
+import Work from "./pages/settings/Work";
 import Shell from "./components/Shell";
 
 // Every page draws its own header and `.page-body` inside the panel.
@@ -48,6 +55,7 @@ export default function App() {
       <Route path="/r/*" element={<Report />} />
       <Route path="/p/*" element={<Proposal />} />
       <Route path="/o/*" element={<Onboard />} />
+      <Route path="/c/*" element={<ChangeOrder />} />
       <Route path="*" element={
         <Shell>
           <Routes>
@@ -65,6 +73,10 @@ export default function App() {
             <Route path="/pipeline" element={<Pipeline />} />
             <Route path="/deals/:id" element={<DealPage />} />
             <Route path="/deals/:id/deck" element={<DeckPage />} />
+            <Route path="/projects" element={<Projects />} />
+            <Route path="/projects/:id" element={<ProjectPage />} />
+            <Route path="/timesheet" element={<Timesheet />} />
+            <Route path="/tasks/:id" element={<TaskRedirect />} />
             <Route path="/radar" element={<Radar />} />
             <Route path="/niche-test" element={<NicheTest />} />
             <Route path="/settings" element={<SettingsHome />} />
@@ -86,6 +98,8 @@ export default function App() {
             <Route path="/settings/packages" element={<Packages />} />
             <Route path="/settings/booking" element={<Booking />} />
             <Route path="/settings/documents" element={<Documents />} />
+            <Route path="/settings/sops" element={<Sops />} />
+            <Route path="/settings/work" element={<Work />} />
           </Routes>
         </Shell>
       } />

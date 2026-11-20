@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Env } from "../env";
 import "../approvals/leadNote"; // registers the built-in kinds for this entry path too
 import "../approvals/emailSend";
+import "../approvals/changeOrderDraft"; // an agent may propose this kind, so it is registered here too
 import { buildEmailSendApproval, mailboxFromEmail, type EmailSendPayload } from "../approvals/emailSend";
 import { getSettings } from "../db/settings";
 import { createApproval, listApprovals, UnknownKindError } from "../db/approvals";
@@ -10,7 +11,7 @@ import { getHandler, registeredKinds } from "../approvals/registry";
 import { checkConflict } from "../conflict";
 
 /** The kinds the app proposes itself, with a card it builds: an agent's own title and preview over one of these could mislead the person approving it. */
-const APP_PROPOSED = ["video.publish", "proposal.send", "onboarding.welcome", "onboarding.nudge"];
+const APP_PROPOSED = ["video.publish", "proposal.send", "onboarding.welcome", "onboarding.nudge", "sop.review", "change_order.send"];
 /** The kinds an agent may propose: all but those the app proposes itself. */
 const proposableKinds = () => registeredKinds().filter((k) => !APP_PROPOSED.includes(k));
 import { logAgentAction } from "../db/agentActions";

@@ -51,6 +51,8 @@ const ACTIVITY_LABEL: Record<string, string> = {
   proposal_sent: "Proposal sent", proposal_viewed: "Proposal viewed", proposal_signed: "Proposal signed", proposal_void: "Proposal voided", deposit_paid: "Deposit paid",
   onboarding_started: "Onboarding started", onboarding_welcome: "Welcome sent", onboarding_submitted: "Questionnaire submitted", onboarding_received: "Client sent materials",
   onboarding_waiting: "Waiting on the client", onboarding_resumed: "Client is back",
+  project_started: "Project started", project_milestone: "Project milestone", project_done: "Project finished", change_order_sent: "Change order sent",
+  change_order_signed: "Change order signed", change_order_paid: "Change order paid", change_order_void: "Change order voided", change_order_declined: "Change order declined",
 };
 
 const TABS = ["overview", "issues", "plan", "email", "activity"] as const;

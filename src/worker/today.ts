@@ -4,8 +4,9 @@ import { suppressedLeadIds } from "./db/suppression";
 import { openProposalsSentBefore } from "./db/documents";
 import { listOpenItems, listOpenOnboardings } from "./db/onboardings";
 import { silentDays, stageOf } from "./onboarding/schedule";
+import { projectAttention } from "./projects/progress";
 
-export const TODAY_KINDS = ["follow_up_due", "draft_unsent", "stalled_deal", "starred_idle", "promising_quick_scan", "proposal_follow_up", "onboarding_attention"] as const;
+export const TODAY_KINDS = ["follow_up_due", "draft_unsent", "stalled_deal", "starred_idle", "promising_quick_scan", "proposal_follow_up", "onboarding_attention", "project_attention"] as const;
 export type TodayKind = (typeof TODAY_KINDS)[number];
 export const isTodayKind = (s: string): s is TodayKind => (TODAY_KINDS as readonly string[]).includes(s);
 
@@ -39,7 +40,8 @@ export function parseSnooze(detail: string | null): { kind: TodayKind; until: nu
 // job_found rows were written by the removed job watch; old ones still must not count as contact.
 // deal_created, deal_moved, call_prep, call_recap and followup_booked are the owner filing a deal (or the queue prepping or recapping a call), not contact with the prospect.
 // video_watch is deliberately NOT in this set: a prospect watching the video is engagement and does un-stall a deal.
-const NOT_CONTACT = new Set(["today_done", "snoozed", "bulk", "starred", "unstarred", "job_found", "deal_created", "deal_moved", "call_prep", "call_recap", "followup_booked", "proposal_viewed", "proposal_signed", "proposal_void", "deposit_paid"]);
+const NOT_CONTACT = new Set(["today_done", "snoozed", "bulk", "starred", "unstarred", "job_found", "deal_created", "deal_moved", "call_prep", "call_recap", "followup_booked", "proposal_viewed", "proposal_signed", "proposal_void", "deposit_paid",
+  "project_started", "project_milestone", "project_done", "change_order_sent", "change_order_signed", "change_order_paid", "change_order_void", "change_order_declined"]);
 
 interface ActivityRow { business_id: string; kind: string; detail: string | null; created_at: string; }
 
@@ -90,6 +92,8 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
       if (reason) onboarding.set(o.businessId, reason);
     }
   }
+  // A client's projects: what needs the owner now. One reason per lead (review, a Claude step that was given up on, a change order to be paid, tasks due); test projects never show.
+  const projects = await projectAttention(db, now);
   const activity = await recentActivity(db, candidates.map((b) => b.id), new Date(t - ACTIVITY_WINDOW_DAYS * DAY).toISOString());
 
   const lastContact = new Map<string, number>(), lastExport = new Map<string, number>();
@@ -134,6 +138,9 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
       const days = plural(Math.floor((t - proposal.sentAt) / DAY), "day");
       items.push(push("proposal_follow_up", b, `Proposal sent ${days} ago, ${proposal.viewed ? "opened, not signed" : "not opened"}`, null, 65));
     }
+    // A client's project is the owner's own work too (like a stalled deal), so it stays for a suppressed lead.
+    const project = projects.get(b.id);
+    if (project && !hidden(b.id, "project_attention")) items.push(push("project_attention", b, project, null, 68));
     // A paying client's onboarding is the owner's own work (like a stalled deal), so it stays for a suppressed lead.
     const attention = onboarding.get(b.id);
     if (attention && !hidden(b.id, "onboarding_attention")) items.push(push("onboarding_attention", b, attention, null, 70));
