@@ -3,13 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { approve, reject } from "../src/worker/approvals/decide";
 import { getHandler } from "../src/worker/approvals/registry";
 import { createReviewApproval } from "../src/worker/approvals/sopReview";
+import { setProjectStatus } from "../src/worker/db/projects";
 import { getTask, insertTasks, listComments, setTaskStatus, type NewTask, type Task } from "../src/worker/db/tasks";
 import type { Env } from "../src/worker/env";
 import { clearProjectHooksForTests, onTasksChanged } from "../src/worker/projects/hooks";
-import { requestClaudeStep } from "../src/worker/projects/dispatch";
+import { dispatchReady, requestClaudeStep } from "../src/worker/projects/dispatch";
 import { completeTask as finishStep, reopenTask, startTask } from "../src/worker/projects/service";
 import { buildBundle } from "../src/worker/queue/bundle";
-import { completeTask, expireOldTasks, finishClaudeTask, getTask as getJob } from "../src/worker/queue/db";
+import { completeTask, expireOldTasks, finishClaudeTask, getTask as getJob, markTaskStale } from "../src/worker/queue/db";
 import { getTaskKind } from "../src/worker/queue/registry";
 import { SOP_STEP_KIND, SopStepResult } from "../src/worker/queue/sopStep";
 import "../src/worker/queue/kinds";
@@ -112,6 +113,14 @@ describe("build", () => {
     expect(bundle.text.slice(at)).toContain(ANSWER);
   });
 
+  it("the checklist so far is shown in an untrusted part, never in the instructions", async () => {
+    const c = await claimed({ extra: { checklist: [{ text: "UNIQUE-CHECKLIST-item", done: true }] } });
+    const built = await getTaskKind(SOP_STEP_KIND)!.build(e, { taskId: c.task.id }, c.job);
+    if ("stale" in built) throw new Error(built.stale);
+    expect(built.instructions).not.toContain("UNIQUE-CHECKLIST");
+    expect(built.untrusted.map((p) => (p.type === "text" ? p.text : "")).some((t) => t.includes("UNIQUE-CHECKLIST-item"))).toBe(true);
+  });
+
   it("never shows a comment from anyone but Logan as trusted text", async () => {
     const c = await claimed();
     await env.DB.prepare(`INSERT INTO task_comments (id, task_id, author, body, created_at) VALUES (?, ?, 'claude', 'CLAUDE-SAID-THIS', ?)`).bind(crypto.randomUUID(), c.task.id, NOW.toISOString()).run();
@@ -161,6 +170,10 @@ describe("apply", () => {
     const again = await createReviewApproval(e, t, { summary: "More text" });
     expect(again.id).toBe(a.id);
     expect(await reviews()).toHaveLength(1);
+    // The waiting card is refreshed to the newest result.
+    expect(again.preview).toContain("More text");
+    expect((await reviews())[0].preview).toContain("More text");
+    expect((await reviews())[0].preview).not.toContain("Drafted the welcome page.");
   });
 
   it("needsLogan on a claude step also goes to review", async () => {
@@ -349,6 +362,37 @@ describe("apply", () => {
 async function reopenTaskFromReview(id: string) {
   await setTaskStatus(env.DB, id, "todo", { now: NOW.toISOString(), claudeTaskId: null, reviewApprovalId: null });
 }
+
+describe("a project that stops being active", () => {
+  it("gives the step back to to do when its job is built, without counting it as Claude's failure, and it is sent again after the project resumes", async () => {
+    const real = await seedProject({ bare: true });
+    const c = await claimed({ seed: real });
+    await setProjectStatus(env.DB, c.project.id, "paused", { reason: "invoice overdue" });
+    expect(await buildBundle(e, c.job)).toHaveProperty("stale");
+    expect(await getTask(env.DB, c.task.id)).toMatchObject({ status: "todo", claudeTaskId: null });
+    expect((await comments(c.task.id)).map(([a]) => a)).toEqual(["system"]);
+    expect((await comments(c.task.id))[0][1]).toMatch(/not active/);
+    await markTaskStale(env.DB, c.job.id, "the project is paused");
+    // Paused: nothing goes. Resumed: it goes again (the pause was not a failure).
+    expect(await dispatchReady(e, NOW)).toEqual({ queued: 0 });
+    await setProjectStatus(env.DB, c.project.id, "active");
+    expect(await dispatchReady(e, NOW)).toEqual({ queued: 1 });
+    expect(await getTask(env.DB, c.task.id)).toMatchObject({ status: "in_progress" });
+  });
+
+  it("a paused give-back does not eat the retry allowance", async () => {
+    const real = await seedProject({ bare: true });
+    const c = await claimed({ seed: real });
+    for (let i = 0; i < 3; i++) {
+      const job = i === 0 ? c.job : await claimById((await getTask(env.DB, c.task.id))!.claudeTaskId!);
+      await setProjectStatus(env.DB, c.project.id, "paused", { reason: "x" });
+      await buildBundle(e, job);
+      await markTaskStale(env.DB, job.id, "paused");
+      await setProjectStatus(env.DB, c.project.id, "active");
+      expect(await dispatchReady(e, NOW)).toEqual({ queued: 1 });
+    }
+  });
+});
 
 describe("onExpire and onFail", () => {
   const FAR = new Date("2027-02-01T00:00:00.000Z");

@@ -61,7 +61,9 @@ export async function createReviewApproval(env: Env, task: Task, d: ReviewDetail
   if ((res.meta.changes ?? 0) > 0) return a;
   const existing = await waitingFor(db, task.id);
   if (!existing) return createReviewApproval(env, task, d); // it was decided between the two statements: put the new one up
-  return existing;
+  // A card is already waiting (Claude sent the step back again, or this is a retry): it shows the newest result, not the first.
+  await db.prepare(`UPDATE approvals SET title = ?, preview = ? WHERE id = ? AND status = 'pending'`).bind(a.title, a.preview, existing.id).run();
+  return { ...existing, title: a.title, preview: a.preview };
 }
 
 /** Removes the waiting review for a task (its step moved on before the card was needed). Only a waiting one is touched. */

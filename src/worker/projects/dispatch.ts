@@ -2,11 +2,13 @@ import type { Env } from "../env";
 import { getProject } from "../db/projects";
 import { getTask, listTasks, setTaskStatus } from "../db/tasks";
 import { cancelTasksFor, enqueueTask } from "../queue/db";
-import { SOP_STEP_KIND } from "../queue/sopStep";
+import { failedJobCount, giveBack, MAX_AUTO_RETRIES, SOP_STEP_KIND } from "../queue/sopStep";
 import { readyClaudeTasks } from "../sop/ready";
 import { onTasksChanged } from "./hooks";
 import { postComment, TaskStateError } from "./service";
 import { projectWaiting } from "./waiting";
+
+export { MAX_AUTO_RETRIES };
 
 /** The most Claude step jobs queued or being worked at once, across every project. */
 export const MAX_IN_FLIGHT = 5;
@@ -62,12 +64,28 @@ async function candidates(db: D1Database): Promise<string[]> {
 }
 
 /**
+ * Steps left in progress under a job that has ended (stale, failed, expired or done) and that nobody has touched since it ended: they go back to to-do, so nothing stays stranded when a path
+ * forgot to give the step back. A step Logan changed after the job ended (he started it from review, or took it off waiting) is his and is left alone.
+ */
+async function reclaimStranded(env: Env): Promise<void> {
+  const rows = (await env.DB.prepare(
+    `SELECT t.id AS task_id, c.id AS job_id FROM tasks t JOIN claude_tasks c ON c.id = t.claude_task_id
+     WHERE t.status = 'in_progress' AND c.kind = ? AND c.status IN ('stale', 'failed', 'expired', 'done') AND c.done_at IS NOT NULL AND t.updated_at <= c.done_at`,
+  ).bind(SOP_STEP_KIND).all<{ task_id: string; job_id: string }>()).results;
+  for (const r of rows) {
+    try { await giveBack(env, r.task_id, { jobId: r.job_id }); }
+    catch (e) { console.error("projects: could not reclaim a stranded step", e instanceof Error ? e.message : "unknown error"); }
+  }
+}
+
+/**
  * Queues every Claude step that is ready, for real projects that are active and not waiting on the client, up to `MAX_IN_FLIGHT` jobs in flight in all (and `limit` new ones when given).
  * A test project is never dispatched (a rehearsal must not spend subscription time unasked): "Ask Claude" works on it. Running it twice queues once, because a step handed to Claude
- * is no longer to do. Returns how many steps it handed over.
+ * is no longer to do. A step whose jobs have failed or expired `MAX_AUTO_RETRIES` times is skipped. Returns how many steps it handed over.
  */
 export async function dispatchReady(env: Env, now: Date, o: { limit?: number } = {}): Promise<{ queued: number }> {
   const db = env.DB;
+  await reclaimStranded(env);
   const room = MAX_IN_FLIGHT - (await inFlight(db));
   const cap = Math.min(room, o.limit ?? room);
   let queued = 0;
@@ -79,6 +97,8 @@ export async function dispatchReady(env: Env, now: Date, o: { limit?: number } =
     if (await projectWaiting(db, project, now)) continue;
     for (const t of readyClaudeTasks(await listTasks(db, id), { projectActive: true, waiting: false })) {
       if (queued >= cap) break;
+      // Claude has failed this step enough times: it waits for Logan (Ask Claude still works).
+      if ((await failedJobCount(db, t.id)) >= MAX_AUTO_RETRIES) continue;
       try { if ((await requestClaudeStep(env, t.id)).queued) queued++; }
       catch (e) { console.error("projects: could not hand a step to Claude", e instanceof Error ? e.message : "unknown error"); }
     }

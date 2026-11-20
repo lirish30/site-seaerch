@@ -30,6 +30,15 @@ export const SopStepResult = z.object({
 });
 export type SopStepResult = z.infer<typeof SopStepResult>;
 
+/** How many jobs for one step may end `failed` or `expired` before automatic dispatch stops sending it to Claude. Logan's "Ask Claude" is never capped. */
+export const MAX_AUTO_RETRIES = 2;
+
+/** Jobs for this step that ended without a result through Claude's own failure (given up, released at the cap, expired). A job that went stale (the project paused, Logan took over) is not one. */
+export async function failedJobCount(db: D1Database, taskId: string): Promise<number> {
+  const r = await db.prepare(`SELECT COUNT(*) AS n FROM claude_tasks WHERE kind = ? AND target_id = ? AND status IN ('failed', 'expired')`).bind(SOP_STEP_KIND, taskId).first<{ n: number }>();
+  return r?.n ?? 0;
+}
+
 const KIND_LABEL: Record<ProjectKind, string> = { build: "a website build", quick_fix: "a quick fix", care_onboarding: "Care onboarding", custom: "a custom project" };
 const COMMENT_MAX = 4000;
 const CHECKLIST_MAX = 40;
@@ -37,6 +46,10 @@ const ANSWER_CAP = 3000;
 const ITEM_CAP = 3000;
 
 const oneLine = (s: string, n: number) => cleanText(s, n).replace(/\s+/g, " ");
+
+/** The step's checklist so far. It holds Claude's own earlier output, which may repeat what the client wrote, so it is shown only in the untrusted block. */
+const checklistPart = (task: Task): QueuePart[] =>
+  task.checklist.length ? [{ type: "text", text: `Checklist so far on this step:\n${task.checklist.map((c) => `- [${c.done ? "x" : " "}] ${oneLine(c.text, 200)}`).join("\n")}` }] : [];
 
 function instructionsFor(o: { task: Task; projectName: string; projectKind: ProjectKind; packages: string[]; loganNotes: string[] }): string {
   const { task, projectName, projectKind, packages, loganNotes } = o;
@@ -56,7 +69,6 @@ function instructionsFor(o: { task: Task; projectName: string; projectKind: Proj
     ...(task.description ? [`- Notes on the step: ${cleanText(task.description, 2000)}`] : []),
     ...(task.docTemplate ? [`- Document template to use: ${oneLine(task.docTemplate, 80)}`] : []),
     ...(task.emailTemplate ? [`- Email template to use: ${oneLine(task.emailTemplate, 80)}`] : []),
-    ...(task.checklist.length ? ["- Checklist so far:", ...task.checklist.map((c) => `  - [${c.done ? "x" : " "}] ${oneLine(c.text, 200)}`)] : []),
     ...(loganNotes.length ? ["", "Logan's own notes on this step (oldest first; follow the newest)", ...loganNotes.map((n) => `- ${n}`)] : []),
     "",
     "How to work",
@@ -126,8 +138,12 @@ function mergeChecklist(have: ChecklistItem[], add: ChecklistItem[]): ChecklistI
   return out.slice(0, CHECKLIST_MAX);
 }
 
-/** Puts a task back to to-do after its job ended without a result. The system comment and the cleared job id are written with the status change, and only if the job still holds the step. */
-async function giveBack(env: Env, taskId: string, o: { jobId?: string } = {}): Promise<void> {
+/**
+ * Puts a task back to to-do after its job ended without a result. The system comment and the cleared job id are written with the status change, and only if the job still holds the step.
+ * `paused` is for a project that is not active: the step goes back with a comment that says so, and it is not Claude's failure. Otherwise, once the step has `MAX_AUTO_RETRIES` failed or
+ * expired jobs, the comment says it is Logan's now (automatic dispatch has stopped sending it; "Ask Claude" still can).
+ */
+export async function giveBack(env: Env, taskId: string, o: { jobId?: string; paused?: boolean } = {}): Promise<void> {
   const db = env.DB;
   const t = await getTask(db, taskId);
   if (!t || t.status !== "in_progress" || !t.claudeTaskId) return; // finished, taken over by Logan, or never Claude's
@@ -137,7 +153,12 @@ async function giveBack(env: Env, taskId: string, o: { jobId?: string } = {}): P
     const holder = await db.prepare(`SELECT status FROM claude_tasks WHERE id = ?`).bind(t.claudeTaskId).first<{ status: string }>();
     if (holder && (holder.status === "pending" || holder.status === "claimed")) return;
   }
-  await setTaskStatus(db, t.id, "todo", { from: ["in_progress"], now: new Date().toISOString(), claudeTaskId: null, comment: { author: "system", body: "Claude did not finish this step" } });
+  const body = o.paused
+    ? "The project is not active, so this step went back to to do"
+    : (await failedJobCount(db, t.id)) >= MAX_AUTO_RETRIES
+      ? "Claude could not do this step; it is yours. Press Ask Claude to try again"
+      : "Claude did not finish this step";
+  await setTaskStatus(db, t.id, "todo", { from: ["in_progress"], now: new Date().toISOString(), claudeTaskId: null, comment: { author: "system", body } });
 }
 
 const sopStep: TaskKindDef<SopStepPayload, SopStepResult> = {
@@ -157,12 +178,16 @@ const sopStep: TaskKindDef<SopStepPayload, SopStepResult> = {
     if ("stale" in t) return t;
     const project = await getProject(env.DB, t.task.projectId);
     if (!project) return { stale: "the project no longer exists" };
-    if (project.status !== "active") return { stale: `the project is ${project.status}` };
+    if (project.status !== "active") {
+      // The step would stay in progress under a dead job: give it back now (not Claude's failure), so it is to do again when the project is.
+      await giveBack(env, t.task.id, { jobId: job.id, paused: true });
+      return { stale: `the project is ${project.status}` };
+    }
     const doc = project.documentId ? await getDocument(env.DB, project.documentId) : null;
     const loganNotes = (await listComments(env.DB, t.task.id)).filter((c) => c.author === "logan").slice(-10).map((c) => cleanText(c.body, 1000));
     return {
       instructions: instructionsFor({ task: t.task, projectName: project.name, projectKind: project.kind, packages: doc?.content.packages.map((x) => x.name) ?? [], loganNotes }),
-      untrusted: await untrustedParts(env, project.onboardingId),
+      untrusted: [...checklistPart(t.task), ...(await untrustedParts(env, project.onboardingId))],
     };
   },
 

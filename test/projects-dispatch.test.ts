@@ -4,10 +4,12 @@ import { touchClient } from "../src/worker/db/onboardings";
 import { setProjectStatus } from "../src/worker/db/projects";
 import { getTask, insertTasks, listComments, TaskInputError, type NewTask } from "../src/worker/db/tasks";
 import type { Env } from "../src/worker/env";
-import { clearProjectHooksForTests, onTasksChanged } from "../src/worker/projects/hooks";
-import { MAX_IN_FLIGHT, dispatchOnTasksChanged, dispatchReady, requestClaudeStep } from "../src/worker/projects/dispatch";
+import { clearProjectHooksForTests, onTasksChanged, runTasksChanged } from "../src/worker/projects/hooks";
+import { MAX_AUTO_RETRIES, MAX_IN_FLIGHT, dispatchOnTasksChanged, dispatchReady, requestClaudeStep } from "../src/worker/projects/dispatch";
 import { completeTask, TaskStateError } from "../src/worker/projects/service";
+import { expireOldTasks, finishClaudeTask, markTaskStale } from "../src/worker/queue/db";
 import { SOP_STEP_KIND } from "../src/worker/queue/sopStep";
+import { claimById } from "./fixtures/draftTask";
 import "../src/worker/queue/kinds";
 import { newTask, resetProjectWork, seedProject, seedProjectWithOnboarding } from "./fixtures/projects";
 
@@ -163,5 +165,75 @@ describe("requestClaudeStep", () => {
     expect(await requestClaudeStep(e, t("a").id)).toEqual({ queued: true });
     expect(await requestClaudeStep(e, t("b").id)).toEqual({ queued: true });
     expect(await getTask(env.DB, t("b").id)).toMatchObject({ status: "in_progress" });
+  });
+});
+
+describe("retries and stranded steps", () => {
+  const comments = async (id: string) => (await listComments(env.DB, id)).map((c) => c.body);
+  const FAR = new Date("2027-02-01T00:00:00.000Z");
+  /** Hands the step to Claude, claims the job, and returns it. */
+  async function dispatched(taskId: string) {
+    await dispatchReady(e, NOW);
+    return claimById((await getTask(env.DB, taskId))!.claudeTaskId!);
+  }
+
+  it("a step whose jobs failed twice is not sent to Claude again, says so, and Ask Claude still works", async () => {
+    expect(MAX_AUTO_RETRIES).toBe(2);
+    onTasksChanged(dispatchOnTasksChanged);
+    const s = await seedProject({ bare: true });
+    const t = await stepsFor(s.project.id, s.businessId, [{ key: "a" }]);
+    const one = await dispatched(t("a").id);
+    await finishClaudeTask(e, one.id, "failed", "cannot do it");
+    expect(await comments(t("a").id)).toEqual(["Claude did not finish this step"]);
+    const two = await dispatched(t("a").id);
+    expect(two.id).not.toBe(one.id);
+    await finishClaudeTask(e, two.id, "failed", "cannot do it either");
+    expect(await comments(t("a").id)).toEqual(["Claude did not finish this step", "Claude could not do this step; it is yours. Press Ask Claude to try again"]);
+    expect(await getTask(env.DB, t("a").id)).toMatchObject({ status: "todo", claudeTaskId: null });
+    // Any change anywhere runs the hook; no third job is made.
+    await runTasksChanged(e, s.project.id);
+    expect(await dispatchReady(e, NOW)).toEqual({ queued: 0 });
+    expect(await jobs()).toHaveLength(2);
+    // Logan can still force it.
+    expect(await requestClaudeStep(e, t("a").id)).toEqual({ queued: true });
+    expect(await jobs()).toHaveLength(3);
+  });
+
+  it("expired jobs count too", async () => {
+    const s = await seedProject({ bare: true });
+    const t = await stepsFor(s.project.id, s.businessId, [{ key: "a" }]);
+    const one = await dispatched(t("a").id);
+    await finishClaudeTask(e, one.id, "failed", "no");
+    const two = await dispatched(t("a").id);
+    await env.DB.prepare(`UPDATE claude_tasks SET created_at = '2026-01-01T00:00:00.000Z' WHERE id = ?`).bind(two.id).run();
+    expect(await expireOldTasks(e, FAR)).toBe(1);
+    expect(await getTask(env.DB, t("a").id)).toMatchObject({ status: "todo", claudeTaskId: null });
+    expect(await comments(t("a").id)).toEqual(["Claude did not finish this step", "Claude could not do this step; it is yours. Press Ask Claude to try again"]);
+    expect(await dispatchReady(e, NOW)).toEqual({ queued: 0 });
+    expect(await jobs()).toHaveLength(2);
+  });
+
+  it("a step left in progress under a job that has ended goes back to to do and is sent again", async () => {
+    const s = await seedProject({ bare: true });
+    const t = await stepsFor(s.project.id, s.businessId, [{ key: "a" }]);
+    const one = await dispatched(t("a").id);
+    await markTaskStale(env.DB, one.id, "something else");
+    expect(await getTask(env.DB, t("a").id)).toMatchObject({ status: "in_progress", claudeTaskId: one.id });
+    expect(await dispatchReady(e, NOW)).toEqual({ queued: 1 });
+    const now = (await getTask(env.DB, t("a").id))!;
+    expect(now.status).toBe("in_progress");
+    expect(now.claudeTaskId).not.toBe(one.id);
+    expect(await jobs()).toHaveLength(2);
+  });
+
+  it("a step Logan touched after the job ended is left alone", async () => {
+    const s = await seedProject({ bare: true });
+    const t = await stepsFor(s.project.id, s.businessId, [{ key: "a" }]);
+    const one = await dispatched(t("a").id);
+    await markTaskStale(env.DB, one.id, "something else");
+    await env.DB.prepare(`UPDATE tasks SET updated_at = '2999-01-01T00:00:00.000Z' WHERE id = ?`).bind(t("a").id).run();
+    expect(await dispatchReady(e, NOW)).toEqual({ queued: 0 });
+    expect(await getTask(env.DB, t("a").id)).toMatchObject({ status: "in_progress", claudeTaskId: one.id });
+    expect(await comments(t("a").id)).toEqual([]);
   });
 });
