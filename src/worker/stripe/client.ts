@@ -176,7 +176,8 @@ export async function createSubscriptionCheckout(
   const trialEnd = at !== null && !chargedAtCheckout(o.firstChargeOn, o.nowMs) ? Math.floor(at / 1000) : undefined;
   const s = await call<{ id?: unknown; url?: unknown }>(f, key, "POST", "/v1/checkout/sessions", {
     mode: "subscription", customer: o.customerId, client_reference_id: o.subscriptionId,
-    payment_method_types: ["card"], // card only: an ACH debit settles days after Checkout and would leave the row waiting, so a subscription is never offered a bank account
+    // No payment_method_types: current Stripe API versions refuse it on Checkout Sessions. The methods come from Stripe Dashboard > Settings > Payment methods; keep bank debits (ACH) off
+    // there for Checkout, since an ACH debit settles days after Checkout and would leave the subscription row waiting.
     line_items: [{ quantity: 1, price_data: monthlyPrice(o.productId, o.monthlyCents) }],
     subscription_data: { description: o.name, trial_end: trialEnd, metadata: { subscription_id: o.subscriptionId, business_id: o.businessId } },
     success_url: o.successUrl, cancel_url: o.cancelUrl,
