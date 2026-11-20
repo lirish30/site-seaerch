@@ -85,7 +85,7 @@ async function apply(env: Env, event: StripeEvent, deps: StripeDeps): Promise<St
   // A retry after a failed onPaid keeps the first paid time.
   await markInvoice(env.DB, inv.id, { status: "paid", paidAt: inv.paidAt ?? new Date().toISOString(), mismatch: null });
   // onPaid runs for every paid event that is not a duplicate, including the retry of one whose onPaid threw: it must be safe to run twice.
-  if (deps.onPaid) await deps.onPaid(env, (await getInvoiceByStripeId(env.DB, inv.stripeInvoiceId))!);
+  if (deps.onPaid) await deps.onPaid(env, (await getInvoiceByStripeId(env.DB, obj.id))!);
   return "applied";
 }
 

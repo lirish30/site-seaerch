@@ -10,7 +10,7 @@ const settings: Settings = {
   tone_preset: "friendly_local", email_length: "short", cta_style: "mini_audit", logo_url: "",
   role_title: "Front-end developer", bio: "I build fast, accessible sites and care about the details.", availability: "Open to full-time roles from January",
   resume_url: "https://logan.dev/resume.pdf", goal_line: "A full-time front-end or web developer role", signature_json: "",
-  voice_engine: null, voice_ref_key: null, booking_url: "", ai_voice_note: 1, booking_config: "{}", documents_config: "{}", work_config: "{}",
+  voice_engine: null, voice_ref_key: null, booking_url: "", ai_voice_note: 1, booking_config: "{}", documents_config: "{}", work_config: "{}", billing_config: "{}",
 };
 const business = { id: "b1", name: "Ace Plumbing", category: "Plumber", address: "Boise, ID", website_url: "https://ace.com" } as Business;
 const contacts: Contact[] = [

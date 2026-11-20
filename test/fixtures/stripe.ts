@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { createDraft } from "../../src/worker/db/documents";
-import { insertInvoice, type InvoiceRow } from "../../src/worker/db/invoices";
+import { insertInvoice, type InvoiceRow, type SentInvoice } from "../../src/worker/db/invoices";
 import type { Fetch } from "../../src/worker/google/oauth";
 import { hmacHex } from "../../src/worker/google/crypto";
 import { proposal, seedDeal } from "./documents";
@@ -29,12 +29,13 @@ export async function sign(body: string, o: { secret?: string; t?: number } = {}
 }
 
 /** A deal with a draft document and a deposit invoice row for it. */
-export async function seedInvoice(o: { amountCents?: number; stripeInvoiceId?: string } = {}): Promise<{ invoice: InvoiceRow; documentId: string; dealId: string; businessId: string }> {
+export async function seedInvoice(o: { amountCents?: number; stripeInvoiceId?: string } = {}): Promise<{ invoice: SentInvoice; documentId: string; dealId: string; businessId: string }> {
   const s = await seedDeal();
   const doc = await createDraft(env.DB, { dealId: s.dealId, businessId: s.businessId, optionId: "b", content: proposal() });
   const invoice = await insertInvoice(env.DB, {
     businessId: s.businessId, dealId: s.dealId, documentId: doc.id, kind: "deposit", stripeCustomerId: "cus_1",
     stripeInvoiceId: o.stripeInvoiceId ?? `in_${crypto.randomUUID().slice(0, 8)}`, amountCents: o.amountCents ?? 199850, hostedUrl: "https://invoice.stripe.com/i/x",
+    ref: `deposit:${doc.id}`, description: "Deposit", test: false, lines: [{ description: "Deposit", amountCents: o.amountCents ?? 199850 }],
   });
   return { invoice, documentId: doc.id, dealId: s.dealId, businessId: s.businessId };
 }

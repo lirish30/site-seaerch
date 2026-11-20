@@ -45,7 +45,8 @@ function safeReason(e: unknown, key: string | undefined): string {
 /** How an invoice row reads to the client. A void or uncollectible invoice cannot be paid, and a document has only the one. */
 function viewOf(inv: InvoiceRow): PublicPayment {
   if (inv.status === "paid") return { state: "paid", amountCents: inv.amountCents };
-  if (inv.status === "void" || inv.status === "uncollectible") return UNAVAILABLE;
+  // A draft (never sent) or a row with no link has nothing to pay yet; a void or uncollectible one can no longer be paid.
+  if (inv.status === "draft" || inv.status === "void" || inv.status === "uncollectible" || !inv.hostedUrl) return UNAVAILABLE;
   return { state: "open", amountCents: inv.amountCents, url: inv.hostedUrl };
 }
 
@@ -62,6 +63,8 @@ async function noteFailure(env: Env, doc: Document, reason: string): Promise<voi
  */
 async function settle(env: Env, doc: Document, inv: InvoiceRow, f: Fetch): Promise<InvoiceRow> {
   const key = env.STRIPE_SECRET_KEY;
+  const stripeInvoiceId = inv.stripeInvoiceId, documentId = inv.documentId;
+  if (!stripeInvoiceId || !documentId) return inv; // a deposit made at Stripe has both; a row without them has nothing to settle
   try {
     if (inv.status === "paid") {
       if (!doc.paidAt) await onInvoicePaid(env, inv);
@@ -69,13 +72,13 @@ async function settle(env: Env, doc: Document, inv: InvoiceRow, f: Fetch): Promi
     }
     if (inv.status !== "open" && inv.status !== "failed") return inv;
     if (!key || !stripeMode(key) || Date.now() - Date.parse(inv.createdAt) < RECHECK_AFTER_MS) return inv;
-    const s = await retrieveInvoice(f, key, inv.stripeInvoiceId);
+    const s = await retrieveInvoice(f, key, stripeInvoiceId);
     if (s.status === "paid") {
-      const problem = paidProblem(inv, { amount_paid: s.amountPaid, currency: s.currency, metadata: { document_id: inv.documentId } });
+      const problem = paidProblem(inv, { amount_paid: s.amountPaid, currency: s.currency, metadata: { document_id: documentId } });
       if (problem) await markInvoice(env.DB, inv.id, { mismatch: problem }, { notFrom: ["paid", "void"] });
       else {
         await markInvoice(env.DB, inv.id, { status: "paid", paidAt: inv.paidAt ?? new Date().toISOString(), mismatch: null });
-        const paid = (await getInvoiceForDocument(env.DB, inv.documentId))!;
+        const paid = (await getInvoiceForDocument(env.DB, documentId))!;
         await onInvoicePaid(env, paid);
         return paid;
       }
@@ -84,7 +87,7 @@ async function settle(env: Env, doc: Document, inv: InvoiceRow, f: Fetch): Promi
   } catch (e) {
     console.error("deposit: could not bring the invoice up to date", safeReason(e, key));
   }
-  return (await getInvoiceForDocument(env.DB, inv.documentId)) ?? inv;
+  return (await getInvoiceForDocument(env.DB, documentId)) ?? inv;
 }
 
 /**
@@ -131,6 +134,7 @@ async function ensure(env: Env, docId: string, deps: { fetch?: Fetch }): Promise
       return viewOf(await insertInvoice(env.DB, {
         businessId: doc.businessId, dealId: doc.dealId, documentId: doc.id, kind: "deposit", stripeCustomerId: customerId,
         stripeInvoiceId: made.invoiceId, amountCents: doc.content.schedule.depositCents, hostedUrl: made.hostedUrl,
+        ref: `deposit:${doc.id}`, description: "Deposit", test: doc.test, lines: [{ description: "Deposit", amountCents: doc.content.schedule.depositCents }],
       }));
     } catch (e) {
       // Another request for the same document got there first (the same Stripe invoice, by the idempotency key): its row is the one.
@@ -206,6 +210,7 @@ async function winDeal(env: Env, doc: Document): Promise<void> {
  * a document with a paid time has had all of this done. A test copy is marked paid and nothing else; a real one also wins its deal and starts its onboarding and its projects.
  */
 export async function onInvoicePaid(env: Env, inv: InvoiceRow): Promise<void> {
+  if (!inv.documentId) { console.error("deposit: a paid invoice has no document", inv.id); return; }
   const doc = await getDocument(env.DB, inv.documentId);
   if (!doc) { console.error("deposit: a paid invoice has no document", inv.id); return; }
   await logActivityOnce(env.DB, doc.businessId, "deposit_paid", `Deposit ${dollars(inv.amountCents)} paid (${doc.content.header.reference} v${doc.version})${doc.test ? ", test copy" : ""}`);

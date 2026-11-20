@@ -67,7 +67,7 @@ describe("the deposit invoice at signing", () => {
     const row = (await getInvoiceForDocument(env.DB, s.doc.id))!;
     expect(row).toMatchObject({ businessId: s.businessId, dealId: s.dealId, documentId: s.doc.id, kind: "deposit", amountCents: 199850, status: "open", stripeCustomerId: expect.stringMatching(/^cus_/) });
     expect(r.ok && r.page).toMatchObject({ state: "signed", payment: { state: "open", amountCents: 199850, url: row.hostedUrl } });
-    expect(row.hostedUrl).toBe(HOSTED(row.stripeInvoiceId));
+    expect(row.hostedUrl).toBe(HOSTED(row.stripeInvoiceId!));
   });
 
   it("a retried afterSign does not create a second invoice or a second customer", async () => {

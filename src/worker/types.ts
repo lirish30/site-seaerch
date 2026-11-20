@@ -206,6 +206,8 @@ export interface Settings {
   documents_config: string;
   /** JSON of a WorkConfig (cost rate, week start, timer cap), or "{}" for the defaults. */
   work_config: string;
+  /** JSON of a BillingConfig (invoice terms, reminder offsets, pause and term-notice days), or "{}" for the defaults. */
+  billing_config: string;
 }
 export type TonePreset = "friendly_local" | "consultative" | "direct" | "formal";
 export type EmailLength = "short" | "medium" | "long";

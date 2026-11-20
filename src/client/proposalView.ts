@@ -29,7 +29,7 @@ export function proposalSteps(doc: StepDoc, views = 0): ProposalStep[] {
 export interface DepositLine { text: string; retry: boolean }
 
 const INVOICE_STATE: Record<InvoiceRow["status"], string> = {
-  open: "open", paid: "paid", void: "void (it can no longer be paid)", uncollectible: "marked uncollectible", failed: "the last payment failed, the client can try again",
+  draft: "not sent yet", open: "open", paid: "paid", void: "void (it can no longer be paid)", uncollectible: "marked uncollectible", failed: "the last payment failed, the client can try again",
 };
 
 /**
