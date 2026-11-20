@@ -210,7 +210,9 @@ CREATE TABLE time_entries (
   note TEXT NOT NULL DEFAULT '',
   source TEXT NOT NULL CHECK (source IN ('timer', 'manual')),
   invoiced_ref TEXT,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  -- A manual entry always has an end, so it can never take the single running-timer slot below.
+  CHECK (source = 'timer' OR ended_at IS NOT NULL)
 );
 CREATE UNIQUE INDEX uq_time_running ON time_entries(source) WHERE ended_at IS NULL;
 CREATE INDEX idx_time_entries_task ON time_entries(task_id);

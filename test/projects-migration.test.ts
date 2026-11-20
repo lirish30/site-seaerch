@@ -47,7 +47,19 @@ describe("the projects migration", () => {
     await entry(t, p, b.id, "timer", T);
     await entry(t, p, b.id, "timer", null);
     await expect(entry(t, p, b.id, "timer", null)).rejects.toThrow();
-    await expect(entry(t, p, b.id, "manual", null).then(() => entry(t, p, b.id, "manual", null))).rejects.toThrow();
+  });
+
+  it("a manual entry must have an end, so it can never hold the running-timer slot", async () => {
+    const b = await seedBusiness();
+    const p = await project(b.id);
+    const t = await task(p, b.id);
+    await env.DB.prepare(`DELETE FROM time_entries WHERE ended_at IS NULL`).run();
+    await expect(entry(t, p, b.id, "manual", null)).rejects.toThrow(/CHECK constraint/i);
+    await entry(t, p, b.id, "manual", T);
+    await entry(t, p, b.id, "manual", T);
+    // The slot stays free for a real timer.
+    await entry(t, p, b.id, "timer", null);
+    await env.DB.prepare(`DELETE FROM time_entries WHERE ended_at IS NULL`).run();
   });
 
   it("a step key and a cadence period each name one task per project", async () => {

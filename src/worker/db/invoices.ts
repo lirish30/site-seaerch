@@ -21,6 +21,12 @@ export async function getInvoiceForDocument(db: D1Database, documentId: string):
   return r ? toInvoice(r) : null;
 }
 
+/** What a deal has actually paid: the sum of its paid invoices, in integer cents (0 when none). */
+export async function paidTotalForDeal(db: D1Database, dealId: string): Promise<number> {
+  const r = await db.prepare(`SELECT COALESCE(SUM(amount_cents), 0) AS total FROM invoices WHERE deal_id = ? AND status = 'paid'`).bind(dealId).first<{ total: number }>();
+  return r?.total ?? 0;
+}
+
 export async function getInvoiceByStripeId(db: D1Database, stripeInvoiceId: string): Promise<InvoiceRow | null> {
   const r = await db.prepare(`SELECT * FROM invoices WHERE stripe_invoice_id = ?`).bind(stripeInvoiceId).first<Row>();
   return r ? toInvoice(r) : null;

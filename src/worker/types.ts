@@ -204,6 +204,8 @@ export interface Settings {
   booking_config: string;
   /** JSON of a DocumentsConfig (legal-review record, late fee, proposal expiry), or "{}" for the defaults. */
   documents_config: string;
+  /** JSON of a WorkConfig (cost rate, week start, timer cap), or "{}" for the defaults. */
+  work_config: string;
 }
 export type TonePreset = "friendly_local" | "consultative" | "direct" | "formal";
 export type EmailLength = "short" | "medium" | "long";
