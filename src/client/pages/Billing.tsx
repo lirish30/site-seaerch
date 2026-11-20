@@ -76,7 +76,7 @@ function SubscriptionItem({ s, plan, today, names, onChanged }: { s: Subscriptio
       {notice && <p className="small" role="status">{notice}{notice === NOTHING_SENT && <> <Link to="/today">Open Home</Link></>}</p>}
       {(next.canStart || next.canCancel) && (
         <div className="wk-task-actions">
-          {next.canStart && <button type="button" className="btn primary" disabled={busy} onClick={() => void start()}>Start billing</button>}
+          {next.canStart && <button type="button" className="btn primary" disabled={busy} onClick={() => void start()}>{next.buttonText}</button>}
           {next.canCancel && <button type="button" className="btn" disabled={busy} onClick={cancel}>Cancel subscription</button>}
         </div>
       )}

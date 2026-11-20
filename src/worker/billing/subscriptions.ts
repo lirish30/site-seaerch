@@ -49,7 +49,7 @@ export async function planSubscriptions(env: Env, doc: Document): Promise<number
  * True when a `link_sent` subscription's link never reached the client and nothing is under way at Stripe: no Checkout session on record, and none of its `subscription.start` approvals has a mail
  * that went out (or is going). That is what a failed mail followed by a rejected approval leaves: a row that says the link was sent, with nobody holding it. Such a row may be put up again.
  */
-async function linkNeverReachedClient(db: D1Database, sub: Subscription): Promise<boolean> {
+export async function linkNeverReachedClient(db: D1Database, sub: Subscription): Promise<boolean> {
   if (sub.status !== "link_sent" || sub.stripeCheckoutSessionId) return false;
   const sentOrSending = await db.prepare(
     `SELECT 1 AS x FROM approvals a JOIN messages m ON m.approval_id = a.id

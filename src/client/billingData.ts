@@ -10,8 +10,8 @@ import type { Subscription } from "../worker/db/subscriptions";
 
 /** GET /api/billing/summary. */
 export interface BillingSummary { mrrCents: number; openCents: number; overdueCents: number; heldClients: number }
-/** A subscription as the owner's list gets it (the client's link token is never sent). */
-export type SubscriptionRow = Omit<Subscription, "token">;
+/** A subscription as the owner's list gets it (the client's link token is never sent). `linkLost`: its link mail never reached the client, so it may be put up again. */
+export type SubscriptionRow = Omit<Subscription, "token"> & { linkLost: boolean };
 export type HoldRow = Hold & { businessName: string };
 /** The approval a Propose, Start billing or Invoice puts up. Nothing is sent to the client until it is approved. */
 export interface WaitingApproval { id: string; kind: string; title: string; status: string }
