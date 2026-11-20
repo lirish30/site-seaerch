@@ -190,11 +190,13 @@ export async function voidDraftOrSent(env: Env, id: string, reason: string, now:
 /**
  * When the order is signed AND paid, its locked tasks become to do (each with a system note, written in the same batch as the change) and the project's tasks-changed hooks run.
  * Idempotent: the change is guarded on the task still being locked, so a replay, or two callers at once, unlock each task once. Returns how many this call unlocked.
- * Anything else (not signed, not paid, void, expired) unlocks nothing. A database error propagates; a hook's own error is swallowed (hooks.ts).
+ * Anything else (not signed, not paid, void, expired, or its project cancelled) unlocks nothing. A database error propagates; a hook's own error is swallowed (hooks.ts).
  */
 export async function unlockIfReady(env: Env, id: string, now: Date): Promise<number> {
   const co = await getChangeOrder(env.DB, id);
   if (!co || co.status !== "signed" || co.paidAt === null) return 0;
+  // A cancelled project gets no more work: its signed and paid order keeps its tasks locked.
+  if ((await getProject(env.DB, co.projectId))?.status === "cancelled") return 0;
   let n = 0;
   for (const t of (await listTasks(env.DB, co.projectId)).filter((x) => x.changeOrderId === id && x.status === "locked")) {
     if (await setTaskStatus(env.DB, t.id, "todo", { from: ["locked"], now: now.toISOString(), comment: { author: "system", body: "Unlocked: the change order is signed and paid." } })) n++;

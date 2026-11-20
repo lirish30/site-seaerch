@@ -9,7 +9,7 @@ import {
 import { listActivity } from "../src/worker/db/activity";
 import { expireDue, getChangeOrder, voidChangeOrder } from "../src/worker/db/changeOrders";
 import { saveSettings } from "../src/worker/db/settings";
-import { listTasks } from "../src/worker/db/tasks";
+import { insertTasks, listTasks } from "../src/worker/db/tasks";
 import { ESIGN_VERSION } from "../src/worker/documents/consent";
 import { consentTextFor } from "../src/worker/documents/public";
 import type { Env } from "../src/worker/env";
@@ -449,5 +449,38 @@ describe("the routes", () => {
       const res = await call(path, { method, body: method === "GET" ? undefined : "{}" });
       expect(res.status, `${method} ${path}`).toBe(401);
     }
+  });
+});
+
+describe("a cancelled project closes its change orders (F5)", () => {
+  const cancel = (projectId: string) => env.DB.prepare(`UPDATE projects SET status = 'cancelled' WHERE id = ?`).bind(projectId).run();
+
+  it("a sent order of a cancelled project reads as closed, cannot be signed or declined, and its tasks never unlock", async () => {
+    const a = await sent();
+    expect(open(await view(a.token)).state).toBe("open");
+    await cancel(a.project.id);
+    const page = await view(a.token);
+    expect(page).toMatchObject({ state: "closed", closedReason: "void", summary: "", priceCents: 0 });
+    expect(await sign(a.token, a.hash)).toMatchObject({ ok: false, status: 409 });
+    expect((await getChangeOrder(env.DB, a.co.id))!.status).not.toBe("signed");
+    expect(await declineChangeOrderPublic(env, a.token, "no thanks", NOW)).toMatchObject({ ok: false, status: 409 });
+    expect((await getChangeOrder(env.DB, a.co.id))!.status).not.toBe("declined");
+    // a view of the closed page is not a client reading it
+    expect(await viewCount(a.co.id)).toBe(1);
+  });
+
+  it("a signed order stays a record on a cancelled project, but unlockIfReady unlocks nothing there", async () => {
+    const a = await sent();
+    await insertTasks(env.DB, [newTask(a.project.id, a.businessId, { stepKey: null, isStep: false, status: "locked", changeOrderId: a.co.id, title: "The extra work" })]);
+    expect((await sign(a.token, a.hash)).ok).toBe(true);
+    await cancel(a.project.id);
+    expect(await view(a.token)).toMatchObject({ state: "signed" }); // a signature is a record
+    expect(await service.unlockIfReady(e, a.co.id, NOW)).toBe(0);
+    await env.DB.prepare(`UPDATE change_orders SET paid_at = ?, paid_via = 'manual' WHERE id = ?`).bind(NOW.toISOString(), a.co.id).run();
+    expect(await service.unlockIfReady(e, a.co.id, NOW)).toBe(0);
+    expect((await listTasks(env.DB, a.project.id)).find((t) => t.changeOrderId === a.co.id)!.status).toBe("locked");
+    // on an active project the same order unlocks
+    await env.DB.prepare(`UPDATE projects SET status = 'active' WHERE id = ?`).bind(a.project.id).run();
+    expect(await service.unlockIfReady(e, a.co.id, NOW)).toBe(1);
   });
 });

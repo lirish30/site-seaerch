@@ -702,6 +702,42 @@ describe("cancelling a project", () => {
     expect(await getApproval(send.id)).toMatchObject({ status: "rejected" });
   });
 
+  it("voids the project's draft, sent and viewed change orders (their tasks skipped) and leaves a signed one alone", async () => {
+    const s = await seedProject({ test: true });
+    const make = async (title: string) => (await json("POST", `/projects/${s.project.id}/change-orders`, { title, hours: 1 })).body.changeOrder.id as string;
+    const draft = await make("Draft one");
+    const sentId = await make("Sent one");
+    const viewedId = await make("Viewed one");
+    const signedId = await make("Signed one");
+    const sealed = await seal((await getChangeOrder(env.DB, sentId))!);
+    const viewed = await seal((await getChangeOrder(env.DB, viewedId))!);
+    await env.DB.prepare(`UPDATE change_orders SET status = 'viewed' WHERE id = ?`).bind(viewed.id).run();
+    const signedSealed = await seal((await getChangeOrder(env.DB, signedId))!);
+    expect(await signChangeOrder(env.DB, signedSealed.id, coSig(signedSealed.contentSha256!), "2026-12-06T09:00:00.000Z")).toBe("signed");
+    expect(sealed.status).toBe("sent");
+
+    expect((await json("PATCH", `/projects/${s.project.id}`, { status: "cancelled" })).status).toBe(200);
+    const status = async (id: string) => (await getChangeOrder(env.DB, id))!;
+    expect(await status(draft)).toMatchObject({ status: "void", voidReason: "the project was cancelled" });
+    expect((await status(sentId)).status).toBe("void");
+    expect((await status(viewedId)).status).toBe("void");
+    expect((await status(signedId)).status).toBe("signed");
+    const tasks = await listTasks(env.DB, s.project.id);
+    expect(tasks.filter((t) => t.changeOrderId && [draft, sentId, viewedId].includes(t.changeOrderId)).map((t) => t.status)).toEqual(["skipped", "skipped", "skipped"]);
+    expect(tasks.find((t) => t.changeOrderId === signedId)!.status).toBe("locked");
+  });
+
+  it("one change order that cannot be voided does not stop the others, nor undo the cancel", async () => {
+    const s = await seedProject({ test: true });
+    const a = (await json("POST", `/projects/${s.project.id}/change-orders`, { title: "A page", hours: 1 })).body.changeOrder.id as string;
+    const b = (await json("POST", `/projects/${s.project.id}/change-orders`, { title: "B page", hours: 1 })).body.changeOrder.id as string;
+    const r = await failing(`BEFORE UPDATE ON change_orders WHEN OLD.id = '${a}' AND NEW.status = 'void' BEGIN SELECT RAISE(ABORT, 'disk hiccup'); END`, () => json("PATCH", `/projects/${s.project.id}`, { status: "cancelled" }));
+    expect(r.status).toBe(200);
+    expect(r.body.project.status).toBe("cancelled");
+    expect((await getChangeOrder(env.DB, a))!.status).toBe("draft");
+    expect((await getChangeOrder(env.DB, b))!.status).toBe("void");
+  });
+
   it("a failure while tidying up does not undo the cancel", async () => {
     const s = await seedProject({ bare: true, test: true });
     const [t] = await seedSteps(s.project.id, s.businessId, [{ key: "1", owner: "claude" }]);

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { reject } from "../approvals/decide";
-import { ownerChangeOrder, withdrawSendApprovals } from "../changeorders/service";
+import { ownerChangeOrder, voidDraftOrSent, withdrawSendApprovals } from "../changeorders/service";
 import { listChangeOrders } from "../db/changeOrders";
 import { getBusiness } from "../db/businesses";
 import { getDeal } from "../db/deals";
@@ -145,15 +145,15 @@ projectRoutes.patch("/projects/:id", async (c) => {
 });
 
 /**
- * After a cancel: the project's open Claude jobs are closed and the approvals waiting on it (review cards for its steps, the send approvals of its change orders) are rejected, so
- * nothing is applied, approved or mailed for a project that is gone. The cancel is saved first and each item is tried on its own: a failure is logged and the rest go on, and
+ * After a cancel: the project's open Claude jobs are closed and the approvals waiting on it (review cards for its steps, the send approvals of its change orders) are rejected and its draft, sent and viewed
+ * change orders are voided, so nothing is applied, approved, mailed or signed for a project that is gone. The cancel is saved first and each item is tried on its own: a failure is logged and the rest go on, and
  * what is missed is still refused later (a job is stale when its result arrives, a review card is refused for a project that is not active).
  */
 async function tidyCancelled(env: Env, p: Project): Promise<void> {
   const log = (what: string, e: unknown) => console.error(`projects: could not ${what} after a cancel`, e instanceof Error ? e.message : "unknown error");
   let tasks: Task[] = [];
-  let orderIds: string[] = [];
-  try { tasks = await listTasks(env.DB, p.id); orderIds = (await listChangeOrders(env.DB, p.id)).map((o) => o.id); }
+  let orders: { id: string; status: string }[] = [];
+  try { tasks = await listTasks(env.DB, p.id); orders = (await listChangeOrders(env.DB, p.id)).map((o) => ({ id: o.id, status: o.status })); }
   catch (e) { log("list the project's work", e); return; }
   for (const t of tasks) {
     try { await cancelTasksFor(env.DB, "task", t.id); } catch (e) { log("close a Claude job", e); }
@@ -161,8 +161,12 @@ async function tidyCancelled(env: Env, p: Project): Promise<void> {
       try { await reject(env.DB, t.reviewApprovalId, "the project was cancelled"); } catch (e) { log("reject a review card", e); }
     }
   }
-  for (const id of orderIds) {
-    try { await withdrawSendApprovals(env.DB, [id], "the project was cancelled"); } catch (e) { log("withdraw a send approval", e); }
+  for (const o of orders) {
+    try { await withdrawSendApprovals(env.DB, [o.id], "the project was cancelled"); } catch (e) { log("withdraw a send approval", e); }
+    // A draft, sent or viewed order is voided (its link stops working and its tasks are skipped); a signed one is a record and stays, and the others are already closed.
+    if (o.status === "draft" || o.status === "sent" || o.status === "viewed") {
+      try { await voidDraftOrSent(env, o.id, "the project was cancelled"); } catch (e) { log("void a change order", e); }
+    }
   }
 }
 

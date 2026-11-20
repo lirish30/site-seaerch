@@ -50,14 +50,21 @@ export interface PublicChangeOrder {
 /** A sent or viewed order is open until its expiry; at the exact instant it still is (signing allows it, in the same words). */
 const timeLeft = (co: ChangeOrder, now: Date): boolean => co.expiresAt !== null && Date.parse(co.expiresAt) >= now.getTime();
 
-/** Why the order is closed, or null while it is open or signed. A sent or viewed order past its time is closed whether or not the nightly sweep has marked it yet. */
-function closedReasonOf(co: ChangeOrder, now: Date): PublicChangeOrder["closedReason"] {
+/**
+ * Why the order is closed, or null while it is open or signed. A sent or viewed order past its time is closed whether or not the nightly sweep has marked it yet, and so is one whose
+ * project was cancelled (cancelling voids the project's orders, and this holds even if that tidy-up missed one). A signed order is a record whatever happens to the project.
+ */
+function closedReasonOf(co: ChangeOrder, now: Date, projectCancelled: boolean): PublicChangeOrder["closedReason"] {
   if (co.status === "void") return "void";
   if (co.status === "declined") return "declined";
   if (co.status === "expired") return "expired";
+  if ((co.status === "sent" || co.status === "viewed") && projectCancelled) return "void";
   if ((co.status === "sent" || co.status === "viewed") && !timeLeft(co, now)) return "expired";
   return null;
 }
+
+/** Whether the order's project has been cancelled (an order with no project found is not treated as cancelled: the page then just has no project name). */
+const projectCancelled = async (env: Env, co: ChangeOrder): Promise<boolean> => (await getProject(env.DB, co.projectId))?.status === "cancelled";
 
 /** The order behind a link, or null: not a token, unknown, revoked (no token) or still a draft. A test order is served like a real one: it is the owner's rehearsal. */
 async function find(env: Env, token: string): Promise<ChangeOrder | null> {
@@ -80,13 +87,14 @@ function dateIn(iso: string, tz: string): string | null {
  * and which order, and nothing of what it said or cost.
  */
 async function pageFor(env: Env, co: ChangeOrder, now: Date, view: { userAgent: string | null } | null): Promise<PublicChangeOrder> {
-  const closedReason = closedReasonOf(co, now);
+  const project = await getProject(env.DB, co.projectId);
+  const closedReason = closedReasonOf(co, now, project?.status === "cancelled");
   if (!closedReason && view && (co.status === "sent" || co.status === "viewed")) {
     // Counting a visit must never stop the client reading their order.
     try { await recordView(env.DB, co.id, { now: now.toISOString(), userAgent: view.userAgent === null ? null : cleanText(view.userAgent, USER_AGENT_MAX) }); }
     catch (e) { console.error("change order: could not record a view", e instanceof Error ? e.message : "unknown error"); }
   }
-  const [settings, project] = await Promise.all([getSettings(env.DB), getProject(env.DB, co.projectId)]);
+  const settings = await getSettings(env.DB);
   const c = co.content;
   const base = {
     reference: c.reference, clientName: c.clientName, contactName: c.contactName, projectName: project?.name ?? "", title: c.title,
@@ -132,7 +140,7 @@ export async function signChangeOrderPublic(
   const parsed = SignFormSchema.safeParse(form);
   if (!parsed.success) return { ok: false, status: 400, error: "invalid body", fields: Object.keys(z.flattenError(parsed.error).fieldErrors) };
   const f = parsed.data;
-  if (closedReasonOf(co, o.now)) return CLOSED;
+  if (closedReasonOf(co, o.now, await projectCancelled(env, co))) return CLOSED;
   if (f.sha256 !== co.contentSha256) return { ok: false, status: 409, error: "this change order changed, reload" };
 
   const at = o.now.toISOString();
@@ -171,7 +179,7 @@ export async function declineChangeOrderPublic(env: Env, token: string, reason: 
   const co = await find(env, token);
   if (!co) return NOT_FOUND;
   if (co.status !== "declined") {
-    if (closedReasonOf(co, now) || co.status === "signed") return CLOSED;
+    if (closedReasonOf(co, now, await projectCancelled(env, co)) || co.status === "signed") return CLOSED;
     const text = typeof reason === "string" ? cleanText(reason, DECLINE_REASON_MAX) : "";
     if ((await declineChangeOrder(env.DB, co.id, text, now.toISOString())) === "not_open") return CLOSED;
   }
