@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
-import { renewalLabel, moneyLabel } from "../../clientView";
+import { moneyLabel, projectStatusLabel, renewalLabel } from "../../clientView";
 import { statusLabel as changeOrderStatus } from "../../changeOrderView";
-import { projectState, type Tone } from "../../projectView";
+import type { Tone } from "../../projectView";
 import { shortDate } from "../../billingView";
 import type { ClientRecord } from "../../../worker/clients/record";
 
@@ -23,7 +23,7 @@ export default function LinkedPanel({ client, today }: { client: ClientRecord; t
         {client.projects.length === 0 && <p className="muted small">No projects yet.</p>}
         <ul className="cl-list">
           {client.projects.map((p) => {
-            const state = projectState({ status: p.status, kind: p.kind, waitingOnClient: false });
+            const state = projectStatusLabel(p);
             return (
               <li key={p.id}>
                 <Link to={`/projects/${encodeURIComponent(p.id)}`}>{p.name}</Link>

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ApiError, clientsApi } from "../../api";
-import { accessActions, accessTone, accessWords, serverProblem, vaultHint } from "../../clientView";
+import { accessActions, accessTone, accessWords, problemText, serverProblem, vaultHint } from "../../clientView";
 import { ACCESS_LABELS, noteProblem, vaultNameProblem } from "../../../worker/sites/access";
 import type { AccessItem, AccessStatus } from "../../../worker/db/sites";
 
@@ -30,6 +30,11 @@ function Row({ clientId, siteId, siteName, item, onChanged }: { clientId: string
   const meta = ACCESS_LABELS[item.key];
   const [vault, setVault] = useState(item.vaultItem ?? "");
   const [note, setNote] = useState(item.note ?? "");
+  // The stored values we last saw. When a reload brings a different stored value, a field you have not touched follows it; one you are typing in stays as typed.
+  const [storedVault, setStoredVault] = useState(item.vaultItem ?? "");
+  const [storedNote, setStoredNote] = useState(item.note ?? "");
+  if ((item.vaultItem ?? "") !== storedVault) { setStoredVault(item.vaultItem ?? ""); if (vault.trim() === storedVault) setVault(item.vaultItem ?? ""); }
+  if ((item.note ?? "") !== storedNote) { setStoredNote(item.note ?? ""); if (note.trim() === storedNote) setNote(item.note ?? ""); }
   const [busy, setBusy] = useState(false);
   const [statusError, setStatusError] = useState("");
   const [vaultProblem, setVaultProblem] = useState<string | null>(null);
@@ -44,7 +49,7 @@ function Row({ clientId, siteId, siteName, item, onChanged }: { clientId: string
   async function changeStatus(status: AccessStatus) {
     setBusy(true); setStatusError(""); setSaved(false);
     try { await clientsApi.setAccess(clientId, siteId, item.key, { status }); await onChanged(); }
-    catch (e) { setStatusError(e instanceof ApiError ? serverProblem(e.body, "Could not change the status.", ["status"]) : "Could not change the status."); }
+    catch (e) { setStatusError(e instanceof ApiError ? problemText(e, "Could not change the status.", ["status"]) : "Could not change the status."); }
     finally { setBusy(false); }
   }
 
@@ -71,7 +76,7 @@ function Row({ clientId, siteId, siteName, item, onChanged }: { clientId: string
         const n = serverProblem(err.body, "", ["note"]);
         if (v) setVaultProblem(v);
         if (n) setNoteError(n);
-        if (!v && !n) setNoteError(serverProblem(err.body, "Could not save."));
+        if (!v && !n) setNoteError(problemText(err, "Could not save."));
       } else setNoteError("Could not save.");
     } finally { setBusy(false); }
   }
@@ -93,13 +98,13 @@ function Row({ clientId, siteId, siteName, item, onChanged }: { clientId: string
         <label className="deal-field" htmlFor={`${id}-vault`}>
           <span>Password manager item</span>
           <input id={`${id}-vault`} type="text" value={vault} maxLength={VAULT_MAX + 40} autoComplete="off" autoCapitalize="off" spellCheck={false}
-            aria-label={`${meta.label}: password manager item name for ${siteName}`} aria-describedby={`${id}-vault-hint`} aria-invalid={vaultProblem ? true : undefined}
+            aria-label={`Password manager item for ${meta.label} on ${siteName}`} aria-describedby={`${id}-vault-hint`} aria-invalid={vaultProblem ? true : undefined}
             onChange={(e) => { setVault(e.target.value); setVaultProblem(null); setSaved(false); }} />
           <small id={`${id}-vault-hint`} className={vaultProblem ? "error" : "muted"} role={vaultProblem ? "alert" : undefined}>{vaultHint(vaultProblem, vault)}</small>
         </label>
         <label className="deal-field" htmlFor={`${id}-note`}>
           <span>Note for you only</span>
-          <textarea id={`${id}-note`} rows={2} value={note} maxLength={NOTE_MAX + 100} aria-label={`${meta.label}: owner note for ${siteName}`} aria-describedby={`${id}-note-hint`}
+          <textarea id={`${id}-note`} rows={2} value={note} maxLength={NOTE_MAX + 100} aria-label={`Note for you only: ${meta.label} on ${siteName}`} aria-describedby={`${id}-note-hint`}
             aria-invalid={noteError ? true : undefined}
             onChange={(e) => { setNote(e.target.value); setNoteError(""); setSaved(false); }} />
           <small id={`${id}-note-hint`} className={noteError ? "error" : "muted"} role={noteError ? "alert" : undefined}>
@@ -107,7 +112,7 @@ function Row({ clientId, siteId, siteName, item, onChanged }: { clientId: string
           </small>
         </label>
         <div className="cl-access-save">
-          <button type="submit" className="btn" disabled={busy || (!vaultDirty && !noteDirty)} aria-label={`Save ${meta.label} details for ${siteName}`}>Save details</button>
+          <button type="submit" className="btn" disabled={busy || (!vaultDirty && !noteDirty)} aria-label={`Save details for ${meta.label} on ${siteName}`}>Save details</button>
           {saved && !vaultDirty && !noteDirty && <span className="small muted" role="status">Saved.</span>}
         </div>
       </form>

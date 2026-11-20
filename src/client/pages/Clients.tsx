@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { clientsApi } from "../api";
 import { useOwnerClock } from "../billingData";
-import { moneyLabel, renewalLabel, sortClients, type ClientSort } from "../clientView";
+import { latestOnly, moneyLabel, renewalLabel, sortClients, type ClientSort } from "../clientView";
 import Icon from "../components/Icon";
 import type { ClientRow } from "../../worker/clients/record";
 
@@ -19,10 +19,16 @@ export default function Clients() {
   const [rows, setRows] = useState<ClientRow[] | null>(null);
   const [failed, setFailed] = useState(false);
 
+  // Toggling "Show test clients" quickly must not let the slower, earlier answer replace the later one.
+  const [guard] = useState(latestOnly);
   const load = useCallback(async () => {
-    try { setRows(await clientsApi.list(showTest)); setFailed(false); } catch { setFailed(true); }
-  }, [showTest]);
-  useEffect(() => { void load(); }, [load]);
+    const ticket = guard.next();
+    try {
+      const next = await clientsApi.list(showTest);
+      if (guard.isLatest(ticket)) { setRows(next); setFailed(false); }
+    } catch { if (guard.isLatest(ticket)) setFailed(true); }
+  }, [showTest, guard]);
+  useEffect(() => { void load(); return () => guard.cancel(); }, [load, guard]);
 
   const setParam = (key: string, value: string | null) => setParams((p) => { const n = new URLSearchParams(p); if (value === null) n.delete(key); else n.set(key, value); return n; }, { replace: true });
   const sorted = sortClients(rows ?? [], sort);
@@ -78,6 +84,7 @@ export default function Clients() {
                 <tr key={r.id}>
                   <th scope="row" className="cl-name" data-label="Client">
                     <Link to={`/clients/${encodeURIComponent(r.id)}`}>{r.name}</Link>
+                    {r.test && <span className="badge2 info"><i className="dot" />Test</span>}
                     {r.held && <span className="badge2 warning"><i className="dot" />On hold</span>}
                   </th>
                   <td data-label="Care">{r.careLabel ?? <span className="muted">None</span>}</td>

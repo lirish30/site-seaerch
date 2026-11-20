@@ -65,11 +65,11 @@ export const nextRenewalOn = (subs: Subscription[]): string | null =>
   subs.filter((s) => !s.test && (LIVE as readonly string[]).includes(s.status) && s.termEndsOn).map((s) => s.termEndsOn as string).sort()[0] ?? null;
 
 export interface ClientRow {
-  id: string; name: string; careLabel: string | null; mrrCents: number; siteCount: number; accessMissing: number; openInvoiceCents: number; held: boolean; nextRenewalOn: string | null;
+  id: string; name: string; /** True for a rehearsal client (see `testClientSql`); such rows only come back with `includeTest`. */ test: boolean; careLabel: string | null; mrrCents: number; siteCount: number; accessMissing: number; openInvoiceCents: number; held: boolean; nextRenewalOn: string | null;
 }
 
 interface ListRow {
-  id: string; name: string; mrr_cents: number; site_count: number; access_missing: number; open_cents: number; held: number; next_renewal_on: string | null;
+  id: string; name: string; is_test: number; mrr_cents: number; site_count: number; access_missing: number; open_cents: number; held: number; next_renewal_on: string | null;
 }
 
 /**
@@ -79,7 +79,7 @@ interface ListRow {
 export async function listClients(db: D1Database, o: { includeTest?: boolean } = {}): Promise<ClientRow[]> {
   const [rows, active] = await Promise.all([
     db.prepare(
-      `SELECT b.id, b.name,
+      `SELECT b.id, b.name, ${testClientSql("b")} AS is_test,
          (SELECT COALESCE(SUM(u.monthly_cents), 0) FROM subscriptions u WHERE u.business_id = b.id AND u.test = 0 AND u.status IN ('active', 'past_due')) AS mrr_cents,
          (SELECT COUNT(*) FROM sites s WHERE s.business_id = b.id AND s.archived_at IS NULL) AS site_count,
          (SELECT COUNT(*) FROM site_access_items i JOIN sites s ON s.id = i.site_id
@@ -96,7 +96,7 @@ export async function listClients(db: D1Database, o: { includeTest?: boolean } =
   const byBusiness = new Map<string, Subscription[]>();
   for (const s of active) byBusiness.set(s.businessId, [...(byBusiness.get(s.businessId) ?? []), s]);
   return rows.results.map((r) => ({
-    id: r.id, name: r.name, careLabel: careLabel(byBusiness.get(r.id) ?? []), mrrCents: r.mrr_cents, siteCount: r.site_count, accessMissing: r.access_missing,
+    id: r.id, name: r.name, test: r.is_test === 1, careLabel: careLabel(byBusiness.get(r.id) ?? []), mrrCents: r.mrr_cents, siteCount: r.site_count, accessMissing: r.access_missing,
     openInvoiceCents: r.open_cents, held: r.held === 1, nextRenewalOn: r.next_renewal_on,
   }));
 }

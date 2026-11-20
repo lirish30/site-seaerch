@@ -1,4 +1,6 @@
 import type { AccessStatus, Site } from "../worker/db/sites";
+import type { ProjectKind, ProjectStatus } from "../worker/db/projects";
+import type { Tone } from "./projectView";
 import type { ClientRow } from "../worker/clients/record";
 import { shortDate } from "./billingView";
 
@@ -17,7 +19,7 @@ const WORDS: Record<AccessStatus, string> = { needed: "Needed", requested: "Requ
 export const accessWords = (status: AccessStatus): string => WORDS[status];
 
 const MOVES: Record<AccessStatus, AccessStatus[]> = {
-  needed: ["requested", "not_applicable"],
+  needed: ["requested", "received", "not_applicable"],
   requested: ["received", "needed", "not_applicable"],
   received: ["verified", "requested", "not_applicable"],
   verified: ["received", "not_applicable"],
@@ -121,4 +123,45 @@ export function serverProblem(body: unknown, fallback: string, only?: string[]):
     if (lines.length) return lines.join(" ");
   }
   return typeof error === "string" && error !== "" && error !== "invalid body" ? error : fallback;
+}
+
+/**
+ * Keeps a page from showing an old answer. `next()` starts a request and returns its ticket; when the answer arrives, apply it only if `isLatest(ticket)`. Anything newer, or a `cancel()`
+ * (the page changed or went away), makes older tickets stale.
+ */
+export function latestOnly(): { next: () => number; isLatest: (ticket: number) => boolean; cancel: () => void } {
+  let current = 0;
+  return { next: () => ++current, isLatest: (ticket) => ticket === current, cancel: () => { current++; } };
+}
+
+/** A server sentence fit to show, or `fallback` when all there is is a status line or the words of a bare 400 ("invalid body", "HTTP 500"). */
+export function friendlyProblem(message: string | undefined, fallback: string): string {
+  const m = message?.trim();
+  return !m || m === "invalid body" || /^HTTP \d{3}$/.test(m) ? fallback : m;
+}
+
+/** What is wrong with a typed site address, in plain words, or null when it is empty or fine. A login in the address is told apart from a missing scheme. Never repeats the input. */
+export function addressProblem(raw: string, label = "The site address"): string | null {
+  const s = raw.trim();
+  if (!s) return null;
+  try {
+    const u = new URL(s);
+    if ((u.protocol === "http:" || u.protocol === "https:") && (u.username || u.password)) return "Leave the login out of the address.";
+  } catch { /* not an address at all: the scheme sentence below */ }
+  return safeHref(s) ? null : `${label} must start with http:// or https://.`;
+}
+
+/** The sentence for a failed call, from the error's `body` and `message`: the server's field sentences, else its plain sentence, else `fallback`. Never "invalid body" or "HTTP 500". */
+export function problemText(e: unknown, fallback: string, only?: string[]): string {
+  const { body, message } = (e ?? {}) as { body?: unknown; message?: unknown };
+  return serverProblem(body, friendlyProblem(typeof message === "string" ? message : undefined, fallback), only);
+}
+
+const STATUS_LABEL: Record<ProjectStatus, { label: string; tone: Tone }> = {
+  active: { label: "Active", tone: "neutral" }, paused: { label: "Paused", tone: "warn" }, done: { label: "Done", tone: "good" }, cancelled: { label: "Cancelled", tone: "muted" },
+};
+
+/** The badge on a project in the Linked panel, from its status (the record does not say whether it waits on the client). A finished Care setup is the Care service still running. */
+export function projectStatusLabel(p: { status: ProjectStatus; kind: ProjectKind }): { label: string; tone: Tone } {
+  return p.status === "done" && p.kind === "care_onboarding" ? { label: "Care running", tone: "good" } : STATUS_LABEL[p.status];
 }

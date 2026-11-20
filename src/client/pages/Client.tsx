@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, ApiError, clientsApi } from "../api";
 import { useOwnerClock } from "../billingData";
-import { carePastDue, moneyLabel, renewalLabel, safeHref, serverProblem } from "../clientView";
+import { addressProblem, carePastDue, latestOnly, moneyLabel, problemText, renewalLabel, safeHref } from "../clientView";
 import ActivityTab from "../components/ActivityTab";
 import Icon from "../components/Icon";
 import LinkedPanel from "../components/client/LinkedPanel";
@@ -26,16 +26,17 @@ function AddSite({ clientId, onAdded }: { clientId: string; onAdded: () => Promi
     e.preventDefault();
     if (busy) return;
     const v = url.trim();
-    if (v && !safeHref(v)) { setError("The site address must start with http:// or https://."); return; }
+    const problem = addressProblem(v);
+    if (problem) { setError(problem); return; }
     setBusy(true); setError("");
     try { await clientsApi.addSite(clientId, v ? { url: v } : {}); setUrl(""); await onAdded(); }
-    catch (err) { setError(err instanceof ApiError ? serverProblem(err.body, err.message || "Could not add the site.") : "Could not add the site."); }
+    catch (err) { setError(err instanceof ApiError ? problemText(err, "Could not add the site.") : "Could not add the site."); }
     finally { setBusy(false); }
   }
   return (
     <form className="cl-add" onSubmit={(e) => void add(e)} noValidate aria-label="Add a site">
       <label className="deal-field" htmlFor="cl-add-url"><span>Add a site</span>
-        <input id="cl-add-url" type="text" inputMode="url" autoComplete="off" autoCapitalize="off" spellCheck={false} placeholder="https://example.com (optional)" aria-label="Address of the new site"
+        <input id="cl-add-url" type="text" inputMode="url" autoComplete="off" autoCapitalize="off" spellCheck={false} placeholder="https://example.com (optional)" aria-label="Add a site: address of the new site"
           value={url} onChange={(e) => { setUrl(e.target.value); setError(""); }} />
       </label>
       <button type="submit" className="btn" disabled={busy}>{busy ? "Adding…" : "Add site"}</button>
@@ -55,17 +56,26 @@ export default function ClientPage() {
   const [failed, setFailed] = useState<"" | "missing" | "error">("");
   const [userName, setUserName] = useState("");
   const [error, setError] = useState("");
+  // The component is reused when the route changes from one client to another, so an answer is applied only while it is the latest ask for the client in the address bar.
+  const [guard] = useState(latestOnly);
 
   const load = useCallback(async () => {
-    try { setClient(await clientsApi.get(id)); setFailed(""); }
-    catch (e) { setFailed(e instanceof ApiError && e.status === 404 ? "missing" : "error"); }
-  }, [id]);
-  useEffect(() => { setClient(null); setFailed(""); setError(""); void load(); }, [load]);
+    const ticket = guard.next();
+    try {
+      const next = await clientsApi.get(id);
+      if (!guard.isLatest(ticket) || next.business.id !== id) return;
+      setClient(next); setFailed("");
+    } catch (e) {
+      if (!guard.isLatest(ticket)) return;
+      setFailed(e instanceof ApiError && e.status === 404 ? "missing" : "error");
+    }
+  }, [id, guard]);
+  useEffect(() => { setClient(null); setFailed(""); setError(""); void load(); return () => guard.cancel(); }, [load, guard]);
   useEffect(() => { api.get<{ settings: { your_name?: string } }>("/settings").then((r) => setUserName(r.settings.your_name ?? "")).catch(() => {}); }, []);
 
   if (failed === "missing") return <div className="cl"><p className="error cl-body" role="alert">That client was not found. It may still be a lead. <Link to="/clients">Back to clients</Link></p></div>;
   if (failed === "error" && !client) return <div className="cl"><p className="error cl-body" role="alert">Couldn’t load this client. <button type="button" className="btn" onClick={() => void load()}>Try again</button> <Link to="/clients">Back to clients</Link></p></div>;
-  if (!client) return <div className="cl"><p className="muted cl-body">Loading…</p></div>;
+  if (!client || client.business.id !== id) return <div className="cl"><p className="muted cl-body">Loading…</p></div>;
 
   const { business: b } = client;
   const late = carePastDue(client.subscriptions);
@@ -105,7 +115,7 @@ export default function ClientPage() {
         {error && <p className="error" role="alert">{error}</p>}
 
         <div className="cl-cols">
-          <div className="cl-col" aria-label="About and sites">
+          <div className="cl-col">
             <section className="cl-card" aria-label="About">
               <h2>About</h2>
               {people.length === 0 && <p className="muted small">No people saved. Add a point of contact on the lead record.</p>}
@@ -139,7 +149,7 @@ export default function ClientPage() {
             </section>
           </div>
 
-          <div className="cl-col" aria-label="Timeline">
+          <div className="cl-col">
             <section className="cl-card" aria-label="Timeline">
               <h2>Timeline</h2>
               <ActivityTab items={client.activity} userName={userName} followUp={b.follow_up_at}
@@ -148,7 +158,7 @@ export default function ClientPage() {
             </section>
           </div>
 
-          <div className="cl-col" aria-label="Linked">
+          <div className="cl-col">
             <LinkedPanel client={client} today={today} />
           </div>
         </div>

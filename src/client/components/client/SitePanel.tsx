@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ApiError, clientsApi } from "../../api";
-import { safeHref, serverProblem, siteTitle } from "../../clientView";
-import { isHttpUrl, noteProblem, type SiteFlag } from "../../../worker/sites/access";
+import { addressProblem, problemText, safeHref, siteTitle } from "../../clientView";
+import { noteProblem, type SiteFlag } from "../../../worker/sites/access";
 import type { AccessItem, AccessMethod, Cms, HostingTier, Site, SiteFields } from "../../../worker/db/sites";
 import AccessChecklist from "./AccessChecklist";
 
@@ -31,7 +31,7 @@ function localProblem(d: Record<TextKey, string>, changed: TextKey[]): string | 
   for (const k of changed) {
     const v = d[k].trim();
     if (!v) continue;
-    if ((k === "url" || k === "adminUrl") && !isHttpUrl(v)) return `${k === "url" ? "The site address" : "The admin address"} must start with http:// or https://.`;
+    if (k === "url" || k === "adminUrl") { const p = addressProblem(v, k === "url" ? "The site address" : "The admin address"); if (p) return p; }
     if (k === "notes") { const p = noteProblem(v); if (p) return p; }
   }
   return null;
@@ -76,14 +76,14 @@ export default function SitePanel({ clientId, site, access, flags, onChanged }: 
       setDraft(draftOf(next)); setBase(draftOf(next));
       await onChanged();
       setSaved(true);
-    } catch (err) { setError(err instanceof ApiError ? serverProblem(err.body, err.message || "Could not save.") : "Could not save."); }
+    } catch (err) { setError(err instanceof ApiError ? problemText(err, "Could not save.") : "Could not save."); }
     finally { setBusy(false); }
   }
 
   async function choose(patch: Partial<SiteFields>) {
     setBusy(true); setError(""); setSaved(false);
     try { await clientsApi.patchSite(clientId, site.id, patch); await onChanged(); }
-    catch (err) { setError(err instanceof ApiError ? serverProblem(err.body, err.message || "Could not save.") : "Could not save."); }
+    catch (err) { setError(err instanceof ApiError ? problemText(err, "Could not save.") : "Could not save."); }
     finally { setBusy(false); }
   }
 
@@ -91,7 +91,8 @@ export default function SitePanel({ clientId, site, access, flags, onChanged }: 
     if (!window.confirm(`Archive ${title}? It leaves this page and frees its domain. Its history stays in the timeline.`)) return;
     setBusy(true); setError("");
     try { await clientsApi.archiveSite(clientId, site.id); await onChanged(); }
-    catch (err) { setError(err instanceof ApiError ? serverProblem(err.body, err.message || "Could not archive.") : "Could not archive."); setBusy(false); }
+    catch (err) { setError(err instanceof ApiError ? problemText(err, "Could not archive.") : "Could not archive."); }
+    finally { setBusy(false); }
   }
 
   return (
@@ -150,7 +151,7 @@ export default function SitePanel({ clientId, site, access, flags, onChanged }: 
         <div className="cl-fields-actions">
           <button type="submit" className="btn primary" disabled={busy || dirty.length === 0} aria-label={`Save changes to ${title}`}>Save changes</button>
           {saved && dirty.length === 0 && <span className="small muted" role="status">Saved.</span>}
-          <button type="button" className="btn" disabled={busy} onClick={() => void archive()} aria-label={`Archive ${title}`}>Archive site</button>
+          <button type="button" className="btn" disabled={busy} onClick={() => void archive()} aria-label={`Archive site ${title}`}>Archive site</button>
         </div>
       </form>
 

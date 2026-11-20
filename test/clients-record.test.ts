@@ -184,6 +184,15 @@ describe("test records", () => {
     expect(withTest.map((c) => c.id)).toContain(test.businessId);
     expect(withTest.find((c) => c.id === test.businessId)!.mrrCents).toBe(0);
   });
+
+  it("a row says whether the client is a test client, by the same rule that hides it", async () => {
+    const real = await seedClient();
+    const test = await seedClient({ test: true });
+    const rows = await listClients(env.DB, { includeTest: true });
+    expect(rows.find((c) => c.id === real.businessId)!.test).toBe(false);
+    expect(rows.find((c) => c.id === test.businessId)!.test).toBe(true);
+    expect((await listClients(env.DB)).every((c) => c.test === false)).toBe(true);
+  });
 });
 
 describe("archived sites", () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  accessActions, accessTone, accessWords, carePastDue, moneyLabel, renewalLabel, safeHref, serverProblem, siteTitle, sortClients, vaultHint,
+  accessActions, accessTone, addressProblem, friendlyProblem, latestOnly, problemText, projectStatusLabel, accessWords, carePastDue, moneyLabel, renewalLabel, safeHref, serverProblem, siteTitle, sortClients, vaultHint,
 } from "../src/client/clientView";
 import { ACCESS_STATUSES } from "../src/worker/db/sites";
 import type { ClientRow } from "../src/worker/clients/record";
@@ -22,7 +22,8 @@ describe("accessActions", () => {
     for (const s of ACCESS_STATUSES) expect(accessActions(s), s).not.toContain(s);
   });
   it("offers the next sensible moves", () => {
-    expect(accessActions("needed")).toEqual(["requested", "not_applicable"]);
+    // A client sometimes sends access unprompted, so a needed line can go straight to received.
+    expect(accessActions("needed")).toEqual(["requested", "received", "not_applicable"]);
     expect(accessActions("requested")).toEqual(["received", "needed", "not_applicable"]);
     expect(accessActions("received")).toEqual(["verified", "requested", "not_applicable"]);
     expect(accessActions("verified")).toEqual(["received", "not_applicable"]);
@@ -132,7 +133,7 @@ describe("carePastDue", () => {
 
 describe("sortClients", () => {
   const row = (name: string, mrrCents: number, accessMissing: number): ClientRow => ({
-    id: name, name, careLabel: null, mrrCents, siteCount: 1, accessMissing, openInvoiceCents: 0, held: false, nextRenewalOn: null,
+    id: name, name, test: false, careLabel: null, mrrCents, siteCount: 1, accessMissing, openInvoiceCents: 0, held: false, nextRenewalOn: null,
   });
   const rows = [row("Beta", 5000, 0), row("alpha", 12900, 3), row("Cedar", 12900, 6), row("Delta", 0, 3)];
   const names = (r: ClientRow[]) => r.map((x) => x.name);
@@ -179,5 +180,98 @@ describe("serverProblem", () => {
     expect(serverProblem({ error: "invalid body", fields: {} }, "Could not save.")).toBe("Could not save.");
     expect(serverProblem(undefined, "Could not save.")).toBe("Could not save.");
     expect(serverProblem("nope", "Could not save.")).toBe("Could not save.");
+  });
+});
+
+describe("latestOnly", () => {
+  it("applies the latest result and ignores a stale one that arrives late", () => {
+    const guard = latestOnly();
+    const first = guard.next();
+    const second = guard.next();
+    expect(guard.isLatest(first)).toBe(false);
+    expect(guard.isLatest(second)).toBe(true);
+  });
+  it("lets a request through when nothing newer has started", () => {
+    const guard = latestOnly();
+    expect(guard.isLatest(guard.next())).toBe(true);
+  });
+  it("drops everything in flight once cancelled (the page changed or went away)", () => {
+    const guard = latestOnly();
+    const t = guard.next();
+    guard.cancel();
+    expect(guard.isLatest(t)).toBe(false);
+    expect(guard.isLatest(guard.next())).toBe(true);
+  });
+  it("a late response for client A never lands once client B has been asked for", async () => {
+    const guard = latestOnly();
+    let shown = "";
+    const load = async (id: string, delayMs: number) => {
+      const t = guard.next();
+      await new Promise((r) => setTimeout(r, delayMs));
+      if (guard.isLatest(t)) shown = id;
+    };
+    await Promise.all([load("A", 20), load("B", 1)]);
+    expect(shown).toBe("B");
+  });
+});
+
+describe("friendlyProblem", () => {
+  it("never shows the raw words of a failed call", () => {
+    expect(friendlyProblem("invalid body", "Could not save.")).toBe("Could not save.");
+    expect(friendlyProblem("HTTP 500", "Could not save.")).toBe("Could not save.");
+    expect(friendlyProblem("HTTP 400", "Could not save.")).toBe("Could not save.");
+    expect(friendlyProblem("", "Could not save.")).toBe("Could not save.");
+    expect(friendlyProblem(undefined, "Could not save.")).toBe("Could not save.");
+  });
+  it("keeps a plain sentence from the server", () => {
+    expect(friendlyProblem("this client already has a live site with that domain", "x")).toBe("this client already has a live site with that domain");
+  });
+});
+
+describe("addressProblem", () => {
+  it("is null for an empty address and for a plain http or https one", () => {
+    expect(addressProblem("")).toBeNull();
+    expect(addressProblem("  ")).toBeNull();
+    expect(addressProblem("https://example.com")).toBeNull();
+  });
+  it("tells a login in the address apart from a missing scheme", () => {
+    expect(addressProblem("https://user:pw@example.com/")).toBe("Leave the login out of the address.");
+    expect(addressProblem("http://user@example.com")).toBe("Leave the login out of the address.");
+    expect(addressProblem("example.com")).toBe("The site address must start with http:// or https://.");
+    expect(addressProblem("javascript:alert(1)")).toBe("The site address must start with http:// or https://.");
+  });
+  it("never repeats what was typed", () => {
+    expect(addressProblem("https://admin:hunter2@example.com")).not.toContain("hunter2");
+  });
+  it("names the field it is about", () => {
+    expect(addressProblem("nope", "The admin address")).toBe("The admin address must start with http:// or https://.");
+  });
+});
+
+describe("problemText", () => {
+  const err = (message: string, body?: unknown) => Object.assign(new Error(message), { body });
+  it("reads the server's field sentence out of a failed call", () => {
+    const e = err("invalid body", { error: "invalid body", fields: { notes: ["A note is 500 characters or fewer."] } });
+    expect(problemText(e, "Could not save.")).toBe("A note is 500 characters or fewer.");
+  });
+  it("uses a fixed sentence when a 400 has no usable field messages, never the raw words", () => {
+    expect(problemText(err("invalid body", { error: "invalid body", fields: {} }), "Could not save.")).toBe("Could not save.");
+    expect(problemText(err("HTTP 500", {}), "Could not save.")).toBe("Could not save.");
+    expect(problemText(err("HTTP 500"), "Could not save.")).toBe("Could not save.");
+  });
+  it("keeps the sentence of a 409", () => {
+    expect(problemText(err("x", { error: "this client already has a live site with that domain" }), "Could not save.")).toBe("this client already has a live site with that domain");
+  });
+});
+
+describe("projectStatusLabel", () => {
+  it("labels a project from its status alone, with no waiting-on-client guess", () => {
+    expect(projectStatusLabel({ status: "active", kind: "build" })).toEqual({ label: "Active", tone: "neutral" });
+    expect(projectStatusLabel({ status: "paused", kind: "build" })).toEqual({ label: "Paused", tone: "warn" });
+    expect(projectStatusLabel({ status: "done", kind: "build" })).toEqual({ label: "Done", tone: "good" });
+    expect(projectStatusLabel({ status: "cancelled", kind: "build" })).toEqual({ label: "Cancelled", tone: "muted" });
+  });
+  it("a finished Care setup is the client's running Care service", () => {
+    expect(projectStatusLabel({ status: "done", kind: "care_onboarding" })).toEqual({ label: "Care running", tone: "good" });
   });
 });
