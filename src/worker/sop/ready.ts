@@ -2,7 +2,7 @@ import type { Task } from "../db/tasks";
 import { unmetRequirements } from "./model";
 
 /** The phases of a project in order, each by the position of its first step: phase 0 is the first one, and so on. Only steps count; ad-hoc and change-order tasks have no phase here. */
-function phaseOrder(tasks: Task[]): Map<string, number> {
+export function phaseOrder(tasks: Task[]): Map<string, number> {
   const first = new Map<string, number>();
   for (const t of tasks) if (t.isStep && !(first.has(t.phaseKey) && first.get(t.phaseKey)! <= t.position)) first.set(t.phaseKey, t.position);
   const order = new Map<string, number>();

@@ -4,8 +4,9 @@ import { suppressedLeadIds } from "./db/suppression";
 import { openProposalsSentBefore } from "./db/documents";
 import { listOpenItems, listOpenOnboardings } from "./db/onboardings";
 import { silentDays, stageOf } from "./onboarding/schedule";
+import { projectAttention } from "./projects/progress";
 
-export const TODAY_KINDS = ["follow_up_due", "draft_unsent", "stalled_deal", "starred_idle", "promising_quick_scan", "proposal_follow_up", "onboarding_attention"] as const;
+export const TODAY_KINDS = ["follow_up_due", "draft_unsent", "stalled_deal", "starred_idle", "promising_quick_scan", "proposal_follow_up", "onboarding_attention", "project_attention"] as const;
 export type TodayKind = (typeof TODAY_KINDS)[number];
 export const isTodayKind = (s: string): s is TodayKind => (TODAY_KINDS as readonly string[]).includes(s);
 
@@ -91,6 +92,8 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
       if (reason) onboarding.set(o.businessId, reason);
     }
   }
+  // A client's projects: what needs the owner now. One reason per lead (review, a Claude step that was given up on, a change order to be paid, tasks due); test projects never show.
+  const projects = await projectAttention(db, now);
   const activity = await recentActivity(db, candidates.map((b) => b.id), new Date(t - ACTIVITY_WINDOW_DAYS * DAY).toISOString());
 
   const lastContact = new Map<string, number>(), lastExport = new Map<string, number>();
@@ -135,6 +138,9 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
       const days = plural(Math.floor((t - proposal.sentAt) / DAY), "day");
       items.push(push("proposal_follow_up", b, `Proposal sent ${days} ago, ${proposal.viewed ? "opened, not signed" : "not opened"}`, null, 65));
     }
+    // A client's project is the owner's own work too (like a stalled deal), so it stays for a suppressed lead.
+    const project = projects.get(b.id);
+    if (project && !hidden(b.id, "project_attention")) items.push(push("project_attention", b, project, null, 68));
     // A paying client's onboarding is the owner's own work (like a stalled deal), so it stays for a suppressed lead.
     const attention = onboarding.get(b.id);
     if (attention && !hidden(b.id, "onboarding_attention")) items.push(push("onboarding_attention", b, attention, null, 70));

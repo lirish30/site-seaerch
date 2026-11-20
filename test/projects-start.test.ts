@@ -387,3 +387,97 @@ describe("startProjectsForPaidDocuments", () => {
     expect(await keysOf(bad.businessId)).toEqual(["QUICKFIX"]);
   });
 });
+
+describe("startProjectsForPaidDocuments: starvation and partial starts", () => {
+  const paid = async (o: Parameters<typeof seed>[0], at: string) => {
+    const s = await seed(o);
+    await setPaid(env.DB, s.doc.id, at);
+    return s;
+  };
+  const checked = async (docId: string) => (await env.DB.prepare(`SELECT projects_checked_at AS c FROM documents WHERE id = ?`).bind(docId).first<{ c: string | null }>())!.c;
+
+  it("documents that can never get a project take their turn and then wait, so a later one is not starved", async () => {
+    await startProjectsForPaidDocuments(e, NOW); // clear any paid document an earlier test left without a project
+    const seoA = await paid({ packages: [SEO] }, "2026-12-03T09:00:00.000Z");
+    const seoB = await paid({ packages: [SEO] }, "2026-12-03T09:01:00.000Z");
+    const seoC = await paid({ packages: [SEO] }, "2026-12-03T09:02:00.000Z");
+    const quick = await paid({ packages: [QUICK] }, "2026-12-03T09:03:00.000Z");
+    // Other tests of this file leave paid documents that never get a project; they would take part in the rotation, so set them aside.
+    await env.DB.prepare(`UPDATE documents SET paid_at = NULL WHERE id NOT IN (?, ?, ?, ?)`).bind(seoA.doc.id, seoB.doc.id, seoC.doc.id, quick.doc.id).run();
+
+    // The window holds two: the two oldest are looked at (and start nothing), and marked as looked at.
+    expect(await startProjectsForPaidDocuments(e, NOW, { limit: 2 })).toBe(0);
+    expect(await checked(seoA.doc.id)).toBe(NOW.toISOString());
+    expect(await checked(seoB.doc.id)).toBe(NOW.toISOString());
+    expect(await checked(quick.doc.id)).toBeNull();
+    expect(await projectsOf(quick.businessId)).toEqual([]);
+
+    // The next call takes the ones not yet looked at first, so the Quick Fix starts.
+    const later = new Date(NOW.getTime() + 86_400_000);
+    expect(await startProjectsForPaidDocuments(e, later, { limit: 2 })).toBe(1);
+    expect(await keysOf(quick.businessId)).toEqual(["QUICKFIX"]);
+    expect(await checked(seoC.doc.id)).toBe(later.toISOString());
+
+    // Then the oldest look comes round again: A and B before C.
+    await startProjectsForPaidDocuments(e, new Date(later.getTime() + 86_400_000), { limit: 2 });
+    expect(await checked(seoA.doc.id)).toBe(new Date(later.getTime() + 86_400_000).toISOString());
+    expect(await checked(seoC.doc.id)).toBe(later.toISOString());
+    expect(await seoNotes(seoA.businessId)).toHaveLength(1); // the "no SOP" line is still written once
+  });
+
+  it("a document that fails is retried by the very next call when it is the only one", async () => {
+    await startProjectsForPaidDocuments(e, NOW);
+    const bad = await paid({ packages: [QUICK] }, "2026-12-03T09:00:00.000Z");
+    const db = new Proxy(env.DB, {
+      get(target, prop) {
+        if (prop === "prepare") return (sql: string) => {
+          if (/INSERT INTO projects/.test(sql)) return { bind: () => { throw new Error("boom"); } };
+          return target.prepare(sql);
+        };
+        const v = Reflect.get(target, prop);
+        return typeof v === "function" ? v.bind(target) : v;
+      },
+    }) as D1Database;
+    expect(await startProjectsForPaidDocuments({ ...e, DB: db } as Env, NOW)).toBe(0);
+    expect(await checked(bad.doc.id)).toBe(NOW.toISOString());
+    expect(await startProjectsForPaidDocuments(e, NOW)).toBe(1);
+  });
+
+  it("a project made without its steps (a start that died half-way) gets them from the sweep", async () => {
+    await startProjectsForPaidDocuments(e, NOW);
+    await ensureSeedSops(env.DB);
+    const s = await paid({ packages: [QUICK] }, "2026-12-03T09:00:00.000Z");
+    const { createProject } = await import("../src/worker/db/projects");
+    const { project } = await createProject(env.DB, {
+      businessId: s.businessId, dealId: s.dealId, documentId: s.doc.id, onboardingId: null, kind: "quick_fix", name: "Ace Plumbing: Quick fix", test: false,
+      templateKey: "QUICKFIX", templateVersion: 1, careDeferred: false, startedAt: "2026-12-03T09:00:00.000Z",
+    });
+    expect(await listTasks(env.DB, project.id)).toEqual([]);
+
+    expect(await startProjectsForPaidDocuments(e, NOW)).toBe(1);
+    expect((await projectsOf(s.businessId)).map((p) => p.id)).toEqual([project.id]); // the same project, not a second one
+    expect((await listTasks(env.DB, project.id)).length).toBeGreaterThan(0);
+    expect(await startProjectsForPaidDocuments(e, NOW)).toBe(0); // healed: nothing more to do
+  });
+
+  it("a finished or cancelled project with no tasks is left alone, and so is a project that has its steps", async () => {
+    await startProjectsForPaidDocuments(e, NOW);
+    await ensureSeedSops(env.DB);
+    const { createProject } = await import("../src/worker/db/projects");
+    const make = async (status: "done" | "cancelled" | "active") => {
+      const s = await paid({ packages: [QUICK] }, "2026-12-03T09:00:00.000Z");
+      const { project } = await createProject(env.DB, {
+        businessId: s.businessId, dealId: s.dealId, documentId: s.doc.id, onboardingId: null, kind: "quick_fix", name: "Quick fix", test: false, templateKey: "QUICKFIX", templateVersion: 1,
+        careDeferred: false, startedAt: "2026-12-03T09:00:00.000Z",
+      });
+      if (status !== "active") await setProjectStatus(env.DB, project.id, status);
+      return project;
+    };
+    const done = await make("done"), cancelled = await make("cancelled");
+    const full = await paid({ packages: [QUICK] }, "2026-12-03T09:00:00.000Z");
+    await startProjects(e, full.doc);
+    expect(await startProjectsForPaidDocuments(e, NOW)).toBe(0);
+    expect(await listTasks(env.DB, done.id)).toEqual([]);
+    expect(await listTasks(env.DB, cancelled.id)).toEqual([]);
+  });
+});

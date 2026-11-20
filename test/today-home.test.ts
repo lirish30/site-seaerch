@@ -29,6 +29,9 @@ describe("Home rows", () => {
     expect(filterPills([...items, item("proposal_follow_up")]).map((p) => `${p.label} ${p.count}`)).toEqual(["All 6", "Follow-ups 2", "Drafts 1", "Deals 1", "Proposals 1", "Scans 1"]);
     // The Onboarding pill follows the same rule, and sits after Proposals.
     expect(filterPills([...items, item("proposal_follow_up"), item("onboarding_attention")]).map((p) => `${p.label} ${p.count}`)).toEqual(["All 7", "Follow-ups 2", "Drafts 1", "Deals 1", "Proposals 1", "Onboarding 1", "Scans 1"]);
+    // The Projects pill follows the same rule, and sits after Onboarding.
+    expect(filterPills([...items, item("proposal_follow_up"), item("onboarding_attention"), item("project_attention")]).map((p) => `${p.label} ${p.count}`)).toEqual(["All 8", "Follow-ups 2", "Drafts 1", "Deals 1", "Proposals 1", "Onboarding 1", "Projects 1", "Scans 1"]);
+    expect(filterPills(items).map((p) => p.label)).not.toContain("Projects");
   });
   it("badges a follow-up as N days late (red) or due today (amber), and nothing else", () => {
     const now = at(9);

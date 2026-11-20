@@ -18,7 +18,11 @@ export interface MailCtx {
   /** The owner's IANA zone, for that day; UTC when absent or unknown. */
   tz?: string;
 }
-export interface FridayCtx { clientName?: string; contactName?: string; waiting: string[]; received: string[]; questionnaireDone: boolean }
+export interface FridayCtx {
+  clientName?: string; contactName?: string; waiting: string[]; received: string[]; questionnaireDone: boolean;
+  /** What the project finished this week and what comes next, as the client's own summary lines (never an internal task title). Each section is left out when empty. */
+  done?: string[]; next?: string[];
+}
 
 const NAME_MAX = 60, BUSINESS_MAX = 120, LABEL_MAX = 100, LIST_MAX = 12, URL_MAX = 300;
 const DAY = 86_400_000;
@@ -91,10 +95,7 @@ export function renderReminder(level: 1 | 2 | 3 | 4, c: MailCtx, link: string, s
   }
 }
 
-/**
- * The Friday summary: what has come in, what is still open, and whether the questionnaire is done.
- * TODO(plan-7): the "done this week / next up" half of the Friday update needs the build tracker Plan 7 adds; until then this is the client-side half only.
- */
+/** The Friday summary: what got done on the site this week and what is next (when there is a project to say it about), what has come in, what is still open, and whether the questionnaire is done. */
 export function renderFriday(c: FridayCtx, link: string, s: Settings): OnboardingMail {
   const list = (labels: string[]) => {
     const shown = labels.map((l) => line(l, LABEL_MAX, link)).filter(Boolean);
@@ -103,6 +104,9 @@ export function renderFriday(c: FridayCtx, link: string, s: Settings): Onboardin
   const biz = line(c.clientName ?? "", BUSINESS_MAX, link);
   const parts = [`Here is where things stand${biz ? ` for ${biz}` : ""} as the week ends.`];
   parts.push(c.questionnaireDone ? "Your questionnaire is in. Thank you." : "Your questionnaire is not in yet. It is the first thing I need.");
+  const done = (c.done ?? []).length ? list(c.done ?? []) : "", next = (c.next ?? []).length ? list(c.next ?? []) : "";
+  if (done) parts.push(`Done this week:\n${done}`);
+  if (next) parts.push(`Coming up next:\n${next}`);
   if (c.received.length) parts.push(`I have received:\n${list(c.received)}`);
   if (c.waiting.length) parts.push(`Still open:\n${list(c.waiting)}`);
   else if (c.questionnaireDone) parts.push("Nothing else is open right now.");

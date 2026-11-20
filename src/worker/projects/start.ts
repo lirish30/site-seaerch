@@ -157,15 +157,21 @@ export async function startTestProject(env: Env, dealId: string, o: { now?: Date
 const SWEEP_LIMIT = 25;
 
 /**
- * Starts projects for real, signed documents whose deposit is paid and that have no project at all: the retry for a payment whose start failed (it is never replayed, because the
- * document is marked paid). Each document is tried on its own, so one failure leaves the rest to go on (it is noted on the lead's timeline and tried again next time). Returns how many
- * documents got a project. A document that has none to start (a Local SEO sale, whose note is written once) is not counted. Safe to repeat: it finds nothing new the second time.
+ * Starts projects for real, signed documents whose deposit is paid and that have no project at all (the retry for a payment whose start failed: it is never replayed, because the
+ * document is marked paid), or whose project was made but never got its steps (a start that died between the two). A finished or cancelled project with no tasks is left as it is.
+ * Each document is tried on its own, so one failure leaves the rest to go on (it is noted on the lead's timeline and tried again next time). Returns how many documents got a project
+ * or their steps. A document that has none to start (a Local SEO sale, whose note is written once) is not counted. Safe to repeat: it finds nothing new the second time.
+ *
+ * The documents least recently tried come first (never-tried ones before all, then by payment date), and each one is marked as tried whatever came of it. So a document that can never
+ * get a project, or keeps failing, takes its turn and then waits behind the others instead of filling the `limit` for good and starving the ones behind it.
  */
-export async function startProjectsForPaidDocuments(env: Env, now: Date = new Date()): Promise<number> {
+export async function startProjectsForPaidDocuments(env: Env, now: Date = new Date(), o: { limit?: number } = {}): Promise<number> {
   const ids = (await env.DB.prepare(
-    `SELECT d.id FROM documents d WHERE d.status = 'signed' AND d.test = 0 AND d.paid_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM projects p WHERE p.document_id = d.id)
-     ORDER BY d.paid_at, d.id LIMIT ?`,
-  ).bind(SWEEP_LIMIT).all<{ id: string }>()).results;
+    `SELECT d.id FROM documents d WHERE d.status = 'signed' AND d.test = 0 AND d.paid_at IS NOT NULL AND (
+       NOT EXISTS (SELECT 1 FROM projects p WHERE p.document_id = d.id)
+       OR EXISTS (SELECT 1 FROM projects p WHERE p.document_id = d.id AND p.status = 'active' AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.project_id = p.id)))
+     ORDER BY COALESCE(d.projects_checked_at, ''), d.paid_at, d.id LIMIT ?`,
+  ).bind(o.limit ?? SWEEP_LIMIT).all<{ id: string }>()).results;
   let started = 0;
   for (const { id } of ids) {
     try {
@@ -181,6 +187,8 @@ export async function startProjectsForPaidDocuments(env: Env, now: Date = new Da
         if (doc) await logActivityOnce(env.DB, doc.businessId, "note", `${doc.content.header.reference} v${doc.version}: projects were not started: ${reason}. Use Start projects on the deal, or wait for the daily sweep.`);
       } catch { /* the note is best effort */ }
     }
+    await env.DB.prepare(`UPDATE documents SET projects_checked_at = ? WHERE id = ?`).bind(now.toISOString(), id)
+      .run().catch((e) => console.error("projects: could not mark a document as tried", e instanceof Error ? e.message : "unknown error"));
   }
   return started;
 }

@@ -58,13 +58,15 @@ export async function listTasks(db: D1Database, projectId: string): Promise<Task
 
 /**
  * Inserts the tasks in one batch: all of them or none (a step key already used in the project fails the whole batch). The rows come back as inserted.
+ * With `ignoreDuplicates` a row that would break a unique index (a recurring task already made for its period, a step key already used) is skipped instead of failing the batch,
+ * and only the rows that went in come back; this is what makes a second sweep, or two at once, add nothing.
  */
-export async function insertTasks(db: D1Database, rows: NewTask[]): Promise<Task[]> {
+export async function insertTasks(db: D1Database, rows: NewTask[], o: { ignoreDuplicates?: boolean } = {}): Promise<Task[]> {
   if (!rows.length) return [];
   const now = nowIso();
   const out: Task[] = rows.map((n) => ({ ...n, id: crypto.randomUUID(), claudeTaskId: null, reviewApprovalId: null, startedAt: null, doneAt: null, createdAt: now, updatedAt: now }));
-  await db.batch(out.map((t) => db.prepare(
-    `INSERT INTO tasks (id, project_id, business_id, is_step, step_key, phase_key, phase_title, position, title, description, owner, status, done_when, est_minutes, due_on, billable, skippable,
+  const results = await db.batch(out.map((t) => db.prepare(
+    `INSERT${o.ignoreDuplicates ? " OR IGNORE" : ""} INTO tasks (id, project_id, business_id, is_step, step_key, phase_key, phase_title, position, title, description, owner, status, done_when, est_minutes, due_on, billable, skippable,
        requires, milestone, client_summary, doc_template, email_template, checklist, change_order_id, cadence_key, period_key, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(
@@ -72,21 +74,44 @@ export async function insertTasks(db: D1Database, rows: NewTask[]): Promise<Task
     t.billable ? 1 : 0, t.skippable ? 1 : 0, JSON.stringify(t.requires), t.milestone, t.clientSummary, t.docTemplate, t.emailTemplate, JSON.stringify(t.checklist), t.changeOrderId,
     t.cadenceKey, t.periodKey, now, now,
   )));
-  return out;
+  return o.ignoreDuplicates ? out.filter((_, i) => (results[i].meta.changes ?? 0) === 1) : out;
 }
 
 /**
  * The open tasks Logan works, across active projects: his own tasks that are to do or under way, and Claude's drafts that are waiting for his review.
  * Whether a task is ready (its requirements met, its phase reached) is derived elsewhere; this is the list before that.
- * Soonest due date first (undated last), then the older project, then step order.
+ * Soonest due date first (undated last), then the older project, then step order. `realOnly` leaves out the tasks of test projects (what Today wants; the owner's task list shows them, flagged).
  */
-export async function listOpenTasksForLogan(db: D1Database): Promise<(Task & { projectName: string; businessName: string })[]> {
+export async function listOpenTasksForLogan(db: D1Database, o: { realOnly?: boolean } = {}): Promise<(Task & { projectName: string; businessName: string })[]> {
   const rows = (await db.prepare(
     `SELECT t.*, p.name AS project_name, b.name AS business_name FROM tasks t JOIN projects p ON p.id = t.project_id JOIN businesses b ON b.id = t.business_id
-     WHERE p.status = 'active' AND ((t.owner = 'logan' AND t.status IN ('todo', 'in_progress')) OR (t.owner = 'claude_drafts' AND t.status = 'in_review'))
+     WHERE p.status = 'active' ${o.realOnly ? "AND p.test = 0" : ""} AND ((t.owner = 'logan' AND t.status IN ('todo', 'in_progress')) OR (t.owner = 'claude_drafts' AND t.status = 'in_review'))
      ORDER BY t.due_on IS NULL, t.due_on, p.started_at, p.id, t.position, t.rowid`,
   ).all<Row & { project_name: string; business_name: string }>()).results;
   return rows.map((r) => ({ ...toTask(r), projectName: r.project_name, businessName: r.business_name }));
+}
+
+/** How many tasks wait for Logan's review, by lead, across real (not test) active projects. */
+export async function reviewCountsByBusiness(db: D1Database): Promise<Map<string, number>> {
+  const rows = (await db.prepare(
+    `SELECT t.business_id, COUNT(*) AS n FROM tasks t JOIN projects p ON p.id = t.project_id WHERE p.status = 'active' AND p.test = 0 AND t.status = 'in_review' GROUP BY t.business_id`,
+  ).all<{ business_id: string; n: number }>()).results;
+  return new Map(rows.map((r) => [r.business_id, r.n]));
+}
+
+/**
+ * How many Claude steps automatic dispatch has given up on, by lead, across real active projects: still to do, owned by Claude (or Claude drafting), with no job queued or running, and
+ * `maxFailures` or more jobs of `jobKind` that ended failed or expired (what `failedJobCount` counts for one step). Such a step waits for Logan, who can still press Ask Claude.
+ */
+export async function cappedStepCountsByBusiness(db: D1Database, jobKind: string, maxFailures: number): Promise<Map<string, number>> {
+  const rows = (await db.prepare(
+    `SELECT t.business_id, COUNT(*) AS n FROM tasks t JOIN projects p ON p.id = t.project_id
+     WHERE p.status = 'active' AND p.test = 0 AND t.status = 'todo' AND t.owner IN ('claude', 'claude_drafts')
+       AND (SELECT COUNT(*) FROM claude_tasks c WHERE c.kind = ?1 AND c.target_id = t.id AND c.status IN ('failed', 'expired')) >= ?2
+       AND NOT EXISTS (SELECT 1 FROM claude_tasks c WHERE c.kind = ?1 AND c.target_id = t.id AND c.status IN ('pending', 'claimed'))
+     GROUP BY t.business_id`,
+  ).bind(jobKind, maxFailures).all<{ business_id: string; n: number }>()).results;
+  return new Map(rows.map((r) => [r.business_id, r.n]));
 }
 
 /** What the owner can change on a task. A field left out is not touched; null clears `dueOn` and `clientSummary`. */

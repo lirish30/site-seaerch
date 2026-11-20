@@ -252,6 +252,15 @@ export async function expireDue(db: D1Database, now: string): Promise<ChangeOrde
   return res.results.map(toChangeOrder);
 }
 
+/** The leads with a signed change order that is not paid yet, on a real (not test) active project: the work is locked until the money is in. */
+export async function businessesAwaitingChangeOrderPayment(db: D1Database): Promise<Set<string>> {
+  const rows = (await db.prepare(
+    `SELECT DISTINCT c.business_id FROM change_orders c JOIN projects p ON p.id = c.project_id
+     WHERE c.status = 'signed' AND c.paid_at IS NULL AND c.test = 0 AND p.test = 0 AND p.status = 'active'`,
+  ).all<{ business_id: string }>()).results;
+  return new Set(rows.map((r) => r.business_id));
+}
+
 /** Removes the order's tasks that are still locked, with their notes (a draft's tasks are all new, so nothing of value goes). Returns how many tasks went. */
 export async function deleteLockedTasks(db: D1Database, id: string): Promise<number> {
   const locked = `SELECT id FROM tasks WHERE change_order_id = ? AND status = 'locked' AND NOT EXISTS (SELECT 1 FROM time_entries te WHERE te.task_id = tasks.id)`;
