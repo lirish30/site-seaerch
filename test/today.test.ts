@@ -10,6 +10,8 @@ import { createDraft, expireDue, markSent, recordView, signDocument, voidDocumen
 import { canonicalJson, sha256Hex } from "../src/worker/documents/hash";
 import { newClientToken } from "../src/worker/documents/token";
 import { clientSig, proposal, providerSig } from "./fixtures/documents";
+import { openInvoice, seedDoc, seedDraft } from "./fixtures/billing";
+import { placeHold } from "../src/worker/db/holds";
 
 const NOW = new Date("2026-10-04T12:00:00.000Z");
 const DAY = 86_400_000;
@@ -28,7 +30,7 @@ beforeAll(async () => {
 
 // buildToday reads every lead, so each test starts from an empty set.
 beforeEach(async () => {
-  for (const t of ["document_views", "document_signatures", "documents", "deals", "activity", "drafts", "audits", "search_results", "businesses", "suppressions"]) await env.DB.prepare(`DELETE FROM ${t}`).run();
+  for (const t of ["billing_holds", "invoices", "document_views", "document_signatures", "documents", "deals", "activity", "drafts", "audits", "search_results", "businesses", "suppressions"]) await env.DB.prepare(`DELETE FROM ${t}`).run();
 });
 
 let searchId = "";
@@ -560,5 +562,85 @@ describe("proposal_follow_up", () => {
     await act(id, "proposal_viewed", ago(1));
     await act(id, "proposal_void", ago(1), "SL-ABCDEF v1: expired");
     expect((await of("stalled_deal")).map((i) => i.businessId)).toEqual([id]);
+  });
+});
+
+describe("billing_attention", () => {
+  type Seed = Awaited<ReturnType<typeof seedDoc>>;
+  const rows = () => of("billing_attention");
+  /** A sent invoice on the client: open, with a due date `dueDaysAgo` days before NOW (negative: in the future), in the booking zone. */
+  async function sent(s: Seed, dueDaysAgo: number, o: { status?: "open" | "failed" | "paid"; test?: boolean } = {}) {
+    const d = await seedDraft({ seed: s, test: o.test ?? false });
+    const inv = await openInvoice(d.invoice);
+    const due = new Date(NOW.getTime() - dueDaysAgo * DAY).toISOString().slice(0, 10);
+    await env.DB.prepare(`UPDATE invoices SET due_on = ?, status = ? WHERE id = ?`).bind(due, o.status ?? "open", inv.id).run();
+    return inv;
+  }
+
+  it("a draft invoice waiting to be proposed shows, for the client, with its own reason", async () => {
+    const s = await seedDoc();
+    await seedDraft({ seed: s });
+    const [item] = await rows();
+    expect(item).toMatchObject({ id: `billing_attention:${s.businessId}`, kind: "billing_attention", businessId: s.businessId, reason: "Invoice drafted: needs your OK to send", due: null });
+  });
+
+  it("an invoice past its due date shows how many days overdue; one not yet due, a paid one and a test one do not show", async () => {
+    const late = await seedDoc(), soon = await seedDoc(), paid = await seedDoc(), test = await seedDoc();
+    await sent(late, 6);
+    await sent(soon, -5);
+    await sent(paid, 9, { status: "paid" });
+    await sent(test, 9, { test: true });
+    expect((await rows()).map((i) => [i.businessId, i.reason])).toEqual([[late.businessId, "Invoice 6 days overdue"]]);
+  });
+
+  it("a failed payment counts from the day it failed", async () => {
+    const s = await seedDoc();
+    const inv = await sent(s, -10, { status: "failed" });
+    await env.DB.prepare(`UPDATE invoices SET failed_on = ? WHERE id = ?`).bind(new Date(NOW.getTime() - 2 * DAY).toISOString().slice(0, 10), inv.id).run();
+    expect((await rows()).map((i) => i.reason)).toEqual(["Invoice 2 days overdue"]);
+  });
+
+  it("holds one row per client, the worst state first: a hold over an overdue invoice over a draft", async () => {
+    const held = await seedDoc(), overdue = await seedDoc(), drafted = await seedDoc();
+    await seedDraft({ seed: held });
+    const heldInv = await sent(held, 20);
+    await sent(held, 3);
+    expect(await placeHold(env.DB, { businessId: held.businessId, invoiceId: heldInv.id, now: ago(2) })).toBe(true);
+    await seedDraft({ seed: overdue });
+    await sent(overdue, 6);
+    await sent(overdue, 2);
+    await seedDraft({ seed: drafted });
+    await seedDraft({ seed: drafted });
+    const items = await rows();
+    expect(items).toHaveLength(3);
+    const reason = (id: string) => items.find((i) => i.businessId === id)!.reason;
+    expect(reason(held.businessId)).toBe("Work on hold since 2 Oct");
+    expect(reason(overdue.businessId)).toBe("Invoice 6 days overdue");
+    expect(reason(drafted.businessId)).toBe("Invoice drafted: needs your OK to send");
+    // The more serious the state, the higher it sits.
+    expect(items.map((i) => i.businessId)).toEqual([held.businessId, overdue.businessId, drafted.businessId]);
+  });
+
+  it("a lifted hold and a paid invoice leave nothing to show", async () => {
+    const s = await seedDoc();
+    const inv = await sent(s, 20);
+    expect(await placeHold(env.DB, { businessId: s.businessId, invoiceId: inv.id, now: ago(2) })).toBe(true);
+    expect(await rows()).toHaveLength(1);
+    await env.DB.prepare(`UPDATE billing_holds SET lifted_at = ?, lifted_by = 'payment'`).bind(ago(0)).run();
+    await env.DB.prepare(`UPDATE invoices SET status = 'paid' WHERE id = ?`).bind(inv.id).run();
+    expect(await rows()).toEqual([]);
+  });
+
+  it("is the owner's own work, so Done hides it like any other kind", async () => {
+    const s = await seedDoc();
+    await seedDraft({ seed: s });
+    expect((await post(`/api/today/billing_attention/${s.businessId}/done`)).status).toBe(200);
+    expect(await rows()).toEqual([]);
+  });
+
+  it("a billing row does not un-stall a deal: sending an invoice, its payment and a hold are not contact with the prospect", async () => {
+    const id = await lead("Quiet client", { status: "contacted", dealValue: 700 });
+    for (const kind of ["invoice_sent", "invoice_paid", "billing_hold_placed"] as const) await act(id, kind, ago(1), "x");
+    expect(await of("stalled_deal")).toHaveLength(1);
   });
 });

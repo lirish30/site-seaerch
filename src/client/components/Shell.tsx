@@ -5,7 +5,7 @@ import { sectionOf, sidebarOf, stageCounts, type Section } from "../navView";
 import { parseView, serializeView, viewRows } from "../savedFilters";
 import { initials } from "../scoreView";
 import { isDraftReady } from "../leadFilters";
-import { TODAY_KIND_LABEL } from "../todayView";
+import { itemLink, TODAY_KIND_LABEL } from "../todayView";
 import type { LeadRow, OutreachCounts, SavedFilter, TodayItem } from "../types";
 import Icon, { LogoMark, type IconName } from "./Icon";
 import { SideGroup, SideItem, SideTitle, SidebarCollapse } from "./sidebars/parts";
@@ -148,7 +148,7 @@ function Bell() {
         <div className="popover rail-left" role="dialog" aria-label="Today">
           <h4>Today</h4>
           {items && items.length > 0 ? items.slice(0, 6).map((i) => (
-            <Link key={i.id} className="pop-item" to={`/leads/${i.businessId}`} onClick={() => setOpen(false)}><span>{i.businessName}</span><small>{TODAY_KIND_LABEL[i.kind]}</small></Link>
+            <Link key={i.id} className="pop-item" to={i.kind === "billing_attention" ? itemLink(i)! : `/leads/${i.businessId}`} onClick={() => setOpen(false)}><span>{i.businessName}</span><small>{TODAY_KIND_LABEL[i.kind]}</small></Link>
           )) : <p className="pop-empty">Nothing needs you today.</p>}
           <hr />
           <Link className="pop-item" to="/today" onClick={() => setOpen(false)}>Open Home<Icon name="arrow-right" size={14} /></Link>
