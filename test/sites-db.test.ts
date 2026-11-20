@@ -2,7 +2,7 @@ import { env, SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { getBusiness } from "../src/worker/db/businesses";
 import {
-  ACCESS_KEYS, archiveSite, createSite, getSite, hasSite, listAccess, listSites, setAccess, SiteConflictError, updateSite,
+  ACCESS_KEYS, adoptAsPrimary, archiveSite, createSite, getSite, hasSite, listAccess, listSites, setAccess, SiteConflictError, updateSite,
 } from "../src/worker/db/sites";
 import { seedBusiness } from "./fixtures/cro";
 
@@ -141,6 +141,27 @@ describe("sites db", () => {
     expect(await hasSite(env.DB, b.id)).toBe(true);
     await archiveSite(env.DB, site.id, T1);
     expect(await hasSite(env.DB, b.id)).toBe(true);
+  });
+});
+
+describe("adoptAsPrimary", () => {
+  it("makes a hand-added live site the primary, once, and only when the business has no primary", async () => {
+    const b = await seedBusiness();
+    const hand = (await createSite(env.DB, { businessId: b.id, url: "https://ace.com" })).site;
+    const other = (await createSite(env.DB, { businessId: b.id, url: "https://other.com" })).site;
+    const adopted = (await adoptAsPrimary(env.DB, hand.id, T1))!;
+    expect(adopted).toMatchObject({ id: hand.id, seedKey: "primary", updatedAt: T1 });
+    expect(await adoptAsPrimary(env.DB, other.id, T2)).toBeNull(); // the business has a primary now
+    expect((await getSite(env.DB, other.id))!.seedKey).toBeNull();
+    expect(await adoptAsPrimary(env.DB, hand.id, T3)).toBeNull(); // already the primary
+  });
+
+  it("refuses an archived site and an unknown one", async () => {
+    const b = await seedBusiness();
+    const { site } = await createSite(env.DB, { businessId: b.id, url: "https://ace.com" });
+    await archiveSite(env.DB, site.id, T1);
+    expect(await adoptAsPrimary(env.DB, site.id, T2)).toBeNull();
+    expect(await adoptAsPrimary(env.DB, "nope", T2)).toBeNull();
   });
 });
 

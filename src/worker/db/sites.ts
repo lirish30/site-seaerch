@@ -129,6 +129,34 @@ export async function archiveSite(db: D1Database, id: string, now: string): Prom
   return (res.meta.changes ?? 0) === 1;
 }
 
+/**
+ * Makes a hand-added live site the business's `primary` (the seed key), so a later seed finds it instead of making a second one. Only when the site has no seed key,
+ * is not archived, and the business has no primary yet, all in one statement. Returns the site, or null when any of that does not hold.
+ */
+export async function adoptAsPrimary(db: D1Database, id: string, now: string): Promise<Site | null> {
+  const res = await db.prepare(
+    `UPDATE sites SET seed_key = 'primary', updated_at = ?1
+     WHERE id = ?2 AND seed_key IS NULL AND archived_at IS NULL
+       AND NOT EXISTS (SELECT 1 FROM sites p WHERE p.business_id = sites.business_id AND p.seed_key = 'primary')`,
+  ).bind(now, id).run();
+  return (res.meta.changes ?? 0) === 1 ? getSite(db, id) : null;
+}
+
+/**
+ * What a later seed may change on a site it already made: a test site becomes real when `real` is true (never the other way), and a hosting tier that is still `unknown`
+ * takes `hostingTier` (a tier anyone has set is never touched). One guarded statement, so it cannot overwrite an edit made at the same moment. Returns the site as it now is.
+ */
+export async function refreshSeededSite(db: D1Database, id: string, o: { real: boolean; hostingTier: HostingTier }, now: string): Promise<Site | null> {
+  await db.prepare(
+    `UPDATE sites SET
+       test = CASE WHEN ?1 = 1 THEN 0 ELSE test END,
+       hosting_tier = CASE WHEN hosting_tier = 'unknown' THEN ?2 ELSE hosting_tier END,
+       updated_at = ?3
+     WHERE id = ?4 AND ((?1 = 1 AND test = 1) OR (hosting_tier = 'unknown' AND ?2 <> 'unknown'))`,
+  ).bind(o.real ? 1 : 0, o.hostingTier, now, id).run();
+  return getSite(db, id);
+}
+
 /** True when the business has any site, archived ones included, so a lead is never deleted from under its history. */
 export async function hasSite(db: D1Database, businessId: string): Promise<boolean> {
   return !!(await db.prepare(`SELECT 1 AS x FROM sites WHERE business_id = ? LIMIT 1`).bind(businessId).first());
