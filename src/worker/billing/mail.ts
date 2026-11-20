@@ -50,6 +50,51 @@ export function renderInvoiceMail(inv: InvoiceRow, link: string, c: { clientName
   return { subject: `Invoice for ${client}: ${what}`.slice(0, 200), body };
 }
 
+export interface ReminderMail { subject: string; body: string }
+
+/**
+ * The reminder for an unpaid invoice: the same words for every client, a fixed template, nothing written by a model. `step` is 1-based and `total` is how many steps the ladder has. A step
+ * before the due date is a heads-up, one on it a plain reminder, a later one says it is overdue, and the last step also says the project's work pauses on `pauseOn` unless the invoice is
+ * paid. `c.offset` is the step's own offset from the due date in days; without it the default ladder's order is used (first a heads-up, second the due date, then overdue). An invoice that
+ * failed to take payment links the hosted invoice page, where the client updates the payment method. What a person typed (the contact's name, the description, the sender's name) is shown as typed,
+ * on one line and capped; the sender escapes it.
+ */
+export function renderReminder(
+  step: number, total: number, inv: InvoiceRow, link: string, c: { contactName: string; yourName: string; pauseOn: string; offset?: number },
+): ReminderMail {
+  const first = oneLine(c.contactName).split(" ")[0].slice(0, 60);
+  const what = oneLine(inv.description).slice(0, 200);
+  const amount = dollars(inv.amountCents);
+  const date = inv.failedOn ?? inv.dueOn;
+  const day = date ? longDate(date) : "";
+  const tone: "ahead" | "today" | "late" = c.offset !== undefined ? (c.offset < 0 ? "ahead" : c.offset === 0 ? "today" : "late") : step <= 1 ? "ahead" : step === 2 ? "today" : "late";
+  const failed = inv.status === "failed";
+  const last = step >= total;
+
+  const lead = failed
+    ? `The payment for your invoice for ${what}, ${amount}, did not go through${day ? ` on ${day}` : ""}.${tone === "late" ? " It is now overdue." : ""}`
+    : tone === "ahead" ? `A heads-up that your invoice for ${what} is coming up: ${amount} is due${day ? ` on ${day}` : ""}.`
+    : tone === "today" ? `A quick reminder that your invoice for ${what}, ${amount}, is due today${day ? ` (${day})` : ""}.`
+    : `Your invoice for ${what}, ${amount}, ${day ? `was due on ${day} and ` : ""}is now overdue.`;
+  const action = failed
+    ? "You can update your payment method, and pay the invoice, on its page here:"
+    : "You can read it and pay it online, by card or bank transfer, here:";
+  const body = [
+    first ? `Hi ${first},` : "Hi,",
+    lead,
+    action,
+    link,
+    last ? `If it is not paid by ${longDate(c.pauseOn)}, work on the project pauses on that date until it is. If something is in the way, reply to this email and we will sort it out.` : "",
+    tone === "ahead" ? "If you have already paid, thank you, and please ignore this note." : "If you have already paid, thank you, and please ignore this note. Reply to this email if you have a question.",
+    ["Thanks,", oneLine(c.yourName)].filter(Boolean).join("\n"),
+  ].filter(Boolean).join("\n\n");
+  const subject = failed ? `Your payment for ${what} did not go through`
+    : tone === "ahead" ? `Reminder: ${what} is due${day ? ` on ${day}` : " soon"}`
+    : tone === "today" ? `Reminder: ${what} is due today`
+    : `Overdue: ${what}${day ? `, due ${day}` : ""}`;
+  return { subject: subject.slice(0, 200), body };
+}
+
 export interface SubscriptionLinkMail { subject: string; body: string }
 
 /**
