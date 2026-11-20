@@ -6,7 +6,7 @@ import { clientBase } from "../documents/mail";
 import { isClientToken } from "../documents/token";
 import type { Env } from "../env";
 import type { Fetch } from "../google/oauth";
-import { StripeError, createSubscriptionCheckout, ensureProduct, retrieveCheckoutSession, stripeMode } from "../stripe/client";
+import { StripeError, chargedAtCheckout, createSubscriptionCheckout, ensureProduct, retrieveCheckoutSession, stripeMode } from "../stripe/client";
 import { ensureStripeCustomer } from "./customer";
 import { invoiceRecipient, subscriptionPlanName } from "./mail";
 import { subscriptionCheckoutCompleted } from "./mirror";
@@ -18,6 +18,8 @@ export interface PublicSubscription {
   monthlyCents: number;
   /** The date of the first payment (a calendar date), or null when none is set. */
   firstChargeOn: string | null;
+  /** True when the card is charged at Checkout (no first charge date, or one under 3 days away): the page says "charged today" then, whatever `firstChargeOn` holds. */
+  chargedNow: boolean;
   termMonths: number | null;
   /** `ready` can start Checkout, `active` is set up and running, `closed` is over (cancelled or ended). */
   state: "ready" | "active" | "closed";
@@ -72,11 +74,12 @@ async function settle(env: Env, sub: Subscription, f: Fetch, now: Date): Promise
 export async function subscriptionPage(env: Env, token: string, deps: Deps = {}): Promise<PublicSubscription | null> {
   const found = await findSubscription(env, token);
   if (!found) return null;
-  const sub = await settle(env, found, stripeFetch(deps), deps.now ?? new Date());
+  const now = deps.now ?? new Date();
+  const sub = await settle(env, found, stripeFetch(deps), now);
   const doc = await getDocument(env.DB, sub.documentId);
   const clientName = oneLine(doc?.content.header.clientName || (await getBusiness(env.DB, sub.businessId))?.name || "");
   return {
-    clientName, planName: await subscriptionPlanName(env, sub), monthlyCents: sub.monthlyCents, firstChargeOn: sub.firstChargeOn, termMonths: sub.termMonths,
+    clientName, planName: await subscriptionPlanName(env, sub), monthlyCents: sub.monthlyCents, firstChargeOn: sub.firstChargeOn, chargedNow: chargedAtCheckout(sub.firstChargeOn, now.getTime()), termMonths: sub.termMonths,
     state: sub.status === "link_sent" ? "ready" : sub.status === "active" || sub.status === "past_due" ? "active" : "closed",
   };
 }

@@ -20,18 +20,18 @@ export function termWords(months: number | null): string {
 }
 
 /**
- * What the page says for the state the server reports. `today` is the viewer's `YYYY-MM-DD`; a first charge on or before it (or none) is "charged today". Nothing here comes from anywhere
- * but the public fields: no ids, no token, no link. A closed link shows no plan details at all.
+ * What the page says for the state the server reports. Whether the card is charged today is the server's call (`chargedNow`, the same rule the Checkout request follows), never the
+ * viewer's clock. Nothing here comes from anywhere but the public fields: no ids, no token, no link. A closed link shows no plan details at all.
  */
-export function subscribeCopy(p: PublicSubscription, today = ""): SubscribeCopy {
+export function subscribeCopy(p: PublicSubscription): SubscribeCopy {
   if (p.state === "closed") {
     return { heading: "This link is no longer open", lines: [], button: null, note: "If you think that is a mistake, reply to the email you got and we'll sort it out." };
   }
   const plan = [p.planName, `${dollars(p.monthlyCents)} a month`];
   if (p.state === "active") {
-    return { heading: "You're all set", lines: [...plan, "Your monthly payment is set up. There is nothing more to do."], button: null, note: "You'll get a receipt by email from our payment processor each time you're charged." };
+    return { heading: "You're all set", lines: [...plan, "Your monthly payment is set up. There is nothing more to do."], button: null, note: "Your payment method will be charged each month until you cancel." };
   }
-  const later = p.firstChargeOn !== null && (!today || p.firstChargeOn > today);
+  const later = !p.chargedNow && p.firstChargeOn !== null;
   return {
     heading: "Set up your monthly payment",
     lines: [...plan, later && p.firstChargeOn ? `First charge on ${chargeDate(p.firstChargeOn)}` : "Charged today", termWords(p.termMonths), "You'll choose a card or bank account on the next page."],
@@ -64,9 +64,6 @@ export function checkoutError(status: number): string {
 
 /** Shown while the page re-reads the state after the return from the payment page. */
 export const CONFIRMING = "Confirming your payment…";
-
-/** The viewer's calendar date as `YYYY-MM-DD` (their own clock and zone). */
-export const localDay = (d: Date): string => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 /** Only an https page on stripe.com is ever navigated to, whatever the server sent. */
 export function isCheckoutUrl(url: unknown): url is string {

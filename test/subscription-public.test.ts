@@ -47,7 +47,7 @@ async function seed(o: Opts = {}) {
   if (status !== "planned") await markSubscription(env.DB, sub.id, { status, firstChargeOn, ...(status === "link_sent" || status === "active" ? { token } : {}) });
   return { ...s, id: sub.id, token, sub: (await getSubscription(env.DB, sub.id))! };
 }
-const page = (token: string, e: Env = E_TEST, f?: ReturnType<typeof stripeApi>["f"]) => subscriptionPage(e, token, f ? { fetch: f } : {});
+const page = (token: string, e: Env = E_TEST, f?: ReturnType<typeof stripeApi>["f"], now?: Date) => subscriptionPage(e, token, { ...(f ? { fetch: f } : {}), ...(now ? { now } : {}) });
 const ready = (p: PublicSubscription | null) => { if (!p || p.state !== "ready") throw new Error(`expected a ready page, got ${p?.state ?? "null"}`); return p; };
 
 describe("the page", () => {
@@ -72,8 +72,8 @@ describe("the page", () => {
   it("shows what the client needs and nothing else", async () => {
     const api = stripeApi(); setStripeFetchForTests(api.f);
     const s = await seed({ keys: ["website_subscription"] });
-    const p = await page(s.token);
-    expect(p).toEqual({ clientName: "Ace Plumbing", planName: "Website Subscription", monthlyCents: 29700, firstChargeOn: "2027-01-02", termMonths: 24, state: "ready" });
+    const p = await page(s.token, E_TEST, undefined, NOW);
+    expect(p).toEqual({ clientName: "Ace Plumbing", planName: "Website Subscription", monthlyCents: 29700, firstChargeOn: "2027-01-02", chargedNow: false, termMonths: 24, state: "ready" });
     expect(api.calls).toHaveLength(0); // no Checkout yet: nothing to ask Stripe
     expect(JSON.stringify(p)).not.toContain(s.token);
   });
@@ -98,6 +98,32 @@ describe("the page", () => {
     await markSubscription(env.DB, active.id, { status: "ended" });
     expect((await page(active.token))!.state).toBe("closed");
   });
+});
+
+describe("chargedNow", () => {
+  // Noon UTC of the first-charge date against the clock the Checkout call uses: 3 or more days away is a trial, anything sooner (or no date) is charged at Checkout.
+  const cases: [string, string | null, Date, boolean][] = [
+    ["5 days away", "2026-12-25", new Date("2026-12-20T12:00:00.000Z"), false],
+    ["exactly 3 days", "2026-12-23", new Date("2026-12-20T12:00:00.000Z"), false],
+    ["2 days", "2026-12-22", new Date("2026-12-20T12:00:00.000Z"), true],
+    ["1 day", "2026-12-21", new Date("2026-12-20T12:00:00.000Z"), true],
+    ["today", "2026-12-20", new Date("2026-12-20T12:00:00.000Z"), true],
+    ["already past", "2026-12-01", new Date("2026-12-20T12:00:00.000Z"), true],
+    ["no date", null, new Date("2026-12-20T12:00:00.000Z"), true],
+  ];
+  for (const [name, firstChargeOn, now, expected] of cases) {
+    it(`${name}: the page says chargedNow ${expected}, and the Checkout request agrees about trial_end`, async () => {
+      const api = stripeApi(); setStripeFetchForTests(api.f);
+      const s = await seed({ keys: ["website_subscription"], firstChargeOn });
+      const p = await page(s.token, E_TEST, undefined, now);
+      expect(p!.chargedNow).toBe(expected);
+      expect(p!.firstChargeOn).toBe(firstChargeOn);
+      const r = await startCheckout(E_TEST, s.token, { now });
+      expect("url" in r).toBe(true);
+      const session = api.calls.find((c) => c.method === "POST" && c.url.includes("/v1/checkout/sessions"))!;
+      expect(session.form.has("subscription_data[trial_end]"), name).toBe(!expected);
+    });
+  }
 });
 
 describe("startCheckout", () => {

@@ -3,7 +3,7 @@ import { useLocation, useParams } from "react-router-dom";
 import Icon from "../components/Icon";
 import { publicSubscription, startSubscriptionCheckout } from "../api";
 import { isReportToken } from "../reportView";
-import { CONFIRMING, STILL_PROCESSING, checkoutError, isCheckoutUrl, localDay, pollDelay, settled, subscribeCopy, type PublicSubscription } from "../subscribeView";
+import { CONFIRMING, STILL_PROCESSING, checkoutError, isCheckoutUrl, pollDelay, settled, subscribeCopy, type PublicSubscription } from "../subscribeView";
 
 type Load = "loading" | "ok" | "gone" | "error";
 
@@ -117,7 +117,7 @@ export default function Subscribe() {
   );
   if (load === "gone" || !page) return <Notice icon="link" title="This link isn't available"><p>It may have expired or been turned off. Reply to the email you got and we'll sort it out.</p></Notice>;
 
-  const copy = subscribeCopy(page, localDay(new Date()));
+  const copy = subscribeCopy(page);
   const polling = waiting && pollDelay(tries) !== null;
   const stalled = waiting && !polling;
 
@@ -126,7 +126,7 @@ export default function Subscribe() {
   return (
     <main className="rp sb">
       <div className="rp-wrap rp-wrap-narrow">
-        <header className="rp-bar"><span className="rp-bar-name">For {page.clientName}</span></header>
+        {page.clientName && <header className="rp-bar"><span className="rp-bar-name">For {page.clientName}</span></header>}
         <article className="rp-card">
           {page.state === "active" && (
             <section className="pp-done" role="status">

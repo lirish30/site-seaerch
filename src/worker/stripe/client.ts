@@ -153,6 +153,15 @@ const DAY_MS = 86_400_000;
 const monthlyPrice = (productId: string, monthlyCents: number) => ({ currency: "usd", product: productId, unit_amount: monthlyCents, recurring: { interval: "month" } });
 
 /**
+ * Whether the card is charged at Checkout rather than on a later date. The one rule behind both the Checkout request (no `trial_end`) and the words on the client's page: a first charge
+ * 3 or more days away (noon UTC of that date, from `nowMs`) is a trial until then; none, or sooner, is charged at Checkout (Stripe wants a trial end at least 48 hours out).
+ */
+export function chargedAtCheckout(firstChargeOn: string | null, nowMs: number): boolean {
+  const at = firstChargeOn === null ? null : noon(firstChargeOn);
+  return at === null || at - nowMs < 3 * DAY_MS;
+}
+
+/**
  * A subscription Checkout page. The first charge is the day the plan starts: when that is 3 or more days off (Stripe wants a trial end at least
  * 48 hours out), the card is taken at Checkout and billed from then, through `trial_end` at noon UTC of that date.
  */
@@ -162,12 +171,9 @@ export async function createSubscriptionCheckout(
   idempotencyKey: string,
 ): Promise<{ sessionId: string; url: string }> {
   if (!wholeCents(o.monthlyCents)) throw new RangeError("a subscription is for a whole, positive number of cents a month");
-  let trialEnd: number | undefined;
-  if (o.firstChargeOn !== null) {
-    const at = noon(o.firstChargeOn);
-    if (at === null) throw new RangeError("firstChargeOn is a YYYY-MM-DD date");
-    if (at - o.nowMs >= 3 * DAY_MS) trialEnd = Math.floor(at / 1000);
-  }
+  const at = o.firstChargeOn === null ? null : noon(o.firstChargeOn);
+  if (o.firstChargeOn !== null && at === null) throw new RangeError("firstChargeOn is a YYYY-MM-DD date");
+  const trialEnd = at !== null && !chargedAtCheckout(o.firstChargeOn, o.nowMs) ? Math.floor(at / 1000) : undefined;
   const s = await call<{ id?: unknown; url?: unknown }>(f, key, "POST", "/v1/checkout/sessions", {
     mode: "subscription", customer: o.customerId, client_reference_id: o.subscriptionId,
     payment_method_types: ["card", "us_bank_account"],
