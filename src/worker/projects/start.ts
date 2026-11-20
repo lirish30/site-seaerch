@@ -62,7 +62,7 @@ async function noteMissing(env: Env, doc: Document, names: string[]): Promise<vo
     .catch((e) => console.error("projects: could not note the missing SOP", e instanceof Error ? e.message : "unknown error"));
 }
 
-/** One cheap read: whether every built-in template is already in the database, so the 14 insert batches of `ensureSeedSops` are skipped on every later start. */
+/** One cheap read: whether every built-in template is already in the database, so the 5 insert batches of `ensureSeedSops` are skipped on every later start. */
 async function seedsPresent(db: D1Database): Promise<boolean> {
   const keys = SEED_SOPS.map((t) => t.key);
   const row = await db.prepare(`SELECT COUNT(*) AS n FROM sop_templates WHERE key IN (${keys.map(() => "?").join(", ")})`).bind(...keys).first<{ n: number }>();
@@ -110,10 +110,19 @@ export async function startProjects(env: Env, doc: Document, o: { now?: Date } =
   return out;
 }
 
+/** A one-time line on the lead's timeline (the same words once, so a daily retry does not pile them up) saying Care did not start when the build finished. Best effort. */
+async function noteCareNotStarted(env: Env, doc: Document, why: string): Promise<void> {
+  const detail = oneLine(`${doc.content.header.reference} v${doc.version}: Care was not started when the build finished ${why}`);
+  await logActivityOnce(env.DB, doc.businessId, "note", detail)
+    .catch((e) => console.error("projects: could not note that Care was not started", e instanceof Error ? e.message : "unknown error"));
+}
+
 /**
  * Starts the Care project (CARE-0) for the document the primary project was sold on, when the primary was set to wait for it. Registered with `onProjectDone`, so it runs
- * when the primary finishes; only a project that is `done` counts (a cancelled build starts no Care). Once: the same call again returns the project already made.
- * Null when there is nothing to start (no wait set, no document, Care declined or not sold, no Care template, or the primary is not done).
+ * when the primary finishes, and the daily sweep runs it again for a finished build that has no Care project (a lost or failed hook); only a project that is `done` counts (a cancelled
+ * build starts no Care). Once: the same call again returns the project already made. A failure to start it, or no active Care template, leaves one note on the lead's timeline (the same
+ * line once) so it is never silent; a failure is still thrown to the caller (the hook runner logs it, the sweep notes it and tries again).
+ * Null when there is nothing to start (no wait set, no document, Care declined or not sold, no active Care template, or the primary is not done).
  */
 export async function startDeferredCare(env: Env, primary: Project): Promise<Project | null> {
   const current = (await getProject(env.DB, primary.id)) ?? primary;
@@ -121,9 +130,18 @@ export async function startDeferredCare(env: Env, primary: Project): Promise<Pro
   const doc = await getDocument(env.DB, current.documentId);
   if (!doc || doc.content.careDeclined) return null;
   const keys = doc.content.packages.map((p) => p.key).filter((k) => CARE_KEYS.includes(k));
+  if (!keys.length) return null;
   const template = (await templatesForPackages(env.DB, keys)).find((t) => covers(t, keys));
-  if (!template) return null;
-  const care = await begin(env, doc, template, { kind: "care_onboarding", careDeferred: false, now: new Date() });
+  if (!template) {
+    await noteCareNotStarted(env, doc, "because its Care template (CARE-0) is switched off or missing. Switch it on in Settings > SOPs and the daily sweep will start Care.");
+    return null;
+  }
+  let care: Project;
+  try { care = await begin(env, doc, template, { kind: "care_onboarding", careDeferred: false, now: new Date() }); }
+  catch (e) {
+    await noteCareNotStarted(env, doc, "(it will be tried again by the daily sweep, or press Start projects on the deal).");
+    throw e;
+  }
   if (!care.test && care.status === "active") await runTasksChanged(env, care.id);
   return care;
 }
@@ -158,7 +176,8 @@ const SWEEP_LIMIT = 25;
 
 /**
  * Starts projects for real, signed documents whose deposit is paid and that have no project at all (the retry for a payment whose start failed: it is never replayed, because the
- * document is marked paid), or whose project was made but never got its steps (a start that died between the two). A finished or cancelled project with no tasks is left as it is.
+ * document is marked paid), whose project was made but never got its steps (a start that died between the two), or whose finished build was waiting to hand over Care and never did (a lost
+ * or failed done hook). A finished or cancelled project with no tasks is left as it is.
  * Each document is tried on its own, so one failure leaves the rest to go on (it is noted on the lead's timeline and tried again next time). Returns how many documents got a project
  * or their steps. A document that has none to start (a Local SEO sale, whose note is written once) is not counted. Safe to repeat: it finds nothing new the second time.
  *
@@ -169,7 +188,9 @@ export async function startProjectsForPaidDocuments(env: Env, now: Date = new Da
   const ids = (await env.DB.prepare(
     `SELECT d.id FROM documents d WHERE d.status = 'signed' AND d.test = 0 AND d.paid_at IS NOT NULL AND (
        NOT EXISTS (SELECT 1 FROM projects p WHERE p.document_id = d.id)
-       OR EXISTS (SELECT 1 FROM projects p WHERE p.document_id = d.id AND p.status = 'active' AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.project_id = p.id)))
+       OR EXISTS (SELECT 1 FROM projects p WHERE p.document_id = d.id AND p.status = 'active' AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.project_id = p.id))
+       OR EXISTS (SELECT 1 FROM projects p WHERE p.document_id = d.id AND p.care_deferred = 1 AND p.status = 'done'
+                    AND NOT EXISTS (SELECT 1 FROM projects c WHERE c.document_id = d.id AND c.kind = 'care_onboarding')))
      ORDER BY COALESCE(d.projects_checked_at, ''), d.paid_at, d.id LIMIT ?`,
   ).bind(o.limit ?? SWEEP_LIMIT).all<{ id: string }>()).results;
   let started = 0;

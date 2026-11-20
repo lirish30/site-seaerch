@@ -481,3 +481,88 @@ describe("startProjectsForPaidDocuments: starvation and partial starts", () => {
     expect(await listTasks(env.DB, cancelled.id)).toEqual([]);
   });
 });
+
+describe("a Care project that was deferred and never started (F2)", () => {
+  /** A real paid proposal (build plus Care) whose build is finished but whose done hook never made the Care project; every other paid document is set aside. */
+  async function finishedBuildWithoutCare() {
+    await startProjectsForPaidDocuments(e, NOW);
+    const s = await seed();
+    await setPaid(env.DB, s.doc.id, "2026-12-03T09:00:00.000Z");
+    await env.DB.prepare(`UPDATE documents SET paid_at = NULL WHERE id != ?`).bind(s.doc.id).run();
+    const [build] = await startProjects(e, s.doc);
+    expect(build.careDeferred).toBe(true);
+    await setProjectStatus(env.DB, build.id, "done"); // finished; the hook lost to a crash or an error
+    expect(await keysOf(s.businessId)).toEqual(["BUILD"]);
+    return s;
+  }
+  const careNotes = async (businessId: string) => (await lines(businessId, "note")).filter((n) => /Care was not started/.test(n));
+
+  it("the daily sweep starts CARE-0, once", async () => {
+    const s = await finishedBuildWithoutCare();
+    expect(await startProjectsForPaidDocuments(e, NOW)).toBe(1);
+    expect(await keysOf(s.businessId)).toEqual(["BUILD", "CARE-0"]);
+    const care = (await projectsOf(s.businessId))[1];
+    expect((await listTasks(env.DB, care.id)).length).toBeGreaterThan(5);
+    expect(await startProjectsForPaidDocuments(e, new Date(NOW.getTime() + 86_400_000))).toBe(0);
+    expect(await keysOf(s.businessId)).toEqual(["BUILD", "CARE-0"]);
+    expect(await lines(s.businessId, "project_started")).toHaveLength(2);
+  });
+
+  it("a build that is still active, or cancelled, or whose Care is declined, makes the sweep start no Care", async () => {
+    await startProjectsForPaidDocuments(e, NOW);
+    const active = await seed();
+    await setPaid(env.DB, active.doc.id, "2026-12-03T09:00:00.000Z");
+    const cancelled = await seed();
+    await setPaid(env.DB, cancelled.doc.id, "2026-12-03T09:00:00.000Z");
+    await env.DB.prepare(`UPDATE documents SET paid_at = NULL WHERE id NOT IN (?, ?)`).bind(active.doc.id, cancelled.doc.id).run();
+    await startProjects(e, active.doc);
+    const [b] = await startProjects(e, cancelled.doc);
+    await setProjectStatus(env.DB, b.id, "cancelled");
+    await startProjectsForPaidDocuments(e, NOW);
+    expect(await keysOf(active.businessId)).toEqual(["BUILD"]);
+    expect(await keysOf(cancelled.businessId)).toEqual(["BUILD"]);
+  });
+
+  it("a Care start that fails leaves one note on the timeline, and the next sweep heals it", async () => {
+    const s = await finishedBuildWithoutCare();
+    await env.DB.prepare(`CREATE TRIGGER test_fail BEFORE INSERT ON projects WHEN NEW.kind = 'care_onboarding' BEGIN SELECT RAISE(ABORT, 'disk hiccup'); END`).run();
+    try {
+      await startProjectsForPaidDocuments(e, NOW);
+      await startProjectsForPaidDocuments(e, new Date(NOW.getTime() + 86_400_000));
+    } finally { await env.DB.prepare(`DROP TRIGGER IF EXISTS test_fail`).run(); }
+    expect(await keysOf(s.businessId)).toEqual(["BUILD"]);
+    expect(await careNotes(s.businessId)).toHaveLength(1); // the same line twice is written once
+    expect((await careNotes(s.businessId))[0]).not.toMatch(/hiccup/);
+    expect(await startProjectsForPaidDocuments(e, new Date(NOW.getTime() + 2 * 86_400_000))).toBe(1);
+    expect(await keysOf(s.businessId)).toEqual(["BUILD", "CARE-0"]);
+  });
+
+  it("a done hook that fails leaves the note too, and the sweep heals it", async () => {
+    const s = await seed();
+    const [build] = await startProjects(e, s.doc);
+    await setPaid(env.DB, s.doc.id, "2026-12-03T09:00:00.000Z");
+    const done = await setProjectStatus(env.DB, build.id, "done");
+    await env.DB.prepare(`CREATE TRIGGER test_fail BEFORE INSERT ON projects WHEN NEW.kind = 'care_onboarding' BEGIN SELECT RAISE(ABORT, 'disk hiccup'); END`).run();
+    try { await runProjectDone(e, done); } finally { await env.DB.prepare(`DROP TRIGGER IF EXISTS test_fail`).run(); }
+    expect(await keysOf(s.businessId)).toEqual(["BUILD"]);
+    expect(await careNotes(s.businessId)).toHaveLength(1);
+    await env.DB.prepare(`UPDATE documents SET paid_at = NULL WHERE id != ?`).bind(s.doc.id).run();
+    await startProjectsForPaidDocuments(e, NOW);
+    expect(await keysOf(s.businessId)).toEqual(["BUILD", "CARE-0"]);
+  });
+
+  it("a deactivated CARE-0 template leaves one note, however many sweeps look, and starts Care when it is switched back on", async () => {
+    const s = await finishedBuildWithoutCare();
+    await setTemplateActive(env.DB, "CARE-0", false);
+    expect(await startDeferredCare(e, (await projectsOf(s.businessId))[0])).toBeNull();
+    await startProjectsForPaidDocuments(e, NOW);
+    await startProjectsForPaidDocuments(e, new Date(NOW.getTime() + 86_400_000));
+    expect(await keysOf(s.businessId)).toEqual(["BUILD"]);
+    const notes = await careNotes(s.businessId);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toMatch(/CARE-0/);
+    await setTemplateActive(env.DB, "CARE-0", true);
+    await startProjectsForPaidDocuments(e, new Date(NOW.getTime() + 2 * 86_400_000));
+    expect(await keysOf(s.businessId)).toEqual(["BUILD", "CARE-0"]);
+  });
+});
