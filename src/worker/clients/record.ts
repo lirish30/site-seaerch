@@ -54,9 +54,9 @@ const money = (cents: number): string => {
   return rest === 0 ? `$${dollars}` : `$${dollars}.${String(rest).padStart(2, "0")}`;
 };
 
-/** `"Care $129/mo"` for the client's active Care row (the newest when it has more than one), or null. The name follows the package: Care, Care Plus. */
+/** `"Care $129/mo"` for the client's Care row that is billing or late on a bill (the newest when it has more than one), or null. The name follows the package: Care, Care Plus. */
 export function careLabel(subs: Subscription[]): string | null {
-  const row = subs.find((s) => !s.test && s.status === "active" && (CARE_KEYS as readonly string[]).includes(s.packageKey));
+  const row = subs.find((s) => !s.test && (LIVE as readonly string[]).includes(s.status) && (CARE_KEYS as readonly string[]).includes(s.packageKey));
   return row ? `${CARE_NAMES[row.packageKey as (typeof CARE_KEYS)[number]]} ${money(row.monthlyCents)}/mo` : null;
 }
 
@@ -73,7 +73,7 @@ interface ListRow {
 }
 
 /**
- * Every client, by name. The numbers come from one query (each is a subquery of the business row), plus one read of the active subscriptions for the Care label, so the list costs two
+ * Every client, by name. The numbers come from one query (each is a subquery of the business row), plus one read of the live subscriptions for the Care label, so the list costs two
  * reads however many clients there are. Test records are left out unless `includeTest`.
  */
 export async function listClients(db: D1Database, o: { includeTest?: boolean } = {}): Promise<ClientRow[]> {
@@ -91,7 +91,7 @@ export async function listClients(db: D1Database, o: { includeTest?: boolean } =
        WHERE ${clientSql("b")}${o.includeTest ? "" : ` AND NOT ${testClientSql("b")}`}
        ORDER BY b.name COLLATE NOCASE, b.id`,
     ).all<ListRow>(),
-    listSubscriptions(db, { statuses: ["active"] }),
+    listSubscriptions(db, { statuses: [...LIVE] }),
   ]);
   const byBusiness = new Map<string, Subscription[]>();
   for (const s of active) byBusiness.set(s.businessId, [...(byBusiness.get(s.businessId) ?? []), s]);

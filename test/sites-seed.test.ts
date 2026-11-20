@@ -70,6 +70,13 @@ describe("ensureSite", () => {
     expect(await lines(b.id, "site_added")).toEqual(["Site record made for a new site"]);
   });
 
+  it("a website address with a login in it is stored without the login", async () => {
+    const b = await seedBusiness({ websiteUrl: "https://u:hunter2@ace.com/" });
+    const r = (await seed(b.id, ["starter_site"]))!;
+    expect(r.site).toMatchObject({ domain: "ace.com", url: "https://ace.com/" });
+    expect(JSON.stringify(await listSites(env.DB, { businessId: b.id }))).not.toContain("hunter2");
+  });
+
   it("calling ensureSite twice leaves one site and one site_added line", async () => {
     const b = await seedBusiness();
     const a = (await seed(b.id, ["starter_site"]))!;

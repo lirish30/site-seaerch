@@ -4,6 +4,17 @@ import type { PackageKey } from "../db/packages";
 import { adoptAsPrimary, createSite, listSites, refreshSeededSite, type HostingTier, type Site } from "../db/sites";
 import { BUILD_KEYS } from "../documents/schedule";
 
+/** The address as it is stored: a login in it (`https://user:pw@host/`) is dropped, so no secret is ever kept in a site record. */
+function withoutLogin(url: string | null): string | null {
+  if (!url) return url;
+  try {
+    const u = new URL(url);
+    if (!u.username && !u.password) return url;
+    u.username = ""; u.password = "";
+    return u.toString();
+  } catch { return url; }
+}
+
 const CARE_KEYS: PackageKey[] = ["care", "care_plus", "care_fallback"];
 
 /** Who hosts the site, from what was sold: the client's own hosting wins; a build or Care means Logan hosts it; anything else (a quick fix, SEO, hourly) says nothing. */
@@ -27,7 +38,7 @@ export async function ensureSite(
   try {
     const biz = await db.prepare(`SELECT website_url FROM businesses WHERE id = ?`).bind(o.businessId).first<{ website_url: string | null }>();
     if (!biz) throw new Error("business not found");
-    const url = biz.website_url?.trim() || null;
+    const url = withoutLogin(biz.website_url?.trim() || null);
     const domain = siteDomain(url);
     const hostingTier = hostingTierFor(o.packageKeys);
     const now = new Date().toISOString();

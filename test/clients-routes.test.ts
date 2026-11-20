@@ -148,6 +148,31 @@ describe("site fields", () => {
     expect(await getSite(env.DB, s.site!.id)).toMatchObject({ url: "https://ace.com", adminUrl: null });
   });
 
+  it("a login inside a site or admin address is a 400 on PATCH and on add, and the answer never repeats it", async () => {
+    const s = await seedClient();
+    const before = await getSite(env.DB, s.site!.id);
+    for (const body of [{ url: "https://u:p@host.com/" }, { adminUrl: "https://u:p@host.com/wp-admin" }, { adminUrl: "https://:pw@host.com/" }, { url: "http://admin@host.com/" }]) {
+      for (const res of [await call("PATCH", `/api/sites/${s.site!.id}`, body), await call("POST", `/api/clients/${s.businessId}/sites`, body)]) {
+        expect(res.status, JSON.stringify(body)).toBe(400);
+        const text = await res.text();
+        for (const echoed of ["p@", "pw@", "u:p", "admin@", "host.com"]) expect(text).not.toContain(echoed);
+        expect(text).toContain("Leave the login out of the address.");
+      }
+    }
+    expect(await getSite(env.DB, s.site!.id)).toEqual(before);
+    expect(await listSites(env.DB, { businessId: s.businessId })).toHaveLength(1);
+  });
+
+  it("a login-shaped host, registrar or DNS provider is refused like a note", async () => {
+    const s = await seedClient();
+    for (const field of ["hostProvider", "registrar", "dnsProvider"]) {
+      const res = await call("PATCH", `/api/sites/${s.site!.id}`, { [field]: "password: x" });
+      expect(res.status, field).toBe(400);
+      expect(await res.text()).not.toContain("password: x");
+    }
+    expect(await getSite(env.DB, s.site!.id)).toMatchObject({ hostProvider: null, registrar: null, dnsProvider: null });
+  });
+
   it("PATCH hostingTier, accessMethod or cms to an unknown value is a 400", async () => {
     const s = await seedClient();
     for (const body of [{ hostingTier: "cloud" }, { accessMethod: "ftp" }, { cms: "drupal" }]) expect((await call("PATCH", `/api/sites/${s.site!.id}`, body)).status).toBe(400);
@@ -233,6 +258,27 @@ describe("add, archive and ownership", () => {
     expect((await call("PATCH", own, { notes: "mine" })).status).toBe(200);
     expect((await call("PUT", `${own}/access/hosting`, { status: "received" })).status).toBe(200);
     expect((await call("DELETE", own)).status).toBe(204);
+  });
+
+  it("PATCH logs one site_changed line naming the fields that changed and never a value; an unchanged PATCH logs none", async () => {
+    const s = await seedClient();
+    const NOTE = "Moved from Bluehost to WP Engine in March.";
+    await call("PATCH", `/api/sites/${s.site!.id}`, { hostingTier: "client_hosted", notes: NOTE, hostProvider: "WP Engine", cms: "unknown" });
+    expect(await lines(s.businessId, "site_changed")).toEqual(["Site updated: host, hosting tier, notes"]);
+    await call("PATCH", `/api/sites/${s.site!.id}`, { hostingTier: "client_hosted", notes: NOTE });
+    expect(await lines(s.businessId, "site_changed")).toEqual(["Site updated: host, hosting tier, notes"]);
+    await call("PATCH", `/api/sites/${s.site!.id}`, { url: "https://secret-name.com/", adminUrl: "https://secret-name.com/wp-admin" });
+    expect((await lines(s.businessId, "site_changed")).at(-1) ?? "").not.toBe("");
+    const all = JSON.stringify(await listActivity(env.DB, s.businessId, 200));
+    for (const value of [NOTE, "WP Engine", "Bluehost", "secret-name", "client_hosted"]) expect(all).not.toContain(value);
+    expect((await lines(s.businessId, "site_changed")).sort()).toEqual(["Site updated: address, admin address", "Site updated: host, hosting tier, notes"]);
+  });
+
+  it("DELETE logs one site_changed line, Site archived, and a second DELETE adds none", async () => {
+    const s = await seedClient();
+    await call("DELETE", `/api/sites/${s.site!.id}`);
+    await call("DELETE", `/api/sites/${s.site!.id}`);
+    expect(await lines(s.businessId, "site_changed")).toEqual(["Site archived"]);
   });
 
   it("DELETE archives (204), the site leaves the record, and a second DELETE is 404", async () => {

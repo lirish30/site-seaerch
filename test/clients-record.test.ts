@@ -63,6 +63,24 @@ describe("Care", () => {
     expect(careLabel([])).toBeNull();
   });
 
+  it("a client whose only Care row is past_due still shows the Care label and the client-hosted flag", async () => {
+    const s = await seedClient({ subs: [{ key: "care", monthlyCents: 12900, status: "past_due" }], site: false });
+    await createSite(env.DB, { businessId: s.businessId, url: "https://own-host.com", hostingTier: "client_hosted", accessMethod: "unknown" });
+    const rec = (await getClientRecord(env.DB, s.businessId, NOW))!;
+    expect(rec.careLabel).toBe("Care $129/mo");
+    expect(rec.sites[0].flags.map((f) => f.code)).toContain("client_hosted_no_access");
+    expect((await row(s.businessId))!.careLabel).toBe("Care $129/mo");
+  });
+
+  it("two active Care-family rows: the label shows the newest and MRR sums both", async () => {
+    const s = await seedClient({ subs: [{ key: "care", monthlyCents: 12900 }] });
+    await addSub(s, { key: "care_plus", monthlyCents: 22900 });
+    const rec = (await getClientRecord(env.DB, s.businessId, NOW))!;
+    expect(rec.careLabel).toBe("Care Plus $229/mo");
+    expect(rec.mrrCents).toBe(12900 + 22900);
+    expect((await row(s.businessId))!).toMatchObject({ careLabel: "Care Plus $229/mo", mrrCents: 35800 });
+  });
+
   it("a client-hosted site on Care with no access method is flagged; a Logan-hosted one is not", async () => {
     const s = await seedClient({ subs: [{ key: "care", monthlyCents: 12900 }], site: false });
     await createSite(env.DB, { businessId: s.businessId, url: "https://own-host.com", hostingTier: "client_hosted", accessMethod: "none" });

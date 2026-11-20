@@ -22,13 +22,18 @@ const NOTE_MAX = 500;
 /** Short text: cleaned (control and bidirectional characters out, ends trimmed), then measured, so what is stored is what was counted. Empty clears the field. */
 const short = (label: string) =>
   z.string(`${label} must be text.`).transform((s) => cleanText(s, s.length))
-    .pipe(z.string().max(SHORT, `${label} is at most ${SHORT} characters.`)).transform((s) => s || null);
+    .pipe(z.string().max(SHORT, `${label} is at most ${SHORT} characters.`))
+    .superRefine((s, ctx) => { const p = noteProblem(s); if (p) ctx.addIssue({ code: "custom", message: p }); }).transform((s) => s || null);
 
-/** An http or https address, or empty to clear it. A refusal never repeats what was typed. */
+/** True when the address carries a user name or password (`https://admin:pw@host/`): a login must never be stored in an address. */
+const hasLogin = (s: string): boolean => { try { const u = new URL(s); return !!(u.username || u.password); } catch { return false; } };
+
+/** An http or https address with no login in it, or empty to clear it. A refusal never repeats what was typed. */
 const link = (label: string) =>
   z.string(`${label} must be text.`).transform((s) => cleanText(s, s.length))
     .pipe(z.string().max(URL_MAX, `${label} is at most ${URL_MAX} characters.`)
-      .refine((s) => s === "" || isHttpUrl(s), `${label} must start with http:// or https://.`)).transform((s) => s || null);
+      .refine((s) => s === "" || isHttpUrl(s), `${label} must start with http:// or https://.`)
+      .refine((s) => !isHttpUrl(s) || !hasLogin(s), "Leave the login out of the address.")).transform((s) => s || null);
 
 const siteNote = z.string("Notes must be text.").transform((s) => cleanText(s, s.length))
   .superRefine((s, ctx) => { const p = noteProblem(s); if (p) ctx.addIssue({ code: "custom", message: p }); }).transform((s) => s || null);
@@ -63,6 +68,12 @@ const STATUS_WORDS: Record<AccessStatus, string> = { needed: "needed", requested
 /** Only the keys the body actually carried, so a field left out is left alone. */
 const given = <T extends Record<string, unknown>>(b: T): Partial<SiteFields> => Object.fromEntries(Object.entries(b).filter(([, v]) => v !== undefined)) as Partial<SiteFields>;
 
+/** What each site field is called in the activity line. Only these words are ever logged, never a value. */
+const FIELD_WORDS: Record<keyof SiteFields, string> = {
+  url: "address", domain: "domain", cms: "platform", hostProvider: "host", registrar: "registrar", dnsProvider: "DNS provider", adminUrl: "admin address",
+  hostingTier: "hosting tier", accessMethod: "access method", notes: "notes",
+};
+
 /** The clients, by name; `?test=1` adds the rehearsal ones. */
 clientRoutes.get("/clients", async (c) => c.json({ clients: await listClients(c.env.DB, { includeTest: c.req.query("test") === "1" }) }));
 
@@ -94,12 +105,17 @@ async function patchSite(c: Ctx, clientId?: string): Promise<Response> {
   if (body instanceof Response) return body;
   const site = await liveSite(c, c.req.param("siteId") ?? c.req.param("id")!, clientId);
   if (!site) return c.json(NOT_FOUND, 404);
-  return c.json({ site: await updateSite(c.env.DB, site.id, given(body), new Date().toISOString()) });
+  const patch = given(body);
+  const changed = (Object.keys(FIELD_WORDS) as (keyof SiteFields)[]).filter((k) => patch[k] !== undefined && patch[k] !== site[k]);
+  const updated = await updateSite(c.env.DB, site.id, patch, new Date().toISOString());
+  if (changed.length) await logActivity(c.env.DB, site.businessId, "site_changed", `Site updated: ${changed.map((k) => FIELD_WORDS[k]).join(", ")}`);
+  return c.json({ site: updated });
 }
 
 async function removeSite(c: Ctx, clientId?: string): Promise<Response> {
   const site = await liveSite(c, c.req.param("siteId") ?? c.req.param("id")!, clientId);
   if (!site || !(await archiveSite(c.env.DB, site.id, new Date().toISOString()))) return c.json(NOT_FOUND, 404);
+  await logActivity(c.env.DB, site.businessId, "site_changed", "Site archived");
   return c.body(null, 204);
 }
 
@@ -116,6 +132,7 @@ async function putAccess(c: Ctx, clientId?: string): Promise<Response> {
   return c.json({ item });
 }
 
+// The id-less site routes cannot carry a client id by design; the /clients/:id/sites/:siteId forms enforce that the site belongs to that client.
 clientRoutes.patch("/sites/:id", (c) => patchSite(c));
 clientRoutes.delete("/sites/:id", (c) => removeSite(c));
 clientRoutes.put("/sites/:id/access/:key", (c) => putAccess(c));
