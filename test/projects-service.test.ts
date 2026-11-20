@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { listActivity } from "../src/worker/db/activity";
 import { ensureSeedSops, getTemplate } from "../src/worker/db/sops";
-import { getProject, listCadences, listMilestones } from "../src/worker/db/projects";
+import { getProject, listCadences, listMilestones, markProjectDone } from "../src/worker/db/projects";
 import { getTask, insertTasks, listComments, listTasks, setTaskStatus, TaskInputError, type NewTask, type Task } from "../src/worker/db/tasks";
 import { listEntriesForTask, runningEntry } from "../src/worker/db/time";
 import type { Env } from "../src/worker/env";
@@ -459,5 +459,122 @@ describe("postComment", () => {
     expect(await listComments(env.DB, s.t("a").id)).toMatchObject([{ author: "claude", body: "Drafted the page copy.", createdAt: T1 }]);
     await expect(postComment(e, s.t("a").id, "logan", "   ", NOW)).rejects.toThrow(TaskInputError);
     await expect(postComment(e, "nope", "logan", "hello", NOW)).rejects.toThrow(/no such task/i);
+  });
+});
+
+/** Makes a table refuse writes (the way a database error part-way through would), runs `fn`, and always puts the table back. */
+async function failing<T>(trigger: string, fn: () => Promise<T>): Promise<void> {
+  await env.DB.prepare(`DROP TRIGGER IF EXISTS test_fail`).run();
+  await env.DB.prepare(`CREATE TRIGGER test_fail ${trigger}`).run();
+  try { await fn(); } finally { await env.DB.prepare(`DROP TRIGGER IF EXISTS test_fail`).run(); }
+}
+const milestoneRows = async (projectId: string) => (await listMilestones(env.DB, projectId)).length;
+
+describe("replay safety", () => {
+  it("a task saved as done by a request that died is settled by repeating it: milestone, log and hook once, then nothing", async () => {
+    const s = await setup([{ key: "a", milestone: "design_approved" }, { key: "b" }]);
+    const m = vi.fn(async () => {});
+    const c = vi.fn(async () => {});
+    onMilestone(m); onTasksChanged(c);
+    // the crash: the status was committed, nothing after it ran
+    expect(await setTaskStatus(env.DB, s.t("a").id, "done", { now: T0 })).toBe(true);
+    expect(await milestoneRows(s.project.id)).toBe(0);
+    const t = await completeTask(e, s.t("a").id, { by, now: NOW });
+    expect(t).toMatchObject({ status: "done", doneAt: T0 });
+    expect(await milestoneRows(s.project.id)).toBe(1);
+    expect(await kinds(s.businessId, "project_milestone")).toHaveLength(1);
+    expect(m).toHaveBeenCalledTimes(1);
+    expect(c).toHaveBeenCalledTimes(1);
+    await completeTask(e, s.t("a").id, { by, now: NOW });
+    expect(m).toHaveBeenCalledTimes(1);
+    expect(c).toHaveBeenCalledTimes(1);
+    expect(await kinds(s.businessId, "project_milestone")).toHaveLength(1);
+  });
+
+  it("a database error while recording the milestone reaches the caller, and repeating the request records it once", async () => {
+    const s = await setup([{ key: "a", milestone: "site_finished" }, { key: "b" }]);
+    const m = vi.fn(async () => {});
+    onMilestone(m);
+    await failing(`BEFORE INSERT ON project_milestones BEGIN SELECT RAISE(ABORT, 'disk hiccup'); END`, async () => {
+      await expect(completeTask(e, s.t("a").id, { by, now: NOW })).rejects.toThrow();
+    });
+    expect(await status(s.t("a").id)).toBe("done");
+    expect(await milestoneRows(s.project.id)).toBe(0);
+    expect(await kinds(s.businessId, "project_milestone")).toEqual([]);
+    expect(m).not.toHaveBeenCalled();
+    await completeTask(e, s.t("a").id, { by, now: NOW });
+    await completeTask(e, s.t("a").id, { by, now: NOW });
+    expect(await milestoneRows(s.project.id)).toBe(1);
+    expect(await kinds(s.businessId, "project_milestone")).toHaveLength(1);
+    expect(m).toHaveBeenCalledTimes(1);
+  });
+
+  it("a database error while finishing the project reaches the caller, and repeating the request finishes it once with its log, cadences and hooks", async () => {
+    const s = await setup([{ key: "a" }, { key: "b" }], { kind: "care_onboarding" });
+    const d = vi.fn(async () => {});
+    onProjectDone(d);
+    await completeTask(e, s.t("a").id, { by, now: NOW });
+    await failing(`BEFORE UPDATE ON projects WHEN NEW.status = 'done' BEGIN SELECT RAISE(ABORT, 'disk hiccup'); END`, async () => {
+      await expect(completeTask(e, s.t("b").id, { by, now: NOW })).rejects.toThrow();
+    });
+    expect(await status(s.t("b").id)).toBe("done");
+    expect((await getProject(env.DB, s.project.id))!.status).toBe("active");
+    expect(await kinds(s.businessId, "project_done")).toEqual([]);
+    expect(d).not.toHaveBeenCalled();
+    await completeTask(e, s.t("b").id, { by, now: new Date(T2) });
+    await completeTask(e, s.t("b").id, { by, now: new Date(T2) });
+    expect(await getProject(env.DB, s.project.id)).toMatchObject({ status: "done", completedAt: T2 });
+    expect(await kinds(s.businessId, "project_done")).toHaveLength(1);
+    expect((await listCadences(env.DB)).filter((c) => c.projectId === s.project.id).map((c) => c.templateKey).sort()).toEqual(["CARE-1", "CARE-4"]);
+    expect(d).toHaveBeenCalledTimes(1);
+  });
+
+  it("a project that was finished but lost its cadences to a crash gets them on a replay, without running the done hooks again", async () => {
+    const s = await setup([{ key: "a" }], { kind: "care_onboarding" });
+    const d = vi.fn(async () => {});
+    onProjectDone(d);
+    await setTaskStatus(env.DB, s.t("a").id, "done", { now: T0 });
+    await markProjectDone(env.DB, s.project.id, T0, { log: { businessId: s.businessId, detail: "x finished" } });
+    await completeTask(e, s.t("a").id, { by, now: NOW });
+    expect((await listCadences(env.DB)).filter((c) => c.projectId === s.project.id)).toHaveLength(2);
+    expect(d).not.toHaveBeenCalled(); // hooks are at-most-once: the crashed request owned this one
+    expect(await kinds(s.businessId, "project_done")).toHaveLength(1);
+  });
+
+  it("the project finish and its log line are one change: a failing log leaves the project active", async () => {
+    const s = await setup([{ key: "a" }]);
+    await setTaskStatus(env.DB, s.t("a").id, "done", { now: T0 });
+    await failing(`BEFORE INSERT ON activity WHEN NEW.kind = 'project_done' BEGIN SELECT RAISE(ABORT, 'disk hiccup'); END`, async () => {
+      await expect(completeTask(e, s.t("a").id, { by, now: NOW })).rejects.toThrow();
+    });
+    expect((await getProject(env.DB, s.project.id))!.status).toBe("active");
+    await completeTask(e, s.t("a").id, { by, now: NOW });
+    expect((await getProject(env.DB, s.project.id))!.status).toBe("done");
+    expect(await kinds(s.businessId, "project_done")).toHaveLength(1);
+  });
+
+  it("a skipped last step saved by a request that died finishes the project when the skip is repeated", async () => {
+    const s = await setup([{ key: "a" }, { key: "b", skippable: true }]);
+    const d = vi.fn(async () => {});
+    onProjectDone(d);
+    await completeTask(e, s.t("a").id, { by, now: NOW });
+    await setTaskStatus(env.DB, s.t("b").id, "skipped", { now: T0 });
+    await skipTask(e, s.t("b").id, "Client declined the extra", NOW);
+    expect((await getProject(env.DB, s.project.id))!.status).toBe("done");
+    await skipTask(e, s.t("b").id, "Client declined the extra", NOW);
+    expect(d).toHaveBeenCalledTimes(1);
+    expect(await kinds(s.businessId, "project_done")).toHaveLength(1);
+  });
+
+  it("a skip and its reason are one change: a failing comment leaves the step as it was, and two skips at once leave one reason", async () => {
+    const s = await setup([{ key: "a", skippable: true }, { key: "b", skippable: true }, { key: "c" }]);
+    await failing(`BEFORE INSERT ON task_comments BEGIN SELECT RAISE(ABORT, 'disk hiccup'); END`, async () => {
+      await expect(skipTask(e, s.t("a").id, "No longer needed", NOW)).rejects.toThrow();
+    });
+    expect(await status(s.t("a").id)).toBe("todo");
+    expect(await listComments(env.DB, s.t("a").id)).toEqual([]);
+    await Promise.all([skipTask(e, s.t("b").id, "Client said no", NOW), skipTask(e, s.t("b").id, "Client said no", NOW)]);
+    expect(await status(s.t("b").id)).toBe("skipped");
+    expect(await listComments(env.DB, s.t("b").id)).toHaveLength(1);
   });
 });

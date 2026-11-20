@@ -1,4 +1,3 @@
-import { logActivity } from "../db/activity";
 import { addCadence, getProject, markProjectDone, reachMilestone } from "../db/projects";
 import {
   addComment, CREDENTIAL_REFUSED, getTask, insertTasks, listTasks, parseTaskPatch, patchTask, setTaskStatus, TaskInputError,
@@ -58,22 +57,38 @@ async function checkReady(env: Env, task: Task): Promise<void> {
   if (unmet.length) throw new TaskBlockedError(unmet);
 }
 
-/** Work done after a change was saved. A failure here is logged and never reaches the caller (the change stands, and a replay would not repeat it). */
-async function after(label: string, fn: () => Promise<unknown>): Promise<void> {
-  try { await fn(); } catch (e) { console.error(`projects: ${label} failed`, e instanceof Error ? e.message : "unknown error"); }
-}
-
-/** Finishes the project when this was its last open step. Only the call whose statement flipped the project runs the follow-ups, so they happen once. */
-async function finishIfLast(env: Env, task: Task, now: Date): Promise<void> {
-  if (!task.isStep || !projectIsFinished(await listTasks(env.DB, task.projectId))) return;
-  if (!(await markProjectDone(env.DB, task.projectId, now.toISOString()))) return;
-  const project = await getProject(env.DB, task.projectId);
-  if (!project) return;
-  await after("logging the finished project", () => logActivity(env.DB, project.businessId, "project_done", `${project.name} finished`));
-  if (project.kind === "care_onboarding") {
-    await after("attaching the Care cadences", async () => { for (const key of CARE_CADENCES) await addCadence(env.DB, project.id, key); });
+/**
+ * Brings the project in line with a step that is closed (done, or skipped when `reaches` is false): records the milestone the step marks, finishes the project when it was the last
+ * open step, and attaches the Care cadences to a finished Care onboarding. Every part is idempotent and guarded in its own statement, and this runs on EVERY completion or skip,
+ * replays included, so a request that died after the task was saved (or hit a database error part-way) is repaired by repeating it. A database error propagates to the caller
+ * for exactly that reason. Returns true when this call changed something (so the caller knows the tasks-changed hooks are due).
+ *
+ * The milestone and finish statements write their timeline lines in the same batch, so each is either all there or not at all. The hooks themselves are at-most-once:
+ * the call whose statement flipped the milestone or the project runs them, and a crash between that statement and the hook loses it. That is a known gap, accepted for now.
+ * A hook's own error is logged and swallowed (hooks.ts).
+ */
+async function settle(env: Env, task: Task, now: Date, reaches: boolean): Promise<boolean> {
+  const at = now.toISOString();
+  let changed = false;
+  let project = await getProject(env.DB, task.projectId);
+  if (!project) return false;
+  if (reaches && task.milestone) {
+    const m = task.milestone;
+    if (await reachMilestone(env.DB, project.id, m, at, { log: { businessId: project.businessId, detail: `${project.name}: ${MILESTONE_LABEL[m]}` } })) {
+      changed = true;
+      await runMilestone(env, project, m);
+    }
   }
-  await runProjectDone(env, project);
+  let finished = false;
+  if (task.isStep && projectIsFinished(await listTasks(env.DB, project.id))) {
+    finished = await markProjectDone(env.DB, project.id, at, { log: { businessId: project.businessId, detail: `${project.name} finished` } });
+    if (finished) { changed = true; project = (await getProject(env.DB, project.id)) ?? project; }
+  }
+  if (project.kind === "care_onboarding" && project.status === "done") {
+    for (const key of CARE_CADENCES) if (await addCadence(env.DB, project.id, key)) changed = true;
+  }
+  if (finished) await runProjectDone(env, project);
+  return changed;
 }
 
 /**
@@ -93,49 +108,47 @@ export async function startTask(env: Env, id: string, now: Date): Promise<Task> 
 
 /**
  * Marks the task done. Refuses a locked or skipped task and one whose requirements are not met (TaskBlockedError names them). Stops the task's own running timer.
- * When the task has a milestone, the project reaches it (the first time only: it is logged and the milestone hooks run once). When it was the project's last open
- * step, the project is finished (once, whatever the number of requests: logs `project_done`, a Care onboarding starts its CARE-1 and CARE-4 cadences, the done hooks run).
- * Then the tasks-changed hooks run. Completing a task that is already done returns it and does nothing else.
+ * Then `settle` runs: when the task has a milestone, the project reaches it (the first time only: it is logged and the milestone hooks run once); when it was the project's last
+ * open step, the project is finished (once, whatever the number of requests: logs `project_done`, a Care onboarding starts its CARE-1 and CARE-4 cadences, the done hooks run).
+ * The tasks-changed hooks run after a change. Completing a task that is already done runs `settle` again, so a request that died half-way is repaired by repeating it; when
+ * everything is already recorded it changes and fires nothing.
  */
 export async function completeTask(env: Env, id: string, o: { by: "logan" | "claude" | "system"; now: Date }): Promise<Task> {
   const task = await need(env, id);
-  if (task.status === "done") return task;
-  if (task.status === "locked") throw new TaskStateError("This task is locked, so it cannot be finished yet.");
-  if (task.status === "skipped") throw new TaskStateError("This step was skipped. Reopen it before marking it done.");
-  await checkReady(env, task);
-  // Before the status moves, so a failure here leaves the task as it was and a retry works.
-  await stopTimerFor(env.DB, id, o.now);
-  if (!(await setTaskStatus(env.DB, id, "done", { from: OPEN, now: o.now.toISOString() }))) return lostRace(env, id, "done");
-
-  if (task.milestone) {
-    await after("recording the milestone", async () => {
-      const m = task.milestone!;
-      if (!(await reachMilestone(env.DB, task.projectId, m, o.now.toISOString()))) return;
-      const project = await getProject(env.DB, task.projectId);
-      if (!project) return;
-      await after("logging the milestone", () => logActivity(env.DB, project.businessId, "project_milestone", `${project.name}: ${MILESTONE_LABEL[m]}`));
-      await runMilestone(env, project, m);
-    });
+  let moved = false;
+  if (task.status !== "done") {
+    if (task.status === "locked") throw new TaskStateError("This task is locked, so it cannot be finished yet.");
+    if (task.status === "skipped") throw new TaskStateError("This step was skipped. Reopen it before marking it done.");
+    await checkReady(env, task);
+    // Before the status moves, so a failure here leaves the task as it was and a retry works.
+    await stopTimerFor(env.DB, id, o.now);
+    moved = await setTaskStatus(env.DB, id, "done", { from: OPEN, now: o.now.toISOString() });
+    if (!moved) await lostRace(env, id, "done");
   }
-  await after("finishing the project", () => finishIfLast(env, task, o.now));
-  await runTasksChanged(env, task.projectId);
+  const settled = await settle(env, task, o.now, true);
+  if (moved || settled) await runTasksChanged(env, task.projectId);
   return need(env, id);
 }
 
-/** Skips a step with a reason (3 to 300 characters, kept as a system comment). A skipped step satisfies `requires` only when it is marked skippable. Skipping the last open step finishes the project. */
+/**
+ * Skips a step with a reason (3 to 300 characters, kept as a system comment written in the same batch as the status change, so a skipped step always has its reason).
+ * A skipped step satisfies `requires` only when it is marked skippable. Skipping the last open step finishes the project. Repeating a skip repairs it like `completeTask`.
+ */
 export async function skipTask(env: Env, id: string, reason: string, now: Date): Promise<Task> {
   const why = cleanText(reason, reason.length);
   if (why.length < 3 || why.length > 300) throw new TaskInputError("A reason for skipping is 3 to 300 characters.");
   if (looksLikeCredential(why)) throw new TaskInputError(CREDENTIAL_REFUSED);
   const task = await need(env, id);
-  if (task.status === "skipped") return task;
-  if (task.status === "done") throw new TaskStateError("This step is already done, so it cannot be skipped.");
-  if (task.status === "locked") throw new TaskStateError("This task is locked, so it cannot be skipped.");
-  await stopTimerFor(env.DB, id, now);
-  if (!(await setTaskStatus(env.DB, id, "skipped", { from: OPEN, now: now.toISOString() }))) return lostRace(env, id, "skipped");
-  await after("noting why the step was skipped", () => addComment(env.DB, id, "system", `Skipped: ${why}`, now.toISOString()));
-  await after("finishing the project", () => finishIfLast(env, task, now));
-  await runTasksChanged(env, task.projectId);
+  let moved = false;
+  if (task.status !== "skipped") {
+    if (task.status === "done") throw new TaskStateError("This step is already done, so it cannot be skipped.");
+    if (task.status === "locked") throw new TaskStateError("This task is locked, so it cannot be skipped.");
+    await stopTimerFor(env.DB, id, now);
+    moved = await setTaskStatus(env.DB, id, "skipped", { from: OPEN, now: now.toISOString(), comment: { author: "system", body: `Skipped: ${why}` } });
+    if (!moved) await lostRace(env, id, "skipped");
+  }
+  const settled = await settle(env, task, now, false);
+  if (moved || settled) await runTasksChanged(env, task.projectId);
   return need(env, id);
 }
 

@@ -174,6 +174,8 @@ export async function moveTask(db: D1Database, id: string, toPosition: number): 
  */
 export async function setTaskStatus(db: D1Database, id: string, to: TaskStatus, o: {
   from?: TaskStatus[]; now: string; claudeTaskId?: string | null; reviewApprovalId?: string | null;
+  /** A note written in the same batch, and only when the status changed (so a lost race leaves no stray note, and a failed note leaves the status alone). Not scanned or cleaned: for the app's own lines. */
+  comment?: { author: CommentAuthor; body: string };
 }): Promise<boolean> {
   if (!(TASK_STATUSES as readonly string[]).includes(to)) throw new Error(`unknown task status ${to}`);
   if (o.from && !o.from.length) return false;
@@ -189,7 +191,12 @@ export async function setTaskStatus(db: D1Database, id: string, to: TaskStatus, 
   binds.push(id);
   let where = `id = ?`;
   if (o.from) { where += ` AND status IN (${o.from.map(() => "?").join(", ")})`; binds.push(...o.from); }
-  const res = await db.prepare(`UPDATE tasks SET ${sets.join(", ")} WHERE ${where}`).bind(...binds).run();
+  const update = db.prepare(`UPDATE tasks SET ${sets.join(", ")} WHERE ${where}`).bind(...binds);
+  if (!o.comment) return ((await update.run()).meta.changes ?? 0) === 1;
+  const [res] = await db.batch([
+    update,
+    db.prepare(`INSERT INTO task_comments (id, task_id, author, body, created_at) SELECT ?, ?, ?, ?, ? WHERE changes() = 1`).bind(crypto.randomUUID(), id, o.comment.author, o.comment.body, o.now),
+  ]);
   return (res.meta.changes ?? 0) === 1;
 }
 

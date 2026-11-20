@@ -1,4 +1,5 @@
 import type { MilestoneKey } from "../sop/model";
+import { activityIfChangedStmt } from "./activity";
 
 export const PROJECT_KINDS = ["build", "quick_fix", "care_onboarding", "custom"] as const;
 export type ProjectKind = (typeof PROJECT_KINDS)[number];
@@ -94,21 +95,36 @@ export async function setProjectStatus(db: D1Database, id: string, status: Proje
   return p;
 }
 
-/**
- * Finishes the project and says whether this call is the one that did it. The guard is in the statement: only an active or paused project becomes done, so of any number of
- * callers at the same moment (or a replay) exactly one gets true, and that one logs and runs the done hooks. A done or cancelled project, or a missing one, gives false.
- */
-export async function markProjectDone(db: D1Database, id: string, now: string): Promise<boolean> {
-  const res = await db.prepare(
-    `UPDATE projects SET status = 'done', paused_reason = NULL, completed_at = ?, updated_at = ? WHERE id = ? AND status NOT IN ('done', 'cancelled')`,
-  ).bind(now, now, id).run();
+/** A line for the lead's timeline that is written in the same batch as the change, and only when that change happened. */
+export interface ChangeLog { businessId: string; kind: "project_done" | "project_milestone"; detail: string }
+
+/** Runs a guarded statement and, when `log` is given, its timeline line in the same batch. True when the statement changed a row. */
+async function guarded(db: D1Database, stmt: D1PreparedStatement, log?: ChangeLog): Promise<boolean> {
+  if (!log) return ((await stmt.run()).meta.changes ?? 0) === 1;
+  const [res] = await db.batch([stmt, activityIfChangedStmt(db, log.businessId, log.kind, log.detail)]);
   return (res.meta.changes ?? 0) === 1;
 }
 
-/** Records that the project reached a milestone. True only the first time. */
-export async function reachMilestone(db: D1Database, projectId: string, m: MilestoneKey, now: string): Promise<boolean> {
-  const res = await db.prepare(`INSERT OR IGNORE INTO project_milestones (project_id, milestone, reached_at) VALUES (?, ?, ?)`).bind(projectId, m, now).run();
-  return (res.meta.changes ?? 0) === 1;
+/**
+ * Finishes the project and says whether this call is the one that did it. The guard is in the statement: only an active or paused project becomes done, so of any number of
+ * callers at the same moment (or a replay) exactly one gets true, and that one runs the done hooks. A done or cancelled project, or a missing one, gives false.
+ * With `log`, the timeline line is written in the same batch, so the project is never done without its line (nor the line without the project).
+ */
+export async function markProjectDone(db: D1Database, id: string, now: string, o: { log?: Omit<ChangeLog, "kind"> } = {}): Promise<boolean> {
+  return guarded(
+    db,
+    db.prepare(`UPDATE projects SET status = 'done', paused_reason = NULL, completed_at = ?, updated_at = ? WHERE id = ? AND status NOT IN ('done', 'cancelled')`).bind(now, now, id),
+    o.log && { ...o.log, kind: "project_done" },
+  );
+}
+
+/** Records that the project reached a milestone. True only the first time. With `log`, the timeline line is written in the same batch (and only then). */
+export async function reachMilestone(db: D1Database, projectId: string, m: MilestoneKey, now: string, o: { log?: Omit<ChangeLog, "kind"> } = {}): Promise<boolean> {
+  return guarded(
+    db,
+    db.prepare(`INSERT OR IGNORE INTO project_milestones (project_id, milestone, reached_at) VALUES (?, ?, ?)`).bind(projectId, m, now),
+    o.log && { ...o.log, kind: "project_milestone" },
+  );
 }
 
 export async function listMilestones(db: D1Database, projectId: string): Promise<{ milestone: MilestoneKey; reachedAt: string }[]> {

@@ -152,6 +152,28 @@ describe("markProjectDone", () => {
   });
 });
 
+describe("changes that log themselves", () => {
+  const lines = async (businessId: string, kind: string) => (await env.DB.prepare(`SELECT detail FROM activity WHERE business_id = ? AND kind = ?`).bind(businessId, kind).all<{ detail: string }>()).results.map((r) => r.detail);
+
+  it("markProjectDone writes its timeline line with the change, once, and a refused change writes none", async () => {
+    const s = await seedProject();
+    expect(await markProjectDone(env.DB, s.project.id, T1, { log: { businessId: s.businessId, detail: "Website build finished" } })).toBe(true);
+    expect(await markProjectDone(env.DB, s.project.id, T2, { log: { businessId: s.businessId, detail: "Website build finished" } })).toBe(false);
+    expect(await lines(s.businessId, "project_done")).toEqual(["Website build finished"]);
+    const c = await seedProject();
+    await setProjectStatus(env.DB, c.project.id, "cancelled", { now: T0 });
+    expect(await markProjectDone(env.DB, c.project.id, T1, { log: { businessId: c.businessId, detail: "nope" } })).toBe(false);
+    expect(await lines(c.businessId, "project_done")).toEqual([]);
+  });
+
+  it("reachMilestone writes its timeline line only the first time", async () => {
+    const s = await seedProject();
+    expect(await reachMilestone(env.DB, s.project.id, "site_finished", T1, { log: { businessId: s.businessId, detail: "Website build: site finished" } })).toBe(true);
+    expect(await reachMilestone(env.DB, s.project.id, "site_finished", T2, { log: { businessId: s.businessId, detail: "Website build: site finished" } })).toBe(false);
+    expect(await lines(s.businessId, "project_milestone")).toEqual(["Website build: site finished"]);
+  });
+});
+
 describe("milestones and cadences", () => {
   it("reachMilestone is true once", async () => {
     const s = await seedProject();
