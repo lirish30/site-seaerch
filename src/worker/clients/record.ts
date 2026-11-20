@@ -8,9 +8,11 @@ import { listInvoices } from "../db/invoices";
 import { listPeople } from "../db/people";
 import { listProjects } from "../db/projects";
 import { getSettings } from "../db/settings";
+import { latestOnboardingForBusiness, listItems } from "../db/onboardings";
 import { listAccess, listSites, type AccessItem, type Site } from "../db/sites";
 import { listSubscriptions, type Subscription } from "../db/subscriptions";
 import { zoneOf } from "../sop/cadence";
+import { ACCESS_ITEM_PREFIX } from "../onboarding/templates";
 import { siteFlags, type SiteFlag } from "../sites/access";
 import type { Activity, Business, Person } from "../types";
 
@@ -113,11 +115,14 @@ export interface ClientChangeOrder {
   sentAt: string | null; signedAt: string | null; paidAt: string | null; createdAt: string;
 }
 
+/** One checklist line plus what the CLIENT typed for it on their onboarding page. That text is untrusted (it may be wrong, or hostile): show it as plain text and never as HTML or a link. */
+export type ClientAccessItem = AccessItem & { clientAnswer: string | null };
+
 export interface ClientRecord {
   business: Business;
   people: Person[];
   /** Live sites only. `access` is the six checklist items with the owner-only vault names and notes: this record is for the owner and nobody else. */
-  sites: { site: Site; access: AccessItem[]; flags: SiteFlag[] }[];
+  sites: { site: Site; access: ClientAccessItem[]; flags: SiteFlag[] }[];
   subscriptions: ClientSubscription[];
   mrrCents: number;
   careLabel: string | null;
@@ -150,9 +155,13 @@ export async function getClientRecord(db: D1Database, businessId: string, now: D
     listChangeOrdersForBusiness(db, businessId), isOnHold(db, businessId), listActivity(db, businessId), listSites(db, { businessId }),
   ]);
   const care = careLabel(subs);
+  // What the client wrote for each access question, from the business's newest onboarding: one read, shared by every site.
+  const onboarding = sites.length > 0 ? await latestOnboardingForBusiness(db, businessId) : null;
+  const answers = new Map((onboarding ? await listItems(db, onboarding.id) : []).filter((i) => i.kind === "text").map((i) => [i.key, i.textValue?.trim() || null] as const));
   const withAccess = await Promise.all(sites.map(async (site) => {
-    const access = await listAccess(db, site.id);
-    return { site, access, flags: siteFlags({ site, items: access, careActive: care !== null }) };
+    const items = await listAccess(db, site.id);
+    const access = items.map((i) => ({ ...i, clientAnswer: answers.get(`${ACCESS_ITEM_PREFIX}${i.key}`) ?? null }));
+    return { site, access, flags: siteFlags({ site, items, careActive: care !== null }) };
   }));
   const owed = invoices.filter((i) => !i.test && (i.status === "open" || i.status === "failed"));
   return {

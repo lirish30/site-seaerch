@@ -10,7 +10,8 @@ import { parseConfig } from "../booking/config";
 import type { Env } from "../env";
 import { isClientToken } from "../documents/token";
 import { silentDays, stageOf, type Stage } from "./schedule";
-import { cleanText, looksLikeCredential, questionsFor, validateAnswers, type Question } from "./templates";
+import { looksSecret } from "../sites/access";
+import { ACCESS_ITEM_PREFIX, cleanText, looksLikeCredential, questionsFor, validateAnswers, type Question } from "./templates";
 
 /** The client's onboarding page and what the client can write to it. Everything typed here is untrusted: cleaned on the way in, never repeated in an error. */
 
@@ -157,6 +158,8 @@ export async function saveClientItemText(env: Env, token: string, itemId: string
   const cleaned = cleanText(text, text.length);
   if (cleaned.length > ITEM_TEXT_MAX) return bad([item.id]);
   if (looksLikeCredential(cleaned)) return { ok: false, status: 422, fields: [item.id] };
+  // The six access items ask where things live, so they also refuse the stronger secret shapes (a JWT, a key prefix, a link with a login in it).
+  if (item.key.startsWith(ACCESS_ITEM_PREFIX) && looksSecret(cleaned)) return { ok: false, status: 422, fields: [item.id] };
 
   const resuming = endsSilence(o, items, now);
   await saveItemText(env.DB, item.id, cleaned, now.toISOString());

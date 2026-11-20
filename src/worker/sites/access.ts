@@ -19,7 +19,7 @@ const NAME_MAX = 80;
 const NOTE_MAX = 500;
 
 /** Shapes that are secrets whatever the spacing: "password: ..." (also pw, passwd, = or a fullwidth colon), a link with a login in it, cloud, payment, GitHub, Slack, OpenAI-style and Google keys, JWTs, private keys, long hex strings. */
-function looksSecret(s: string): boolean {
+export function looksSecret(s: string): boolean {
   return looksLikeCredential(s)
     || /\b(?:pw|passwd|pwd|pass(?:word|code|phrase)?|login|api[ _-]?key|secret|token)\s*[:=\uFF1A\uFF1D]/i.test(s)
     || /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@]*@/i.test(s)

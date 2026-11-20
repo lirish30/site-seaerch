@@ -86,6 +86,8 @@
 .cl-access-name { flex:1 1 140px; min-width:0; }
 .cl-access-status { flex:0 1 190px; }
 .cl-access-help, .cl-access-when { margin:0; }
+.cl-access-answer { margin:0; padding:6px 10px; border-left:3px solid var(--border-strong); background:var(--bg-muted); border-radius:4px; display:flex; flex-direction:column; gap:2px; overflow-wrap:anywhere; white-space:pre-wrap; }
+.cl-access-answer q { quotes:"\201C" "\201D"; }
 .cl-access-form { display:flex; flex-direction:column; gap:10px; }
 .cl-access-save { display:flex; align-items:center; gap:10px; }
 

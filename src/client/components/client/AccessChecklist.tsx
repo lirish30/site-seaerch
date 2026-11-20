@@ -3,10 +3,12 @@ import { ApiError, clientsApi } from "../../api";
 import { accessActions, accessTone, accessWords, problemText, serverProblem, vaultHint } from "../../clientView";
 import { ACCESS_LABELS, noteProblem, vaultNameProblem } from "../../../worker/sites/access";
 import type { AccessItem, AccessStatus } from "../../../worker/db/sites";
+import type { ClientAccessItem } from "../../../worker/clients/record";
 
 const TONE = { neutral: "outline", good: "positive", warn: "warning" } as const;
 const NOTE_MAX = 500;
 const VAULT_MAX = 80;
+const ANSWER_SHOWN = 400;
 
 /** "3 Nov" or "3 Nov 2025" in the owner's own zone, from a stored timestamp. */
 function stampDay(iso: string): string {
@@ -26,7 +28,7 @@ function stamps(i: AccessItem): string {
   return parts.filter((p) => !p.endsWith(" ")).join(" · ");
 }
 
-function Row({ clientId, siteId, siteName, item, onChanged }: { clientId: string; siteId: string; siteName: string; item: AccessItem; onChanged: () => Promise<void> }) {
+function Row({ clientId, siteId, siteName, item, onChanged }: { clientId: string; siteId: string; siteName: string; item: ClientAccessItem; onChanged: () => Promise<void> }) {
   const meta = ACCESS_LABELS[item.key];
   const [vault, setVault] = useState(item.vaultItem ?? "");
   const [note, setNote] = useState(item.note ?? "");
@@ -93,6 +95,13 @@ function Row({ clientId, siteId, siteName, item, onChanged }: { clientId: string
       </div>
       <p className="muted small cl-access-help">{meta.help}</p>
       {when && <p className="small cl-access-when">{when}</p>}
+      {item.clientAnswer && (
+        // The client's own words: untrusted, so plain text only (React escapes it; it is never a link), cut short, and labelled as possibly wrong.
+        <blockquote className="small cl-access-answer" aria-label={`What the client wrote about ${meta.label} for ${siteName}`}>
+          <span className="muted">Client wrote (may be wrong)</span>
+          <q>{item.clientAnswer.length > ANSWER_SHOWN ? `${item.clientAnswer.slice(0, ANSWER_SHOWN).trimEnd()}…` : item.clientAnswer}</q>
+        </blockquote>
+      )}
       {statusError && <p className="error small" role="alert">{statusError}</p>}
       <form className="cl-access-form" onSubmit={(e) => void saveDetails(e)} noValidate>
         <label className="deal-field" htmlFor={`${id}-vault`}>
@@ -122,7 +131,7 @@ function Row({ clientId, siteId, siteName, item, onChanged }: { clientId: string
 
 /** The six access lines of one site: a status you move along, the NAME of the password manager item, and a note only you see. Nothing here ever stores a login. */
 export default function AccessChecklist({ clientId, siteId, siteName, items, onChanged }: {
-  clientId: string; siteId: string; siteName: string; items: AccessItem[]; onChanged: () => Promise<void>;
+  clientId: string; siteId: string; siteName: string; items: ClientAccessItem[]; onChanged: () => Promise<void>;
 }) {
   return (
     <section className="cl-checklist" aria-label={`Access checklist for ${siteName}`}>

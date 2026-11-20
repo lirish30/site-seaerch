@@ -19,10 +19,11 @@ describe("item templates", () => {
     expect(keysOf(["starter_site"])).not.toContain("service_area_text");
   });
 
-  it("quick fix and care only are light and get no items", () => {
+  it("quick fix and care only are light and get just the six access items", () => {
     expect(onboardingKindOf(["quick_fix"])).toBe("light");
     expect(onboardingKindOf(["care", "care_plus"])).toBe("light");
-    expect(itemsFor(["quick_fix", "care"])).toEqual([]);
+    expect(keysOf(["quick_fix", "care"])).toEqual(["access_hosting", "access_dns", "access_registrar", "access_admin", "access_gbp", "access_analytics"]);
+    expect(itemsFor(["hourly"])).toEqual([]);
     expect(onboardingKindOf(["starter_site", "care"])).toBe("build");
     expect(onboardingKindOf(["website_subscription"])).toBe("build");
   });

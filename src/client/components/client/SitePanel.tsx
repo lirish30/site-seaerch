@@ -2,7 +2,8 @@ import { useState } from "react";
 import { ApiError, clientsApi } from "../../api";
 import { addressProblem, problemText, safeHref, siteTitle } from "../../clientView";
 import { noteProblem, type SiteFlag } from "../../../worker/sites/access";
-import type { AccessItem, AccessMethod, Cms, HostingTier, Site, SiteFields } from "../../../worker/db/sites";
+import type { AccessMethod, Cms, HostingTier, Site, SiteFields } from "../../../worker/db/sites";
+import type { ClientAccessItem } from "../../../worker/clients/record";
 import AccessChecklist from "./AccessChecklist";
 
 const CMS: [Cms, string][] = [
@@ -45,7 +46,7 @@ function SafeLink({ url, children }: { url: string | null; children: React.React
 
 /** One site: its fields (text fields save together, the three choices save the moment you pick), the warnings, and the access checklist. */
 export default function SitePanel({ clientId, site, access, flags, onChanged }: {
-  clientId: string; site: Site; access: AccessItem[]; flags: SiteFlag[]; onChanged: () => Promise<void>;
+  clientId: string; site: Site; access: ClientAccessItem[]; flags: SiteFlag[]; onChanged: () => Promise<void>;
 }) {
   const title = siteTitle(site);
   const original = draftOf(site);
