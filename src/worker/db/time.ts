@@ -64,7 +64,7 @@ export async function listEntriesBetween(db: D1Database, fromIso: string, toIso:
   return rows.map((r) => ({ ...toEntry(r), title: r.title, projectName: r.project_name }));
 }
 
-/** What Logan can change on an entry. A field left out is not touched. Moving `startedAt` moves `endedAt` with it, so the length stays. */
+/** What Logan can change on an entry. A field left out is not touched. Moving `startedAt` moves `endedAt` with it, so the length stays; changing `minutes` puts `endedAt` that long after the start. */
 export interface EntryPatch { minutes?: number; billable?: boolean; note?: string; startedAt?: string }
 
 const INVOICED = "This time has been invoiced, so it cannot be changed.";
@@ -87,12 +87,18 @@ export async function patchEntry(db: D1Database, id: string, p: EntryPatch): Pro
   }
   if (p.billable !== undefined) set("billable", p.billable ? 1 : 0);
   if (p.note !== undefined) set("note", cleanNote(p.note));
+  // The end follows the start and the length: a new start shifts it, and new minutes put it exactly that long after the (new) start.
+  let startMs = Date.parse(entry.startedAt);
+  let endedAt = entry.endedAt;
   if (p.startedAt !== undefined) {
     const to = Date.parse(p.startedAt);
     if (!/^\d{4}-\d\d-\d\dT/.test(p.startedAt) || !Number.isFinite(to)) throw new TimeStateError("A start time must be a date and time like 2026-12-03T17:00:00.000Z.");
     set("started_at", new Date(to).toISOString());
-    if (entry.endedAt !== null) set("ended_at", new Date(Date.parse(entry.endedAt) + (to - Date.parse(entry.startedAt))).toISOString());
+    if (endedAt !== null) endedAt = new Date(Date.parse(endedAt) + (to - startMs)).toISOString();
+    startMs = to;
   }
+  if (p.minutes !== undefined && endedAt !== null) endedAt = new Date(startMs + p.minutes * 60_000).toISOString();
+  if (endedAt !== entry.endedAt) set("ended_at", endedAt);
   if (sets.length) {
     const res = await db.prepare(`UPDATE time_entries SET ${sets.join(", ")} WHERE id = ? AND invoiced_ref IS NULL`).bind(...vals, id).run();
     if ((res.meta.changes ?? 0) !== 1) throw new TimeStateError(INVOICED);

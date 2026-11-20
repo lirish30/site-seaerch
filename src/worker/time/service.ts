@@ -1,7 +1,7 @@
 import type { Env } from "../env";
 import { dayKey, wallToUtc } from "../booking/slots";
 import { parseConfig } from "../booking/config";
-import { commitTimer, getEntry, insertEntry, listEntriesBetween, runningEntry, TimeStateError, type StopPlan, type TimeEntry } from "../db/time";
+import { commitTimer, insertEntry, listEntriesBetween, runningEntry, TimeStateError, type StopPlan, type TimeEntry } from "../db/time";
 import { getSettings } from "../db/settings";
 import { getTask } from "../db/tasks";
 import { parseWorkConfig } from "./config";

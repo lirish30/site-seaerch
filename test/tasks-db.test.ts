@@ -141,6 +141,8 @@ describe("patchTask", () => {
       [{ estMinutes: -1 }, /estimate/i],
       [{ estMinutes: 1.5 }, /whole minutes/i],
       [{ dueOn: "2026-02-31" }, /date/i],
+      [{ dueOn: "2026-13-45" }, /date/i],
+      [{ dueOn: "2026-00-10" }, /date/i],
       [{ dueOn: "next week" }, /date/i],
       [{ clientSummary: "x".repeat(81) }, /at most 80/i],
     ];
@@ -152,6 +154,20 @@ describe("patchTask", () => {
     expect(await getTask(env.DB, t.id)).toMatchObject({ title: "Step 1", updatedAt: t.updatedAt });
     // At the caps is fine.
     await patchTask(env.DB, t.id, { title: "x".repeat(120), description: "y".repeat(2000), checklist: Array.from({ length: 40 }, () => ({ text: "z".repeat(200), done: false })) }, T1);
+  });
+});
+
+describe("patchTask dates", () => {
+  it("an impossible calendar date is a TaskInputError, never a RangeError, and a real one is kept", async () => {
+    const s = await seedProject();
+    const [t] = await seedSteps(s.project.id, s.businessId, [{ key: "1" }]);
+    for (const dueOn of ["2026-13-45", "2026-99-99", "0000-00-00", "2026-12-32", "2026-02-30"]) {
+      const err = await patchTask(env.DB, t.id, { dueOn }, T1).catch((x) => x);
+      expect(err, dueOn).toBeInstanceOf(TaskInputError);
+      expect(err).not.toBeInstanceOf(RangeError);
+    }
+    expect((await patchTask(env.DB, t.id, { dueOn: "2028-02-29" }, T1)).dueOn).toBe("2028-02-29");
+    expect(await getTask(env.DB, t.id)).toMatchObject({ dueOn: "2028-02-29" });
   });
 });
 

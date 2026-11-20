@@ -84,6 +84,20 @@ describe("time entries", () => {
     expect(await patchEntry(env.DB, running.id, { note: "ok" })).toMatchObject({ note: "ok", endedAt: null });
   });
 
+  it("changing the minutes moves the end with it, alone or with a new start, and leaves a running timer's end empty", async () => {
+    const s = await seed();
+    const e = await insertEntry(env.DB, s.entry());
+    const start = e.startedAt;
+    const longer = await patchEntry(env.DB, e.id, { minutes: 45 });
+    expect(longer).toMatchObject({ minutes: 45, startedAt: start, endedAt: new Date(Date.parse(start) + 45 * 60_000).toISOString() });
+    const both = await patchEntry(env.DB, e.id, { minutes: 20, startedAt: "2026-12-02T17:00:00.000Z" });
+    expect(both).toMatchObject({ minutes: 20, startedAt: "2026-12-02T17:00:00.000Z", endedAt: "2026-12-02T17:20:00.000Z" });
+    const note = await patchEntry(env.DB, e.id, { note: "same length" });
+    expect(note).toMatchObject({ minutes: 20, endedAt: "2026-12-02T17:20:00.000Z" });
+    const running = await insertEntry(env.DB, s.entry({ endedAt: null, minutes: 0 }));
+    expect(await patchEntry(env.DB, running.id, { startedAt: "2026-12-02T18:00:00.000Z" })).toMatchObject({ endedAt: null });
+  });
+
   it("listEntriesBetween names the task and project and takes the half-open range", async () => {
     const s = await seed();
     const a = await insertEntry(env.DB, s.entry({ startedAt: "2026-12-03T10:00:00.000Z" }));

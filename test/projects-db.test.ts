@@ -2,7 +2,7 @@ import { env, SELF } from "cloudflare:test";
 import { describe, it, expect, beforeAll } from "vitest";
 import { getBusiness } from "../src/worker/db/businesses";
 import { getDeal } from "../src/worker/db/deals";
-import { addCadence, createProject, getProject, hasProject, listCadences, listMilestones, listProjects, reachMilestone, setProjectStatus } from "../src/worker/db/projects";
+import { addCadence, createProject, getProject, hasProject, listCadences, listMilestones, listProjects, markProjectDone, reachMilestone, setProjectStatus } from "../src/worker/db/projects";
 import { setTaskStatus } from "../src/worker/db/tasks";
 import { seedDoc, seedProject, seedSteps, T0, T1, T2 } from "./fixtures/projects";
 import { seedDeal } from "./fixtures/documents";
@@ -124,6 +124,31 @@ describe("setProjectStatus", () => {
 
   it("an unknown project rejects", async () => {
     await expect(setProjectStatus(env.DB, "nope", "done", { now: T1 })).rejects.toThrow();
+  });
+});
+
+describe("markProjectDone", () => {
+  it("is true only for the call that finished the project, and a second or concurrent call gets false", async () => {
+    const s = await seedProject();
+    expect(await markProjectDone(env.DB, s.project.id, T1)).toBe(true);
+    expect(await getProject(env.DB, s.project.id)).toMatchObject({ status: "done", completedAt: T1, pausedReason: null, updatedAt: T1 });
+    expect(await markProjectDone(env.DB, s.project.id, T2)).toBe(false);
+    expect((await getProject(env.DB, s.project.id))!.completedAt).toBe(T1);
+    const c = await seedProject();
+    const r = await Promise.all([markProjectDone(env.DB, c.project.id, T1), markProjectDone(env.DB, c.project.id, T1), markProjectDone(env.DB, c.project.id, T1)]);
+    expect(r.filter(Boolean)).toHaveLength(1);
+  });
+
+  it("finishes a paused project but never a cancelled one, and a missing project is false", async () => {
+    const p = await seedProject();
+    await setProjectStatus(env.DB, p.project.id, "paused", { reason: "invoice overdue", now: T0 });
+    expect(await markProjectDone(env.DB, p.project.id, T1)).toBe(true);
+    expect(await getProject(env.DB, p.project.id)).toMatchObject({ status: "done", pausedReason: null });
+    const c = await seedProject();
+    await setProjectStatus(env.DB, c.project.id, "cancelled", { now: T0 });
+    expect(await markProjectDone(env.DB, c.project.id, T1)).toBe(false);
+    expect((await getProject(env.DB, c.project.id))!.status).toBe("cancelled");
+    expect(await markProjectDone(env.DB, "nope", T1)).toBe(false);
   });
 });
 

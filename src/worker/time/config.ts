@@ -20,12 +20,12 @@ export const WorkConfigSchema = z.object({
 
 /**
  * Reads settings.work_config. "" and "{}" give the defaults, and missing keys take their default.
- * A document that no longer validates also gives the defaults.
+ * A document that no longer validates also gives the defaults. The result is always the caller's own copy, never the shared defaults object.
  */
 export function parseWorkConfig(raw: string): WorkConfig {
-  if (!raw.trim()) return DEFAULT_WORK_CONFIG;
+  if (!raw.trim()) return { ...DEFAULT_WORK_CONFIG };
   try {
     const r = WorkConfigSchema.safeParse({ ...DEFAULT_WORK_CONFIG, ...JSON.parse(raw) });
-    return r.success ? r.data : DEFAULT_WORK_CONFIG;
-  } catch { return DEFAULT_WORK_CONFIG; }
+    return r.success ? r.data : { ...DEFAULT_WORK_CONFIG };
+  } catch { return { ...DEFAULT_WORK_CONFIG }; }
 }

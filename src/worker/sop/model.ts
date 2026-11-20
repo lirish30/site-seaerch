@@ -143,7 +143,7 @@ export function validateTemplate(t: SopTemplateInput): string[] {
 }
 
 /** The first dependency loop found, as the keys around it (first key repeated at the end), or null. */
-function findCycle(graph: Map<string, string[]>): string[] | null {
+export function findCycle(graph: Map<string, string[]>): string[] | null {
   const state = new Map<string, 1 | 2>(); // 1 = on the current path, 2 = finished
   const path: string[] = [];
   const visit = (k: string): string[] | null => {

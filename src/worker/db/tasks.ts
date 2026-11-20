@@ -95,7 +95,12 @@ export interface TaskPatch {
   requires?: string[]; checklist?: ChecklistItem[]; clientSummary?: string | null;
 }
 
-const isCalendarDate = (s: string) => /^\d{4}-\d\d-\d\d$/.test(s) && new Date(`${s}T00:00:00.000Z`).toISOString().startsWith(s);
+/** A real calendar date: "2026-13-45" is not a date at all and "2026-02-30" would roll into March. Never throws. */
+const isCalendarDate = (s: string) => {
+  if (!/^\d{4}-\d\d-\d\d$/.test(s)) return false;
+  const t = Date.parse(`${s}T00:00:00.000Z`);
+  return Number.isFinite(t) && new Date(t).toISOString().startsWith(s);
+};
 
 /** Text is cleaned (control and bidirectional characters removed, ends trimmed) before its length is checked. */
 const text = (label: string, max: number, o: { required?: boolean } = {}) =>
@@ -115,11 +120,16 @@ const PatchSchema = z.object({
   clientSummary: text("A client summary", 80).transform((s) => s || null).nullable(),
 }).partial().strict();
 
-/** Applies the patch and returns the task. Refuses (TaskInputError, nothing saved) text over the caps, a blank title and values that are not allowed. Throws when there is no such task. */
-export async function patchTask(db: D1Database, id: string, p: TaskPatch, now: string): Promise<Task> {
+/** The patch with its text cleaned and every value checked. Throws TaskInputError (a plain sentence) for text over the caps, a blank title and values that are not allowed. */
+export function parseTaskPatch(p: TaskPatch): TaskPatch {
   const parsed = PatchSchema.safeParse(p);
   if (!parsed.success) throw new TaskInputError(parsed.error.issues[0].message);
-  const v = parsed.data;
+  return parsed.data;
+}
+
+/** Applies the patch and returns the task. Refuses (TaskInputError, nothing saved) text over the caps, a blank title and values that are not allowed. Throws when there is no such task. */
+export async function patchTask(db: D1Database, id: string, p: TaskPatch, now: string): Promise<Task> {
+  const v = parseTaskPatch(p);
   const sets: string[] = [];
   const vals: (string | number | null)[] = [];
   const set = (col: string, val: string | number | null) => { sets.push(`${col} = ?`); vals.push(val); };
@@ -200,6 +210,9 @@ export async function deleteTask(db: D1Database, id: string): Promise<boolean> {
   return (res[1].meta.changes ?? 0) === 1;
 }
 
+/** What a refused login or password is told. The text itself is never echoed. */
+export const CREDENTIAL_REFUSED = "This looks like a login or password. Never put those in a task; note where they are stored instead.";
+
 export type CommentAuthor = "logan" | "claude" | "system";
 export interface TaskComment { id: string; author: CommentAuthor; body: string; createdAt: string }
 
@@ -210,7 +223,7 @@ export interface TaskComment { id: string; author: CommentAuthor; body: string; 
 export async function addComment(db: D1Database, taskId: string, author: CommentAuthor, body: string, now: string): Promise<void> {
   const clean = cleanText(body, 4000);
   if (!clean) throw new TaskInputError("A comment cannot be empty.");
-  if (author !== "system" && looksLikeCredential(clean)) throw new TaskInputError("This looks like a login or password. Never put those in a task; note where they are stored instead.");
+  if (author !== "system" && looksLikeCredential(clean)) throw new TaskInputError(CREDENTIAL_REFUSED);
   await db.prepare(`INSERT INTO task_comments (id, task_id, author, body, created_at) VALUES (?, ?, ?, ?, ?)`).bind(crypto.randomUUID(), taskId, author, clean, now).run();
 }
 

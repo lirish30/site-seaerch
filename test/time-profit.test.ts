@@ -54,6 +54,17 @@ describe("work config", () => {
     expect(parseWorkConfig(JSON.stringify({ costRateCentsPerHour: 3500 }))).toEqual({ ...DEFAULT_WORK_CONFIG, costRateCentsPerHour: 3500 });
   });
 
+  it("parseWorkConfig hands back its own copy, so changing the result never changes the defaults", () => {
+    for (const raw of ["", "{}", "not json", JSON.stringify({ timerCapMinutes: 59 })]) {
+      const c = parseWorkConfig(raw);
+      expect(c).not.toBe(DEFAULT_WORK_CONFIG);
+      c.timerCapMinutes = 1;
+      c.costRateCentsPerHour = 999;
+      expect(DEFAULT_WORK_CONFIG).toEqual({ costRateCentsPerHour: 0, weekStartsOn: 1, timerCapMinutes: 720 });
+      expect(parseWorkConfig(raw)).toEqual(DEFAULT_WORK_CONFIG);
+    }
+  });
+
   it("parseWorkConfig falls back on invalid JSON and out-of-range values", () => {
     expect(parseWorkConfig("not json")).toEqual(DEFAULT_WORK_CONFIG);
     expect(parseWorkConfig("[1]")).toEqual(DEFAULT_WORK_CONFIG);

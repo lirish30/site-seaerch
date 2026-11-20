@@ -94,6 +94,17 @@ export async function setProjectStatus(db: D1Database, id: string, status: Proje
   return p;
 }
 
+/**
+ * Finishes the project and says whether this call is the one that did it. The guard is in the statement: only an active or paused project becomes done, so of any number of
+ * callers at the same moment (or a replay) exactly one gets true, and that one logs and runs the done hooks. A done or cancelled project, or a missing one, gives false.
+ */
+export async function markProjectDone(db: D1Database, id: string, now: string): Promise<boolean> {
+  const res = await db.prepare(
+    `UPDATE projects SET status = 'done', paused_reason = NULL, completed_at = ?, updated_at = ? WHERE id = ? AND status NOT IN ('done', 'cancelled')`,
+  ).bind(now, now, id).run();
+  return (res.meta.changes ?? 0) === 1;
+}
+
 /** Records that the project reached a milestone. True only the first time. */
 export async function reachMilestone(db: D1Database, projectId: string, m: MilestoneKey, now: string): Promise<boolean> {
   const res = await db.prepare(`INSERT OR IGNORE INTO project_milestones (project_id, milestone, reached_at) VALUES (?, ?, ?)`).bind(projectId, m, now).run();

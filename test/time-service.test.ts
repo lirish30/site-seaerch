@@ -49,6 +49,24 @@ describe("timers", () => {
     expect((await stopTimer(env, plus(START, 14 * MIN + 29_000)))!.minutes).toBe(14);
   });
 
+  it("two timers started at the same moment: one starts, the other is refused, and one row is running", async () => {
+    const s = await seed();
+    const other = await s.more();
+    const r = await Promise.allSettled([startTimer(env, s.task.id, START), startTimer(env, other.id, START)]);
+    expect(r.filter((x) => x.status === "fulfilled")).toHaveLength(1);
+    const lost = r.filter((x): x is PromiseRejectedResult => x.status === "rejected");
+    expect(lost).toHaveLength(1);
+    expect(lost[0].reason).toBeInstanceOf(TimeStateError);
+    const n = await env.DB.prepare(`SELECT COUNT(*) AS n FROM time_entries WHERE ended_at IS NULL`).first<{ n: number }>();
+    expect(n!.n).toBe(1);
+    expect(await runningEntry(env.DB)).not.toBeNull();
+    // and the same task twice
+    await stopTimer(env, plus(START, 5 * MIN));
+    const same = await Promise.allSettled([startTimer(env, s.task.id, START), startTimer(env, s.task.id, START)]);
+    expect(same.map((x) => x.status).sort()).toEqual(["fulfilled", "rejected"]);
+    expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM time_entries WHERE ended_at IS NULL`).first<{ n: number }>())!.n).toBe(1);
+  });
+
   it("stopping with no timer running does nothing", async () => {
     expect(await stopTimer(env, START)).toBeNull();
   });
