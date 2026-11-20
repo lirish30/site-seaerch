@@ -140,7 +140,7 @@ describe("startCheckout", () => {
     expect(api.more).toEqual({ products: 1, sessions: 1 });
 
     const session = api.creates().find((c) => new URL(c.url).pathname === "/v1/checkout/sessions")!;
-    expect(session.headers["idempotency-key"]).toBe(`checkout:${s.id}:2026-12-20`);
+    expect(session.headers["idempotency-key"]).toBe(`checkout:${s.id}:2026-12-20:2`);
     expect(session.form.get("client_reference_id")).toBe(s.id);
     expect(session.form.get("success_url")).toBe(`${BASE}/s/${s.token}?done=1`);
     expect(session.form.get("cancel_url")).toBe(`${BASE}/s/${s.token}`);

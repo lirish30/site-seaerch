@@ -121,7 +121,7 @@ export async function startCheckout(env: Env, token: string, deps: Deps = {}): P
     const session = await createSubscriptionCheckout(f, key, {
       customerId, productId: product.id, name: plan, monthlyCents: sub.monthlyCents, firstChargeOn: sub.firstChargeOn, subscriptionId: sub.id, businessId: sub.businessId,
       successUrl: `${base}/s/${token}?done=1`, cancelUrl: `${base}/s/${token}`, nowMs: now.getTime(),
-    }, `checkout:${sub.id}:${now.toISOString().slice(0, 10)}`);
+    }, `checkout:${sub.id}:${now.toISOString().slice(0, 10)}:2`); // `:2`: the first form of this request was refused by Stripe, and Stripe keeps a key for 24 hours against its first parameters
     // Stored before the url leaves: a Checkout the app does not know of could be paid and never activate anything.
     const stored = await markSubscription(env.DB, sub.id, { stripeCheckoutSessionId: session.sessionId, stripeCustomerId: customerId }, { from: ["link_sent"] });
     if (!stored) return { error: "closed" }; // it was activated or cancelled while the session was being made
