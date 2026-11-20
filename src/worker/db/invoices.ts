@@ -180,14 +180,15 @@ export interface InvoicePatch { status?: InvoiceStatus; mismatch?: string | null
  * Patches a row. `notFrom` names the states it must not leave, checked in the statement itself so two events racing cannot undo each other.
  * True when a row changed.
  */
-export async function markInvoice(db: D1Database, id: string, patch: InvoicePatch, opts: { notFrom?: InvoiceStatus[] } = {}): Promise<boolean> {
+export async function markInvoice(db: D1Database, id: string, patch: InvoicePatch, opts: { notFrom?: InvoiceStatus[]; failedOnOnce?: boolean } = {}): Promise<boolean> {
   const sets: string[] = [], binds: unknown[] = [];
   if (patch.status !== undefined) { sets.push("status = ?"); binds.push(patch.status); }
   if (patch.mismatch !== undefined) { sets.push("mismatch = ?"); binds.push(patch.mismatch); }
   if (patch.paidAt !== undefined) { sets.push("paid_at = ?"); binds.push(patch.paidAt); }
   if (patch.hostedUrl !== undefined) { sets.push("hosted_url = ?"); binds.push(patch.hostedUrl); }
   if (patch.dueOn !== undefined) { sets.push("due_on = ?"); binds.push(patch.dueOn); }
-  if (patch.failedOn !== undefined) { sets.push("failed_on = ?"); binds.push(patch.failedOn); }
+  // Stripe retries a failed payment for days; the date of the first failure is the one the reminders and the pause count from, so `failedOnOnce` keeps it (guarded in the statement itself).
+  if (patch.failedOn !== undefined) { sets.push(opts.failedOnOnce ? "failed_on = COALESCE(failed_on, ?)" : "failed_on = ?"); binds.push(patch.failedOn); }
   if (sets.length === 0) return false;
   const notFrom = opts.notFrom ?? [];
   const guard = notFrom.length ? ` AND status NOT IN (${notFrom.map(() => "?").join(", ")})` : "";

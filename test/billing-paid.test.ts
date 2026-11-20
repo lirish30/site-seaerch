@@ -312,6 +312,74 @@ describe("subscription invoices", () => {
     expect((await getSubscription(env.DB, s.sub.id))!.status).toBe("active");
   });
 
+  it("a first invoice that arrives before the Checkout is mirrored once; the Checkout then activates the subscription and nothing is duplicated", async () => {
+    const s = await sub({ status: "link_sent" });
+    const stripeSub = `sub_${crypto.randomUUID().slice(0, 8)}`;
+    const obj = cycle(stripeSub, { subscription_details: { metadata: { subscription_id: s.sub.id } }, livemode: false });
+    // not an unknown subscription: its own metadata names ours, which has no Stripe subscription yet
+    expect(await handleStripeEvent(env, subEvent("invoice.paid", obj), deps)).toBe("applied");
+    expect(await byStripe(obj.id)).toMatchObject({ kind: "subscription", status: "paid", subscriptionId: s.sub.id, amountCents: 29900, ref: `stripe:${obj.id}` });
+    // the invoice never activates it
+    expect(await getSubscription(env.DB, s.sub.id)).toMatchObject({ status: "link_sent", stripeSubscriptionId: null, activatedAt: null });
+    expect(await logs(s.businessId, "invoice_paid")).toHaveLength(1);
+    // the Checkout arrives: it is the only thing that activates
+    const done = sessionEvent(session(s.sub, { subscription: stripeSub }));
+    expect(await handleStripeEvent(env, done, deps)).toBe("applied");
+    const active = (await getSubscription(env.DB, s.sub.id))!;
+    expect(active).toMatchObject({ status: "active", stripeSubscriptionId: stripeSub });
+    // both replayed (same ids, and fresh event ids): nothing changes, nothing is added
+    expect(await handleStripeEvent(env, done, deps)).toBe("duplicate");
+    expect(await handleStripeEvent(env, subEvent("invoice.paid", obj), deps)).toBe("applied");
+    expect(await handleStripeEvent(env, sessionEvent(session(s.sub, { subscription: stripeSub })), deps)).toBe("applied");
+    expect(await getSubscription(env.DB, s.sub.id)).toEqual(active);
+    expect(await listInvoices(env.DB, { kinds: ["subscription"], businessId: s.businessId })).toHaveLength(1);
+    expect(await logs(s.businessId, "invoice_paid")).toHaveLength(1);
+  });
+
+  it("the newer payload shape (parent.subscription_details) is mirrored, found by Stripe id or by metadata", async () => {
+    const known = await sub({ status: "active", stripeId: `sub_${crypto.randomUUID().slice(0, 8)}` });
+    const a = cycle("x", { subscription: undefined, parent: { type: "subscription_details", subscription_details: { subscription: known.sub.stripeSubscriptionId, metadata: {} } } });
+    expect(await handleStripeEvent(env, subEvent("invoice.paid", a), deps)).toBe("applied");
+    expect(await byStripe(a.id)).toMatchObject({ kind: "subscription", status: "paid", subscriptionId: known.sub.id });
+
+    const early = await sub({ status: "link_sent" });
+    const stripeSub = `sub_${crypto.randomUUID().slice(0, 8)}`;
+    const b = cycle("x", { subscription: undefined, parent: { subscription_details: { subscription: stripeSub, metadata: { subscription_id: early.sub.id } } } });
+    expect(await handleStripeEvent(env, subEvent("invoice.paid", b), deps)).toBe("applied");
+    expect(await byStripe(b.id)).toMatchObject({ kind: "subscription", subscriptionId: early.sub.id });
+    expect((await getSubscription(env.DB, early.sub.id))!.status).toBe("link_sent");
+  });
+
+  it("an invoice whose metadata names a subscription that has another Stripe subscription is ignored, and so is a live one for a test subscription", async () => {
+    const s = await sub({ status: "active", stripeId: `sub_${crypto.randomUUID().slice(0, 8)}` });
+    const other = cycle(`sub_${crypto.randomUUID().slice(0, 8)}`, { subscription_details: { metadata: { subscription_id: s.sub.id } } });
+    expect(await handleStripeEvent(env, subEvent("invoice.paid", other), deps)).toBe("ignored");
+    expect(await getInvoiceByStripeId(env.DB, other.id)).toBeNull();
+    const t = await sub({ status: "link_sent", test: true });
+    const live = cycle(`sub_${crypto.randomUUID().slice(0, 8)}`, { livemode: true, subscription_details: { metadata: { subscription_id: t.sub.id } } });
+    expect(await handleStripeEvent(env, subEvent("invoice.paid", live), deps)).toBe("ignored");
+    expect(await getInvoiceByStripeId(env.DB, live.id)).toBeNull();
+    // a metadata id that is no subscription of ours is ignored too
+    expect(await handleStripeEvent(env, subEvent("invoice.paid", cycle("sub_zzz", { subscription_details: { metadata: { subscription_id: "nope" } } })), deps)).toBe("ignored");
+  });
+
+  it("a later payment_failed (Stripe's retry on another day) keeps the first failed_on; a paid-then-late failure changes nothing", async () => {
+    const s = await sub({ status: "active", stripeId: `sub_${crypto.randomUUID().slice(0, 8)}` });
+    const bad = cycle(s.sub.stripeSubscriptionId!, { amount_paid: 0 });
+    const day = (iso: string) => ({ ...deps, clock: () => new Date(iso) });
+    expect(await handleStripeEvent(env, subEvent("invoice.payment_failed", bad), day("2027-03-01T20:00:00.000Z"))).toBe("applied");
+    expect((await byStripe(bad.id)).failedOn).toBe("2027-03-01");
+    // the retry three and five days later fails again
+    expect(await handleStripeEvent(env, subEvent("invoice.payment_failed", bad), day("2027-03-04T20:00:00.000Z"))).toBe("applied");
+    expect(await handleStripeEvent(env, subEvent("invoice.payment_failed", bad), day("2027-03-06T20:00:00.000Z"))).toBe("applied");
+    expect(await byStripe(bad.id)).toMatchObject({ status: "failed", failedOn: "2027-03-01" });
+    // paid, then a late failure: nothing moves, the date stays
+    expect(await handleStripeEvent(env, subEvent("invoice.paid", { ...bad, amount_paid: 29900 }), day("2027-03-07T20:00:00.000Z"))).toBe("applied");
+    expect(await handleStripeEvent(env, subEvent("invoice.payment_failed", bad), day("2027-03-09T20:00:00.000Z"))).toBe("ignored");
+    expect(await byStripe(bad.id)).toMatchObject({ status: "paid", failedOn: "2027-03-01" });
+    expect((await getSubscription(env.DB, s.sub.id))!.status).toBe("active");
+  });
+
   it("a cancelled subscription is not woken by a late paid invoice", async () => {
     const s = await sub({ status: "cancelled", stripeId: `sub_${crypto.randomUUID().slice(0, 8)}` });
     await handleStripeEvent(env, subEvent("invoice.paid", cycle(s.sub.stripeSubscriptionId!)), deps);

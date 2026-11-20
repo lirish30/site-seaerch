@@ -91,7 +91,7 @@ async function applyInvoice(env: Env, event: StripeEvent, deps: StripeDeps, now:
     // A failed autopay month is dated (the date the reminders and the pause count from) and puts its subscription past due.
     const autopay = inv.kind === "subscription";
     const failedOn = autopay && event.type === "invoice.payment_failed" ? calendarDateIn(now, zoneOf(await getSettings(env.DB))) : undefined;
-    if (!(await markInvoice(env.DB, inv.id, { status: move.to, failedOn }, { notFrom: move.notFrom }))) return "ignored";
+    if (!(await markInvoice(env.DB, inv.id, { status: move.to, failedOn }, { notFrom: move.notFrom, failedOnOnce: true }))) return "ignored";
     if (autopay && inv.subscriptionId && event.type === "invoice.payment_failed") await markSubscription(env.DB, inv.subscriptionId, { status: "past_due" }, { from: ["active"] });
     // A voided invoice can no longer be paid, so it holds nobody's work back.
     if (event.type === "invoice.voided") await liftHoldsForInvoice(env.DB, inv.id, "void", now.toISOString());
@@ -122,7 +122,7 @@ async function apply(env: Env, event: StripeEvent, deps: StripeDeps, now: Date):
   return "ignored";
 }
 
-export interface StripeDeps { onPaid?: (env: Env, inv: InvoiceRow) => Promise<void>; /** The clock, for the event lease. */ now?: () => Date }
+export interface StripeDeps { onPaid?: (env: Env, inv: InvoiceRow) => Promise<void>; /** The clock, for the event lease. */ now?: () => Date; /** The clock the handlers date their work by (a failure's `failed_on`); the real time unless a test hands one in. */ clock?: () => Date }
 
 /**
  * Handles one verified event, claiming it first: the id is inserted with no processed time, and only the caller that holds the claim applies it.
@@ -136,7 +136,7 @@ export async function handleStripeEvent(env: Env, event: StripeEvent, deps: Stri
   const claim = await claimEvent(env.DB, event.id, event.type, now());
   if (claim !== "claimed") return claim;
   try {
-    const result = await apply(env, event, deps, new Date());
+    const result = await apply(env, event, deps, (deps.clock ?? (() => new Date()))());
     await finishEvent(env.DB, event.id, now());
     return result;
   } catch (e) {

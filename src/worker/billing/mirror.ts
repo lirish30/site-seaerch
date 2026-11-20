@@ -18,10 +18,19 @@ const dateOf = (seconds: unknown, tz: string): string | null => (typeof seconds 
  * invoice). The amount is what Stripe says was paid (for a paid event) or is due; on a failure `failed_on` is today in the owner's zone. Safe to run again: the row's ref is `stripe:<invoice id>`.
  */
 export async function mirrorSubscriptionInvoice(env: Env, obj: Record<string, any>, type: string, now: Date = new Date()): Promise<InvoiceRow | null> {
-  const stripeInvoiceId = idOf(obj?.id), stripeSubscriptionId = idOf(obj?.subscription);
+  // No Stripe-Version is pinned, so the subscription is read from either payload shape: the older `subscription` and `subscription_details`, or the newer `parent.subscription_details`.
+  const details = obj?.parent?.subscription_details;
+  const stripeInvoiceId = idOf(obj?.id), stripeSubscriptionId = idOf(obj?.subscription) ?? idOf(details?.subscription);
   if (!stripeInvoiceId || !stripeSubscriptionId) return null;
-  const sub = await getSubscriptionByStripeId(env.DB, stripeSubscriptionId);
-  if (!sub) return null;
+  let sub = await getSubscriptionByStripeId(env.DB, stripeSubscriptionId);
+  if (!sub) {
+    // Stripe does not order events: a first invoice can arrive before checkout.session.completed has stored the Stripe subscription. The subscription's own metadata (set when its Checkout was made)
+    // names ours. It is taken only when ours has no Stripe subscription yet, or this one, and a live event never lands on a test subscription. The invoice never activates it: only the Checkout does.
+    const meta = obj?.subscription_details?.metadata ?? details?.metadata;
+    const ours = typeof meta?.subscription_id === "string" && meta.subscription_id ? await getSubscription(env.DB, meta.subscription_id) : null;
+    if (!ours || (ours.stripeSubscriptionId !== null && ours.stripeSubscriptionId !== stripeSubscriptionId) || (ours.test && obj.livemode === true)) return null;
+    sub = ours;
+  }
   const cents = type === "invoice.paid" ? obj.amount_paid : obj.amount_due;
   if (!wholeCents(cents)) return null;
   const settings = await getSettings(env.DB);
