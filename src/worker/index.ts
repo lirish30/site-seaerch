@@ -45,6 +45,7 @@ import "./approvals/onboardingWelcome";
 import "./approvals/onboardingNudge";
 import "./approvals/sopReview";
 import "./projects/dispatch"; // registers the hook that sends the next ready Claude step when a task changes
+import "./projects/start"; // registers the hook that starts Care when the build it waited for is done
 import { mcpRoute } from "./mcp/route";
 import { runScheduled } from "./schedule";
 

@@ -13,6 +13,7 @@ import { DAILY_CRON, runScheduled } from "../src/worker/schedule";
 import { E, deliver, signedDeal } from "./fixtures/close";
 import { OWNER_EMAIL, clientSig, proposal, readyToSend, seedDeal, sendDraft, stubPdfRenderer } from "./fixtures/documents";
 import { invoiceEvent } from "./fixtures/stripe";
+import { resetProjectWork } from "./fixtures/projects";
 
 // The onboarding after the close, through the entry points the app really uses: the Stripe webhook, the approvals route, the client's page and uploads, the
 // owner's routes, Today and the daily cron, with the world replaced by fakes (Stripe, the mail transport, the PDF browser) and the clock (a fixed calendar).
@@ -31,6 +32,7 @@ beforeEach(async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   at(SENT);
   // Storage is shared by the tests of a file, and the daily sweep reads every open onboarding: start each test from none.
+  await resetProjectWork(); // the payment now starts projects, and a project points at its onboarding
   await env.DB.batch(["onboarding_nudges", "onboarding_files", "onboarding_answers", "onboarding_items", "onboardings", "approvals"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
   mail = await readyToSend();
   setMailDeps({ ...getMailDeps(), now: () => new Date() }); // the mail transport's clock is the test's clock
