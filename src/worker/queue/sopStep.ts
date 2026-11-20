@@ -8,6 +8,7 @@ import {
   addComment, CREDENTIAL_REFUSED, getTask, listComments, listTasks, patchTask, setTaskStatus, TaskInputError, type ChecklistItem, type Task,
 } from "../db/tasks";
 import { cleanText, looksLikeCredential, QUESTIONS } from "../onboarding/templates";
+import { runTasksChanged } from "../projects/hooks";
 import { completeTask, TaskStateError } from "../projects/service";
 import { OWNER_LABEL, unmetRequirements } from "../sop/model";
 import { TaskRefused, registerTaskKind, type QueuePart, type TaskKindDef } from "./registry";
@@ -66,7 +67,8 @@ function instructionsFor(o: { task: Task; projectName: string; projectKind: Proj
     `- Who does it: ${OWNER_LABEL[task.owner]}. ${drafts
       ? "You prepare it and Logan reads it and approves it before it counts as done. Draft anything that would go to the client; do not send it."
       : "When you finish it, the step is marked done, so do the whole step or say plainly what is left."}`,
-    ...(task.description ? [`- Notes on the step: ${cleanText(task.description, 2000)}`] : []),
+    // A change order's description is its summary, which may have come from an agent's draft (or the client's request): it goes in the untrusted block instead.
+    ...(task.description && !task.changeOrderId ? [`- Notes on the step: ${cleanText(task.description, 2000)}`] : []),
     ...(task.docTemplate ? [`- Document template to use: ${oneLine(task.docTemplate, 80)}`] : []),
     ...(task.emailTemplate ? [`- Email template to use: ${oneLine(task.emailTemplate, 80)}`] : []),
     ...(loganNotes.length ? ["", "Logan's own notes on this step (oldest first; follow the newest)", ...loganNotes.map((n) => `- ${n}`)] : []),
@@ -96,6 +98,10 @@ async function target(env: Env, p: SopStepPayload, job: { id: string }): Promise
   if (task.claudeTaskId !== job.id) return { stale: "the step was taken back from this job" };
   return { task };
 }
+
+/** A change-order step's summary: it can carry words from outside (an agent's draft of the order), so it is shown only in the untrusted block. */
+const changeOrderPart = (task: Task): QueuePart[] =>
+  task.changeOrderId && task.description.trim() ? [{ type: "text", text: `Notes on this step (the change order's summary):\n${cleanText(task.description, 2000)}` }] : [];
 
 /** The client's answers and what they sent, each as a part of its own so nothing they wrote can run into anything else. */
 async function untrustedParts(env: Env, onboardingId: string | null): Promise<QueuePart[]> {
@@ -187,7 +193,7 @@ const sopStep: TaskKindDef<SopStepPayload, SopStepResult> = {
     const loganNotes = (await listComments(env.DB, t.task.id)).filter((c) => c.author === "logan").slice(-10).map((c) => cleanText(c.body, 1000));
     return {
       instructions: instructionsFor({ task: t.task, projectName: project.name, projectKind: project.kind, packages: doc?.content.packages.map((x) => x.name) ?? [], loganNotes }),
-      untrusted: [...checklistPart(t.task), ...(await untrustedParts(env, project.onboardingId))],
+      untrusted: [...changeOrderPart(t.task), ...checklistPart(t.task), ...(await untrustedParts(env, project.onboardingId))],
     };
   },
 
@@ -201,6 +207,18 @@ const sopStep: TaskKindDef<SopStepPayload, SopStepResult> = {
     const db = env.DB;
     const task = await getTask(db, p.taskId);
     if (!task) return { stale: "the step no longer exists" };
+    if (task.status === "done" && task.claudeTaskId === job.id) {
+      // This job already saved the step as done, but what follows (the milestone, the project finishing, the Care cadences, the hooks) may have been lost to a database error that
+      // made the first completion throw, so Claude is retrying. Finishing again repairs whatever is missing and fires nothing when it is all recorded.
+      const owner = await getProject(db, task.projectId);
+      if (!owner || !projectIsLive(owner)) return { stale: `the project is ${owner?.status ?? "gone"}` };
+      try { await completeTask(env, task.id, { by: "claude", now: new Date() }); }
+      catch (e) {
+        if (e instanceof TaskStateError) return { stale: e.message };
+        throw e;
+      }
+      return { log: { summary: `Claude finished "${task.title}"`, recordType: "task", recordId: task.id } };
+    }
     if (task.status !== "in_progress" || task.claudeTaskId !== job.id) return { stale: "the step is no longer in progress for this job" };
     // A job claimed before the project was paused or cancelled: nothing of its result is applied (no comment, no finish, no milestone, no review card), and the step goes back
     // to to-do like `build` does, so it is not stranded. A stale job is not a failed one, so this never counts toward the retry cap.
@@ -257,6 +275,7 @@ const sopStep: TaskKindDef<SopStepPayload, SopStepResult> = {
       await discardReviewApproval(db, task.id);
       return { stale: "the step changed while its review was being made" };
     }
+    await runTasksChanged(env, task.projectId); // the step no longer holds a dispatch slot: let the next ready one take it
     return { log: { summary: `Claude's work on "${task.title}" is waiting for Logan's review`, recordType: "task", recordId: task.id } };
   },
 
