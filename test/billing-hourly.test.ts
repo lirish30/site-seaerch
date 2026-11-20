@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hourlyInvoice } from "../src/worker/billing/hourly";
+import { handleStripeEvent } from "../src/worker/stripe/webhook";
 import { discardDraftInvoice, getInvoice, listInvoices } from "../src/worker/db/invoices";
 import { getPackage } from "../src/worker/db/packages";
 import { insertPlanned, markSubscription } from "../src/worker/db/subscriptions";
@@ -8,6 +9,7 @@ import { insertTasks } from "../src/worker/db/tasks";
 import { insertEntry, listEntriesForTask, releaseTimeEntries, unbilledBillableMinutes, type NewEntry } from "../src/worker/db/time";
 import type { Env } from "../src/worker/env";
 import { setMailDeps } from "../src/worker/mail/deps";
+import { openInvoice, refEvent } from "./fixtures/billing";
 import { readyToSend } from "./fixtures/documents";
 import { newTask, seedProject } from "./fixtures/projects";
 
@@ -92,6 +94,24 @@ describe("hourly invoices", () => {
     const entries = await listEntriesForTask(env.DB, s.task.id);
     expect(entries.every((x) => x.invoicedRef === invoices[0].ref)).toBe(true);
     expect(await waiting(invoices[0].id)).toHaveLength(1);
+  });
+
+  it("hourly: an invoice voided in the Stripe Dashboard frees its time for the next invoice, and a replay frees nothing more", async () => {
+    const s = await seed();
+    const a = await insertEntry(env.DB, s.entry(30));
+    const made = (await hourlyInvoice(e, { projectId: s.project.id, now: NOW }))!;
+    const open = await openInvoice(made.invoice);
+    expect((await listEntriesForTask(env.DB, s.task.id))[0].invoicedRef).toBe(made.invoice.ref);
+    const evt = refEvent("invoice.voided", open);
+    expect(await handleStripeEvent(env, evt)).toBe("applied");
+    expect((await getInvoice(env.DB, made.invoice.id))!.status).toBe("void");
+    expect((await listEntriesForTask(env.DB, s.task.id))[0].invoicedRef).toBeNull();
+    expect(await unbilledBillableMinutes(env.DB, s.project.id)).toEqual({ entryIds: [a.id], minutes: 30 });
+    // Billed again on a new invoice, a later void event for the old one must not take it back.
+    const next = (await hourlyInvoice(e, { projectId: s.project.id, now: NOW }))!;
+    expect(next.invoice.ref).not.toBe(made.invoice.ref);
+    await handleStripeEvent(env, refEvent("invoice.voided", open)); // the same void again: it frees only what the OLD invoice's ref tagged, which is nothing now
+    expect((await listEntriesForTask(env.DB, s.task.id))[0].invoicedRef).toBe(next.invoice.ref);
   });
 
   it("hourly: an entry already on an invoice is never claimed again", async () => {

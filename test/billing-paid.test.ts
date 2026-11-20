@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { onAnyInvoicePaid } from "../src/worker/billing/paid";
 import { mirrorSubscriptionInvoice, subscriptionCheckoutCompleted, subscriptionUpdated } from "../src/worker/billing/mirror";
 import { milestoneInvoice } from "../src/worker/billing/milestones";
-import { draftChangeOrder, voidDraftOrSent } from "../src/worker/changeorders/service";
+import { draftChangeOrder, markChangeOrderPaid, voidDraftOrSent } from "../src/worker/changeorders/service";
 import { listActivity } from "../src/worker/db/activity";
 import { getChangeOrder, signChangeOrder } from "../src/worker/db/changeOrders";
 import { activeHolds, placeHold } from "../src/worker/db/holds";
@@ -118,6 +118,20 @@ describe("paid invoices of every kind", () => {
     expect(await logs(s.businessId, "invoice_paid")).toEqual([]);
     // the deposit is not involved
     expect(await logs(s.businessId, "deposit_paid")).toEqual([]);
+    // a replay of the one payment is not a second payment
+    expect((await logs(s.businessId, "note")).filter((n) => n.includes("paid twice"))).toEqual([]);
+  });
+
+  it("a change-order invoice paid at Stripe after the order was marked paid by hand is noted as paid twice, once", async () => {
+    const s = await changeOrderInvoice();
+    await markChangeOrderPaid(e, s.coId, { via: "manual", now: new Date("2026-12-07T10:00:00.000Z") });
+    expect(await handleStripeEvent(env, refEvent("invoice.paid", s.invoice), deps)).toBe("applied");
+    await handleStripeEvent(env, refEvent("invoice.paid", s.invoice), deps); // the same payment under a new event id
+    expect(await getInvoice(env.DB, s.invoice.id)).toMatchObject({ status: "paid" });
+    expect(await getChangeOrder(env.DB, s.coId)).toMatchObject({ paidVia: "manual" }); // the first payment stands
+    const twice = (await logs(s.businessId, "note")).filter((n) => n.includes("paid twice: check it"));
+    expect(twice).toHaveLength(1);
+    expect(twice[0]).toContain(s.invoice.ref);
   });
 
   it("a paid event for a change order that was voided is noted and does not throw", async () => {

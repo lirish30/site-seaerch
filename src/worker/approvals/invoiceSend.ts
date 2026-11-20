@@ -7,6 +7,7 @@ import { invoiceRecipient, renderInvoiceMail, signOff } from "../billing/mail";
 import { checkConflict } from "../conflict";
 import { logActivityOnce } from "../db/activity";
 import type { Approval } from "../db/approvals";
+import { getChangeOrder } from "../db/changeOrders";
 import { attachStripeInvoice, getInvoice } from "../db/invoices";
 import { getByApproval } from "../db/messages";
 import { getSettings } from "../db/settings";
@@ -41,6 +42,11 @@ registerHandler({
     const mailed = (await getByApproval(db, a.id))?.status === "sent";
     const note = () => logActivityOnce(db, inv!.businessId, "invoice_sent", `${inv!.description} ${dollars(inv!.amountCents)} (${inv!.ref}) ${inv!.test ? "(test) " : ""}sent, due ${inv!.dueOn ?? "on receipt"}`);
     if (mailed) { if (!draft) await note(); return; }
+    // A change order that was paid (by hand) after its invoice was drafted is not billed again: nothing is made at Stripe or mailed, and the timeline says why.
+    if (inv.kind === "change_order" && inv.changeOrderId && (await getChangeOrder(db, inv.changeOrderId))?.paidAt) {
+      await logActivityOnce(db, inv.businessId, "note", `${oneLine(inv.description).slice(0, 120)} ${dollars(inv.amountCents)} (${inv.ref}) was not sent: the change order is already paid. Void or discard this invoice if it is still open`);
+      return;
+    }
 
     const settings = await getSettings(db);
     const key = env.STRIPE_SECRET_KEY;

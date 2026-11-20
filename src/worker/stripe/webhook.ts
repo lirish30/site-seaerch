@@ -3,6 +3,7 @@ import { calendarDateIn } from "../billing/dates";
 import { liftHoldOfDeadInvoice } from "../billing/lift";
 import { claimEvent, finishEvent, getInvoiceByStripeId, markInvoice, releaseEvent, type InvoiceRow, type InvoiceStatus } from "../db/invoices";
 import { getSettings } from "../db/settings";
+import { releaseTimeEntries } from "../db/time";
 import { markSubscription } from "../db/subscriptions";
 import type { Env } from "../env";
 import { zoneOf } from "../sop/cadence";
@@ -95,6 +96,8 @@ async function applyInvoice(env: Env, event: StripeEvent, deps: StripeDeps, now:
     if (autopay && inv.subscriptionId && event.type === "invoice.payment_failed") await markSubscription(env.DB, inv.subscriptionId, { status: "past_due" }, { from: ["active"] });
     // A voided or written-off invoice can no longer be paid, so it holds nobody's work back: the work that was waiting is sent now.
     if (event.type === "invoice.voided" || event.type === "invoice.marked_uncollectible") await liftHoldOfDeadInvoice(env, inv.id, now);
+    // An hourly invoice voided in the Stripe Dashboard bills nothing: the time it tagged is freed for the next invoice (the same as discarding it in the app; safe to repeat).
+    if (event.type === "invoice.voided" && inv.kind === "hourly") await releaseTimeEntries(env.DB, inv.ref);
     return "applied";
   }
 

@@ -4,6 +4,7 @@ import { liftHoldsForInvoice } from "../db/holds";
 import type { InvoiceRow } from "../db/invoices";
 import { markSubscription } from "../db/subscriptions";
 import { markChangeOrderPaid, ChangeOrderStateError } from "../changeorders/service";
+import { getChangeOrder } from "../db/changeOrders";
 import { onInvoicePaid } from "../documents/deposit";
 import type { Env } from "../env";
 import { dispatchReady } from "../projects/dispatch";
@@ -14,7 +15,12 @@ const NOTE_MAX = 280;
 async function changeOrderPaid(env: Env, inv: InvoiceRow, now: Date): Promise<void> {
   const note = (why: string) => logActivityOnce(env.DB, inv.businessId, "note", `${inv.description} ${dollars(inv.amountCents)} was paid (${inv.ref}) but ${why}: check it`.slice(0, NOTE_MAX));
   if (!inv.changeOrderId) { await note("the invoice has no change order"); return; }
-  try { await markChangeOrderPaid(env, inv.changeOrderId, { via: "stripe", now }); }
+  try {
+    // An order Logan already marked paid by hand takes this payment too: the order stays as it was, and the money coming twice is his to look at. (Stripe's own earlier payment, replayed, is not a second one.)
+    const before = await getChangeOrder(env.DB, inv.changeOrderId);
+    await markChangeOrderPaid(env, inv.changeOrderId, { via: "stripe", now });
+    if (before?.paidAt && before.paidVia !== "stripe") await note("the change order was already paid, so it was paid twice");
+  }
   catch (e) {
     // A change order that is no longer signed (voided or expired after the invoice went out) cannot take the payment. The money is Logan's to look at, not an error to retry.
     if (!(e instanceof ChangeOrderStateError)) throw e;

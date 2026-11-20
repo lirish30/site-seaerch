@@ -215,6 +215,11 @@ export async function unlockIfReady(env: Env, id: string, now: Date): Promise<nu
 export async function markChangeOrderPaid(env: Env, id: string, o: { via: "stripe" | "manual"; now: Date }): Promise<ChangeOrder> {
   const co = await need(env, id);
   if (co.status !== "signed") throw new ChangeOrderStateError(co.status === "draft" || co.status === "sent" || co.status === "viewed" ? "This change order has not been signed yet, so it cannot be marked paid." : `A ${co.status} change order cannot be marked paid.`);
+  // By hand while the order's own Stripe invoice can still be paid would take the money twice: that invoice is voided or discarded first. (A paid order's repeat is a repair, never refused.)
+  if (o.via === "manual" && !co.paidAt) {
+    const inv = await getInvoiceByRef(env.DB, changeOrderRef(id));
+    if (inv && (inv.status === "draft" || inv.status === "open" || inv.status === "failed")) throw new ChangeOrderStateError("Void or discard this change order's invoice first, then mark it paid.");
+  }
   await markPaid(env.DB, id, { at: o.now.toISOString(), via: o.via, log: { businessId: co.businessId, detail: `${co.content.reference} (${shortId(co)}) paid (${o.via === "stripe" ? "Stripe" : "outside Stripe"})` } });
   await unlockIfReady(env, id, o.now);
   return need(env, id);
