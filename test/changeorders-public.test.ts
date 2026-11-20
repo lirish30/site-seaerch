@@ -14,7 +14,7 @@ import { ESIGN_VERSION } from "../src/worker/documents/consent";
 import { consentTextFor } from "../src/worker/documents/public";
 import type { Env } from "../src/worker/env";
 import { clearProjectHooksForTests } from "../src/worker/projects/hooks";
-import { FAR, content, seal, seedOrder, sendOrder } from "./fixtures/changeorders";
+import { FAR, content, discardOrderInvoice, seal, seedOrder, sendOrder } from "./fixtures/changeorders";
 import { readyToSend } from "./fixtures/documents";
 import { newTask, seedProject } from "./fixtures/projects";
 
@@ -285,6 +285,7 @@ describe("signing", () => {
     if (!r.ok) return;
     expect(r.page).toMatchObject({ state: "signed", payment: "none" });
     expect(await lockedOf()).toEqual(["locked", "locked"]);
+    await discardOrderInvoice(e, co.id); // signing drafted its invoice; by hand only once that is out of the way
     await markChangeOrderPaid(e, co.id, { via: "manual", now: new Date("2026-12-07T10:00:00.000Z") });
     expect(await lockedOf()).toEqual(["todo", "todo"]);
     expect((await view(co.token!))).toMatchObject({ state: "signed", payment: "paid" });

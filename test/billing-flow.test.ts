@@ -575,12 +575,14 @@ describe("billing, end to end", () => {
     expect(mail.sent.map((m) => m.to)).toEqual([CLIENT_MAIL]);
     expect(mail.sent[0].text).toContain("$129");
     expect(await getSubscription(env.DB, bWeb.id)).toMatchObject({ status: "active", packageKey: "website_subscription" }); // a notice changes nothing
-    // On the last day the term ends: Stripe is told to stop at the end of the paid period (once, whatever the cron does twice), the row is ended, and the Care row is untouched.
-    await cron("2029-02-14");
+    // Two days before the term ends nothing moves. The day before (the daily run is after Stripe's noon-UTC billing anchor, so month 25 would be next) Stripe is told to stop at the end of the paid
+    // period (once, whatever the cron does twice), the row is ended, and the Care row is untouched.
+    await cron("2029-02-13");
     expect(await getSubscription(env.DB, bWeb.id)).toMatchObject({ status: "active" });
     expect(stopCalls()).toEqual([]);
-    await cron("2029-02-15");
-    await cron("2029-02-15");
+    await cron("2029-02-14");
+    await cron("2029-02-14");
+    await cron("2029-02-15"); // a later run changes nothing
     expect(await getSubscription(env.DB, bWeb.id)).toMatchObject({ status: "ended", packageKey: "website_subscription", monthlyCents: 29700 });
     expect(await getSubscription(env.DB, bCare.id)).toMatchObject({ status: "active", packageKey: "care", monthlyCents: 12900, stripeSubscriptionId: "sub_bay_care" });
     expect(stopCalls().map((x) => [x.form.get("cancel_at_period_end"), x.headers["idempotency-key"]])).toEqual([["true", `end:${bWeb.id}`]]);

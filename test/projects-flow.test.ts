@@ -15,6 +15,7 @@ import { DAILY_CRON, runScheduled } from "../src/worker/schedule";
 import { E, deliver, signedDeal } from "./fixtures/close";
 import { OWNER_EMAIL, REVIEWED_CONFIG, clientSig, proposal, readyToSend, seedDeal, sendDraft, stubPdfRenderer } from "./fixtures/documents";
 import { invoiceEvent } from "./fixtures/stripe";
+import { discardOrderInvoice } from "./fixtures/changeorders";
 import { resetProjectWork } from "./fixtures/projects";
 
 // Projects after the close, through the entry points the app really uses: the Stripe webhook, the owner's routes (tasks, timer, change orders, settings, approvals), the MCP tools
@@ -378,6 +379,11 @@ describe("projects, end to end", () => {
     // ---- Logan marks it paid (the money is in his account): a confirm is needed; the task unlocks once and goes to Claude.
     expect((await owner("POST", `/change-orders/${co.id}/mark-paid`, {})).status).toBe(400);
     expect((await project(care.project.id)).tasks.find((t) => t.id === lockedTask.id)!.status).toBe("locked");
+    // Signing drafted the order's invoice; marking it paid by hand is refused until that invoice is out of the way (the route says so in a plain sentence).
+    const refused = await owner("POST", `/change-orders/${co.id}/mark-paid`, { confirm: true });
+    expect(refused.status).toBe(409);
+    expect(((await refused.json()) as { error: string }).error).toContain("Void or discard this change order's invoice first");
+    await discardOrderInvoice(env as never, co.id);
     await ok("POST", `/change-orders/${co.id}/mark-paid`, { confirm: true });
     const unlocked = (await project(care.project.id)).tasks.find((t) => t.id === lockedTask.id)!;
     expect(unlocked).toMatchObject({ status: "in_progress", owner: "claude" });
