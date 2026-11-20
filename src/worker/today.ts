@@ -41,7 +41,7 @@ export function parseSnooze(detail: string | null): { kind: TodayKind; until: nu
 // deal_created, deal_moved, call_prep, call_recap and followup_booked are the owner filing a deal (or the queue prepping or recapping a call), not contact with the prospect.
 // video_watch is deliberately NOT in this set: a prospect watching the video is engagement and does un-stall a deal.
 const NOT_CONTACT = new Set(["today_done", "snoozed", "bulk", "starred", "unstarred", "job_found", "deal_created", "deal_moved", "call_prep", "call_recap", "followup_booked", "proposal_viewed", "proposal_signed", "proposal_void", "deposit_paid",
-  "project_started", "project_milestone", "project_done", "change_order_sent", "change_order_signed", "change_order_paid", "change_order_void", "change_order_declined", "invoice_sent", "invoice_paid"]);
+  "project_started", "project_milestone", "project_done", "change_order_sent", "change_order_signed", "change_order_paid", "change_order_void", "change_order_declined", "invoice_sent", "invoice_paid", "billing_hold_placed"]);
 
 interface ActivityRow { business_id: string; kind: string; detail: string | null; created_at: string; }
 

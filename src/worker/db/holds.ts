@@ -34,6 +34,12 @@ export async function activeHolds(db: D1Database, businessId?: string): Promise<
   return rows.map((r) => ({ ...toHold(r), businessName: r.business_name }));
 }
 
+/** The hold an invoice has, lifted or not (at most one, ever), or null. */
+export async function holdForInvoice(db: D1Database, invoiceId: string): Promise<Hold | null> {
+  const r = await db.prepare(`SELECT * FROM billing_holds WHERE invoice_id = ?`).bind(invoiceId).first<Row>();
+  return r ? toHold(r) : null;
+}
+
 export async function isOnHold(db: D1Database, businessId: string): Promise<boolean> {
   return !!(await db.prepare(`SELECT 1 AS x FROM billing_holds WHERE business_id = ? AND lifted_at IS NULL LIMIT 1`).bind(businessId).first());
 }

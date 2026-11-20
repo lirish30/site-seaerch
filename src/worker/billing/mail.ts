@@ -12,6 +12,7 @@ import type { Subscription } from "../db/subscriptions";
 import { parseSignature } from "../email/signature";
 import type { Env } from "../env";
 import type { Settings } from "../types";
+import { calendarDaysBetween } from "./dates";
 
 export interface InvoiceMail { subject: string; body: string }
 
@@ -97,6 +98,41 @@ export function renderReminder(
     : tone === "today" ? `Reminder: ${what} is due today`
     : `Overdue: ${what}${day ? `, due ${day}` : ""}`;
   return { subject: subject.slice(0, 200), body };
+}
+
+export interface PauseNoticeMail { subject: string; body: string }
+
+/**
+ * The mail that tells a client their project's work has paused because an invoice is overdue: the same words for every client, a fixed template, nothing written by a model. It says only what is
+ * true: the invoice is overdue (by how many days, when `c.today` is given and the day has come), work on the project has paused, and it resumes once the invoice is paid; the link is Stripe's page
+ * (an invoice that failed to take payment links where the card is updated). It promises nothing else. What a person typed (the contact's name, the description, the sender's name) is shown as
+ * typed, on one line and capped; the sender escapes it.
+ */
+export function renderPauseNotice(inv: InvoiceRow, link: string, c: { contactName: string; yourName: string; today?: string }): PauseNoticeMail {
+  const first = oneLine(c.contactName).split(" ")[0].slice(0, 60);
+  const what = oneLine(inv.description).slice(0, 200);
+  const amount = dollars(inv.amountCents);
+  const failed = inv.status === "failed";
+  const date = inv.failedOn ?? inv.dueOn;
+  const day = date ? longDate(date) : "";
+  const late = date && c.today ? calendarDaysBetween(date, c.today) : 0;
+  const how = late > 0 ? `${late} ${late === 1 ? "day" : "days"} overdue` : "overdue";
+  const lead = failed
+    ? `The payment for your invoice for ${what}, ${amount}, did not go through${day ? ` on ${day}` : ""}, and it is now ${how}.`
+    : `Your invoice for ${what}, ${amount}, ${day ? `was due on ${day} and ` : ""}is now ${how}.`;
+  const action = failed
+    ? "You can update your payment method, and pay the invoice, on its page here:"
+    : "You can read it and pay it online, by card or bank transfer, here:";
+  const body = [
+    first ? `Hi ${first},` : "Hi,",
+    lead,
+    "Because of that, work on your project has paused. It resumes once this invoice is paid.",
+    action,
+    link,
+    "If something is in the way, reply to this email and we will sort it out.",
+    ["Thanks,", oneLine(c.yourName)].filter(Boolean).join("\n"),
+  ].join("\n\n");
+  return { subject: `Work on your project has paused: ${what} is overdue`.slice(0, 200), body };
 }
 
 export interface SubscriptionLinkMail { subject: string; body: string }

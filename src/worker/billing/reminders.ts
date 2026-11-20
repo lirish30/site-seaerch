@@ -22,7 +22,7 @@ export function reminderStep(offsets: number[], daysFromDue: number): number | n
  * date) when Stripe makes it, BEFORE the mail goes, so a mail that failed and an approval that was dropped leave an invoice that looks sent but was never received. Stripe mails a
  * subscription's own monthly invoices itself, so those never have one and do not need one.
  */
-async function originalMailSent(db: D1Database, inv: InvoiceRow): Promise<boolean> {
+export async function originalMailSent(db: D1Database, inv: InvoiceRow): Promise<boolean> {
   if (inv.kind === "subscription") return true;
   return !!(await db.prepare(
     `SELECT 1 AS x FROM approvals a JOIN messages m ON m.approval_id = a.id
