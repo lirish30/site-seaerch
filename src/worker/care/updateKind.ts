@@ -10,6 +10,7 @@ import { HelperRefused, registerHelperKind, type HelperKindDef } from "../helper
 import { WP_ARG, SshTarget } from "./args";
 import { onRunDone } from "./batch";
 import { BACKUP_FAILED_SENTENCE, FAILED_SENTENCE, brokenPageSentence, closeUpdateIncident, openUpdateIncident, rollbackFailedSentence, rolledBackSentence } from "./incidents";
+import { queueReview } from "../queue/careReview";
 import { MAX_PATHS } from "./versions";
 
 /** The helper updates one client site's plugins, themes and core over SSH: backup, page checks, the updates, a put-back when a page breaks. Only ever queued from an approved run. */
@@ -226,7 +227,14 @@ const careUpdate: HelperKindDef<CareUpdatePayload, CareUpdateResult> = {
     } else if (status !== "dropped") {
       if (status === "ok" && applied > 0) await closeUpdateIncident(env, site.id, now);
       if (applied > 0) await logActivityOnce(db, site.businessId, "care_updated", `${domain}: ${applied} ${applied === 1 ? "update" : "updates"} applied (run ${tag})`);
-      if (status === "changed") for (const c of await pageChecksFor(db, run.id)) if (c.verdict === "changed") await setReview(db, c.id, ["none"], "pending");
+      // A changed page waits for Claude's look. A retry finds the review already pending and still queues (the task's dedupe key is the check id, so never two).
+      if (status === "changed") {
+        for (const c of await pageChecksFor(db, run.id)) {
+          if (c.verdict !== "changed") continue;
+          await setReview(db, c.id, ["none"], "pending");
+          await queueReview(env, c.id);
+        }
+      }
     }
 
     // The commit point. Whoever lost a race for it (the run was dropped while the effects above ran) says so.

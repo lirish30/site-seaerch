@@ -220,6 +220,11 @@ export async function pageChecksFor(db: D1Database, runId: string): Promise<Page
   return rows.map(toCheck);
 }
 
+export async function getPageCheck(db: D1Database, id: string): Promise<PageCheck | null> {
+  const r = await db.prepare(`SELECT * FROM care_page_checks WHERE id = ?`).bind(id).first<CheckRow>();
+  return r ? toCheck(r) : null;
+}
+
 /** Records the review of one page check, only while it is in one of the `from` states; false otherwise. */
 export async function setReview(db: D1Database, checkId: string, from: Review[], to: Review): Promise<boolean> {
   if (from.length === 0) return false;

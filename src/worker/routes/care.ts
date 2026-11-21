@@ -2,8 +2,12 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { isTestClient } from "../clients/record";
 import { closeUnmonitoredIncidents, listIncidents, recentChecks, setMonitoring } from "../db/monitoring";
+import { getPageCheck, getRun, setReview } from "../db/careUpdates";
 import { getSite, type Site } from "../db/sites";
 import type { Env } from "../env";
+import { onRunDone } from "../care/batch";
+import { cancelTasksFor } from "../queue/db";
+import { CARE_REVIEW_TARGET } from "../queue/careReview";
 import { careClientIds, careFleet, incidentViews, monitoringViews, safeProbeError } from "../monitoring/fleet";
 import { monitorableUrl } from "../monitoring/probe";
 import { bodyOf, NOT_FOUND, ownerOnError, type Ctx } from "../projects/http";
@@ -61,4 +65,18 @@ careRoutes.put("/sites/:id/monitoring", async (c) => {
   if (!body.enabled) await closeUnmonitoredIncidents(c.env.DB, now.toISOString(), site.id);
   const [view] = await monitoringViews(c.env.DB, [updated], await careClientIds(c.env.DB, [updated.businessId]), now);
   return c.json({ site: view });
+});
+
+/**
+ * Logan looked at a page that changed after updates and it is fine: pending becomes `logan_ok`, Claude's open look at it is closed and the batch moves on.
+ * 404 for a page check nobody has; 409 when it is not waiting for a look.
+ */
+careRoutes.post("/care/checks/:id/ok", async (c) => {
+  const check = await getPageCheck(c.env.DB, c.req.param("id"));
+  if (!check) return c.json(NOT_FOUND, 404);
+  if (!(await setReview(c.env.DB, check.id, ["pending"], "logan_ok"))) return c.json({ error: "This page is not waiting for a look." }, 409);
+  await cancelTasksFor(c.env.DB, CARE_REVIEW_TARGET, check.id);
+  const run = await getRun(c.env.DB, check.runId);
+  if (run) await onRunDone(c.env, run.batchId);
+  return c.json({ ok: true });
 });

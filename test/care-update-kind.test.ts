@@ -11,6 +11,7 @@ import { listTasks } from "../src/worker/db/tasks";
 import { InvalidHelperJobError, getHelperJob } from "../src/worker/helper/jobs";
 import { HelperRefused, getHelperKind } from "../src/worker/helper/kinds";
 import { incidentView } from "../src/worker/monitoring/fleet";
+import "../src/worker/queue/kinds";
 import { seedClient } from "./fixtures/clients";
 
 const def = () => getHelperKind(CARE_UPDATE_KIND)!;
@@ -18,6 +19,7 @@ const T0 = "2027-03-01T10:00:00.000Z";
 const T1 = "2027-03-08T10:00:00.000Z";
 
 beforeEach(async () => {
+  await env.DB.prepare(`DELETE FROM claude_tasks WHERE kind = 'care.review'`).run();
   await env.DB.batch(["care_page_checks", "care_runs", "care_batches", "care_updates", "site_incidents", "helper_jobs"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
   await env.DB.prepare(`DELETE FROM tasks WHERE cadence_key = 'CARE-5'`).run();
   await env.DB.batch([env.DB.prepare(`DELETE FROM sop_template_steps`), env.DB.prepare(`DELETE FROM sop_templates`)]);
@@ -211,14 +213,19 @@ describe("apply", () => {
   it("a changed page gives run changed and review pending; applying again changes nothing", async () => {
     const c = await setup();
     const run = await queue(c);
-    const o = { pages: [page({ verdict: "changed", ssim: 0.8 }), page({ path: "/contact" })] };
+    for (const k of Object.values(carePageKeys(run.id, 0))) await env.RAW.put(k, "jpeg");
+    const o = { pages: [page({ verdict: "changed", ssim: 0.8, uploaded: { before: true, after: true, diff: true } }), page({ path: "/contact" })] };
     await applyResult(run, o);
     expect(await getRun(env.DB, run.id)).toMatchObject({ status: "changed" });
     expect((await pageChecksFor(env.DB, run.id)).map((p) => [p.verdict, p.review])).toEqual([["changed", "pending"], ["ok", "none"]]);
     const before = await activityKinds(c.businessId);
+    const reviews = () => env.DB.prepare(`SELECT status, dedupe_key FROM claude_tasks WHERE kind = 'care.review'`).all<{ status: string; dedupe_key: string }>().then((r) => r.results);
+    const [check] = await pageChecksFor(env.DB, run.id);
+    expect(await reviews()).toEqual([{ status: "pending", dedupe_key: check.id }]);
     await applyResult(run, o);
     expect((await pageChecksFor(env.DB, run.id)).length).toBe(2);
     expect(await activityKinds(c.businessId)).toEqual(before);
+    expect(await reviews()).toHaveLength(1);
   });
 
   it("stores only the picture keys that were uploaded, and a retry's unknown before reading as null", async () => {

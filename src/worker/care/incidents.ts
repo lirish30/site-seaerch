@@ -34,10 +34,13 @@ export const brokenPageSentence = (path: string): string => `a page is broken af
 /** "rollback failed for a: restore from siteline-backups/x.sql.gz". */
 export const rollbackFailedSentence = (slugs: string[], backupFile: string | null): string => `rollback failed for ${list(slugs)}: ${backupFile ? `restore from ${backupFile}` : NO_BACKUP}`;
 
+/** "a page looks different after updates: /contact" (Claude, or nobody, could not say the changed page is fine). */
+export const pageLooksDifferentSentence = (path: string): string => `a page looks different after updates: ${path}`;
+
 const SLUGS = "[A-Za-z0-9._, +-]{1,300}";
 /** Every sentence an `update_failed` incident may carry. `incidentView` shows nothing else. */
 export const UPDATE_DETAIL = new RegExp(
-  `^(updates rolled back: ${SLUGS}( broke \\/[A-Za-z0-9._~\\/%-]{0,200}| failed)|rollback failed for ${SLUGS}: (restore from [A-Za-z0-9._\\/-]{1,300}|${NO_BACKUP})|${FAILED_SENTENCE}|${BACKUP_FAILED_SENTENCE}|a page is broken after updates: \\/[A-Za-z0-9._~\\/%-]{0,200})$`,
+  `^(updates rolled back: ${SLUGS}( broke \\/[A-Za-z0-9._~\\/%-]{0,200}| failed)|rollback failed for ${SLUGS}: (restore from [A-Za-z0-9._\\/-]{1,300}|${NO_BACKUP})|${FAILED_SENTENCE}|${BACKUP_FAILED_SENTENCE}|a page is broken after updates: \\/[A-Za-z0-9._~\\/%-]{0,200}|a page looks different after updates: \\/[A-Za-z0-9._~\\/%-]{0,200})$`,
 );
 
 /** The booking zone's calendar date for `d` (YYYY-MM-DD). */
