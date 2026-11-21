@@ -1,13 +1,14 @@
 import { testClientSql } from "../clients/record";
 import { getReportFor, insertReport, type CareReport } from "../db/careReports";
 import { holdFreeSql } from "../db/holds";
+import { CARE_SUBSCRIPTION_SQL } from "../db/monitoring";
 import { liveProjectSql } from "../db/projects";
 import { getSettings } from "../db/settings";
 import { newClientToken } from "../documents/token";
 import type { Env } from "../env";
 import { queueReport } from "../queue/careReport";
 import { periodKey, zoneOf } from "../sop/cadence";
-import { buildFacts } from "./reportFacts";
+import { buildFacts, monthRange } from "./reportFacts";
 import { CARE_4, tickCare4 } from "./tasks";
 
 // Starting each Care client's monthly report (Plan 13). On the first daily run of a month the client's CARE-4 task for the new month exists; from then on, until the client has a report, the sweep builds the
@@ -48,15 +49,20 @@ async function begin(env: Env, businessId: string, period: string, test: boolean
   return { report, created };
 }
 
-/** The real clients that have a CARE-4 task for the current month still to do on a live, real project, no billing hold and no report (or one with no summary job yet) for `period`, at most the cap. */
-async function candidates(env: Env, current: string, period: string): Promise<string[]> {
+/**
+ * The real clients with live Care (a billing or late Care subscription) that have a CARE-4 task for the current month still to do on a live, real project, no billing hold and no report (or one with no summary job yet) for `period`,
+ * at most the cap. The project's CARE-4 cadence must have been attached before `periodEnd` (the first instant after the reported month): a client whose Care began after that month has nothing to report on. One attached inside
+ * the month still gets a (partial) first report.
+ */
+async function candidates(env: Env, current: string, period: string, periodEnd: string): Promise<string[]> {
   return (await env.DB.prepare(
     `SELECT t.business_id AS id FROM tasks t JOIN projects p ON p.id = t.project_id JOIN businesses b ON b.id = t.business_id
+       JOIN project_cadences pc ON pc.project_id = t.project_id AND pc.template_key = t.cadence_key AND pc.created_at < ?
      WHERE t.cadence_key = ? AND t.period_key = ? AND t.is_step = 0 AND t.status NOT IN ('done', 'skipped')
-       AND ${liveProjectSql("p")} AND p.test = 0 AND ${holdFreeSql("t")} AND NOT ${testClientSql("b")}
+       AND ${liveProjectSql("p")} AND p.test = 0 AND ${holdFreeSql("t")} AND NOT ${testClientSql("b")} AND ${CARE_SUBSCRIPTION_SQL("b")}
        AND NOT EXISTS (SELECT 1 FROM care_reports r WHERE r.business_id = t.business_id AND r.period = ? AND (r.status <> 'collecting' OR r.claude_task_id IS NOT NULL))
      GROUP BY t.business_id ORDER BY t.business_id LIMIT ?`,
-  ).bind(CARE_4, current, period, MAX_PER_RUN).all<{ id: string }>()).results.map((r) => r.id);
+  ).bind(periodEnd, CARE_4, current, period, MAX_PER_RUN).all<{ id: string }>()).results.map((r) => r.id);
 }
 
 /**
@@ -68,7 +74,7 @@ export async function sweepReports(env: Env, now: Date): Promise<{ started: numb
   const period = previousMonth(now, tz);
   let started = 0;
   let skipped = 0;
-  for (const businessId of await candidates(env, periodKey("monthly", now, tz), period)) {
+  for (const businessId of await candidates(env, periodKey("monthly", now, tz), period, monthRange(period, tz).to)) {
     try {
       if ((await begin(env, businessId, period, false, now, tz)).created) started++;
       else skipped++;

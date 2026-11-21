@@ -6,6 +6,7 @@ import { CareReportRefused, previousMonth, startReport, sweepReports } from "../
 import { tickCare4 } from "../src/worker/care/tasks";
 import { getReportFor, insertReport, listReports } from "../src/worker/db/careReports";
 import { placeHold } from "../src/worker/db/holds";
+import { markSubscription } from "../src/worker/db/subscriptions";
 import { addCadence, setProjectStatus } from "../src/worker/db/projects";
 import { ensureSeedSops } from "../src/worker/db/sops";
 import { insertTasks, listTasks } from "../src/worker/db/tasks";
@@ -36,10 +37,16 @@ beforeEach(async () => {
 });
 afterEach(() => { vi.restoreAllMocks(); });
 
+/** The CARE-4 cadence on a project, attached at an explicit time (the real clock must not decide which month it looks old enough for): before November 2026 unless `at` says otherwise. */
+async function cadence(projectId: string, at = "2026-10-15T17:00:00.000Z") {
+  await addCadence(env.DB, projectId, "CARE-4");
+  await env.DB.prepare(`UPDATE project_cadences SET created_at = ? WHERE project_id = ? AND template_key = 'CARE-4'`).bind(at, projectId).run();
+}
+
 /** A real client with live Care and the monthly report cadence on its project; its CARE-4 task is made for the month `at` falls in (none when `task` is false). */
-async function careClient(o: { task?: boolean; test?: boolean; at?: Date } = {}) {
+async function careClient(o: { task?: boolean; test?: boolean; at?: Date; cadenceAt?: string } = {}) {
   const s = await seedClient({ subs: CARE, test: o.test });
-  await addCadence(env.DB, s.project!.id, "CARE-4");
+  await cadence(s.project!.id, o.cadenceAt);
   if (o.task !== false) await generateRecurring(e, o.at ?? NOW);
   return s;
 }
@@ -89,7 +96,7 @@ describe("sweepReports", () => {
     const none = await careClient({ task: false });
     const lastMonth = await careClient({ task: false });
     const skipped = await careClient({ task: false });
-    await addCadence(env.DB, held.project!.id, "CARE-4");
+    await cadence(held.project!.id);
     for (const s of [held, test, cancelled]) await task(s);
     await task(lastMonth, "2026-11");
     await task(skipped, "2026-12", "skipped");
@@ -100,6 +107,29 @@ describe("sweepReports", () => {
     expect(await sweepReports(e, NOW)).toEqual({ started: 1, skipped: 0 });
     expect((await reports()).map((r) => r.businessId)).toEqual([good.businessId]);
     expect(await jobs()).toHaveLength(1);
+  });
+
+  it("makes nothing for a client whose Care subscription is no longer live, and starts again when it is live", async () => {
+    const lapsed = await careClient();
+    const past = await careClient();
+    await markSubscription(env.DB, lapsed.subIds[0], { status: "cancelled" });
+    await markSubscription(env.DB, past.subIds[0], { status: "past_due" }); // late on a bill is still live Care
+    expect(await sweepReports(e, NOW)).toEqual({ started: 1, skipped: 0 });
+    expect((await reports()).map((r) => r.businessId)).toEqual([past.businessId]);
+    expect(await jobs()).toHaveLength(1);
+  });
+
+  it("makes nothing for a client whose Care began after the reported month ended, and still reports one that began inside it", async () => {
+    const late = await careClient({ cadenceAt: "2026-12-01T08:00:00.000Z" }); // the first instant after November in Los Angeles
+    const lateOctober = await careClient({ cadenceAt: "2026-12-01T07:59:59.999Z" }); // the last millisecond of it
+    const inside = await careClient({ cadenceAt: "2026-11-20T17:00:00.000Z" }); // a partial first month
+    const wayLate = await careClient({ cadenceAt: "2026-12-02T01:00:00.000Z" });
+    expect(await sweepReports(e, NOW)).toEqual({ started: 2, skipped: 0 });
+    expect((await reports()).map((r) => r.businessId).sort()).toEqual([inside.businessId, lateOctober.businessId].sort());
+    expect(await getReportFor(env.DB, late.businessId, "2026-11")).toBeNull();
+    expect(await getReportFor(env.DB, wayLate.businessId, "2026-11")).toBeNull();
+    // The owner's own start is not held back by it.
+    expect((await startReport(e, late.businessId, { test: false, now: NOW })).created).toBe(true);
   });
 
   it("one client whose facts fail is logged and does not stop the next", async () => {
@@ -117,7 +147,7 @@ describe("sweepReports", () => {
   });
 
   it("starts at most 50 clients a run, and the rest the next day", async () => {
-    for (let i = 0; i < 52; i++) await seedClient({ subs: CARE }).then((s) => addCadence(env.DB, s.project!.id, "CARE-4"));
+    for (let i = 0; i < 52; i++) await seedClient({ subs: CARE }).then((s) => cadence(s.project!.id));
     await generateRecurring(e, NOW);
     vi.spyOn(factsMod, "buildFacts").mockImplementation(async (_en, businessId, period, now) => factsMod.ReportFacts.parse({
       version: 1, period, label: "November 2026", from: "2026-11-01T08:00:00.000Z", to: "2026-12-01T08:00:00.000Z", clientName: businessId.slice(0, 8), sites: [], edits: null, renewals: [], generatedAt: now.toISOString(),
@@ -188,14 +218,14 @@ describe("startReport", () => {
 
   it("works for a real client on hold too (the owner asked for it), and refuses a client with no live Care project", async () => {
     const real = await seedClient({ subs: CARE, invoice: { cents: 5000 } });
-    await addCadence(env.DB, real.project!.id, "CARE-4");
+    await cadence(real.project!.id);
     await placeHold(env.DB, { businessId: real.businessId, invoiceId: real.invoice!.id, now: NOW.toISOString() });
     expect((await startReport(e, real.businessId, { test: false, now: NOW })).created).toBe(true);
 
     const plain = await seedClient({ subs: CARE }); // no CARE-4 cadence
     await expect(startReport(e, plain.businessId, { test: false, now: NOW })).rejects.toBeInstanceOf(CareReportRefused);
     const gone = await seedClient({ subs: CARE });
-    await addCadence(env.DB, gone.project!.id, "CARE-4");
+    await cadence(gone.project!.id);
     await setProjectStatus(env.DB, gone.project!.id, "cancelled");
     await expect(startReport(e, gone.businessId, { test: false, now: NOW })).rejects.toThrow(/no live Care project/);
     expect(await reports()).toHaveLength(1);
