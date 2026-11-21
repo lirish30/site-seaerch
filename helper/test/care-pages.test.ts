@@ -1,3 +1,6 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { compare, pageUrl, readPage, screenshot, toJpeg, verdictOf, type PageShot } from "../src/care/pages.ts";
 import type { Exec } from "../src/exec.ts";
@@ -70,23 +73,58 @@ describe("readPage", () => {
     expect(read.n).toBeLessThan(5 * 1024 * 1024);
     expect(read.n).toBeLessThanOrEqual(2 * 1024 * 1024 + 2 * 64 * 1024);
   });
+  it("keeps the status when the body read stalls past the timeout, as an empty body", async () => {
+    const f = (async (_u: string, init: RequestInit) => {
+      const stream = new ReadableStream<Uint8Array>({
+        pull: () => new Promise((_res, rej) => { init.signal!.addEventListener("abort", () => rej(new Error("aborted")), { once: true }); }),
+      });
+      return new Response(stream, { status: 200 });
+    }) as unknown as typeof fetch;
+    const real = AbortSignal.timeout;
+    const ac = new AbortController();
+    AbortSignal.timeout = () => ac.signal;
+    setTimeout(() => ac.abort(), 20);
+    try { expect(await readPage(f, "https://a.com/")).toEqual({ status: 200, fatal: false, forms: 0 }); }
+    finally { AbortSignal.timeout = real; }
+  });
+  it("keeps the status when the body read throws, as an empty body", async () => {
+    const f = bodyFetch(async function* () { yield "<form>"; throw new Error("reset"); }, 503);
+    expect(await readPage(f, "https://a.com/")).toEqual({ status: 503, fatal: false, forms: 0 });
+  });
   it("gives status null on a throw", async () => {
     const f = (async () => { throw new Error("down"); }) as unknown as typeof fetch;
     expect(await readPage(f, "https://a.com/")).toEqual({ status: null, fatal: false, forms: 0 });
   });
 });
 
+/** An exec standing in for Chrome: writes the PNG named by `--screenshot=` unless told not to. */
+const chromeThatWrites = (write = true) => vi.fn<Exec>(async (_f, args) => {
+  const out = args.find((a) => a.startsWith("--screenshot="))!.slice("--screenshot=".length);
+  if (write) writeFileSync(out, "png");
+  return { stdout: "" };
+});
+
 describe("screenshot", () => {
+  const png = () => join(mkdtempSync(join(tmpdir(), "shot-")), "o.png");
   it("passes the URL last, as argv", async () => {
-    const exec = vi.fn<Exec>(async () => ({ stdout: "" }));
-    expect(await screenshot(exec, "/chrome", "https://a.com/x", "/o.png")).toBe(true);
+    const out = png();
+    const exec = chromeThatWrites();
+    expect(await screenshot(exec, "/chrome", "https://a.com/x", out)).toBe(true);
     const [file, args, opts] = exec.mock.calls[0];
     expect(file).toBe("/chrome");
-    expect(args).toEqual(["--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run", "--window-size=1280,1600", "--virtual-time-budget=8000", "--screenshot=/o.png", "https://a.com/x"]);
+    expect(args).toEqual(["--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run", "--window-size=1280,1600", "--virtual-time-budget=8000", `--screenshot=${out}`, "https://a.com/x"]);
     expect(opts?.timeoutMs).toBe(60_000);
   });
   it("is false on failure", async () => {
-    expect(await screenshot(async () => { throw new Error("x"); }, "/c", "https://a.com", "/o.png")).toBe(false);
+    expect(await screenshot(async () => { throw new Error("x"); }, "/c", "https://a.com", png())).toBe(false);
+  });
+  it("is false when Chrome exits 0 but wrote no PNG", async () => {
+    expect(await screenshot(chromeThatWrites(false), "/c", "https://a.com", png())).toBe(false);
+  });
+  it("is false when the PNG is empty", async () => {
+    const out = png();
+    const exec: Exec = async () => { writeFileSync(out, ""); return { stdout: "" }; };
+    expect(await screenshot(exec, "/c", "https://a.com", out)).toBe(false);
   });
 });
 

@@ -28,7 +28,7 @@ function fakeApi() {
     async claim() { return null; },
     async download(_id, key, to) { downloads.push({ key }); writeFileSync(to, REF_BYTES); },
     async upload(jobId, key, from, contentType) { uploads.push({ jobId, key, body: readFileSync(from, "utf8"), contentType }); },
-    async complete() {}, async fail() {},
+    async touch() {}, async complete() {}, async fail() {},
   };
   return { api, uploads, downloads };
 }

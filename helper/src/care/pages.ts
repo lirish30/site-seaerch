@@ -1,3 +1,4 @@
+import { stat } from "node:fs/promises";
 import type { Exec } from "../exec.ts";
 import { WP_ARG } from "./wp.ts";
 
@@ -9,11 +10,19 @@ export interface PageShot { path: string; status: number | null; fatal: boolean;
 const MAX_BODY = 2 * 1024 * 1024;
 const FATAL_TEXT = "There has been a critical error on this website";
 
-/** One GET (20 s, redirects followed). Reads at most 2 MB of the body, then stops. A timeout or throw gives `status: null`. */
+/**
+ * One GET (20 s, redirects followed). Reads at most 2 MB of the body, then stops. A request that fails or times out before the headers arrive gives `status: null`.
+ * Once the headers have arrived the status is kept for good: a body that stalls or breaks off counts as an empty body (not fatal, no forms), never as an unreachable page.
+ */
 export async function readPage(fetchFn: typeof fetch, url: string): Promise<{ status: number | null; fatal: boolean; forms: number }> {
+  let res: Response;
   try {
-    const res = await fetchFn(url, { redirect: "follow", signal: AbortSignal.timeout(20_000) });
-    let html = "";
+    res = await fetchFn(url, { redirect: "follow", signal: AbortSignal.timeout(20_000) });
+  } catch {
+    return { status: null, fatal: false, forms: 0 };
+  }
+  let html = "";
+  try {
     if (res.body) {
       const reader = res.body.getReader();
       const dec = new TextDecoder();
@@ -29,20 +38,21 @@ export async function readPage(fetchFn: typeof fetch, url: string): Promise<{ st
         await reader.cancel().catch(() => {});
       }
     }
-    return { status: res.status, fatal: html.includes(FATAL_TEXT), forms: (html.match(/<form/gi) ?? []).length };
   } catch {
-    return { status: null, fatal: false, forms: 0 };
+    html = "";
   }
+  return { status: res.status, fatal: html.includes(FATAL_TEXT), forms: (html.match(/<form/gi) ?? []).length };
 }
 
-/** Headless Chrome screenshot of `url` into `outPng`. The URL is the last argv element (no shell). False on any failure. */
+/** Headless Chrome screenshot of `url` into `outPng`. The URL is the last argv element (no shell). False on any failure, and when Chrome exits 0 without writing the file. */
 export async function screenshot(exec: Exec, chrome: string, url: string, outPng: string): Promise<boolean> {
   try {
     await exec(chrome, [
       "--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run", "--window-size=1280,1600",
       "--virtual-time-budget=8000", `--screenshot=${outPng}`, url,
     ], { timeoutMs: 60_000 });
-    return true;
+    const s = await stat(outPng);
+    return s.isFile() && s.size > 0;
   } catch {
     return false;
   }

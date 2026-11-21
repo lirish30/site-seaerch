@@ -165,7 +165,7 @@ describe("render handler", () => {
       async claim() { return null; },
       async download(_id, key, to) { downloads.push(key); writeFileSync(to, `bytes of ${key}`); },
       async upload(_id, key, from, contentType) { uploads.push({ key, contentType, bytes: statSync(from).size }); },
-      async complete() {}, async fail() {},
+      async touch() {}, async complete() {}, async fail() {},
     };
     return { api, uploads, downloads };
   }

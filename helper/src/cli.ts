@@ -5,6 +5,7 @@ import { configPath, loadConfig, writePairing, type Config } from "./config.ts";
 import { runProcess } from "./exec.ts";
 import { realMedia } from "./ffmpeg.ts";
 import { careInventoryHandler } from "./handlers/careInventory.ts";
+import { careUpdateHandler } from "./handlers/careUpdate.ts";
 import { meetilySyncHandler } from "./handlers/meetilySync.ts";
 import { renderHandler } from "./handlers/render.ts";
 import { voiceSampleHandler } from "./handlers/voiceSample.ts";
@@ -33,11 +34,11 @@ export interface CliDeps {
 const stamp = (m: string) => `${new Date().toISOString()} ${m}`;
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** The jobs this helper can do: the cloned voice for a line, a clip of the voice test, the render, the Meetily sync, and the read of a site's WordPress for care updates. */
+/** The jobs this helper can do: the cloned voice for a line, a clip of the voice test, the render, the Meetily sync, the read of a site's WordPress for care updates, and the update of a site (backup, update, page checks, rollback). */
 export function buildHandlers(cfg: Config): JobHandler[] {
   const engines = createEngines(cfg);
   const media = realMedia(cfg);
-  return [voiceSegmentHandler(engines, media), voiceSampleHandler(engines, media), renderHandler(media), meetilySyncHandler(), careInventoryHandler()];
+  return [voiceSegmentHandler(engines, media), voiceSampleHandler(engines, media), renderHandler(media), meetilySyncHandler(), careInventoryHandler(), careUpdateHandler()];
 }
 
 function abortableSleep(signal?: AbortSignal): (ms: number) => Promise<void> {

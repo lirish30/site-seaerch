@@ -5,7 +5,7 @@ import { pipeline } from "node:stream/promises";
 import type { Config } from "./config.ts";
 
 /** Keep in step with package.json (a test checks). The server's `minHelperVersion` is compared against this at start. */
-export const HELPER_VERSION = "0.1.0";
+export const HELPER_VERSION = "0.2.0";
 /** The server refuses an upload over this (MAX_OUTPUT_BYTES in src/worker/routes/helper.ts). Checked here too so a big file fails before it is sent. */
 export const MAX_UPLOAD_BYTES = 80 * 1024 * 1024;
 
@@ -29,6 +29,8 @@ export interface JobApi {
   claim(kinds: string[]): Promise<ClaimedJob | null>;
   download(jobId: string, key: string, toPath: string): Promise<void>;
   upload(jobId: string, key: string, fromPath: string, contentType: string): Promise<void>;
+  /** Says the job is still being worked on, so its claim is not handed to another Mac. A 409 (the job is no longer this device's) throws an `ApiError`: the handler must stop. */
+  touch(jobId: string): Promise<void>;
   complete(jobId: string, result: unknown): Promise<void>;
   fail(jobId: string, error: string): Promise<void>;
 }
@@ -123,6 +125,11 @@ export class ApiClient implements JobApi {
     const body = await readFile(fromPath);
     // Safe to repeat: a PUT of the same bytes to the same key replaces itself.
     await retryTransient(() => this.send(`/jobs/${encodeURIComponent(jobId)}/output?key=${encodeURIComponent(key)}`, { method: "PUT", headers: { "content-type": contentType }, body }), this.retry);
+  }
+
+  /** Safe to repeat: it only sets the claim time to now. Tried again on a transient failure; a 409 is thrown at once. */
+  async touch(jobId: string): Promise<void> {
+    await retryTransient(async () => { await (await this.post(`/jobs/${encodeURIComponent(jobId)}/touch`, {})).body?.cancel().catch(() => {}); }, this.retry);
   }
 
   async complete(jobId: string, result: unknown): Promise<void> {

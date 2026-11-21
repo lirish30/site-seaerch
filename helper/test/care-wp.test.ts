@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { WP_ARG, WpError, quoteRemote, wp, wpText } from "../src/care/wp.ts";
+import { WP_ARG, WpError, quoteRemote, remote, wp, wpText } from "../src/care/wp.ts";
 import type { Exec } from "../src/exec.ts";
 
 const T = { alias: "client1", path: "/var/www/html" };
@@ -93,5 +93,34 @@ describe("quoteRemote", () => {
   it("single-quotes and escapes a single quote", () => {
     expect(quoteRemote("it's")).toBe("'it'\\''s'");
     expect(quoteRemote("plain")).toBe("'plain'");
+  });
+});
+
+describe("remote", () => {
+  it("runs one of the four commands over ssh with each word quoted and the same options as wp", async () => {
+    const exec = fake("");
+    await remote(exec, "client1", ["find", "siteline-backups", "-name", "*.sql.gz", "-mtime", "+28", "-delete"], { timeoutMs: 7 });
+    expect(exec).toHaveBeenCalledWith("ssh", ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "client1", "--", "find", "'siteline-backups'", "'-name'", "'*.sql.gz'", "'-mtime'", "'+28'", "'-delete'"], { timeoutMs: 7 });
+  });
+  it("allows mkdir, test and gzip", async () => {
+    const exec = fake("ok");
+    expect(await remote(exec, "client1", ["mkdir", "-p", "siteline-backups"], { timeoutMs: 1 })).toBe("ok");
+    await remote(exec, "client1", ["test", "-e", "siteline-backups/a.com-x.sql.gz"], { timeoutMs: 1 });
+    await remote(exec, "client1", ["gzip", "-f", "siteline-backups/a.com-x.sql"], { timeoutMs: 1 });
+    expect(exec).toHaveBeenCalledTimes(3);
+  });
+  it("refuses any other command, a bad alias, a hostile word, an absolute path or a tilde, and never spawns", async () => {
+    const exec = fake("");
+    const o = { timeoutMs: 1 };
+    await expect(remote(exec, "client1", ["rm", "-rf", "x"], o)).rejects.toThrow(WpError);
+    await expect(remote(exec, "client1", ["sh", "-c", "id"], o)).rejects.toThrow(WpError);
+    await expect(remote(exec, "client1", [], o)).rejects.toThrow(WpError);
+    await expect(remote(exec, "-oProxyCommand=x", ["test", "-e", "a"], o)).rejects.toThrow(WpError);
+    for (const bad of ["x; id", "$(id)", "`id`", "a b", "a\nb", "../x", "~/x", "/etc/passwd", "a'b"]) await expect(remote(exec, "client1", ["gzip", "-f", bad], o)).rejects.toThrow(WpError);
+    expect(exec).not.toHaveBeenCalled();
+  });
+  it("turns a failed run into a WpError", async () => {
+    const exec: Exec = async () => { throw new Error("exit 1"); };
+    await expect(remote(exec, "client1", ["test", "-e", "a"], { timeoutMs: 1 })).rejects.toThrow(WpError);
   });
 });

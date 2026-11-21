@@ -31,6 +31,7 @@ function fakeApi(script: (ClaimedJob | null | Error)[]) {
       return n;
     },
     async download() {}, async upload() {},
+    async touch() {},
     async complete(id, result) { completes.push({ id, result }); },
     async fail(id, error) { fails.push({ id, error }); },
   };

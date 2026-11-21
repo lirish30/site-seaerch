@@ -59,3 +59,21 @@ export async function wpText(exec: Exec, t: { alias: string; path: string }, arg
   if (!line) throw new WpError("wp-cli gave no readable answer");
   return line;
 }
+
+/** The only programs `remote` runs besides wp-cli: make the backup folder, look for a backup, compress the dump, delete old dumps. */
+const REMOTE_COMMANDS = new Set(["mkdir", "test", "gzip", "find"]);
+/** A word of one of those commands: relative (never starts with `/`), no `~`, no `..`, no shell syntax. `*` is allowed for `find -name '*.sql.gz'`; it is single-quoted, so the shell never expands it. */
+const REMOTE_WORD = /^(?!\/)(?!.*\.\.)[A-Za-z0-9_.=,:+@%*-][A-Za-z0-9_./=,:+@%*-]{0,299}$/;
+
+/**
+ * Runs `mkdir`, `test`, `gzip` or `find` (nothing else) in the SSH user's home on `alias`, through the same alias check, argv array and quoting as `wp`.
+ * Paths are relative to the home folder, where an SSH session starts: a quoted `~` would not expand on the server. Returns stdout; a non-zero exit (`test -e` on a missing file) is a `WpError`.
+ */
+export async function remote(exec: Exec, alias: string, words: string[], o: { timeoutMs: number }): Promise<string> {
+  if (!WP_ARG.alias.test(alias) || words.length === 0 || !REMOTE_COMMANDS.has(words[0]) || !words.slice(1).every((w) => REMOTE_WORD.test(w))) throw new WpError("this command is not allowed");
+  try {
+    return (await exec("ssh", ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15", alias, "--", words[0], ...words.slice(1).map(quoteRemote)], { timeoutMs: o.timeoutMs })).stdout;
+  } catch (e) {
+    throw new WpError((e instanceof Error ? e.message : String(e)).slice(0, 300));
+  }
+}

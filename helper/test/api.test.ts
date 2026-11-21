@@ -125,6 +125,22 @@ describe("ApiClient", () => {
     expect(JSON.parse(String(seen[0].body))).toEqual({ error: "the engine fell over" });
   });
 
+  it("touch posts to /touch, and a 409 throws so the handler stops", async () => {
+    const f = fake(new Response(null, { status: 204 }), json({ error: "this job is not claimed by this device" }, 409));
+    await f.client.touch("j1");
+    expect(f.seen[0].url).toBe("https://agency.example.com/helper/jobs/j1/touch");
+    expect(f.seen[0].method).toBe("POST");
+    const e = await f.client.touch("j1").then(() => null, (x: unknown) => x);
+    expect((e as ApiError).status).toBe(409);
+    expect(f.seen).toHaveLength(2);
+  });
+
+  it("touch tries again on a transient failure", async () => {
+    const f = fake(new Response("x", { status: 503 }), new Response(null, { status: 204 }));
+    await f.client.touch("j1");
+    expect(f.seen).toHaveLength(2);
+  });
+
   it("an answer that is not JSON still gives a readable error", async () => {
     const { client } = fake(new Response("<html>bad gateway</html>", { status: 502 }));
     const e = await client.hello().then(() => null, (x: unknown) => x);

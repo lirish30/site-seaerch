@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { deviceOf, requireHelper, type HelperEnv } from "../helper/auth";
 import {
-  ALREADY_DONE, NOT_FOUND, NOT_YOURS, claimHelperJob, completeHelperJob, failHelperJob, getHelperJob, type HelperJob,
+  ALREADY_DONE, NOT_FOUND, NOT_YOURS, claimHelperJob, completeHelperJob, failHelperJob, getHelperJob, touchHelperJob, type HelperJob,
 } from "../helper/jobs";
 import { getHelperKind, registeredHelperKinds } from "../helper/kinds";
 
@@ -114,6 +114,12 @@ helperRoutes.post("/jobs/:id/complete", async (c) => {
   const body = (await c.req.json().catch(() => null)) as { result?: unknown } | null;
   const r = await completeHelperJob(c.env, c.req.param("id"), deviceOf(c).id, body?.result);
   return r.ok ? c.json({ ok: true }) : c.json({ error: r.error }, statusOf(r.error));
+});
+
+/** The helper is still at work: refresh its claim. A job that is no longer this device's answers 409, and the helper stops. */
+helperRoutes.post("/jobs/:id/touch", async (c) => {
+  if (!(await touchHelperJob(c.env.DB, c.req.param("id"), deviceOf(c).id, new Date()))) return c.json({ error: NOT_YOURS }, 409);
+  return c.body(null, 204);
 });
 
 const FailBody = z.object({ error: z.string().trim().min(1).max(2000) });
