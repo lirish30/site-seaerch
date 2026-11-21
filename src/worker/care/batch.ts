@@ -55,13 +55,14 @@ async function sitesWithOpenFailure(db: D1Database): Promise<Set<string>> {
 
 /**
  * A new week's batch replaces what is still open of earlier weeks: every pending `care.updates` approval of an earlier weekly batch is rejected with "replaced by this week's batch",
- * and an earlier weekly batch that is not settled is cancelled. Idempotent.
+ * and an earlier weekly batch that is not settled is cancelled, then its runs tick the clients' CARE-1 checklists (a cancelled batch is settled, so 1.5 and 1.6 can finish). Idempotent.
  */
-async function replaceEarlierWeeks(db: D1Database, batch: CareBatch, now: string): Promise<void> {
+async function replaceEarlierWeeks(env: Env, batch: CareBatch, now: string): Promise<void> {
+  const db = env.DB;
   const old = (await db.prepare(`SELECT id, status FROM care_batches WHERE kind = 'weekly' AND id <> ? AND period < ?`).bind(batch.id, batch.period).all<{ id: string; status: string }>()).results;
   for (const b of old) {
     await rejectPending(db, b.id, REPLACED_NOTE);
-    if (b.status !== "done" && b.status !== "cancelled") await setBatchStatus(db, b.id, ["inventory", "wave1", "wave2"], "cancelled", now);
+    if (b.status !== "done" && b.status !== "cancelled" && (await setBatchStatus(db, b.id, ["inventory", "wave1", "wave2"], "cancelled", now))) await tickRuns(env, b.id);
   }
 }
 /** Rejects every pending `care.updates` approval of a batch through the shared reject (status, decided_at, decision_note, error cleared), as Logan's own reject would. */
@@ -107,7 +108,7 @@ async function beginWeekly(env: Env, now: Date, tz: string): Promise<{ batch: Ca
   const db = env.DB;
   const period = periodKey("weekly", now, tz);
   const { batch } = await ensureWeeklyBatch(db, period, now.toISOString());
-  await replaceEarlierWeeks(db, batch, now.toISOString());
+  await replaceEarlierWeeks(env, batch, now.toISOString());
   if (batch.status !== "inventory") return { batch, queued: 0 };
   let queued = 0;
   const failing = await sitesWithOpenFailure(db);
@@ -395,7 +396,7 @@ export async function draftWave(env: Env, batch: CareBatch, wave: 0 | 1 | 2, now
 /**
  * The daily safety net, so a lost hook never strands a batch: drops a queued run that never got a helper job (older than 30 minutes) and frees its updates, calls the hook of every open batch
  * again (drafting the wave a hook missed, once), and cancels a weekly batch made more than six days ago in any wave, whether or not CARE-1 is on (G5): its pending wave approvals are
- * rejected with "this week's batch ran out of time" and its open inventory jobs expire; runs already queued are left to finish. `drafted` counts the approvals made in this pass.
+ * rejected with "this week's batch ran out of time", its open inventory jobs expire and its ended runs tick the CARE-1 checklists; runs already queued are left to finish (their own hook ticks them). `drafted` counts the approvals made in this pass.
  */
 export async function careBackstop(env: Env, now: Date): Promise<{ drafted: number; cancelled: number }> {
   const db = env.DB;
@@ -428,6 +429,7 @@ export async function careBackstop(env: Env, now: Date): Promise<{ drafted: numb
           .bind("cancelled: its weekly batch ran out of time", iso, CARE_INVENTORY, id).run();
       }
       await rejectPending(db, id, OUT_OF_TIME_NOTE);
+      await tickRuns(env, id); // the batch is settled now: clients whose runs all ended get 1.5 and 1.6 (tickRuns is guarded and idempotent)
       continue;
     }
     if (batch.status === "inventory") await onInventoryDone(env, id);

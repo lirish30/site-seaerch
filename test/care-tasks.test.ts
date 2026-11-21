@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSite } from "../src/worker/db/sites";
 import { approve } from "../src/worker/approvals/decide";
 import "../src/worker/approvals/careUpdates";
-import { onInventoryDone, startSingleRun, startWeeklyBatch } from "../src/worker/care/batch";
+import { careBackstop, onInventoryDone, startSingleRun, startWeeklyBatch } from "../src/worker/care/batch";
 import { tickCare1 } from "../src/worker/care/tasks";
 import { getBatch, getRun, insertPageChecks, runsFor, saveInventory, setRunStatus, upsertSeen, type CareBatch } from "../src/worker/db/careUpdates";
 import { openIncident } from "../src/worker/db/monitoring";
@@ -242,5 +242,41 @@ describe("the batch ticks the CARE-1 task", () => {
     expect(err).toHaveBeenCalled();
     expect((await care1(a.project!.id)).status).not.toBe("done");
     spy.mockRestore(); err.mockRestore();
+  });
+});
+
+describe("a cancelled batch still finishes its CARE-1 checklists", () => {
+  const useClock = (at: Date) => { realClock?.(); realClock = tickingClock(at); };
+  const pendingWave2 = async (batchId: string) => (await env.DB.prepare(`SELECT id FROM approvals WHERE kind = 'care.updates' AND status = 'pending' AND json_extract(payload, '$.batchId') = ? AND json_extract(payload, '$.wave') = 2`).bind(batchId).all()).results;
+
+  it("the backstop cancels a batch whose wave 2 was left pending six days: the clean canary client's task is done", async () => {
+    const a = await mk("a.com", { cents: 5000 });
+    await mk("b.com", { cents: 7000 });
+    const batch = await inventoried();
+    await approveAll(); // wave 1: a.com
+    await finishRun((await runsFor(env.DB, batch.id))[0].id, "ok");
+    expect(await pendingWave2(batch.id)).toHaveLength(1); // b.com's wave 2 is left waiting
+    expect((await care1(a.project!.id)).status).not.toBe("done");
+    expect((await careBackstop(env, new Date(WED.getTime() + 7 * 86_400_000))).cancelled).toBe(1);
+    expect((await getBatch(env.DB, batch.id))!.status).toBe("cancelled");
+    expect(await ticks(a.project!.id)).toEqual([true, true, true, true, true, true]);
+    expect((await care1(a.project!.id)).status).toBe("done");
+  });
+
+  it("a new week's batch cancels last week's: the clean canary client's last-week task is done", async () => {
+    useClock(LAST_WEEK);
+    const a = await mk("a.com", { cents: 5000, lastWeek: true });
+    await mk("b.com", { cents: 7000, lastWeek: true });
+    const { batch: old } = await startWeeklyBatch(env, LAST_WEEK);
+    await env.DB.prepare(`UPDATE helper_jobs SET status = 'done' WHERE kind = 'care.inventory'`).run();
+    await onInventoryDone(env, old!.id);
+    await approveAll();
+    await finishRun((await runsFor(env.DB, old!.id))[0].id, "ok");
+    expect(await pendingWave2(old!.id)).toHaveLength(1);
+    expect((await care1(a.project!.id, "2026-W48")).status).not.toBe("done");
+    useClock(WED);
+    await startWeeklyBatch(env, WED);
+    expect((await getBatch(env.DB, old!.id))!.status).toBe("cancelled");
+    expect((await care1(a.project!.id, "2026-W48")).status).toBe("done");
   });
 });
