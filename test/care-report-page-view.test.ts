@@ -71,7 +71,7 @@ describe("renewalLine", () => {
 });
 
 describe("siteDetails", () => {
-  const s = (over: Partial<PublicReportSite> = {}): PublicReportSite => ({ domain: "ace.com", uptimePercent: 99.9, coveredDays: 30, monitoredSince: "2026-10-03", incidents: 0, longestOutageMinutes: null, updatesApplied: 4, updatesRolledBack: 0, backups: 2, speedScore: 81, ...over });
+  const s = (over: Partial<PublicReportSite> = {}): PublicReportSite => ({ domain: "ace.com", uptimePercent: 99.9, coveredDays: 30, monitoredSince: "2026-10-03", incidents: 0, longestOutageMinutes: null, updatesApplied: 4, updatesRolledBack: 0, updatesTracked: true, backups: 2, speedScore: 81, ...over });
   it("lists only what was measured, in plain words", () => {
     expect(siteDetails(s())).toEqual([
       { label: "Uptime", value: "99.9% uptime over 30 days" },
@@ -87,9 +87,17 @@ describe("siteDetails", () => {
     expect(d).toContainEqual({ label: "Updates", value: "4 applied, 1 undone because it caused a problem" });
     expect(d.map((x) => x.label)).not.toContain("Mobile speed");
   });
-  it("leaves the uptime row out when it has nothing to say, and says no downtime plainly", () => {
-    const d = siteDetails(s({ uptimePercent: null, monitoredSince: null, incidents: 0, updatesApplied: 0, backups: 0, speedScore: null }));
+  it("leaves the uptime row out when it has nothing to say, and says no downtime plainly when days were checked", () => {
+    const d = siteDetails(s({ uptimePercent: null, monitoredSince: null, coveredDays: 3, incidents: 0, updatesApplied: 0, backups: 0, speedScore: null }));
     expect(d).toEqual([{ label: "Downtime", value: "No downtime recorded" }, { label: "Updates", value: "None applied this month" }]);
+  });
+  it("never says no downtime for a month with no checked day, and says nothing about updates for a site no update run covered", () => {
+    const d = siteDetails(s({ uptimePercent: null, monitoredSince: null, coveredDays: 0, incidents: 0, updatesApplied: 0, updatesTracked: false, backups: 0, speedScore: null }));
+    expect(d).toEqual([{ label: "Downtime", value: "Not measured this month" }]);
+    expect(JSON.stringify(d)).not.toMatch(/no downtime|none applied/i);
+    // An outage is a measurement even when no day counted, and an untracked site's zero updates are not shown as "0 applied".
+    expect(siteDetails(s({ uptimePercent: null, monitoredSince: null, coveredDays: 0, incidents: 1, longestOutageMinutes: 30, updatesApplied: 0, updatesTracked: false, backups: 0, speedScore: null })))
+      .toEqual([{ label: "Downtime", value: "Went down once; the longest was about 30 min" }]);
   });
   it("one incident is once", () => {
     expect(siteDetails(s({ incidents: 1, longestOutageMinutes: null }))).toContainEqual({ label: "Downtime", value: "Went down once" });

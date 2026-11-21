@@ -56,15 +56,19 @@ export function siteDetails(s: PublicReportSite): { label: string; value: string
   const rows: { label: string; value: string }[] = [];
   const up = uptimeLine(s);
   if (up) rows.push({ label: "Uptime", value: up });
-  if (s.incidents === 0) rows.push({ label: "Downtime", value: "No downtime recorded" });
+  // A month with no covered day was not measured: "no downtime" would be a claim about time nobody checked.
+  if (s.incidents === 0) rows.push({ label: "Downtime", value: s.coveredDays > 0 ? "No downtime recorded" : "Not measured this month" });
   else {
     const times = s.incidents === 1 ? "Went down once" : `Went down ${s.incidents} times`;
     rows.push({ label: "Downtime", value: s.longestOutageMinutes !== null ? `${times}; the longest was about ${hours(s.longestOutageMinutes)}` : times });
   }
-  if (s.updatesApplied === 0 && s.updatesRolledBack === 0) rows.push({ label: "Updates", value: "None applied this month" });
-  else {
-    const undone = s.updatesRolledBack > 0 ? `, ${s.updatesRolledBack} undone because ${s.updatesRolledBack === 1 ? "it" : "they"} caused a problem` : "";
-    rows.push({ label: "Updates", value: `${s.updatesApplied} applied${undone}` });
+  // The update rows are for a site an update run covered; for any other the counts were not measured, and "none applied" would say they were.
+  if (s.updatesTracked) {
+    if (s.updatesApplied === 0 && s.updatesRolledBack === 0) rows.push({ label: "Updates", value: "None applied this month" });
+    else {
+      const undone = s.updatesRolledBack > 0 ? `, ${s.updatesRolledBack} undone because ${s.updatesRolledBack === 1 ? "it" : "they"} caused a problem` : "";
+      rows.push({ label: "Updates", value: `${s.updatesApplied} applied${undone}` });
+    }
   }
   if (s.backups > 0) rows.push({ label: "Backups", value: `${s.backups} taken` });
   if (s.speedScore !== null) rows.push({ label: "Mobile speed", value: `${s.speedScore} out of 100` });

@@ -11,6 +11,7 @@ import { MIN_CHECKS_FOR_A_DAY, uptimeOf } from "../monitoring/rollup";
 import { runPageSpeed } from "../pagespeed";
 import { periodLabel, zoneOf } from "../sop/cadence";
 import { editLedger } from "./ledger";
+import { COLLATERAL_NOTE } from "./updateKind";
 
 // The facts a client's monthly Care report is built from (Plan 13), frozen into the report row when it is made. Only what the app measured goes in: a number it could not measure is
 // null or left out, never 0 or 100%. NOTHING a client site or the helper said in words goes in either: no plugin name or slug, no incident sentence, no backup file name, no ssh alias,
@@ -31,6 +32,8 @@ export const SiteFacts = z.object({
   updatesApplied: Count,
   updatesRolledBack: Count,
   updatesFailed: Count,
+  /** True when an update run of the site finished in the month, so the update numbers are measured. Missing (an older report) or false: nothing was measured, and the zeros are not shown or said as "none". */
+  updatesTracked: z.boolean().optional(),
   backups: Count,
   speedScore: z.number().int().min(0).max(100).nullable(),
 });
@@ -133,21 +136,25 @@ async function siteFacts(env: Env, site: Site, r: ReturnType<typeof monthRange>,
   const longest = outages.length ? Math.max(1, Math.round(Math.max(...outages) / 60_000)) : null;
 
   // The runs of the month are those that FINISHED in it. What happened to each update is what the run recorded: the helper's per-update `steps` stored in the job's result, not the update's
-  // status now (the next inventory read resets a failed or rolled-back update to available). A retried update counts its outcome in each run's own month; a skipped one counts nothing.
+  // status now (the next inventory read resets a failed or rolled-back update to available). A retried update counts its outcome in each run's own month; a skipped one counts nothing. An update the helper
+  // put back only because ANOTHER one failed (the collateral note) is waiting again and caused nothing: it counts as neither rolled back nor failed.
   const counted = (await db.prepare(
     `SELECT json_extract(s.value, '$.outcome') AS outcome, COUNT(*) AS n
        FROM care_runs r JOIN helper_jobs j ON j.id = r.helper_job_id AND j.result IS NOT NULL JOIN json_each(j.result, '$.steps') s
-      WHERE r.site_id = ? AND r.finished_at >= ? AND r.finished_at < ? GROUP BY outcome`,
-  ).bind(site.id, r.from, r.to).all<{ outcome: string; n: number }>()).results;
+      WHERE r.site_id = ? AND r.finished_at >= ? AND r.finished_at < ?
+        AND NOT (json_extract(s.value, '$.outcome') = 'rolled_back' AND COALESCE(instr(json_extract(s.value, '$.note'), ?), 0) = 1) GROUP BY outcome`,
+  ).bind(site.id, r.from, r.to, COLLATERAL_NOTE).all<{ outcome: string; n: number }>()).results;
   const nOf = (...outcomes: string[]) => counted.filter((c) => outcomes.includes(c.outcome)).reduce((n, c) => n + c.n, 0);
-  const backups = (await db.prepare(`SELECT COUNT(*) AS n FROM care_runs WHERE site_id = ? AND finished_at >= ? AND finished_at < ? AND backup_file IS NOT NULL AND backup_file <> ''`)
-    .bind(site.id, r.from, r.to).first<{ n: number }>())?.n ?? 0;
+  const ran = await db.prepare(`SELECT COUNT(*) AS runs, COALESCE(SUM(backup_file IS NOT NULL AND backup_file <> ''), 0) AS backups FROM care_runs WHERE site_id = ? AND finished_at >= ? AND finished_at < ?`)
+    .bind(site.id, r.from, r.to).first<{ runs: number; backups: number }>();
+  const backups = ran?.backups ?? 0;
 
   return {
     domain: site.domain ?? siteDomain(site.url) ?? "this site",
     monitoredSince: since?.day ?? null, uptimePercent: uptime.percent, coveredDays: uptime.coveredDays,
     incidents: down.length, longestOutageMinutes: longest,
-    updatesApplied: nOf("applied"), updatesRolledBack: nOf("rolled_back"), updatesFailed: nOf("failed", "rollback_failed"), backups,
+    updatesApplied: nOf("applied"), updatesRolledBack: nOf("rolled_back"), updatesFailed: nOf("failed", "rollback_failed"),
+    updatesTracked: (ran?.runs ?? 0) > 0, backups,
   };
 }
 
@@ -236,8 +243,10 @@ export function plainSummary(f: ReportFacts): string {
     lines.push(`Sites went down ${plural(total, "time", "times")} in total.`);
   }
 
-  if (f.sites.length) {
-    const applied = f.sites.reduce((n, s) => n + s.updatesApplied, 0), rolledBack = f.sites.reduce((n, s) => n + s.updatesRolledBack, 0), failed = f.sites.reduce((n, s) => n + s.updatesFailed, 0);
+  // The update sentence only speaks for the sites an update run covered: for the others "none applied" would be a zero the app never measured.
+  const tracked = f.sites.filter((s) => s.updatesTracked === true);
+  if (tracked.length) {
+    const applied = tracked.reduce((n, s) => n + s.updatesApplied, 0), rolledBack = tracked.reduce((n, s) => n + s.updatesRolledBack, 0), failed = tracked.reduce((n, s) => n + s.updatesFailed, 0);
     if (applied + rolledBack + failed === 0) lines.push("No updates were applied this month.");
     else {
       const parts = [`${applied} ${applied === 1 ? "update was" : "updates were"} applied`];
@@ -245,7 +254,7 @@ export function plainSummary(f: ReportFacts): string {
       if (failed) parts.push(`${failed} could not be applied`);
       lines.push(`${parts.join(", ")}.`);
     }
-    const backups = f.sites.reduce((n, s) => n + s.backups, 0);
+    const backups = tracked.reduce((n, s) => n + s.backups, 0);
     if (backups) lines.push(`${backups} ${backups === 1 ? "backup was" : "backups were"} taken before updates.`);
   }
 

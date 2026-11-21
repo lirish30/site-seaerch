@@ -49,7 +49,7 @@ function factLines(f: ReportFacts): string {
   for (const s of f.sites) {
     lines.push(
       `Site ${s.domain}: uptime ${num(s.uptimePercent, "%")} over ${s.coveredDays} days checked${s.monitoredSince ? `, watched since ${s.monitoredSince}` : ""}; incidents ${s.incidents}; longest outage ${num(s.longestOutageMinutes, " minutes")}; ` +
-      `updates applied ${s.updatesApplied}, rolled back ${s.updatesRolledBack}, failed ${s.updatesFailed}; backups ${s.backups}; mobile speed score ${num(s.speedScore, " out of 100")}`,
+      `${s.updatesTracked === true ? `updates applied ${s.updatesApplied}, rolled back ${s.updatesRolledBack}, failed ${s.updatesFailed}; backups ${s.backups}; ` : ""}mobile speed score ${num(s.speedScore, " out of 100")}`,
     );
   }
   if (!f.sites.length) lines.push("No monitored sites.");

@@ -20,7 +20,7 @@ const standIn = async (_env: unknown, report: { id: string }) => {
 const NOW = "2026-12-01T10:00:00.000Z";
 const site = (domain: string, over: Record<string, unknown> = {}) => ({
   domain, monitoredSince: "2026-10-03", uptimePercent: 99.9, coveredDays: 30, incidents: 0, longestOutageMinutes: null,
-  updatesApplied: 4, updatesRolledBack: 0, updatesFailed: 0, backups: 2, speedScore: 81, ...over,
+  updatesApplied: 4, updatesRolledBack: 0, updatesFailed: 0, updatesTracked: true, backups: 2, speedScore: 81, ...over,
 });
 const FACTS = {
   version: 1, period: "2026-11", label: "November 2026", from: "2026-11-01T08:00:00.000Z", to: "2026-12-01T08:00:00.000Z", clientName: "Acme Dental",
@@ -93,6 +93,19 @@ describe("the care.report kind", () => {
     expect(built.instructions).toMatch(/never mention prices/);
     expect(built.instructions).toMatch(/Never promise results/);
     expect(built.instructions).toMatch(/ONE recommendation/);
+  });
+
+  it("build gives Claude no update or backup line for a site no update run covered (not measured, so not zero)", async () => {
+    const r = await made({ ...FACTS, sites: [site("acme-dental.example"), site("shop.acme-dental.example", { updatesTracked: false, updatesApplied: 0, backups: 0 })] });
+    const task = await claim(r.id);
+    const built = await kind().build(env, task.payload, task);
+    if ("stale" in built) throw new Error(built.stale);
+    const lines = built.untrusted.map((p) => (p as { text: string }).text).join("\n").split("\n");
+    expect(lines.find((l) => l.startsWith("Site acme-dental.example"))).toMatch(/updates applied 4/);
+    const shop = lines.find((l) => l.startsWith("Site shop.acme-dental.example"))!;
+    expect(shop).toContain("incidents 0");
+    expect(shop).not.toMatch(/updates|backups/);
+    expect(shop).toMatch(/mobile speed score 81 out of 100/);
   });
 
   it("build is stale once the report has its words, is gone, or has numbers that cannot be read", async () => {

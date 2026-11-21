@@ -24,7 +24,7 @@ const site = (domain: string, over: Record<string, unknown> = {}) => ({
 const FACTS = {
   version: 1, period: "2026-11", label: "November 2026", from: "2026-11-01T07:00:00.000Z", to: "2026-12-01T08:00:00.000Z", clientName: "Ace Plumbing",
   sites: [
-    site("ace.com", { alias: "ace-prod", wp_path: "/var/www/ace/public_html", backupFile: "siteline-backups/ace-2026-11-14.tar.gz", slug: "contact-form-7", detail: "Connection refused by the upstream proxy" }),
+    site("ace.com", { updatesTracked: true, alias: "ace-prod", wp_path: "/var/www/ace/public_html", backupFile: "siteline-backups/ace-2026-11-14.tar.gz", slug: "contact-form-7", detail: "Connection refused by the upstream proxy" }),
     site("shop.ace.com", { incidents: 2, longestOutageMinutes: 12, speedScore: null, uptimePercent: null, monitoredSince: null, coveredDays: 0 }),
   ],
   edits: { month: "2026-11", allowanceMinutes: 60, usedMinutes: 100, percent: 166, state: "over", requestsDone: 3 },
@@ -61,8 +61,9 @@ describe("publicReport", () => {
     expect(page).toEqual({
       clientName: "Ace Plumbing", label: "November 2026", summary: SUMMARY, recommendation: RECOMMENDATION,
       sites: [
-        { domain: "ace.com", uptimePercent: 99.9, coveredDays: 30, monitoredSince: "2026-10-03", incidents: 0, longestOutageMinutes: null, updatesApplied: 4, updatesRolledBack: 0, backups: 2, speedScore: 81 },
-        { domain: "shop.ace.com", uptimePercent: null, coveredDays: 0, monitoredSince: null, incidents: 2, longestOutageMinutes: 12, updatesApplied: 4, updatesRolledBack: 0, backups: 2, speedScore: null },
+        { domain: "ace.com", uptimePercent: 99.9, coveredDays: 30, monitoredSince: "2026-10-03", incidents: 0, longestOutageMinutes: null, updatesApplied: 4, updatesRolledBack: 0, updatesTracked: true, backups: 2, speedScore: 81 },
+        // A stored report with no `updatesTracked` (an older one) reads as not tracked.
+        { domain: "shop.ace.com", uptimePercent: null, coveredDays: 0, monitoredSince: null, incidents: 2, longestOutageMinutes: 12, updatesApplied: 4, updatesRolledBack: 0, updatesTracked: false, backups: 2, speedScore: null },
       ],
       edits: { usedMinutes: 100, allowanceMinutes: 60, state: "over", requestsDone: 3 },
       renewals: [{ what: "certificate", domain: "ace.com", on: "2026-12-20" }, { what: "subscription_term", domain: null, on: "2027-01-15" }],
@@ -126,7 +127,7 @@ describe("GET /api/public/m/:token", () => {
     ]) expect(text, secret).not.toContain(secret);
     expect(Object.keys(JSON.parse(text)).sort()).toEqual(["clientName", "edits", "label", "recommendation", "renewals", "sentOn", "sites", "summary"]);
     expect(Object.keys(JSON.parse(text).sites[0]).sort()).toEqual(
-      ["backups", "coveredDays", "domain", "incidents", "longestOutageMinutes", "monitoredSince", "speedScore", "updatesApplied", "updatesRolledBack", "uptimePercent"],
+      ["backups", "coveredDays", "domain", "incidents", "longestOutageMinutes", "monitoredSince", "speedScore", "updatesApplied", "updatesRolledBack", "updatesTracked", "uptimePercent"],
     );
   });
 

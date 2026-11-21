@@ -46,11 +46,15 @@ function headlineLines(f: ReportFacts): string[] {
     const parts = [
       s.uptimePercent === null ? "uptime not measured" : `up ${s.uptimePercent}% over ${plural(s.coveredDays, "day", "days")} checked`,
       plural(s.incidents, "incident", "incidents") + (s.incidents > 0 && s.longestOutageMinutes !== null ? ` (longest about ${plural(s.longestOutageMinutes, "minute", "minutes")})` : ""),
-      `${plural(s.updatesApplied, "update", "updates")} applied`,
     ];
-    if (s.updatesRolledBack) parts.push(`${s.updatesRolledBack} rolled back`);
-    if (s.updatesFailed) parts.push(`${s.updatesFailed} failed`);
-    parts.push(plural(s.backups, "backup", "backups"), s.speedScore === null ? "speed not measured" : `mobile speed ${s.speedScore} out of 100`);
+    // The update and backup counts are only said for a site an update run covered: for another they were not measured, and "0 updates" would read as a measurement.
+    if (s.updatesTracked === true) {
+      parts.push(`${plural(s.updatesApplied, "update", "updates")} applied`);
+      if (s.updatesRolledBack) parts.push(`${s.updatesRolledBack} rolled back`);
+      if (s.updatesFailed) parts.push(`${s.updatesFailed} failed`);
+      parts.push(plural(s.backups, "backup", "backups"));
+    }
+    parts.push(s.speedScore === null ? "speed not measured" : `mobile speed ${s.speedScore} out of 100`);
     return `- ${s.domain}: ${parts.join(", ")}`;
   });
   if (!f.sites.length) lines.push("- No monitored sites.");

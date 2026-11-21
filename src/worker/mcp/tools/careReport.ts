@@ -19,7 +19,7 @@ export function registerCareReportTools(server: McpServer, ctx: ToolCtx): void {
   const { db, log, text } = ctx;
 
   server.registerTool("get_care_report", {
-    description: "The monthly Care reports of one month (period YYYY-MM, default last month), one per client, ordered by client name: status (collecting, ready, sent, revoked, cancelled), the summary and recommendation, when it was sent, how often the client opened it, the headline numbers (per site: uptime percent, days checked, incidents, longest outage in minutes, updates applied, rolled back and failed, backups, mobile speed score; the edit requests done) and the client's edit hours that month (allowance, used, percent, state). A number that was not measured is null. clientId narrows to one client. Rehearsal clients are left out. Never a link or a token.",
+    description: "The monthly Care reports of one month (period YYYY-MM, default last month), one per client, ordered by client name: status (collecting, ready, sent, revoked, cancelled), the summary and recommendation, when it was sent, how often the client opened it, the headline numbers (per site: uptime percent, days checked, incidents, longest outage in minutes, updates applied, rolled back and failed (with updatesTracked: false when no update run covered the site that month, so those counts were not measured and mean nothing), backups, mobile speed score; the edit requests done) and the client's edit hours that month (allowance, used, percent, state). A number that was not measured is null. clientId narrows to one client. Rehearsal clients are left out. Never a link or a token.",
     inputSchema: { period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "period must look like 2026-11").optional(), clientId: z.string().min(1).max(100).optional() },
   }, async ({ period, clientId }) => {
     const tz = zoneOf(await getSettings(db));
@@ -33,7 +33,7 @@ export function registerCareReportTools(server: McpServer, ctx: ToolCtx): void {
         headline: facts.success ? {
           sites: facts.data.sites.map((s) => ({
             domain: s.domain, uptimePercent: s.uptimePercent, coveredDays: s.coveredDays, incidents: s.incidents, longestOutageMinutes: s.longestOutageMinutes,
-            updatesApplied: s.updatesApplied, updatesRolledBack: s.updatesRolledBack, updatesFailed: s.updatesFailed, backups: s.backups, speedScore: s.speedScore,
+            updatesApplied: s.updatesApplied, updatesRolledBack: s.updatesRolledBack, updatesFailed: s.updatesFailed, updatesTracked: s.updatesTracked === true, backups: s.backups, speedScore: s.speedScore,
           })),
           editRequestsDone: facts.data.edits ? facts.data.edits.requestsDone : null,
         } : null,

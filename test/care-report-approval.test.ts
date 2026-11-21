@@ -32,7 +32,7 @@ const SUMMARY = "The site was up almost all month and four updates went in.";
 const RECOMMENDATION = "Look at why the shop site went down twice.";
 const site = (domain: string, over: Record<string, unknown> = {}) => ({
   domain, monitoredSince: "2026-10-03", uptimePercent: 99.9, coveredDays: 30, incidents: 0, longestOutageMinutes: null,
-  updatesApplied: 4, updatesRolledBack: 0, updatesFailed: 0, backups: 2, speedScore: 81, ...over,
+  updatesApplied: 4, updatesRolledBack: 0, updatesFailed: 0, updatesTracked: true, backups: 2, speedScore: 81, ...over,
 });
 const FACTS = {
   version: 1, period: "2026-11", label: "November 2026", from: "2026-11-01T08:00:00.000Z", to: "2026-12-01T08:00:00.000Z", clientName: "Ace Plumbing",
@@ -67,8 +67,8 @@ async function careClient(o: { test?: boolean } = {}) {
 }
 let n = 0;
 /** A `ready` report for the client, with the words stored. */
-async function readyReport(s: { businessId: string }, o: { test?: boolean; source?: "claude" | "plain" | "logan"; summary?: string } = {}): Promise<CareReport> {
-  const { report } = await insertReport(env.DB, { businessId: s.businessId, period: "2026-11", token: `tok-care-report-approval-${++n}-${"x".repeat(20)}`, facts: FACTS, test: o.test ?? false, now: "2026-12-02T14:00:00.000Z" });
+async function readyReport(s: { businessId: string }, o: { test?: boolean; source?: "claude" | "plain" | "logan"; summary?: string; facts?: unknown } = {}): Promise<CareReport> {
+  const { report } = await insertReport(env.DB, { businessId: s.businessId, period: "2026-11", token: `tok-care-report-approval-${++n}-${"x".repeat(20)}`, facts: o.facts ?? FACTS, test: o.test ?? false, now: "2026-12-02T14:00:00.000Z" });
   expect(await setSummary(env.DB, report.id, ["collecting"], { summary: o.summary ?? SUMMARY, recommendation: RECOMMENDATION, source: o.source ?? "claude", now: "2026-12-02T15:00:00.000Z" })).toBe(true);
   return (await getReport(env.DB, report.id))!;
 }
@@ -154,6 +154,16 @@ describe("proposeReportApproval", () => {
       expect(a.preview, part).toContain(part);
     }
     expect(a.preview).not.toContain("not written by Claude");
+  });
+
+  it("says nothing about updates or backups for a site no update run covered, and the other sites still show theirs", async () => {
+    const facts = { ...FACTS, sites: [site("ace.com"), site("shop.ace.com", { updatesTracked: false, updatesApplied: 0, backups: 0 })] };
+    const { id } = await proposed(await careClient(), { facts });
+    const preview = (await approvalRow(id))!.preview;
+    const [ace, shop] = ["- ace.com:", "- shop.ace.com:"].map((p) => preview.split("\n").find((l) => l.startsWith(p))!);
+    expect(ace).toContain("4 updates applied");
+    expect(shop).toBeTruthy();
+    expect(shop).not.toMatch(/update|backup/i);
   });
 
   it("says plainly when the summary was written by the code and not by Claude, and who edited it", async () => {

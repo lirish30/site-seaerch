@@ -47,7 +47,7 @@ const NOW_STATUS: Record<Outcome, string> = { applied: "applied", skipped: "avai
  * One care run of a site that finished at `finishedAt`, with what the helper's result recorded for each update (`outcome`). A new update row gets the status the run left it in;
  * an `id` reuses an update that an earlier run handled. The job's result is stored as `completeHelperJob` stores it.
  */
-async function run(siteId: string, finishedAt: string, o: { status?: string; backup?: string | null; updates?: { slug: string; outcome: Outcome; id?: string }[] } = {}) {
+async function run(siteId: string, finishedAt: string, o: { status?: string; backup?: string | null; updates?: { slug: string; outcome: Outcome; id?: string; note?: string }[] } = {}) {
   const runId = crypto.randomUUID(), jobId = crypto.randomUUID(), batchId = crypto.randomUUID();
   const ids: { id: string }[] = [];
   for (const u of o.updates ?? []) {
@@ -59,7 +59,7 @@ async function run(siteId: string, finishedAt: string, o: { status?: string; bac
       ).bind(id, siteId, u.slug, `Name of ${u.slug}`, finishedAt, finishedAt, NOW_STATUS[u.outcome]).run();
     }
   }
-  const result = { backupFile: null, steps: (o.updates ?? []).map((u, i) => ({ id: ids[i].id, outcome: u.outcome, note: "" })), pages: [], rolledBack: false, retry: false };
+  const result = { backupFile: null, steps: (o.updates ?? []).map((u, i) => ({ id: ids[i].id, outcome: u.outcome, note: u.note ?? "" })), pages: [], rolledBack: false, retry: false };
   await env.DB.batch([
     env.DB.prepare(`INSERT INTO care_batches (id, period, kind, site_id, status, created_at, updated_at) VALUES (?, '2026-11', 'single', ?, 'done', ?, ?)`).bind(batchId, siteId, finishedAt, finishedAt),
     env.DB.prepare(`INSERT INTO helper_jobs (id, kind, payload, status, result, created_at, done_at) VALUES (?, 'care.update', ?, 'done', ?, ?, ?)`)
@@ -246,6 +246,32 @@ describe("buildFacts: updates and backups", () => {
     expect((await facts(s, { period: "2026-10", now: new Date("2026-11-01T17:00:00.000Z") })).sites[0]).toMatchObject({ updatesApplied: 0, updatesFailed: 1, updatesRolledBack: 0 });
   });
 
+  it("an update put back only because another one failed is neither rolled back nor failed: one failed with four collaterals is 1 failed, 0 rolled back", async () => {
+    const s = await careClient();
+    const COLLATERAL = "put back because another update failed";
+    await run(s.site!.id, "2026-11-12T18:00:00.000Z", {
+      status: "rolled_back", backup: "b",
+      updates: [{ slug: "bad", outcome: "failed", note: "wp-cli refused the update" }, ...["a", "b", "c", "d"].map((slug) => ({ slug, outcome: "rolled_back" as const, note: COLLATERAL }))],
+    });
+    expect((await facts(s)).sites[0]).toMatchObject({ updatesApplied: 0, updatesRolledBack: 0, updatesFailed: 1 });
+    // The update that failed and was itself put back, and a rollback with no note, still count.
+    await run(s.site!.id, "2026-11-19T18:00:00.000Z", { status: "rolled_back", updates: [{ slug: "x", outcome: "rolled_back", note: "put back after this update failed" }, { slug: "y", outcome: "rolled_back" }] });
+    expect((await facts(s)).sites[0]).toMatchObject({ updatesRolledBack: 2, updatesFailed: 1 });
+  });
+
+  it("says updates were tracked only for a site with a run that finished in the month, even a run with nothing to update", async () => {
+    const s = await careClient();
+    const other = await addSite(s, "https://ace-shop.com");
+    const third = await addSite(s, "https://ace-blog.com");
+    await run(s.site!.id, "2026-11-12T18:00:00.000Z", { updates: [] }); // a run with nothing in it still covered the month
+    await run(other.id, "2026-10-12T18:00:00.000Z", { updates: [{ slug: "a", outcome: "applied" }] }); // October's run
+    await run(third.id, "2026-11-12T18:00:00.000Z", {});
+    await env.DB.prepare(`UPDATE care_runs SET finished_at = NULL, status = 'running' WHERE site_id = ?`).bind(third.id).run(); // still going
+    const f = await facts(s);
+    expect(Object.fromEntries(f.sites.map((x) => [x.domain, x.updatesTracked]))).toEqual({ "ace.com": true, "ace-shop.com": false, "ace-blog.com": false });
+    expect(ReportFacts.parse({ ...f, sites: f.sites.map(({ updatesTracked: _t, ...rest }) => rest) }).sites[0].updatesTracked).toBeUndefined(); // an older stored report still parses
+  });
+
   it("counts a backup only for a run with a backup file, per site, and not for another site's run or a run still going", async () => {
     const s = await careClient();
     const other = await addSite(s, "https://ace-shop.com");
@@ -390,7 +416,7 @@ describe("what the facts never hold", () => {
 describe("plainSummary", () => {
   const base = (): ReportFacts => ({
     version: 1, period: "2026-11", label: "November 2026", from: "2026-11-01T07:00:00.000Z", to: "2026-12-01T08:00:00.000Z", clientName: "Ace Plumbing", generatedAt: NOW.toISOString(),
-    sites: [{ domain: "ace.com", monitoredSince: "2026-11-01", uptimePercent: 99.9, coveredDays: 30, incidents: 1, longestOutageMinutes: 14, updatesApplied: 5, updatesRolledBack: 1, updatesFailed: 0, backups: 2, speedScore: 71 }],
+    sites: [{ domain: "ace.com", monitoredSince: "2026-11-01", uptimePercent: 99.9, coveredDays: 30, incidents: 1, longestOutageMinutes: 14, updatesApplied: 5, updatesRolledBack: 1, updatesFailed: 0, updatesTracked: true, backups: 2, speedScore: 71 }],
     edits: { month: "2026-11", allowanceMinutes: 60, usedMinutes: 45, percent: 75, state: "ok", requestsDone: 3 },
     renewals: [{ what: "domain", domain: "ace.com", on: "2027-01-10" }],
   });
@@ -410,12 +436,22 @@ describe("plainSummary", () => {
 
   it("says what it cannot measure by leaving it out, and says so plainly when nothing was done", () => {
     const f = base();
-    f.sites = [{ domain: "ace.com", monitoredSince: null, uptimePercent: null, coveredDays: 0, incidents: 0, longestOutageMinutes: null, updatesApplied: 0, updatesRolledBack: 0, updatesFailed: 0, backups: 0, speedScore: null }];
+    f.sites = [{ domain: "ace.com", monitoredSince: null, uptimePercent: null, coveredDays: 0, incidents: 0, longestOutageMinutes: null, updatesApplied: 0, updatesRolledBack: 0, updatesFailed: 0, updatesTracked: true, backups: 0, speedScore: null }];
     f.edits = null;
     f.renewals = [];
     const text = plainSummary(f);
     expect(text).not.toMatch(/uptime|was up|%|speed|edit|renewal|backup/i);
     expect(text).toMatch(/no updates/i);
+  });
+
+  it("leaves the update sentence out for a site no update run ever covered (it was not measured, so it is not zero)", () => {
+    const f = base();
+    f.sites = [{ ...f.sites[0], updatesApplied: 0, updatesRolledBack: 0, updatesTracked: false, backups: 0 }];
+    expect(plainSummary(f)).not.toMatch(/update|backup/i);
+    delete f.sites[0].updatesTracked; // an older report has no such field: it reads as not tracked
+    expect(plainSummary(f)).not.toMatch(/update/i);
+    f.sites = [{ ...f.sites[0], updatesTracked: true }, { ...f.sites[0], domain: "shop.ace.com", updatesApplied: 7, updatesTracked: false }];
+    expect(plainSummary(f)).toMatch(/0 updates were applied|No updates were applied/); // only the tracked site's figures are counted
   });
 
   it("stays under 600 characters with ten sites, and is the same for the same facts", () => {

@@ -17,7 +17,7 @@ const SUMMARY = "The site was up almost all month and four updates went in.";
 const RECOMMENDATION = "Look at why the shop site went down twice.";
 const site = (domain: string, over: Record<string, unknown> = {}) => ({
   domain, monitoredSince: "2026-10-03", uptimePercent: 99.9, coveredDays: 30, incidents: 1, longestOutageMinutes: 12,
-  updatesApplied: 4, updatesRolledBack: 1, updatesFailed: 0, backups: 2, speedScore: 81, ...over,
+  updatesApplied: 4, updatesRolledBack: 1, updatesFailed: 0, updatesTracked: true, backups: 2, speedScore: 81, ...over,
 });
 const facts = (over: Record<string, unknown> = {}) => ({
   version: 1, period: "2026-11", label: "November 2026", from: "2026-11-01T08:00:00.000Z", to: "2026-12-01T08:00:00.000Z", clientName: "Ace Plumbing",
@@ -67,13 +67,19 @@ describe("get_care_report", () => {
     expect(out.reports[0]).toEqual({
       clientId: a.s.businessId, client: "Ace Plumbing", status: "ready", summary: SUMMARY, recommendation: RECOMMENDATION, sentOn: null, views: 0,
       headline: {
-        sites: [{ domain: "ace.com", uptimePercent: 99.9, coveredDays: 30, incidents: 1, longestOutageMinutes: 12, updatesApplied: 4, updatesRolledBack: 1, updatesFailed: 0, backups: 2, speedScore: 81 }],
+        sites: [{ domain: "ace.com", uptimePercent: 99.9, coveredDays: 30, incidents: 1, longestOutageMinutes: 12, updatesApplied: 4, updatesRolledBack: 1, updatesFailed: 0, updatesTracked: true, backups: 2, speedScore: 81 }],
         editRequestsDone: 3,
       },
       ledger: { month: "2026-11", allowanceMinutes: 60, usedMinutes: 0, percent: 0, state: "ok" },
     });
     expect(out.reports[1]).toMatchObject({ clientId: b.s.businessId, sentOn: "2026-12-01" }); // 01:00 UTC on the 2nd is still the 1st in Los Angeles
     expect(out.reports[2]).toMatchObject({ clientId: c.s.businessId, summary: "", recommendation: "" });
+  });
+
+  it("says updatesTracked false for a site no update run covered (an older stored report has none), so the agent cannot read its zeros as measured", async () => {
+    await reported("Ace Plumbing", { status: "sent", facts: facts({ sites: [site("ace.com", { updatesTracked: undefined, updatesApplied: 0, updatesRolledBack: 0 })] }) });
+    const out = await ok<Answer>("get_care_report", { period: "2026-11" });
+    expect(out.reports[0].headline.sites[0]).toMatchObject({ updatesTracked: false, updatesApplied: 0 });
   });
 
   it("never returns a token, a link, an alias or a backup file name, even when the stored numbers carry them", async () => {

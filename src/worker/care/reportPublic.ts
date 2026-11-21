@@ -18,6 +18,8 @@ export interface PublicReportSite {
   longestOutageMinutes: number | null;
   updatesApplied: number;
   updatesRolledBack: number;
+  /** False when no update run covered the site that month: its update numbers were not measured, and the page says nothing about them. */
+  updatesTracked: boolean;
   backups: number;
   speedScore: number | null;
 }
@@ -57,7 +59,7 @@ export async function publicReport(env: Pick<Env, "DB">, token: string, now: Dat
     recommendation: report.recommendation,
     sites: f.sites.map((s) => ({
       domain: s.domain, uptimePercent: s.uptimePercent, coveredDays: s.coveredDays, monitoredSince: s.monitoredSince, incidents: s.incidents, longestOutageMinutes: s.longestOutageMinutes,
-      updatesApplied: s.updatesApplied, updatesRolledBack: s.updatesRolledBack, backups: s.backups, speedScore: s.speedScore,
+      updatesApplied: s.updatesApplied, updatesRolledBack: s.updatesRolledBack, updatesTracked: s.updatesTracked === true, backups: s.backups, speedScore: s.speedScore,
     })),
     edits: f.edits ? { usedMinutes: f.edits.usedMinutes, allowanceMinutes: f.edits.allowanceMinutes, state: f.edits.state, requestsDone: f.edits.requestsDone } : null,
     renewals: f.renewals.map((r) => ({ what: r.what, domain: r.domain, on: r.on })),

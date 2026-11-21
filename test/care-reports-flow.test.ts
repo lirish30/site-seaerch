@@ -285,8 +285,9 @@ describe("care reports, end to end", () => {
     expect(aFacts).toMatchObject({ period: "2026-11", label: "November 2026", clientName: "Alpha Bakery", edits: { allowanceMinutes: 60, usedMinutes: 75, percent: 125, state: "over", requestsDone: 1 } });
     const main = aFacts.sites.find((s) => s.domain === "alpha-bakery.example.com")!;
     const shop = aFacts.sites.find((s) => s.domain === "alpha-shop.example.com")!;
-    expect(main).toMatchObject({ monitoredSince: "2026-11-01", uptimePercent: 99.6, coveredDays: 30, incidents: 1, longestOutageMinutes: 180, updatesApplied: 2, updatesRolledBack: 1, updatesFailed: 0, backups: 3, speedScore: 34 });
-    expect(shop).toMatchObject({ uptimePercent: 100, coveredDays: 30, incidents: 0, longestOutageMinutes: null, updatesApplied: 0, backups: 0, speedScore: 34 });
+    expect(main).toMatchObject({ monitoredSince: "2026-11-01", uptimePercent: 99.6, coveredDays: 30, incidents: 1, longestOutageMinutes: 180, updatesApplied: 2, updatesRolledBack: 1, updatesFailed: 0, updatesTracked: true, backups: 3, speedScore: 34 });
+    // No update run ever covered the second site: its zeros are not measurements.
+    expect(shop).toMatchObject({ uptimePercent: 100, coveredDays: 30, incidents: 0, longestOutageMinutes: null, updatesApplied: 0, updatesTracked: false, backups: 0, speedScore: 34 });
     expect(aFacts.renewals).toEqual([{ what: "certificate", domain: "alpha-bakery.example.com", on: "2027-01-11" }]);
     const bFacts = ReportFacts.parse(JSON.parse((await env.DB.prepare(`SELECT facts FROM care_reports WHERE business_id = ?`).bind(b.businessId).first<{ facts: string }>())!.facts));
     expect(bFacts.sites).toEqual([expect.objectContaining({ domain: "bravo-plumbing.example.com", monitoredSince: "2026-11-20", coveredDays: 11, uptimePercent: 100, incidents: 0 })]);
@@ -395,9 +396,9 @@ describe("care reports, end to end", () => {
     const pMain = open.json.sites.find((s: { domain: string }) => s.domain === "alpha-bakery.example.com");
     const pShop = open.json.sites.find((s: { domain: string }) => s.domain === "alpha-shop.example.com");
     expect(open.json.sites).toHaveLength(2);
-    expect(pMain).toEqual({ domain: "alpha-bakery.example.com", uptimePercent: 99.6, coveredDays: 30, monitoredSince: "2026-11-01", incidents: 1, longestOutageMinutes: 180, updatesApplied: 2, updatesRolledBack: 1, backups: 3, speedScore: 34 });
+    expect(pMain).toEqual({ domain: "alpha-bakery.example.com", uptimePercent: 99.6, coveredDays: 30, monitoredSince: "2026-11-01", incidents: 1, longestOutageMinutes: 180, updatesApplied: 2, updatesRolledBack: 1, updatesTracked: true, backups: 3, speedScore: 34 });
     expect(pMain.uptimePercent).toBeLessThan(100);
-    expect(pShop).toMatchObject({ uptimePercent: 100, incidents: 0, longestOutageMinutes: null, updatesApplied: 0, updatesRolledBack: 0 });
+    expect(pShop).toMatchObject({ uptimePercent: 100, incidents: 0, longestOutageMinutes: null, updatesApplied: 0, updatesRolledBack: 0, updatesTracked: false });
     const viewed = (await reportOf(a.businessId))!;
     expect(viewed.view_count).toBe(1);
     expect(viewed.first_viewed_at).toBe(DEC_17.toISOString());
