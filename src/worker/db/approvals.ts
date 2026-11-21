@@ -86,6 +86,12 @@ export async function createApprovalOnce(db: D1Database, a: {
   return (res.meta.changes ?? 0) > 0 ? toApproval(row) : null;
 }
 
+/** Rewrites the title and preview of an approval that is still pending (the card shows the record as it is now). False when it is decided or unknown: a decided card is history and stays as it was. */
+export async function updatePendingCard(db: D1Database, id: string, card: { title: string; preview: string }): Promise<boolean> {
+  const res = await db.prepare(`UPDATE approvals SET title = ?, preview = ? WHERE id = ? AND status = 'pending'`).bind(card.title, card.preview, id).run();
+  return (res.meta.changes ?? 0) === 1;
+}
+
 export async function listApprovals(db: D1Database, o: { status?: ApprovalStatus; limit?: number }): Promise<Approval[]> {
   const rows = (await db.prepare(`SELECT * FROM approvals WHERE status = ? ORDER BY created_at DESC, id DESC LIMIT ?`)
     .bind(o.status ?? "pending", o.limit ?? 100).all<Row>()).results;

@@ -124,6 +124,7 @@ export default function CareUpdates() {
         </div>
         <div className="header-actions">
           <Link className="btn" to="/care">Health</Link>
+          <Link className="btn" to="/care/reports">Reports</Link>
           <button type="button" className="btn" onClick={() => void load()}><Icon name="refresh" size={16} />Refresh</button>
         </div>
       </header>

@@ -3,7 +3,7 @@ import type { Env } from "../env";
 import { localDay } from "../monitoring/rollup";
 
 // The edit-hours ledger (Plan 13): how much of a Care client's monthly edit allowance is used. Only time logged on the client's edit-request tasks counts;
-// a billable change order, the weekly Care updates (CARE-1) and a Care incident (CARE-5) are other work. A time entry belongs to the month it STARTED in, in the booking zone.
+// a billable change order or any other billable time, the weekly Care updates (CARE-1) and a Care incident (CARE-5) are other work. A time entry belongs to the month it STARTED in, in the booking zone.
 
 /** The edit time each Care plan includes every month, in minutes. */
 export const EDIT_ALLOWANCE_MINUTES: Record<"care" | "care_plus" | "care_fallback", number> = { care: 60, care_plus: 180, care_fallback: 60 };
@@ -41,7 +41,7 @@ export async function editLedger(env: Pick<Env, "DB">, businessId: string, month
   const to = new Date(Date.UTC(y, m, 1) + 2 * DAY).toISOString();
   const entries = (await env.DB.prepare(
     `SELECT e.started_at AS started_at, e.minutes AS minutes FROM time_entries e JOIN tasks t ON t.id = e.task_id
-     WHERE t.edit_request = 1 AND t.business_id = ? AND e.business_id = ? AND e.started_at >= ? AND e.started_at < ?`,
+     WHERE t.edit_request = 1 AND e.billable = 0 AND t.business_id = ? AND e.business_id = ? AND e.started_at >= ? AND e.started_at < ?`,
   ).bind(businessId, businessId, from, to).all<{ started_at: string; minutes: number }>()).results;
   let usedMinutes = 0;
   for (const e of entries) {

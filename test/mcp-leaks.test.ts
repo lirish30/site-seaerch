@@ -16,6 +16,7 @@ import { createOnboarding, listItems, saveItemText } from "../src/worker/db/onbo
 import { setAccess } from "../src/worker/db/sites";
 import { openIncident } from "../src/worker/db/monitoring";
 import { createSingleBatch, insertRun, setRunStatus } from "../src/worker/db/careUpdates";
+import { insertReport, setSummary } from "../src/worker/db/careReports";
 import { markSubscription } from "../src/worker/db/subscriptions";
 import { markSent } from "../src/worker/db/changeOrders";
 import { sha256Hex, canonicalJson } from "../src/worker/documents/hash";
@@ -31,7 +32,7 @@ const SENTINELS = {
   documentToken: "DOCUMENT-TOKEN-SENTINEL", bookingCancelToken: "BOOKING-CANCEL-TOKEN-SENTINEL", onboardingToken: "ONBOARDING-TOKEN-SENTINEL",
   changeOrderToken: "CHANGE-ORDER-TOKEN-SENTINEL", hostedUrl: "https://invoice.stripe.com/i/HOSTED-URL-SENTINEL", stripeInvoice: "in_STRIPE-INVOICE-SENTINEL",
   stripeCustomer: "cus_STRIPE-CUSTOMER-SENTINEL", stripeSubscription: "sub_STRIPE-SUBSCRIPTION-SENTINEL", transcriptKey: "transcript.json",
-  sshAlias: "SSH-ALIAS-SENTINEL-host", wpPath: "/var/www/WP-PATH-SENTINEL", backupFile: "BACKUP-FILE-SENTINEL",
+  reportToken: "CARE-REPORT-TOKEN-SENTINEL", sshAlias: "SSH-ALIAS-SENTINEL-host", wpPath: "/var/www/WP-PATH-SENTINEL", backupFile: "BACKUP-FILE-SENTINEL",
   mailboxOut: env.MAILBOX_OUTREACH_PASSWORD, mailboxMain: env.MAILBOX_MAIN_PASSWORD,
 };
 const TRANSCRIPT = "TRANSCRIPT-SENTINEL";
@@ -93,6 +94,12 @@ beforeAll(async () => {
   const careBatch = await createSingleBatch(env.DB, s.site!.id, "2026-W49", "2026-12-05T08:00:00.000Z");
   const careRun = await insertRun(env.DB, { batchId: careBatch.id, siteId: s.site!.id, wave: 0, now: "2026-12-05T08:00:00.000Z" });
   await setRunStatus(env.DB, careRun.id, ["queued"], "ok", { summary: "1 applied", backupFile: `siteline-backups/${SENTINELS.backupFile}.sql.gz` }, "2026-12-05T08:30:00.000Z");
+  // A monthly report with its client token, and a backup file name and alias stored inside its numbers: the report tool must say neither.
+  const { report } = await insertReport(env.DB, {
+    businessId: s.businessId, period: "2026-11", token: SENTINELS.reportToken, test: false, now: "2026-12-01T10:00:00.000Z",
+    facts: { version: 1, period: "2026-11", label: "November 2026", from: "2026-11-01T08:00:00.000Z", to: "2026-12-01T08:00:00.000Z", clientName: "Ace Plumbing", sites: [], edits: null, renewals: [], generatedAt: "2026-12-01T10:00:00.000Z", alias: SENTINELS.sshAlias, backupFile: SENTINELS.backupFile },
+  });
+  await setSummary(env.DB, report.id, ["collecting"], { summary: "The site was up all month.", recommendation: "Nothing to fix.", source: "claude", now: "2026-12-01T11:00:00.000Z" });
   // An open down incident on the client's site, so the Care tools have something to show.
   await openIncident(env.DB, { siteId: s.site!.id, businessId: s.businessId, kind: "down", detail: "HTTP 503", now: "2026-12-05T09:00:00.000Z" });
   await logActivity(env.DB, s.businessId, "note" as never, "Called Pat");
@@ -108,7 +115,7 @@ const calls = (): [string, unknown][] => [
   ["list_open_tasks", {}], ["list_open_tasks", { owner: "logan" }], ["list_open_tasks", { owner: "claude" }], ["list_open_tasks", { owner: "client" }],
   ["get_deal", { id: ids.dealId }], ["list_invoices", {}], ["list_invoices", { business_id: ids.businessId }], ["list_invoices", { status: "open" }],
   ["list_meetings", {}], ["list_meetings", { business_id: ids.businessId }], ["get_meeting", { id: ids.meetingId }],
-  ["get_care_overview", {}], ["get_care_updates", {}], ["list_incidents", {}], ["list_incidents", { open: true }], ["list_incidents", { open: false }], ["list_incidents", { clientId: ids.businessId }],
+  ["get_care_overview", {}], ["get_care_updates", {}], ["get_care_report", {}], ["get_care_report", { period: "2026-11" }], ["get_care_report", { period: "2026-11", clientId: ids.businessId }], ["list_incidents", {}], ["list_incidents", { open: true }], ["list_incidents", { open: false }], ["list_incidents", { clientId: ids.businessId }],
   ["get_timeline", { record_type: "business", record_id: ids.businessId }], ["get_timeline", { record_type: "project", record_id: ids.projectId }],
 ];
 

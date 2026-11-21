@@ -31,6 +31,7 @@ export default function WorkSidebar() {
       <SideItem to="/billing" icon="card" label="Billing" active={pathname === "/billing"} />
       <SideItem to="/money" icon="trending" label="Money" active={pathname === "/money"} />
       <SideItem to="/care" icon="shield" label="Care" active={pathname === "/care"} />
+      <SideItem to="/care/reports" icon="file-text" label="Care reports" active={pathname === "/care/reports"} />
       <SideItem to="/timesheet" icon="calendar" label="Timesheet" active={pathname === "/timesheet"} />
       <div className="side-gap" aria-hidden="true" />
     </>

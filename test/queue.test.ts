@@ -392,7 +392,7 @@ describe("mcp queue tools", () => {
   it("mcp lists the task, lead, read, act and money tools", async () => {
     const j = await rpcJson("tools/list", {});
     expect(j.result.tools.map((t: { name: string }) => t.name).sort()).toEqual(
-      ["add_note", "add_task", "add_task_comment", "complete_claude_task", "get_care_overview", "get_care_updates", "get_client", "get_deal", "get_lead", "get_meeting", "get_money_summary", "get_project", "get_site", "get_timeline", "list_approvals", "list_incidents", "list_invoices", "list_meetings",
+      ["add_note", "add_task", "add_task_comment", "complete_claude_task", "get_care_overview", "get_care_report", "get_care_updates", "get_client", "get_deal", "get_lead", "get_meeting", "get_money_summary", "get_project", "get_site", "get_timeline", "list_approvals", "list_incidents", "list_invoices", "list_meetings",
         "list_open_tasks", "list_projects", "log_time", "next_claude_task", "propose_approval", "queue_status", "release_claude_task", "run_audit", "search_clients", "search_leads"],
     );
   });

@@ -6,7 +6,7 @@ import { ReportFacts } from "../care/reportFacts";
 import { CARE_4, tickCare4 } from "../care/tasks";
 import { checkConflict } from "../conflict";
 import { logActivityOnce } from "../db/activity";
-import { createApprovalOnce, type Approval } from "../db/approvals";
+import { createApprovalOnce, updatePendingCard, type Approval } from "../db/approvals";
 import { getReport, markSent, setTaskAndApproval, type CareReport } from "../db/careReports";
 import { isOnHold } from "../db/holds";
 import { getByApproval } from "../db/messages";
@@ -121,6 +121,16 @@ export async function proposeReportApproval(env: Env, report: CareReport): Promi
   if (!id) throw new Error("Could not make the approval for the monthly report.");
   await setTaskAndApproval(db, report.id, { approvalId: id });
   return id;
+}
+
+/**
+ * Rewrites the card of the report's approval, if it is still pending, from the report as it is now, so Logan approves the words the card shows (the card is built when the approval is proposed, while the mail
+ * is built from the live row when it runs). A decided approval, or a report with none, is left alone. True when a card was rewritten.
+ */
+export async function refreshReportApproval(env: Env, report: CareReport): Promise<boolean> {
+  const id = await existingApproval(env.DB, report.id);
+  if (!id) return false;
+  return updatePendingCard(env.DB, id, await describe(env, report));
 }
 
 /**

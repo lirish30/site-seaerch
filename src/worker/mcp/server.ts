@@ -19,6 +19,7 @@ const proposableKinds = () => registeredKinds().filter((k) => !APP_PROPOSED.incl
 import { makeCtx } from "./tools/context";
 import { registerActTools } from "./tools/act";
 import { registerCareTools } from "./tools/care";
+import { registerCareReportTools } from "./tools/careReport";
 import { registerMoneyTools } from "./tools/money";
 import { registerReadTools } from "./tools/read";
 import { approvalView } from "./tools/views";
@@ -222,5 +223,6 @@ export function buildMcpServer(env: Env): McpServer {
   registerActTools(server, ctx);
   registerMoneyTools(server, ctx);
   registerCareTools(server, ctx);
+  registerCareReportTools(server, ctx);
   return server;
 }

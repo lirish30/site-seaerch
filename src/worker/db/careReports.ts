@@ -46,12 +46,13 @@ export async function getReportFor(db: D1Database, businessId: string, period: s
   return r ? toReport(r) : null;
 }
 
-/** Reports of one period and/or in any of the given statuses (an empty status list matches none), oldest first. */
-export async function listReports(db: D1Database, o: { period?: string; status?: ReportStatus[] }): Promise<CareReport[]> {
+/** Reports of one period, of one client and/or in any of the given statuses (an empty status list matches none), oldest first. */
+export async function listReports(db: D1Database, o: { period?: string; businessId?: string; status?: ReportStatus[] }): Promise<CareReport[]> {
   if (o.status && o.status.length === 0) return [];
   const where: string[] = [];
   const args: string[] = [];
   if (o.period !== undefined) { where.push("period = ?"); args.push(o.period); }
+  if (o.businessId !== undefined) { where.push("business_id = ?"); args.push(o.businessId); }
   if (o.status) { where.push(`status IN (${marks(o.status.length)})`); args.push(...o.status); }
   const rows = (await db.prepare(`SELECT * FROM care_reports ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY created_at, rowid`).bind(...args).all<Row>()).results;
   return rows.map(toReport);

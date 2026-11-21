@@ -4,6 +4,7 @@ import { ApiError, careApi } from "../../api";
 import { shortDate } from "../../billingView";
 import { runLabel, whyLabel } from "../../careUpdatesView";
 import { bandTone, formatUptime, healthChipText, incidentLine, siteStateLabel } from "../../careView";
+import CareEditHours from "./CareEditHours";
 import type { CareSiteView } from "../../../worker/care/views";
 import type { Health } from "../../../worker/clients/health";
 import type { Site } from "../../../worker/db/sites";
@@ -122,6 +123,8 @@ export default function CarePanel({ businessId, health, sites, zone, onChanged }
       {health.reasons.length > 0
         ? <ul className="cr-reasons">{health.reasons.map((r) => <li key={r}>{r}</li>)}</ul>
         : <p className="muted small">Nothing is pulling this score down.</p>}
+
+      <CareEditHours businessId={businessId} />
 
       <h3 className="cr-sub">Sites</h3>
       {sites.length === 0 && <p className="muted small">No site to watch yet.</p>}

@@ -117,6 +117,12 @@ describe("editLedger", () => {
     expect(await editLedger(env, other.s.businessId, "2026-11", LA)).toMatchObject({ usedMinutes: 55 });
   });
 
+  it("leaves out a billable entry even on an edit-request task", async () => {
+    const a = await clientWith(10);
+    await logged(a.s, a.t.id, 45, "2026-11-11T18:00:00.000Z", { billable: true });
+    expect(await editLedger(env, a.s.businessId, "2026-11", LA)).toMatchObject({ usedMinutes: 10, state: "ok" });
+  });
+
   it("counts an entry only toward the client of its task, even if the entry names another", async () => {
     const a = await clientWith(0);
     const other = await clientWith(0);

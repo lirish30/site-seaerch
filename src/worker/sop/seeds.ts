@@ -253,4 +253,26 @@ const CARE_5: SopTemplateInput = {
   ]),
 };
 
-export const SEED_SOPS: SopTemplateInput[] = [BUILD, QUICKFIX, CARE_0, CARE_1, CARE_4, CARE_5];
+/** The checklist for one change a client asks for on their site. It is never started as a project: each edit request copies its steps. */
+const CARE_3: SopTemplateInput = {
+  key: "CARE-3",
+  name: "Care edit request",
+  kind: "project",
+  cadence: null,
+  cadenceDay: null,
+  appliesTo: ["care", "care_plus", "care_fallback"],
+  active: true,
+  steps: stepsOf([
+    {
+      key: "edit", title: "Make one edit", steps: [
+        { key: "1.1", title: "Log the request", owner: C, est: 1, done: "The request is written down with the client, their plan and how much of this month's edit time is left." },
+        { key: "1.2", title: "Check the scope", owner: CL, est: 2, done: "The request is sorted as within the allowance, needing a quote, or out of scope (a redesign or a new feature), and Logan has approved that.", requires: ["1.1"] },
+        { key: "1.3", title: "Make the change and take before and after pictures", owner: C, est: 15, done: "The change is made on a test copy and has a before picture and an after picture.", requires: ["1.2"] },
+        { key: "1.4", title: "Approve, publish and reply", owner: CL, est: 3, done: "Logan has approved the change, it is live, and the client has a reply showing before and after, within 24 business hours.", requires: ["1.3"] },
+        { key: "1.5", title: "Log the minutes", owner: C, est: 1, done: "The time is on the edit-hours ledger, and the month is flagged when it passes 80% of the allowance.", requires: ["1.4"] },
+      ],
+    },
+  ]),
+};
+
+export const SEED_SOPS: SopTemplateInput[] = [BUILD, QUICKFIX, CARE_0, CARE_1, CARE_4, CARE_5, CARE_3];
