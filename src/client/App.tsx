@@ -48,6 +48,7 @@ import BillingSettings from "./pages/settings/Billing";
 import Billing from "./pages/Billing";
 import Money from "./pages/Money";
 import Care from "./pages/Care";
+import CareUpdates, { CareRunPage } from "./pages/CareUpdates";
 import Sops from "./pages/settings/Sops";
 import Work from "./pages/settings/Work";
 import Clients from "./pages/Clients";
@@ -87,6 +88,8 @@ export default function App() {
             <Route path="/billing" element={<Billing />} />
             <Route path="/money" element={<Money />} />
             <Route path="/care" element={<Care />} />
+            <Route path="/care/updates" element={<CareUpdates />} />
+            <Route path="/care/runs/:id" element={<CareRunPage />} />
             <Route path="/clients" element={<Clients />} />
             <Route path="/clients/:id" element={<ClientPage />} />
             <Route path="/tasks/:id" element={<TaskRedirect />} />
