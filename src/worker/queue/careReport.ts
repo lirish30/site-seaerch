@@ -17,8 +17,10 @@ export type CareReportPayload = z.infer<typeof CareReportPayload>;
 /** Claude's words are shown to a client: no address, no email, no dollar amount, no markdown, no long run of blank lines. A result that fails this is refused and the task stays claimed. */
 const REFUSED = /https?:\/\/|www\.|@|\$\s?\d|[`#*_]{2}/i;
 const BLANK_LINES = /(?:\r?\n){3,}/;
+/** Markdown that survives the two-character check: a link `[x](y)` and a line that starts as a heading or a bullet. */
+const MARKDOWN = /\]\(|^\s*(#|[-*]\s)/m;
 const words = (max: number) => z.string().trim().min(1).max(max)
-  .refine((s) => !REFUSED.test(s), "must not contain a link, an email address, a price or markdown")
+  .refine((s) => !REFUSED.test(s) && !MARKDOWN.test(s), "must not contain a link, an email address, a price or markdown")
   .refine((s) => !BLANK_LINES.test(s), "must not contain a run of blank lines");
 
 export const CareReportResult = z.object({ summary: words(600), recommendation: words(300) });
@@ -91,18 +93,26 @@ const careReport: TaskKindDef<CareReportPayload, CareReportResult> = {
   async build(env, p) {
     const report = await getReport(env.DB, p.reportId);
     if (!report) return { stale: "the report no longer exists" };
-    if (report.status !== "collecting") return { stale: "the report already has its words" };
+    // A stale task is never looked at again, so a report that would wait on it is settled here first: a report whose words are stored but has no approval (an `apply` that crashed) gets
+    // its approval, and one whose numbers cannot be read gets the plain summary.
+    if (report.status !== "collecting") {
+      if (report.status === "ready" && !report.approvalId) await propose(env, p.reportId);
+      return { stale: "the report already has its words" };
+    }
     const facts = ReportFacts.safeParse(report.facts);
-    if (!facts.success) return { stale: "the report's numbers cannot be read" };
+    if (!facts.success) {
+      await settlePlain(env, p.reportId);
+      return { stale: "the report's numbers cannot be read" };
+    }
     return { instructions: INSTRUCTIONS, untrusted: [{ type: "text", text: factLines(facts.data) }] };
   },
 
-  /** Stores Claude's words and proposes the approval. A crash-retry finds the words already stored and only proposes (one approval per report); anything else is stale. */
+  /** Stores Claude's words and proposes the approval. A crash-retry finds the report `ready` with no approval (whoever wrote its words) and only proposes (one approval per report); anything else is stale. */
   async apply(env, p, r) {
     const report = await getReport(env.DB, p.reportId);
     if (!report) return { stale: "the report no longer exists" };
     const stored = await setSummary(env.DB, p.reportId, ["collecting"], { summary: r.summary, recommendation: r.recommendation, source: "claude", now: new Date().toISOString() });
-    if (!stored && !(report.status === "ready" && report.summarySource === "claude" && !report.approvalId)) return { stale: "the report already has its words" };
+    if (!stored && !(report.status === "ready" && !report.approvalId)) return { stale: "the report already has its words" };
     await propose(env, p.reportId);
     return { log: { summary: `wrote the ${report.period} Care report summary`, recordType: CARE_REPORT_TARGET, recordId: report.id } };
   },

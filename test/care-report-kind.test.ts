@@ -53,12 +53,14 @@ describe("the care.report kind", () => {
   });
 
   it("refuses a link, an address, an amount, markdown, a run of blank lines and too many characters, and trims", () => {
-    const bad = ["see https://x.example", "go to www.x.example", "write a@b.co", "it costs $99", "it costs $ 99", "this is **bold**", "## heading", "a\n\n\nb", "x".repeat(601)];
+    const bad = ["see [here](x)", "# heading", "intro\n# heading", "- one\n- two", "* one", "intro\n  - one", "see https://x.example", "go to www.x.example", "write a@b.co", "it costs $99", "it costs $ 99", "this is **bold**", "## heading", "a\n\n\nb", "x".repeat(601)];
     for (const summary of bad) expect(CareReportResult.safeParse({ ...GOOD, summary }).success, summary).toBe(false);
     for (const recommendation of ["see https://x.example", "x".repeat(301), "  ", ""]) expect(CareReportResult.safeParse({ ...GOOD, recommendation }).success, recommendation).toBe(false);
     expect(CareReportResult.safeParse({ ...GOOD, summary: "" }).success).toBe(false);
     expect(CareReportResult.safeParse({ summary: "x".repeat(600), recommendation: "y".repeat(300) }).success).toBe(true);
+    for (const recommendation of ["see [here](x)", "- do this"]) expect(CareReportResult.safeParse({ ...GOOD, recommendation }).success, recommendation).toBe(false);
     expect(CareReportResult.safeParse({ summary: "a\n\nb", recommendation: "ok" }).success).toBe(true);
+    expect(CareReportResult.safeParse({ summary: "Uptime was 99.9% and it's fine - mostly. Two updates (both small) went in.", recommendation: "Ask about the shop's 2 outages." }).success).toBe(true);
     expect(CareReportResult.parse({ summary: "  hello  ", recommendation: " there " })).toEqual({ summary: "hello", recommendation: "there" });
   });
 
@@ -103,6 +105,21 @@ describe("the care.report kind", () => {
     expect(await kind().build(env, { reportId: bad.id }, task)).toEqual({ stale: expect.any(String) });
   });
 
+  it("build settles a report it cannot brief: the approval for stored words that have none, the plain summary for numbers that cannot be read", async () => {
+    const r = await made();
+    const task = await claim(r.id);
+    await env.DB.prepare(`UPDATE care_reports SET status = 'ready', summary_source = 'claude', summary = ?, recommendation = ?, ready_at = ? WHERE id = ?`).bind(GOOD.summary, GOOD.recommendation, NOW, r.id).run();
+    expect(await kind().build(env, task.payload, task)).toEqual({ stale: expect.any(String) });
+    expect(await getReport(env.DB, r.id)).toMatchObject({ status: "ready", summary: GOOD.summary, summarySource: "claude", approvalId: "approval-1" });
+    expect(await kind().build(env, task.payload, task)).toEqual({ stale: expect.any(String) });
+    expect(proposed.size).toBe(1);
+
+    const bad = await made({ version: 2 });
+    expect(await kind().build(env, { reportId: bad.id }, task)).toEqual({ stale: expect.any(String) });
+    const got = (await getReport(env.DB, bad.id))!;
+    expect(got).toMatchObject({ status: "ready", summarySource: "plain", summary: "Care report for 2026-11.", recommendation: "", approvalId: "approval-2" });
+  });
+
   it("a good result makes the report ready with Claude's words and one approval, and a second apply changes nothing", async () => {
     const r = await made();
     const task = await claim(r.id);
@@ -133,6 +150,14 @@ describe("the care.report kind", () => {
     expect(await completeTask(env, task.id, GOOD)).toEqual({ ok: true });
     expect(await getReport(env.DB, r.id)).toMatchObject({ approvalId: "approval-1", summary: GOOD.summary });
     expect(proposed.size).toBe(1);
+  });
+
+  it("an apply that crashed while Logan edited the words still proposes, and leaves his words", async () => {
+    const r = await made();
+    const task = await claim(r.id);
+    await env.DB.prepare(`UPDATE care_reports SET status = 'ready', summary_source = 'logan', summary = 'mine', recommendation = 'his', ready_at = ? WHERE id = ?`).bind(NOW, r.id).run();
+    expect(await completeTask(env, task.id, GOOD)).toEqual({ ok: true });
+    expect(await getReport(env.DB, r.id)).toMatchObject({ summary: "mine", summarySource: "logan", approvalId: "approval-1" });
   });
 
   it("apply is stale for a report that was cancelled, and Logan's edited words are not overwritten", async () => {
