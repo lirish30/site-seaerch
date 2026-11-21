@@ -4,7 +4,7 @@ import worker from "../src/worker/index";
 import * as factsMod from "../src/worker/care/reportFacts";
 import { CareReportRefused, previousMonth, startReport, sweepReports } from "../src/worker/care/reportSweep";
 import { tickCare4 } from "../src/worker/care/tasks";
-import { getReportFor, insertReport, listReports } from "../src/worker/db/careReports";
+import { getReportFor, insertReport, listReports, upsertUptimeDay } from "../src/worker/db/careReports";
 import { placeHold } from "../src/worker/db/holds";
 import { markSubscription } from "../src/worker/db/subscriptions";
 import { addCadence, setProjectStatus } from "../src/worker/db/projects";
@@ -43,10 +43,15 @@ async function cadence(projectId: string, at = "2026-10-15T17:00:00.000Z") {
   await env.DB.prepare(`UPDATE project_cadences SET created_at = ? WHERE project_id = ? AND template_key = 'CARE-4'`).bind(at, projectId).run();
 }
 
-/** A real client with live Care and the monthly report cadence on its project; its CARE-4 task is made for the month `at` falls in (none when `task` is false). */
-async function careClient(o: { task?: boolean; test?: boolean; at?: Date; cadenceAt?: string } = {}) {
+/**
+ * A real client with live Care and the monthly report cadence on its project; its CARE-4 task is made for the month `at` falls in (none when `task` is false). Its site has a rolled-up uptime day on `uptimeFrom`
+ * (the first of November unless said, none when null): the sweep reports only months the rollup has written at least one day of.
+ */
+async function careClient(o: { task?: boolean; test?: boolean; at?: Date; cadenceAt?: string; uptimeFrom?: string | null } = {}) {
   const s = await seedClient({ subs: CARE, test: o.test });
   await cadence(s.project!.id, o.cadenceAt);
+  const from = o.uptimeFrom === undefined ? "2026-11-01" : o.uptimeFrom;
+  if (from && s.site) await upsertUptimeDay(env.DB, s.site.id, from, 288, 288);
   if (o.task !== false) await generateRecurring(e, o.at ?? NOW);
   return s;
 }
@@ -132,6 +137,28 @@ describe("sweepReports", () => {
     expect((await startReport(e, late.businessId, { test: false, now: NOW })).created).toBe(true);
   });
 
+  it("builds nothing on the first sweep after a deploy mid-month (the rollup has no day of the reported month), and starts once it has one", async () => {
+    // Deployed on 10 December: the rollup's first day is in the current month, so November was never measured, though the clients already have December's CARE-4 task and a cadence from before November.
+    const s = await careClient({ uptimeFrom: "2026-12-02" });
+    const t = await careClient({ uptimeFrom: null });
+    expect(await sweepReports(e, NOW)).toEqual({ started: 0, skipped: 0 });
+    expect(await reports()).toEqual([]);
+    expect(await jobs()).toEqual([]);
+    expect((await care4(s.project!.id))[0].checklist.map((c) => c.done)).toEqual([false, false, false, false, false, false]);
+    // The owner's own start is not held back by it (the rehearsal needs it).
+    expect((await startReport(e, t.businessId, { test: false, now: NOW })).created).toBe(true);
+    // The rollup reaches the reported month (even its last day only): both clients are candidates, the one with a report is left alone.
+    await upsertUptimeDay(env.DB, s.site!.id, "2026-11-30", 288, 288);
+    expect(await sweepReports(e, NOW)).toEqual({ started: 1, skipped: 0 });
+    expect((await reports()).map((r) => r.businessId).sort()).toEqual([s.businessId, t.businessId].sort());
+  });
+
+  it("builds nothing when the rollup has no day at all", async () => {
+    await careClient({ uptimeFrom: null });
+    expect(await sweepReports(e, NOW)).toEqual({ started: 0, skipped: 0 });
+    expect(await reports()).toEqual([]);
+  });
+
   it("one client whose facts fail is logged and does not stop the next", async () => {
     const bad = await careClient();
     const ok = await careClient();
@@ -148,6 +175,7 @@ describe("sweepReports", () => {
 
   it("starts at most 50 clients a run, and the rest the next day", async () => {
     for (let i = 0; i < 52; i++) await seedClient({ subs: CARE }).then((s) => cadence(s.project!.id));
+    await upsertUptimeDay(env.DB, (await env.DB.prepare(`SELECT id FROM sites LIMIT 1`).first<{ id: string }>())!.id, "2026-11-01", 288, 288);
     await generateRecurring(e, NOW);
     vi.spyOn(factsMod, "buildFacts").mockImplementation(async (_en, businessId, period, now) => factsMod.ReportFacts.parse({
       version: 1, period, label: "November 2026", from: "2026-11-01T08:00:00.000Z", to: "2026-12-01T08:00:00.000Z", clientName: businessId.slice(0, 8), sites: [], edits: null, renewals: [], generatedAt: now.toISOString(),
@@ -183,7 +211,7 @@ describe("sweepReports", () => {
 describe("the daily run", () => {
   it("starts the reports after the project sweep and the uptime rollup, so the last day of the month is in the report", async () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    const s = await careClient({ task: false });
+    const s = await careClient({ task: false, uptimeFrom: null });
     // 30 November (Los Angeles) is 08:00 UTC that day to 08:00 UTC the next. Only raw checks exist: nothing has rolled them up yet, and there is no CARE-4 task for December yet either.
     const t0 = Date.parse("2026-11-30T08:00:00.000Z");
     const rows = Array.from({ length: 288 }, (_, i) => env.DB.prepare(`INSERT INTO site_checks (id, site_id, checked_at, ok, status, ms, error) VALUES (?, ?, ?, 1, NULL, NULL, NULL)`).bind(crypto.randomUUID(), s.site!.id, new Date(t0 + i * 300_000).toISOString()));
