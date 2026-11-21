@@ -151,4 +151,17 @@ describe("redactLinks", () => {
     expect(redactLinks("https://c.example/s/(the link is made when you approve)")).toBe("https://c.example/s/(the link is made when you approve)");
     expect(redactLinks("https://ace.com/about?page=2 and no links")).toBe("https://ace.com/about?page=2 and no links");
   });
+
+  // A client link is often the last thing in a sentence or a list item: the token must go whatever punctuation follows it.
+  const TOKEN = "Zx9_-Qw3Er5TyUiOp7AsDfGhJkL1MnBvCxZ2QwErT4y";
+  it("uses a 43-character token for the punctuation cases", () => { expect(TOKEN).toHaveLength(43); });
+  it.each([",", ";", ":", "!", "*", "?", "."])("cuts a 43-character token followed by %s and keeps the punctuation", (p) => {
+    expect(redactLinks(`Your page: https://c.example/o/${TOKEN}${p}`)).toBe(`Your page: https://c.example/o/[link]${p}`);
+    expect(redactLinks(`https://c.example/p/${TOKEN}${p} Thanks`)).toBe(`https://c.example/p/[link]${p} Thanks`);
+    expect(redactLinks(`https://c.example/anything/${TOKEN}${p}${p}`)).toBe(`https://c.example/anything/[link]${p}${p}`); // a token with no known prefix, and the mark twice
+    expect(redactLinks(`link: /s/${TOKEN}${p}`)).toBe(`link: /s/[link]${p}`); // a bare path
+    expect(redactLinks(`https://c.example/r/tok_12345678${p}`)).toBe(`https://c.example/r/[link]${p}`); // a short token after a known prefix
+    expect(redactLinks(`https://invoice.stripe.com/i/acct_1/live_abc${p}`)).toBe(`https://invoice.stripe.com/[link]${p}`);
+    expect(redactLinks(`https://c.example/r/x/book?cancel=${TOKEN}${p}`)).toBe(`https://c.example/r/x/book?cancel=[link]${p}`);
+  });
 });

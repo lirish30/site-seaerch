@@ -50,8 +50,12 @@ function redactUrl(url: string): string {
  */
 export function redactLinks(text: string): string {
   return text
-    .replace(/https?:\/\/[^\s<>"')\]]+/gi, redactUrl)
-    .replace(/(^|[\s(])\/(r|p|o|c|s)\/[A-Za-z0-9_.~-]{8,}/g, "$1/$2/[link]");
+    // Punctuation that ends a sentence or a list item is not part of the link: cut it off first, so the last segment is the bare token, and put it back after.
+    .replace(/https?:\/\/[^\s<>"')\]]+/gi, (url) => { const tail = /[.,;:!*?]+$/.exec(url)?.[0] ?? ""; return redactUrl(tail ? url.slice(0, -tail.length) : url) + tail; })
+    .replace(/(^|[\s(])\/(r|p|o|c|s)\/([A-Za-z0-9_.~-]{8,})/g, (m, lead: string, prefix: string, token: string) => {
+      const tail = /\.+$/.exec(token)?.[0] ?? ""; // a full stop after the path ends the sentence
+      return token.length - tail.length < 8 ? m : `${lead}/${prefix}/[link]${tail}`;
+    });
 }
 
 export const activityView = (a: Activity) => ({ id: a.id, kind: a.kind, detail: a.detail === null ? null : redactLinks(a.detail), createdAt: a.created_at });
