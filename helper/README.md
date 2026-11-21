@@ -5,8 +5,8 @@ voice, ffmpeg, HyperFrames) and sends the result back. It never receives a conne
 the Mac needs to be exposed. Everything it does is $0 and local.
 
 It keeps no state except `~/.siteline-helper/config.json` and a cache folder (`~/.siteline-helper/cache`). **Deleting the cache is always safe.**
-The jobs it understands: `voice.segment` (one script line in the cloned voice), `voice.sample` (one clip of the blind voice test) and `render` (the finished
-video, see "Rendering" below).
+The jobs it understands: `voice.segment` (one script line in the cloned voice), `voice.sample` (one clip of the blind voice test), `render` (the finished
+video, see "Rendering" below) and `meetily.sync` (see "Meetily" below).
 
 ## Requirements
 
@@ -51,7 +51,8 @@ Only `apiBase` and `token` are required. Everything else has a default:
   },
   "ffmpeg": "ffmpeg",
   "ffprobe": "ffprobe",
-  "hyperframes": "hyperframes"
+  "hyperframes": "hyperframes",
+  "meetilyDb": "~/Library/Application Support/com.meetily.ai/meeting_minutes.sqlite   (written out in full)"
 }
 ```
 
@@ -109,6 +110,21 @@ Notes for the spike:
   `VoiceEngine.synth` is the one place that would change.
 - The reference recording is converted to mono 24 kHz wav before it reaches an engine, whatever format it was uploaded in.
 - Environment variables the scripts read: `SITELINE_QWEN3_MODEL`, `SITELINE_QWEN3_REF_TEXT`, `SITELINE_TORCH_DEVICE`, `SITELINE_OPENVOICE_CKPT`, `SITELINE_OPENVOICE_SPEAKER`.
+
+## Meetily
+
+The `meetily.sync` job reads the meetings Meetily recorded on this Mac and sends Agency OS **only the ones that match a booking or calendar event**. It
+reads Meetily's database (`meetilyDb`, default `~/Library/Application Support/com.meetily.ai/meeting_minutes.sqlite`) read-only and never changes it.
+The same database file holds Meetily's API keys and licence; the helper only ever queries the `meetings`, `transcripts` and `summary_processes` tables, so
+those never leave the Mac.
+
+- A meeting matches the booking or calendar window it overlaps most, after widening each window by 15 minutes. No overlap, or a tie, means no match.
+- A meeting updated less than 5 minutes ago is skipped (it is probably still recording) and picked up by the next sync.
+- A meeting that matches nothing is never uploaded, named in a result, or written to a log.
+- It needs Node's built-in `node:sqlite` (Node 22.18 or newer, no install). If your Node prints an "ExperimentalWarning: SQLite is an experimental feature"
+  line, it is harmless; run with `NODE_NO_WARNINGS=1` to hide it. Do not switch to a different SQLite tool: this one opens the file read-only.
+- If Meetily is recording or saving when a sync runs, the job fails with "Meetily is busy with its database"; the next sync tries again.
+- `doctor` shows whether the database file is where the config says (it is optional, so a missing file does not fail `doctor`).
 
 ## Start it at login (launchd)
 

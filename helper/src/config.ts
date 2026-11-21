@@ -14,6 +14,8 @@ export interface Config {
   ffmpeg: string;
   ffprobe: string;
   hyperframes: string;
+  /** Meetily's SQLite file, read (never written) by the `meetily.sync` job. */
+  meetilyDb: string;
 }
 
 /** Where the helper keeps its one file and its cache. */
@@ -73,6 +75,7 @@ export function loadConfig(path: string = configPath()): Config {
     ffmpeg: text(c, "ffmpeg", "ffmpeg"),
     ffprobe: text(c, "ffprobe", "ffprobe"),
     hyperframes: text(c, "hyperframes", "hyperframes"),
+    meetilyDb: text(c, "meetilyDb", join(homedir(), "Library", "Application Support", "com.meetily.ai", "meeting_minutes.sqlite")),
   };
 }
 
