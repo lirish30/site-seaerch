@@ -1,4 +1,4 @@
-import type { MeetingSummary } from "../meetings/summary";
+import { MeetingSummarySchema, type MeetingSummary } from "../meetings/summary";
 
 export type MeetingStatus = "received" | "summarized" | "failed";
 
@@ -15,12 +15,12 @@ interface Row {
   transcript_key: string; notes: string | null; status: MeetingStatus; summary: string | null; followup_sent_at: string | null; created_at: string; summarized_at: string | null;
 }
 
-/** The summary column read back; a missing or damaged value is `null`, never a thrown error. */
+/** The summary column read back; a missing, damaged or wrongly shaped value is `null`, never a thrown error. */
 function readSummary(s: string | null): MeetingSummary | null {
   if (s === null) return null;
   try {
-    const v = JSON.parse(s);
-    return v && typeof v === "object" && typeof v.summary === "string" ? (v as MeetingSummary) : null;
+    const v = MeetingSummarySchema.safeParse(JSON.parse(s));
+    return v.success ? v.data : null;
   } catch { return null; }
 }
 
@@ -63,6 +63,12 @@ export async function knownMeetilyIds(db: D1Database, sinceIso: string): Promise
 /** Stores the summary and marks the meeting summarized. True only for the call that moved a received or failed meeting to summarized. */
 export async function saveSummary(db: D1Database, id: string, s: MeetingSummary, now: string): Promise<boolean> {
   const res = await db.prepare(`UPDATE meetings SET status = 'summarized', summary = ?, summarized_at = ? WHERE id = ? AND status IN ('received', 'failed')`).bind(JSON.stringify(s), now, id).run();
+  return (res.meta.changes ?? 0) === 1;
+}
+
+/** Marks a meeting that was never summarized as failed, so the panel offers "Summarize again". True only for the call that moved a received meeting; a summarized one is left alone. */
+export async function setMeetingFailed(db: D1Database, id: string): Promise<boolean> {
+  const res = await db.prepare(`UPDATE meetings SET status = 'failed' WHERE id = ? AND status = 'received'`).bind(id).run();
   return (res.meta.changes ?? 0) === 1;
 }
 

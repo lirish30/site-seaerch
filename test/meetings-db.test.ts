@@ -2,8 +2,8 @@ import { env } from "cloudflare:test";
 import { describe, it, expect, beforeEach } from "vitest";
 import { deleteBusiness } from "../src/worker/db/businesses";
 import { insertBookingIfFree } from "../src/worker/db/bookings";
-import { getMeeting, insertMeetingIfNew, knownMeetilyIds, listMeetings, markFollowupSent, meetingForBooking, saveSummary } from "../src/worker/db/meetings";
-import type { MeetingSummary } from "../src/worker/meetings/summary";
+import { getMeeting, insertMeetingIfNew, knownMeetilyIds, listMeetings, markFollowupSent, meetingForBooking, saveSummary, setMeetingFailed } from "../src/worker/db/meetings";
+import { MeetingSummarySchema, type MeetingSummary } from "../src/worker/meetings/summary";
 import { seedBusiness } from "./fixtures/cro";
 
 const summary = (): MeetingSummary => ({
@@ -106,6 +106,45 @@ describe("saveSummary", () => {
     const { meeting } = await insertMeetingIfNew(env.DB, input(b.id));
     await env.DB.prepare(`UPDATE meetings SET summary = 'not json' WHERE id = ?`).bind(meeting.id).run();
     expect((await getMeeting(env.DB, meeting.id))!.summary).toBeNull();
+  });
+});
+
+describe("reading a stored summary", () => {
+  it("is null when the JSON parses but is not a summary", async () => {
+    const b = await seedBusiness();
+    const { meeting } = await insertMeetingIfNew(env.DB, input(b.id));
+    for (const wrong of [{ summary: "just text" }, { ...summary(), actionItems: "none" }, { ...summary(), possibleChangeOrders: [{ title: "x", summary: "y", reason: "z", hours: 12.1 }] }, ["a"], 7]) {
+      await env.DB.prepare(`UPDATE meetings SET summary = ? WHERE id = ?`).bind(JSON.stringify(wrong), meeting.id).run();
+      expect((await getMeeting(env.DB, meeting.id))!.summary).toBeNull();
+    }
+  });
+});
+
+describe("setMeetingFailed", () => {
+  it("moves only a received meeting to failed, and Summarize again can then save", async () => {
+    const b = await seedBusiness();
+    const { meeting } = await insertMeetingIfNew(env.DB, input(b.id));
+    expect(await setMeetingFailed(env.DB, meeting.id)).toBe(true);
+    expect((await getMeeting(env.DB, meeting.id))!.status).toBe("failed");
+    expect(await setMeetingFailed(env.DB, meeting.id)).toBe(false);
+    expect(await saveSummary(env.DB, meeting.id, summary(), "2026-12-01T20:00:00.000Z")).toBe(true);
+    expect(await setMeetingFailed(env.DB, meeting.id)).toBe(false);
+    expect((await getMeeting(env.DB, meeting.id))!.status).toBe("summarized");
+    expect(await setMeetingFailed(env.DB, "nope")).toBe(false);
+  });
+});
+
+describe("the summary's limits", () => {
+  it("bounds each change order like the change_order.draft payload", () => {
+    const co = (over: Record<string, unknown>) => MeetingSummarySchema.safeParse({ ...summary(), possibleChangeOrders: [{ ...summary().possibleChangeOrders[0], ...over }] }).success;
+    expect(co({})).toBe(true);
+    expect(co({ hours: 0.25 })).toBe(true);
+    expect(co({ hours: 40 })).toBe(true);
+    for (const hours of [0, 0.2, 12.1, 40.25, 41, -1]) expect(co({ hours }), String(hours)).toBe(false);
+    expect(co({ title: "" })).toBe(false);
+    expect(co({ title: "t".repeat(121) })).toBe(false);
+    expect(co({ summary: "s".repeat(1501) })).toBe(false);
+    expect(co({ reason: "r".repeat(601) })).toBe(false);
   });
 });
 

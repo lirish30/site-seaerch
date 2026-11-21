@@ -111,6 +111,15 @@ describe("mcp", () => {
     }
   });
 
+  it("mcp cannot propose meeting.followup with its own mail text", async () => {
+    const count = async () => (await env.DB.prepare(`SELECT COUNT(*) AS n FROM approvals WHERE kind = 'meeting.followup'`).first<{ n: number }>())!.n;
+    const before = await count();
+    const j = await call("propose_approval", { kind: "meeting.followup", title: "Looks harmless", preview: "Harmless text", payload: { meetingId: "m1" }, record_type: "meeting", record_id: "m1" });
+    expect(j.result.isError).toBe(true);
+    expect(j.result.content[0].text).toContain("the app proposes it itself");
+    expect(await count()).toBe(before);
+  });
+
   it("propose lead.note creates pending approval and logs action", async () => {
     const before = (await listAgentActions(env.DB, { limit: 500 })).length;
     const j = await call("propose_approval", { kind: "lead.note", title: "Note", preview: "Add note", payload: { businessId: "b1", text: "hi" } });

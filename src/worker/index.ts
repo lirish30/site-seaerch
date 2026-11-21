@@ -49,6 +49,7 @@ import "./approvals/videoPublish";
 import "./approvals/proposalSend";
 import "./approvals/onboardingWelcome";
 import "./approvals/onboardingNudge";
+import "./approvals/meetingFollowup";
 import "./approvals/sopReview";
 import "./approvals/changeOrderSend";
 import "./approvals/changeOrderDraft";
