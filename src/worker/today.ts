@@ -118,11 +118,11 @@ export function outageLength(ms: number): string {
  * A client's site that is down or whose domain is about to lapse, one row per client: a site that is down (priority 90) beats a domain close to expiring (66). Only open incidents on live,
  * real sites of real clients (listIncidents already leaves out test clients and test sites). It is the owner's own work, so it stays for a suppressed lead.
  * The reason is built here from our own numbers (the open time, the site's expiry date) and never from `incident.detail`: that text is frozen when the incident opens, so a domain count would go stale,
- * and it is never shown. With several sites down the one down longest is named and the others counted.
+ * and it is never shown. With several sites down the one down longest is named and the others counted. `openedAt` is when the client's newest open incident opened.
  */
-async function incidentAttention(db: D1Database, now: Date): Promise<Map<string, { reason: string; priority: number }>> {
+async function incidentAttention(db: D1Database, now: Date): Promise<Map<string, { reason: string; priority: number; openedAt: number }>> {
   const incidents = await listIncidents(db, { open: true, limit: 1000 });
-  const out = new Map<string, { reason: string; priority: number }>();
+  const out = new Map<string, { reason: string; priority: number; openedAt: number }>();
   if (!incidents.length) return out;
   const sites = new Map<string, { domain: string | null; expiresOn: string | null }>();
   for (const part of chunks([...new Set(incidents.map((i) => i.siteId))])) {
@@ -134,12 +134,14 @@ async function incidentAttention(db: D1Database, now: Date): Promise<Map<string,
   const byClient = new Map<string, Incident[]>();
   for (const i of incidents) if (sites.has(i.siteId)) (byClient.get(i.businessId) ?? byClient.set(i.businessId, []).get(i.businessId)!).push(i);
   for (const [businessId, list] of byClient) {
+    // Done and snooze answer the incidents that were open when they were pressed, so the row also carries when the newest open one opened (see `hidden`).
+    const openedAt = Math.max(...list.map((i) => ms(i.openedAt)));
     const name = (i: Incident) => sites.get(i.siteId)!.domain ?? "A site"; // never an address: a URL can carry a login
     const downs = list.filter((i) => i.kind === "down").sort((a, c) => ms(a.openedAt) - ms(c.openedAt));
     if (downs.length) {
       const others = downs.length - 1;
       const tail = others === 0 ? "" : `, and ${others} other ${others === 1 ? "site is" : "sites are"} down too`;
-      out.set(businessId, { reason: `${name(downs[0])} has been down for ${outageLength(now.getTime() - ms(downs[0].openedAt))}${tail}`, priority: 90 });
+      out.set(businessId, { reason: `${name(downs[0])} has been down for ${outageLength(now.getTime() - ms(downs[0].openedAt))}${tail}`, priority: 90, openedAt });
       continue;
     }
     // The nearest expiry speaks.
@@ -151,7 +153,7 @@ async function incidentAttention(db: D1Database, now: Date): Promise<Map<string,
       : days < 0 ? `${name(i)} expired ${plural(-days, "day")} ago`
       : days === 0 ? `${name(i)} expires today`
       : `${name(i)} expires in ${plural(days, "day")}`;
-    out.set(businessId, { reason, priority: 66 });
+    out.set(businessId, { reason, priority: 66, openedAt });
   }
   return out;
 }
@@ -216,19 +218,24 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
   const activity = await recentActivity(db, candidates.map((b) => b.id), new Date(t - ACTIVITY_WINDOW_DAYS * DAY).toISOString());
 
   const lastContact = new Map<string, number>(), lastExport = new Map<string, number>();
-  const queueAction = new Map<string, { hiddenUntil: number }>(); // `${businessId}|${kind}` -> the latest done/snooze, rows arrive oldest first
+  const queueAction = new Map<string, { hiddenUntil: number; at: number }>(); // `${businessId}|${kind}` -> the latest done/snooze and when it was pressed, rows arrive oldest first
   for (const a of activity) {
     const at = ms(a.created_at);
     if (!Number.isFinite(at)) continue;
     if (a.kind === "export") lastExport.set(a.business_id, Math.max(lastExport.get(a.business_id) ?? -Infinity, at));
     if (!NOT_CONTACT.has(a.kind)) lastContact.set(a.business_id, Math.max(lastContact.get(a.business_id) ?? -Infinity, at));
-    if (a.kind === "today_done" && a.detail && isTodayKind(a.detail)) queueAction.set(`${a.business_id}|${a.detail}`, { hiddenUntil: at + DONE_HIDES_DAYS * DAY });
+    if (a.kind === "today_done" && a.detail && isTodayKind(a.detail)) queueAction.set(`${a.business_id}|${a.detail}`, { hiddenUntil: at + DONE_HIDES_DAYS * DAY, at });
     if (a.kind === "snoozed") {
       const s = parseSnooze(a.detail);
-      if (s) queueAction.set(`${a.business_id}|${s.kind}`, { hiddenUntil: s.until });
+      if (s) queueAction.set(`${a.business_id}|${s.kind}`, { hiddenUntil: s.until, at });
     }
   }
-  const hidden = (businessId: string, kind: TodayKind) => (queueAction.get(`${businessId}|${kind}`)?.hiddenUntil ?? -Infinity) > t;
+  // `since`: a done or snooze only counts when it was pressed after that time. A site incident passes when its newest open incident opened, so a new outage after the owner marked
+  // the old one done shows at once instead of staying hidden for the rest of the week.
+  const hidden = (businessId: string, kind: TodayKind, since = -Infinity) => {
+    const a = queueAction.get(`${businessId}|${kind}`);
+    return !!a && a.at > since && a.hiddenUntil > t;
+  };
 
   const items: TodayItem[] = [];
   const quick: { item: TodayItem; score: number }[] = [];
@@ -265,7 +272,7 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
     const noAccess = access.get(b.id);
     if (noAccess && !hidden(b.id, "access_missing")) items.push(push("access_missing", b, noAccess.reason, null, noAccess.priority));
     const incident = incidents.get(b.id);
-    if (incident && !hidden(b.id, "site_incident")) items.push(push("site_incident", b, incident.reason, null, incident.priority));
+    if (incident && !hidden(b.id, "site_incident", incident.openedAt)) items.push(push("site_incident", b, incident.reason, null, incident.priority));
     // A paying client's onboarding is the owner's own work (like a stalled deal), so it stays for a suppressed lead.
     const attention = onboarding.get(b.id);
     if (attention && !hidden(b.id, "onboarding_attention")) items.push(push("onboarding_attention", b, attention, null, 70));

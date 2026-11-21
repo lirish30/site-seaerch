@@ -152,18 +152,69 @@ describe("site_incident", () => {
     expect(await rows()).toHaveLength(1);
   });
 
+  const mark = (businessId: string, kind: string, detail: string, at: string) =>
+    env.DB.prepare(`INSERT INTO activity (id, business_id, kind, detail, created_at) VALUES (?,?,?,?,?)`).bind(crypto.randomUUID(), businessId, kind, detail, at).run();
+
+  // Updated for the per-incident rule: Done and snooze now come after the incident they answer (the old test pressed them 6 and 8 days before a 47 minute outage opened).
   it("Done hides it for 7 days, then it comes back; snooze hides it until its time", async () => {
     const s = await seedClient();
-    await down(s.site!, 47 * MIN);
-    const mark = (kind: string, detail: string, at: string) => env.DB.prepare(`INSERT INTO activity (id, business_id, kind, detail, created_at) VALUES (?,?,?,?,?)`)
-      .bind(crypto.randomUUID(), s.businessId, kind, detail, at).run();
-    await mark("today_done", "site_incident", ago(6 * DAY));
+    await down(s.site!, 10 * DAY);
+    await mark(s.businessId, "today_done", "site_incident", ago(6 * DAY));
     expect(await rows()).toEqual([]);
     await env.DB.prepare(`DELETE FROM activity`).run();
-    await mark("today_done", "site_incident", ago(8 * DAY));
+    await mark(s.businessId, "today_done", "site_incident", ago(8 * DAY));
     expect(await rows()).toHaveLength(1);
-    await mark("snoozed", `site_incident|${new Date(NOW.getTime() + DAY).toISOString()}`, ago(0));
+    await mark(s.businessId, "snoozed", `site_incident|${new Date(NOW.getTime() + DAY).toISOString()}`, ago(0));
     expect(await rows()).toEqual([]);
+  });
+
+  describe("Done and snooze answer the incidents that were open when they were pressed", () => {
+    const secondSite = async (s: { businessId: string }) => (await createSite(env.DB, { businessId: s.businessId, url: "https://ace-second.com" })).site;
+
+    it("Done, then the same incident still open: stays hidden", async () => {
+      const s = await seedClient();
+      await down(s.site!, 3 * DAY);
+      await mark(s.businessId, "today_done", "site_incident", ago(2 * DAY));
+      expect(await rows()).toEqual([]);
+    });
+
+    it("Done, then a NEW incident opens later (another site going down): it shows at once", async () => {
+      const s = await seedClient();
+      await down(s.site!, 3 * DAY);
+      await mark(s.businessId, "today_done", "site_incident", ago(2 * DAY));
+      await down(await secondSite(s), 60 * MIN);
+      const found = await rows();
+      expect(found).toHaveLength(1);
+      expect(found[0].reason).toBe("ace.com has been down for 3 days, and 1 other site is down too");
+    });
+
+    it("Done, then the same site goes down again later (a new incident): it shows", async () => {
+      const s = await seedClient();
+      await down(s.site!, 3 * DAY);
+      await mark(s.businessId, "today_done", "site_incident", ago(2 * DAY));
+      await closeIncident(env.DB, s.site!.id, "down", ago(DAY));
+      await down(s.site!, 60 * MIN);
+      expect((await rows())[0].reason).toBe("ace.com has been down for 1 hour");
+    });
+
+    it("snooze until a future time hides the same incident but not a newer one", async () => {
+      const s = await seedClient();
+      await down(s.site!, 3 * DAY);
+      await mark(s.businessId, "snoozed", `site_incident|${new Date(NOW.getTime() + 2 * DAY).toISOString()}`, ago(DAY));
+      expect(await rows()).toEqual([]);
+      await down(await secondSite(s), 60 * MIN);
+      expect(await rows()).toHaveLength(1);
+    });
+
+    it("a domain incident opened after Done shows as well", async () => {
+      const s = await seedClient();
+      await down(s.site!, 3 * DAY);
+      await mark(s.businessId, "today_done", "site_incident", ago(2 * DAY));
+      expect(await rows()).toEqual([]);
+      await closeIncident(env.DB, s.site!.id, "down", ago(DAY));
+      await domain(s.site!, "2026-12-20");
+      expect(await rows()).toHaveLength(1);
+    });
   });
 
   it("a site going down is not contact with the client, so it does not un-stall a deal", async () => {
