@@ -2,7 +2,7 @@ import { computeHealth, type Health } from "../clients/health";
 import { healthInputs, UPTIME_DAYS } from "../clients/healthData";
 import { careLabel, clientMrrCents, LIVE, testClientSql } from "../clients/record";
 import { chunks } from "../db/chunks";
-import { CARE_SUBSCRIPTION_SQL, openIncidentsFor, type Incident, type IncidentKind } from "../db/monitoring";
+import { CARE_SUBSCRIPTION_SQL, monitoredSiteSql, openIncidentsFor, type Incident, type IncidentKind } from "../db/monitoring";
 import { getSettings } from "../db/settings";
 import { toSite, type Site, type SiteRow } from "../db/sites";
 import { listSubscriptions, type Subscription } from "../db/subscriptions";
@@ -17,7 +17,7 @@ import { ERROR_TEXT, monitorableUrl, SLOW_MS } from "./probe";
 export interface SiteMonitoringView {
   siteId: string;
   domain: string | null;
-  /** The probe checks this site: the same rule as `monitoredSites` (live, real, with an address, and switched on by hand or the client has live Care). */
+  /** The probe checks this site: the rule `monitoredSiteSql` states in SQL (live, real, with an address, and switched on by hand or the client has live Care). */
   monitored: boolean;
   /** The address passes `monitorableUrl`, so switching it on can work. */
   monitorable: boolean;
@@ -157,7 +157,7 @@ export async function careFleet(db: D1Database, now: Date): Promise<CareRow[]> {
       `SELECT b.id AS id, b.name AS name, ${CARE_SUBSCRIPTION_SQL("b")} AS care FROM businesses b
        WHERE NOT ${testClientSql("b")}
          AND (${CARE_SUBSCRIPTION_SQL("b")}
-           OR EXISTS (SELECT 1 FROM sites s WHERE s.business_id = b.id AND ${BOARD_SITE} AND s.monitoring = 1))`,
+           OR EXISTS (SELECT 1 FROM sites s WHERE s.business_id = b.id AND ${monitoredSiteSql("s", "b")}))`,
     ).all<{ id: string; name: string; care: number }>(),
     listSubscriptions(db, { statuses: [...LIVE] }),
   ]);

@@ -106,7 +106,11 @@ export async function listSites(db: D1Database, o: { businessId?: string; includ
   return rows.map(toSite);
 }
 
-/** Changes the fields given. A new `url` without a `domain` re-derives the domain. Returns null for an unknown site; throws SiteConflictError on a duplicate live domain. */
+/**
+ * Changes the fields given. A new `url` without a `domain` re-derives the domain. Returns null for an unknown site; throws SiteConflictError on a duplicate live domain.
+ * Care monitoring follows the address: clearing it closes the site's open incidents, and a changed domain forgets the old domain's expiry (date and lookup time) and closes its
+ * `domain_expiring` incident, so the next daily look asks the registry about the new one. Both closes are silent, as in `closeUnmonitoredIncidents`.
+ */
 export async function updateSite(db: D1Database, id: string, patch: Partial<SiteFields>, now: string): Promise<Site | null> {
   const p: Partial<SiteFields> = { ...patch };
   if (p.domain !== undefined) p.domain = siteDomain(p.domain);
@@ -117,19 +121,31 @@ export async function updateSite(db: D1Database, id: string, patch: Partial<Site
     sets.push(`${COLUMNS[k]} = ?`); binds.push(p[k]);
   }
   if (sets.length === 0) return getSite(db, id);
+  const before = p.url !== undefined || p.domain !== undefined ? await getSite(db, id) : null;
+  const domainChanged = !!before && p.domain !== undefined && p.domain !== before.domain;
+  if (domainChanged) sets.push("domain_expires_on = NULL", "domain_checked_at = NULL");
   try {
     await db.prepare(`UPDATE sites SET ${sets.join(", ")}, updated_at = ? WHERE id = ?`).bind(...binds, now, id).run();
   } catch (e) {
     if (isUnique(e)) throw new SiteConflictError();
     throw e;
   }
+  if (before && p.url !== undefined && (p.url === null || p.url.trim() === "")) await closeSiteIncidents(db, id, now);
+  else if (domainChanged) await closeSiteIncidents(db, id, now, "domain_expiring");
   return getSite(db, id);
 }
 
-/** Archives a live site (its domain is freed). False when it is unknown or already archived. */
+/** Closes the site's open incidents (all of them, or one kind) without a word in the activity log. Plain SQL here: db/monitoring.ts imports this file. */
+async function closeSiteIncidents(db: D1Database, siteId: string, now: string, kind?: "domain_expiring"): Promise<void> {
+  await db.prepare(`UPDATE site_incidents SET closed_at = ? WHERE site_id = ? AND closed_at IS NULL${kind ? " AND kind = ?" : ""}`).bind(...(kind ? [now, siteId, kind] : [now, siteId])).run();
+}
+
+/** Archives a live site (its domain is freed) and closes its open incidents. False when it is unknown or already archived. */
 export async function archiveSite(db: D1Database, id: string, now: string): Promise<boolean> {
   const res = await db.prepare(`UPDATE sites SET archived_at = ?, updated_at = ? WHERE id = ? AND archived_at IS NULL`).bind(now, now, id).run();
-  return (res.meta.changes ?? 0) === 1;
+  if ((res.meta.changes ?? 0) !== 1) return false;
+  await closeSiteIncidents(db, id, now);
+  return true;
 }
 
 /**

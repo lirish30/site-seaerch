@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { isTestClient } from "../clients/record";
-import { listIncidents, recentChecks, setMonitoring } from "../db/monitoring";
+import { closeUnmonitoredIncidents, listIncidents, recentChecks, setMonitoring } from "../db/monitoring";
 import { getSite, type Site } from "../db/sites";
 import type { Env } from "../env";
 import { careClientIds, careFleet, incidentViews, monitoringViews } from "../monitoring/fleet";
@@ -57,6 +57,8 @@ careRoutes.put("/sites/:id/monitoring", async (c) => {
   }
   const now = new Date();
   const updated = (await setMonitoring(c.env.DB, site.id, body.enabled, now.toISOString())) ?? site;
+  // Switched off: if nothing else watches the site (no live Care), its open incidents end now instead of at the next tick.
+  if (!body.enabled) await closeUnmonitoredIncidents(c.env.DB, now.toISOString(), site.id);
   const [view] = await monitoringViews(c.env.DB, [updated], await careClientIds(c.env.DB, [updated.businessId]), now);
   return c.json({ site: view });
 });

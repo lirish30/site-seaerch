@@ -1,4 +1,4 @@
-import { monitoredSites, pruneChecks } from "../db/monitoring";
+import { closeUnmonitoredIncidents, monitoredSites, pruneChecks } from "../db/monitoring";
 import type { Site } from "../db/sites";
 import type { Env } from "../env";
 import { recordDomainExpiry, recordProbe } from "./incidents";
@@ -57,6 +57,12 @@ async function inChunks<T>(items: T[], fn: (item: T) => Promise<void>): Promise<
 /** Probes up to MAX_PER_TICK monitored sites and records each result. A site whose address is not monitorable (monitorableUrl) is counted in `skipped` and never fetched. */
 export async function sweepUptime(env: Env, now: Date): Promise<UptimeSweepResult> {
   const out: UptimeSweepResult = { probed: 0, failed: 0, skipped: 0, opened: 0, closed: 0 };
+  // An incident of a site that is no longer watched (Care ended, switch off, address cleared, archived, marked test) would otherwise stay open for ever. Closed silently, in one statement.
+  try {
+    await closeUnmonitoredIncidents(env.DB, now.toISOString());
+  } catch (e) {
+    console.error("uptime: could not close the incidents of unmonitored sites", e);
+  }
   try {
     const sites = await monitoredSites(env.DB, MAX_PER_TICK);
     const todo: { site: Site; url: string }[] = [];

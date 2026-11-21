@@ -100,17 +100,35 @@ export const CARE_SUBSCRIPTION_SQL = (a: string): string =>
   `EXISTS (SELECT 1 FROM subscriptions cs WHERE cs.business_id = ${a}.id AND cs.test = 0 AND cs.status IN (${list(LIVE)}) AND cs.package_key IN (${list(CARE_KEYS)}))`;
 
 /**
- * The sites the probe should check: real and live, with an address, never a test client, and either switched on by hand or belonging to a client with live Care.
- * The site checked longest ago comes first (one never checked before all), at most `limit`.
+ * SQL true for the site (alias `s`) of the business (alias `b`) when the probe watches it: real and live, with an address, never a test client's, and either switched on by hand or
+ * belonging to a client with live Care. The one statement of this rule: `monitoredSites`, the close step below and the Care board all use it.
+ */
+export const monitoredSiteSql = (s: string, b: string): string =>
+  `(${s}.test = 0 AND ${s}.archived_at IS NULL AND ${s}.url IS NOT NULL AND ${s}.url <> '' AND NOT ${testClientSql(b)} AND (${s}.monitoring = 1 OR ${CARE_SUBSCRIPTION_SQL(b)}))`;
+
+/**
+ * The sites the probe should check (see `monitoredSiteSql`). The site checked longest ago comes first (one never checked before all), at most `limit`.
  */
 export async function monitoredSites(db: D1Database, limit: number): Promise<Site[]> {
   const rows = (await db.prepare(
     `SELECT s.* FROM sites s JOIN businesses b ON b.id = s.business_id
-     WHERE s.test = 0 AND s.archived_at IS NULL AND s.url IS NOT NULL AND s.url <> ''
-       AND NOT ${testClientSql("b")}
-       AND (s.monitoring = 1 OR ${CARE_SUBSCRIPTION_SQL("b")})
+     WHERE ${monitoredSiteSql("s", "b")}
      ORDER BY (SELECT MAX(c.checked_at) FROM site_checks c WHERE c.site_id = s.id) ASC, s.created_at, s.id
      LIMIT ?`,
   ).bind(limit).all<SiteRow>()).results;
   return rows.map(toSite);
+}
+
+/**
+ * Closes, silently (no activity line: nothing came back, the watching just stopped), every open incident whose site is not watched any more: Care ended, the switch is off, the address
+ * was cleared, the site was archived or marked test. One statement, so it is safe to run on every tick and when two runs overlap; an incident of a watched site is never touched.
+ * `siteId` narrows it to one site (the switch route). Returns how many incidents it closed.
+ */
+export async function closeUnmonitoredIncidents(db: D1Database, now: string, siteId?: string): Promise<number> {
+  const res = await db.prepare(
+    `UPDATE site_incidents SET closed_at = ?
+     WHERE closed_at IS NULL ${siteId === undefined ? "" : "AND site_id = ?"}
+       AND NOT EXISTS (SELECT 1 FROM sites s JOIN businesses b ON b.id = s.business_id WHERE s.id = site_incidents.site_id AND ${monitoredSiteSql("s", "b")})`,
+  ).bind(...(siteId === undefined ? [now] : [now, siteId])).run();
+  return res.meta.changes ?? 0;
 }
