@@ -30,7 +30,7 @@ video, see "Rendering" below), `meetily.sync` (see "Meetily" below) and three Ca
 
    This writes `~/.siteline-helper/config.json` (owner-only permissions) and checks the token with the server. The token is never printed.
    Set `SITELINE_HELPER_CONFIG=/path/to/config.json` to use a different file.
-3. `node helper/src/cli.ts doctor` shows the config, whether the server accepts the token, each voice engine's state, and the ffmpeg, ffprobe and hyperframes versions.
+3. `node helper/src/cli.ts doctor` shows the config, whether the server accepts the token, each voice engine's state, the ffmpeg, ffprobe and hyperframes versions, and Chrome's path and version (or "not found"; only care updates need Chrome).
 
 Pairing again keeps every other setting already in the file. If the token is revoked in Settings, the helper stops with a clear message; pair the Mac again.
 
@@ -154,9 +154,10 @@ Host client-alias
 Every command goes to `ssh` as an argument list (no local shell), every word is checked against a fixed pattern on both sides and each remote word is single-quoted. The only things it runs on the server:
 
 - Reading: `wp core version`, `wp core check-update --format=json`, `wp cli info --format=json`, `wp plugin list --fields=... --format=json`, `wp theme list --fields=... --format=json`, `wp plugin get <slug> --field=version`, `wp theme get <slug> --field=version`.
-- Updating (only a site an approved wave covers): `wp db export`, `wp plugin update <slug> --version=<to>`, `wp theme update <slug> --version=<to>`, `wp core update --version=<to>`, `wp core update-db`.
+- Updating (only a site an approved wave covers): `wp db export`, `wp plugin update <slug> --version=<to>`, `wp theme update <slug> --version=<to>`, `wp core update --version=<to>`, `wp core update-db`, then `wp cache flush` once after the updates (best effort: a site with no object cache, or a refusal, changes nothing).
+- A **premium** plugin or theme (not on wordpress.org, marked "can't roll back") is updated with `wp plugin update <slug>` (or `wp theme update <slug>`) **without** `--version`: its own updater only offers its newest version. It counts as applied only when the version it then reads is the one the plan showed; otherwise it is failed, and as it cannot be put back the incident names the backup.
 - Putting back (only after a page breaks or an update fails): `wp plugin install <slug> --version=<from> --force`, `wp theme install ... --force`, `wp core update --version=<from> --force`, `wp core update-db`.
-- Housekeeping in the SSH user's home folder, nothing else: `mkdir -p siteline-backups`, `test -e` and `gzip -t` and `gzip -f` on a backup file, `find siteline-backups -name '*.sql.gz' -mtime +28 -delete`.
+- Housekeeping in the SSH user's home folder, nothing else: `mkdir -m 700 -p siteline-backups` (only the SSH user can read the dumps), `test -e` and `gzip -t` and `gzip -f` on a backup file, `find siteline-backups -name '*.sql.gz' -mtime +28 -delete`.
 
 It never runs `wp eval`, `wp shell`, `wp db query`, `wp db import`, `sh -c` or anything built from text a site returned. Plugin names, page HTML and WP-CLI output are only stored and shown as data.
 
@@ -171,9 +172,11 @@ Before any update the helper runs `wp db export` and gzips it to `siteline-backu
 
 ### Page checks and Chrome
 
-For each site it opens up to five pages (the site's check pages, default `/`) in headless Google Chrome at 1280 wide and 1600 tall, first screen only, before and after the updates. It reads the status, looks for the "critical error" text and counts `<form>` elements (forms are counted, never submitted). It compares the two screenshots with ffmpeg's SSIM (under 0.95 counts as changed) and uploads a before, an after and a difference picture for each page.
+For each site it opens up to five pages (the site's check pages, default `/`) in headless Google Chrome at 1280 wide and 1600 tall, first screen only, before and after the updates. It reads the status, looks for the "critical error" text and counts `<form>` elements (forms are counted, never submitted).
 
-Chrome's path is `chrome` in `~/.siteline-helper/config.json`; the default is `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`. Set it if Chrome is somewhere else. `node helper/src/cli.ts doctor` checks `ffmpeg` and `ffprobe` but **not Chrome**; check Chrome by running its path with `--version`.
+A cache in front of the site (WP Rocket, the host's Varnish, Cloudflare) could answer with a copy saved before the update and hide a broken page. So every read and every screenshot asks for its own address, the page plus `?siteline-check=<run id>-<page>-<before|after|recheck>` (no cache has that copy), each read sends `cache-control: no-cache` and `pragma: no-cache`, and `wp cache flush` runs after the updates. A read that gets no answer at all is tried once more, 2 seconds later, before it counts as broken. The query shows up in the site's access log and analytics as a visit to the page with that query. It compares the two screenshots with ffmpeg's SSIM (under 0.95 counts as changed) and uploads a before, an after and a difference picture for each page.
+
+Chrome's path is `chrome` in `~/.siteline-helper/config.json`; the default is `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`. Set it if Chrome is somewhere else. `node helper/src/cli.ts doctor` shows Chrome's path and its `--version`, or "not found".
 
 ### Certificates
 
@@ -185,7 +188,7 @@ Do this before any client.
 
 1. Make a throwaway WordPress site you can break (a cheap host or a copy) with SSH and WP-CLI. Add it in Agency OS as a **test** client with a test Care subscription and its address, set its SSH alias and WordPress folder, and set its WordPress access method to SSH.
 2. Put the alias in `~/.ssh/config`. Run `ssh <alias> -- wp --path=<folder> core version` by hand. It must answer without asking for anything.
-3. Run `node helper/src/cli.ts doctor`. Check Chrome with `"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --version`.
+3. Run `node helper/src/cli.ts doctor`. Its `chrome` line must show a version, not "not found".
 4. On the client's Care panel, press "Plan updates for this site" (the single-site run). The helper reads the site; you approve one approval; the helper backs up, updates, checks the pages and reports. Look at the run view: the backup file name, each page and its pictures.
 5. Make it fail on purpose (for example a plugin update that breaks a page) and check that the code is put back and an incident and a fix task appear. A single-site run on a test site touches no weekly checklist.
 6. Only then add a real client's alias.
