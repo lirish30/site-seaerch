@@ -33,8 +33,12 @@ export async function tickCare1(env: Env, businessId: string, period: string, st
   let changed = false;
   for (const id of await care1Ids(env, businessId, period)) {
     const task = await getTask(env.DB, id);
-    if (!task || task.status === "done" || task.status === "skipped" || idx.some((i) => i >= task.checklist.length)) continue;
-    const next = task.checklist.map((c, i) => (idx.includes(i) ? { ...c, done: true } : c));
+    if (!task || task.status === "done" || task.status === "skipped") continue;
+    // The checklist is a snapshot of the template when the task was made: only a task that still lines up with the template (same length, item text starts with the step's title) is ticked.
+    if (task.checklist.length !== tpl.steps.length) continue;
+    const safe = idx.filter((i) => task.checklist[i].text.startsWith(tpl.steps[i].title));
+    if (safe.length === 0) continue;
+    const next = task.checklist.map((c, i) => (safe.includes(i) ? { ...c, done: true } : c));
     if (next.every((c, i) => c.done === task.checklist[i].done)) continue;
     await patchTask(env.DB, id, { checklist: next }, now.toISOString());
     changed = true;
@@ -79,7 +83,7 @@ export async function tickApproved(env: Env, batchId: string, siteIds: string[],
 
 /**
  * Brings each client's task in line with the batch's runs: 1.3 once a canary (wave 1) run has ended; when every run of the client is final (and no approval of the batch still waits on one of its
- * sites) 1.5, and with no failed or rolled-back run 1.6 too and the task is completed once every item is ticked. A failed client keeps 1.6 for Logan.
+ * sites, and the batch is settled) 1.5, and with no failed or rolled-back run 1.6 too and the task is completed once every item is ticked. A failed client keeps 1.6 for Logan.
  */
 export async function tickRuns(env: Env, batchId: string, now: Date = new Date()): Promise<void> {
   await guarded("tick the run steps", async () => {
@@ -97,6 +101,7 @@ export async function tickRuns(env: Env, batchId: string, now: Date = new Date()
     for (const [businessId, mine] of byClient) {
       await guarded("tick one client's run steps", async () => {
         if (mine.some((r) => r.wave === 1 && FINAL_RAN.includes(r.status))) await tickCare1(env, businessId, batch.period, ["1.3"], now);
+        if (batch.status !== "done" && batch.status !== "cancelled") return; // a client's later wave may not be planned yet: only a settled batch finishes the week
         if (waiting.has(businessId) || mine.some((r) => r.status === "queued" || r.status === "running")) return;
         const bad = mine.some((r) => r.status === "failed" || r.status === "rolled_back");
         await tickCare1(env, businessId, batch.period, bad ? ["1.5"] : ["1.5", "1.6"], now);

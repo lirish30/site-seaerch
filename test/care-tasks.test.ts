@@ -1,5 +1,6 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createSite } from "../src/worker/db/sites";
 import { approve } from "../src/worker/approvals/decide";
 import "../src/worker/approvals/careUpdates";
 import { onInventoryDone, startSingleRun, startWeeklyBatch } from "../src/worker/care/batch";
@@ -7,7 +8,7 @@ import { tickCare1 } from "../src/worker/care/tasks";
 import { getBatch, getRun, runsFor, saveInventory, setRunStatus, upsertSeen, type CareBatch } from "../src/worker/db/careUpdates";
 import { addCadence } from "../src/worker/db/projects";
 import { ensureSeedSops } from "../src/worker/db/sops";
-import { getTask, listTasks, patchTask } from "../src/worker/db/tasks";
+import { listTasks, patchTask } from "../src/worker/db/tasks";
 import "../src/worker/helper/kinds";
 import { generateRecurring } from "../src/worker/projects/sweep";
 import { onRunDone } from "../src/worker/care/batch";
@@ -27,16 +28,25 @@ beforeEach(async () => {
 });
 
 /** A real client with live Care, a WordPress site with one waiting update and a CARE-1 task for this week (and the week before when asked). */
-async function mk(domain: string, o: { lastWeek?: boolean } = {}) {
-  const s = await seedClient({ subs: [{ key: "care", monthlyCents: 5000 }] });
+async function mk(domain: string, o: { lastWeek?: boolean; cents?: number; group?: "brochure" | "woocommerce" } = {}) {
+  const s = await seedClient({ subs: [{ key: "care", monthlyCents: o.cents ?? 5000 }] });
   await env.DB.prepare(`UPDATE sites SET domain = ?, cms = 'wordpress', access_method = 'ssh_wpcli', wp_ssh_alias = ?, wp_path = ?, care_paths = '["/"]' WHERE id = ?`)
     .bind(domain, `${domain.split(".")[0]}-host`, `/var/www/${domain.split(".")[0]}`, s.site!.id).run();
-  await saveInventory(env.DB, { siteId: s.site!.id, wpVersion: "6.4", phpVersion: "8.2", groupKey: "brochure", plugins: [], readAt: iso(Date.now()) });
+  await saveInventory(env.DB, { siteId: s.site!.id, wpVersion: "6.4", phpVersion: "8.2", groupKey: o.group ?? "brochure", plugins: [], readAt: iso(Date.now()) });
   await upsertSeen(env.DB, s.site!.id, [{ type: "plugin", slug: "akismet", name: "akismet", fromVersion: "1.0", toVersion: "1.1", risk: "minor", rollbackable: true }], iso(Date.now() - 86_400_000));
   await addCadence(env.DB, s.project!.id, "CARE-1");
   if (o.lastWeek) await generateRecurring(env, LAST_WEEK);
   await generateRecurring(env, WED);
   return { ...s, siteId: s.site!.id, businessId: s.businessId };
+}
+/** A second WordPress site for a client that already has one, with a waiting update. */
+async function addSite(businessId: string, domain: string) {
+  const site = (await createSite(env.DB, { businessId, url: `https://${domain}` })).site!;
+  await env.DB.prepare(`UPDATE sites SET domain = ?, cms = 'wordpress', access_method = 'ssh_wpcli', wp_ssh_alias = ?, wp_path = ?, care_paths = '["/"]' WHERE id = ?`)
+    .bind(domain, `${domain.split(".")[0]}-host`, `/var/www/${domain.split(".")[0]}`, site.id).run();
+  await saveInventory(env.DB, { siteId: site.id, wpVersion: "6.4", phpVersion: "8.2", groupKey: "brochure", plugins: [], readAt: iso(Date.now()) });
+  await upsertSeen(env.DB, site.id, [{ type: "plugin", slug: "akismet", name: "akismet", fromVersion: "1.0", toVersion: "1.1", risk: "minor", rollbackable: true }], iso(Date.now() - 86_400_000));
+  return site.id;
 }
 const care1 = async (projectId: string, period = "2026-W49") => (await listTasks(env.DB, projectId)).find((t) => t.cadenceKey === "CARE-1" && t.periodKey === period)!;
 const ticks = async (projectId: string, period?: string) => (await care1(projectId, period)).checklist.map((c) => c.done);
@@ -130,19 +140,51 @@ describe("the batch ticks the CARE-1 task", () => {
     expect(await ticks(a.project!.id)).toEqual([false, false, false, false, false, false]);
   });
 
-  it("an error while ticking is logged and swallowed, the batch still moves on", async () => {
-    const a = await mk("a.com");
-    const err = vi.spyOn(console, "error").mockImplementation(() => {});
-    const orig = env.DB.prepare.bind(env.DB);
-    const spy = vi.spyOn(env.DB, "prepare").mockImplementation(((sql: string) => {
-      if (/FROM tasks/.test(sql)) throw new Error("boom");
-      return orig(sql);
-    }) as typeof env.DB.prepare);
+  it("a two-site client finishes only when the batch settles, not when its canary ends first", async () => {
+    const x = await mk("a.com", { cents: 4000, group: "brochure" });
+    const y = await mk("c.com", { cents: 5000, group: "woocommerce" });
+    const bSite = await addSite(x.businessId, "b.com");
+    await env.DB.prepare(`UPDATE sites SET archived_at = NULL WHERE id = ?`).bind(bSite).run();
     const batch = await inventoried();
-    spy.mockRestore();
-    expect(batch.status).toBe("wave1");
+    await approveAll(); // wave 1: a.com and c.com
+    const runs = await runsFor(env.DB, batch.id);
+    expect(runs).toHaveLength(2);
+    const runOf = (siteId: string) => runs.find((r) => r.siteId === siteId)!;
+    await finishRun(runOf(x.siteId).id, "ok"); // c.com's canary is still running
+    expect(await ticks(x.project!.id)).toEqual([true, true, true, true, false, false]);
+    expect((await care1(x.project!.id)).status).not.toBe("done");
+    await finishRun(runOf(y.siteId).id, "ok"); // wave 2 is drafted for b.com
+    expect((await care1(x.project!.id)).status).not.toBe("done");
+    await approveAll();
+    const b = (await runsFor(env.DB, batch.id)).find((r) => r.siteId === bSite)!;
+    expect((await care1(x.project!.id)).status).not.toBe("done");
+    await finishRun(b.id, "ok");
+    expect((await getBatch(env.DB, batch.id))!.status).toBe("done");
+    expect(await ticks(x.project!.id)).toEqual([true, true, true, true, true, true]);
+    expect((await care1(x.project!.id)).status).toBe("done");
+  });
+
+  it("a step inserted into the template after the task was made ticks nothing wrong", async () => {
+    const a = await mk("a.com");
+    const tid = (await env.DB.prepare(`SELECT id FROM sop_templates WHERE key = 'CARE-1'`).first<{ id: string }>())!.id;
+    await env.DB.prepare(`UPDATE sop_template_steps SET position = position + 1 WHERE template_id = ? AND key IN ('1.2','1.3','1.4','1.5','1.6')`).bind(tid).run();
+    await env.DB.prepare(`INSERT INTO sop_template_steps (template_id, key, phase_key, phase_title, position, title, owner, est_minutes, done_when, requires, skippable)
+      SELECT template_id, '1.1b', phase_key, phase_title, position - 1, 'A new step', owner, 0, 'x', '[]', 0 FROM sop_template_steps WHERE template_id = ? AND key = '1.2'`).bind(tid).run();
+    expect(await tickCare1(env, a.businessId, "2026-W49", ["1.2", "1.3"], WED)).toBe(false);
+    expect(await ticks(a.project!.id)).toEqual([false, false, false, false, false, false]);
+  });
+
+  it("an error in the run ticks is logged and swallowed, and the batch still advances", async () => {
+    const a = await mk("a.com");
+    const batch = await inventoried();
+    await approveAll();
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const svc = await import("../src/worker/projects/service");
+    const spy = vi.spyOn(svc, "completeTask").mockRejectedValue(new Error("boom"));
+    await finishRun((await runsFor(env.DB, batch.id))[0].id, "ok");
+    expect((await getBatch(env.DB, batch.id))!.status).toBe("done");
     expect(err).toHaveBeenCalled();
-    err.mockRestore();
-    void a; void getTask;
+    expect((await care1(a.project!.id)).status).not.toBe("done");
+    spy.mockRestore(); err.mockRestore();
   });
 });
