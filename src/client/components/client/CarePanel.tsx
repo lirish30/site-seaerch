@@ -67,7 +67,7 @@ function SiteRow({ site, view, onChanged }: { site: Site; view: SiteMonitoringVi
       <label className="switch cr-switch">
         <input type="checkbox" role="switch" checked={on} disabled={busy} aria-label={`Monitor ${name}`} onChange={(e) => void flip(e.target.checked)} />
         <i aria-hidden="true" />
-        <span>{on ? "Monitoring is on" : "Monitoring is off"}</span>
+        <span>{on ? "Switched on by hand" : "Not switched on by hand"}</span>
       </label>
       {viaCare && <p className="muted small cr-note">Checked anyway, because this client has a Care plan.</p>}
       {error && <p className="error small" role="alert">{error}</p>}
