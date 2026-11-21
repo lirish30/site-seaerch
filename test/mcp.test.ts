@@ -53,11 +53,12 @@ describe("mcp", () => {
     expect((await SELF.fetch("https://x/mcp", { method: "GET" })).status).toBe(401);
   });
 
-  it("mcp lists exactly eight tools", async () => {
+  it("mcp lists the eight task and lead tools and the eleven read tools", async () => {
     const j = await result("tools/list", {});
-    expect(j.result.tools.map((t: { name: string }) => t.name).sort()).toEqual(
-      ["complete_claude_task", "get_lead", "list_approvals", "next_claude_task", "propose_approval", "queue_status", "release_claude_task", "search_leads"],
-    );
+    expect(j.result.tools.map((t: { name: string }) => t.name).sort()).toEqual([
+      "complete_claude_task", "get_client", "get_deal", "get_lead", "get_meeting", "get_project", "get_site", "get_timeline", "list_approvals", "list_invoices", "list_meetings",
+      "list_open_tasks", "list_projects", "next_claude_task", "propose_approval", "queue_status", "release_claude_task", "search_clients", "search_leads",
+    ]);
   });
 
   it("search_leads finds seeded lead", async () => {

@@ -1,3 +1,4 @@
+import { testClientSql } from "../clients/record";
 import { MeetingSummarySchema, type MeetingSummary } from "../meetings/summary";
 
 export type MeetingStatus = "received" | "summarized" | "failed";
@@ -53,11 +54,14 @@ export async function meetingByMeetilyId(db: D1Database, meetilyId: string): Pro
   return r ? toMeeting(r) : null;
 }
 
-/** Newest first. Pass `businessId` for one client's meetings. */
-export async function listMeetings(db: D1Database, o: { businessId?: string; limit?: number }): Promise<Meeting[]> {
-  const rows = o.businessId
-    ? (await db.prepare(`SELECT * FROM meetings WHERE business_id = ? ORDER BY started_at DESC, id LIMIT ?`).bind(o.businessId, o.limit ?? 50).all<Row>()).results
-    : (await db.prepare(`SELECT * FROM meetings ORDER BY started_at DESC, id LIMIT ?`).bind(o.limit ?? 50).all<Row>()).results;
+/** Newest first. Pass `businessId` for one client's meetings. `realOnly` leaves out the meetings of a rehearsal client (see `testClientSql`). */
+export async function listMeetings(db: D1Database, o: { businessId?: string; limit?: number; realOnly?: boolean }): Promise<Meeting[]> {
+  const where: string[] = [], binds: (string | number)[] = [];
+  if (o.businessId) { where.push("m.business_id = ?"); binds.push(o.businessId); }
+  if (o.realOnly) where.push(`NOT ${testClientSql("b")}`);
+  const rows = (await db.prepare(
+    `SELECT m.* FROM meetings m JOIN businesses b ON b.id = m.business_id ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY m.started_at DESC, m.id LIMIT ?`,
+  ).bind(...binds, o.limit ?? 50).all<Row>()).results;
   return rows.map(toMeeting);
 }
 

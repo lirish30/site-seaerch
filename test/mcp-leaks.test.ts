@@ -1,0 +1,106 @@
+import { env } from "cloudflare:test";
+import { beforeAll, describe, expect, it } from "vitest";
+import "../src/worker/approvals/leadNote";
+import { createApproval } from "../src/worker/db/approvals";
+import { logActivity } from "../src/worker/db/activity";
+import { attachStripeInvoice } from "../src/worker/db/invoices";
+import { insertBookingIfFree } from "../src/worker/db/bookings";
+import { insertMeetingIfNew } from "../src/worker/db/meetings";
+import { createOnboarding, listItems, saveItemText } from "../src/worker/db/onboardings";
+import { setAccess } from "../src/worker/db/sites";
+import { markSubscription } from "../src/worker/db/subscriptions";
+import { markSent } from "../src/worker/db/changeOrders";
+import { sha256Hex, canonicalJson } from "../src/worker/documents/hash";
+import { addChangeOrder, seedClient } from "./fixtures/clients";
+import { insertTasks } from "../src/worker/db/tasks";
+import { newTask, resetProjectWork } from "./fixtures/projects";
+import { tool } from "./fixtures/mcp";
+
+/** Every value an agent must never read, each unmistakable in a response. */
+const SENTINELS = {
+  vaultName: "VAULT-NAME-SENTINEL", accessNote: "ACCESS-NOTE-SENTINEL", clientAnswer: "CLIENT-ANSWER-SENTINEL", subscriptionToken: "SUBSCRIPTION-TOKEN-SENTINEL",
+  documentToken: "DOCUMENT-TOKEN-SENTINEL", bookingCancelToken: "BOOKING-CANCEL-TOKEN-SENTINEL", onboardingToken: "ONBOARDING-TOKEN-SENTINEL",
+  changeOrderToken: "CHANGE-ORDER-TOKEN-SENTINEL", hostedUrl: "https://invoice.stripe.com/i/HOSTED-URL-SENTINEL", stripeInvoice: "in_STRIPE-INVOICE-SENTINEL",
+  stripeCustomer: "cus_STRIPE-CUSTOMER-SENTINEL", stripeSubscription: "sub_STRIPE-SUBSCRIPTION-SENTINEL", transcriptKey: "transcript.json", mailboxOut: "pw-out", mailboxMain: "pw-main",
+} as const;
+const TRANSCRIPT = "TRANSCRIPT-SENTINEL";
+
+let ids: { businessId: string; dealId: string; siteId: string; projectId: string; meetingId: string };
+
+beforeAll(async () => {
+  await env.DB.batch(["meetings", "invoices", "subscriptions", "bookings"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+  await resetProjectWork();
+  const s = await seedClient({ subs: [{ monthlyCents: 12900, key: "care" }], invoice: { cents: 50000 } });
+  // Access: a vault item name and a note on the site.
+  await setAccess(env.DB, s.site!.id, "hosting", { status: "received", vaultItem: SENTINELS.vaultName, note: SENTINELS.accessNote }, "2026-12-05T10:00:00.000Z");
+  // The client's own answer to an access question, and the onboarding token.
+  const { onboarding } = await createOnboarding(env.DB, {
+    businessId: s.businessId, dealId: s.dealId, documentId: s.documentId, kind: "build", test: false,
+    items: [{ key: "access_hosting", label: "Hosting", instructions: "Where is the site hosted?", kind: "text", phase: 1 }],
+  });
+  await saveItemText(env.DB, (await listItems(env.DB, onboarding.id))[0].id, SENTINELS.clientAnswer, "2026-12-05T10:00:00.000Z");
+  await env.DB.prepare(`UPDATE onboardings SET token = ? WHERE id = ?`).bind(SENTINELS.onboardingToken, onboarding.id).run();
+  // Subscription token and Stripe ids.
+  await markSubscription(env.DB, s.subIds[0], { token: SENTINELS.subscriptionToken, stripeCustomerId: SENTINELS.stripeCustomer, stripeSubscriptionId: SENTINELS.stripeSubscription });
+  // The document's client token.
+  await env.DB.prepare(`UPDATE documents SET token = ? WHERE id = ?`).bind(SENTINELS.documentToken, s.documentId).run();
+  // A booking's cancel token.
+  const booking = (await insertBookingIfFree(env.DB, {
+    businessId: s.businessId, dealId: s.dealId, kind: "discovery", startAt: "2026-12-01T17:00:00.000Z", endAt: "2026-12-01T17:20:00.000Z", contactName: "Pat Jones",
+    contactEmail: "pat@ace.test", contactPhone: null, answers: null, source: "visitor",
+  }))!;
+  await env.DB.prepare(`UPDATE bookings SET cancel_token = ? WHERE id = ?`).bind(SENTINELS.bookingCancelToken, booking.id).run();
+  // A change order sent with a token.
+  const co = await addChangeOrder(s, s.project!.id);
+  await markSent(env.DB, co.id, { token: SENTINELS.changeOrderToken, content: co.content, contentSha256: await sha256Hex(canonicalJson(co.content)), sentAt: "2026-12-05T10:00:00.000Z", expiresAt: "2099-01-01T00:00:00.000Z", approvalId: null });
+  // The invoice's Stripe ids and hosted link.
+  await env.DB.prepare(`UPDATE invoices SET status = 'draft', stripe_customer_id = NULL, stripe_invoice_id = NULL, hosted_url = NULL WHERE id = ?`).bind(s.invoice!.id).run();
+  await attachStripeInvoice(env.DB, s.invoice!.id, { stripeCustomerId: SENTINELS.stripeCustomer, stripeInvoiceId: SENTINELS.stripeInvoice, hostedUrl: SENTINELS.hostedUrl, dueOn: "2027-01-20", now: "2026-12-20T10:00:00.000Z" });
+  // A meeting with a transcript line.
+  const meetingId = crypto.randomUUID();
+  const key = `meetings/${meetingId}/transcript.json`;
+  await env.RAW.put(key, JSON.stringify({ lines: [{ speaker: "Pat", atSec: 1, text: TRANSCRIPT }] }));
+  await insertMeetingIfNew(env.DB, {
+    id: meetingId, meetilyId: `m-${meetingId}`, businessId: s.businessId, bookingId: booking.id, windowKey: "w", title: "Kickoff call", startedAt: "2026-12-01T17:00:00.000Z",
+    endedAt: "2026-12-01T17:30:00.000Z", transcriptKey: key, notes: null,
+  });
+  await insertTasks(env.DB, [newTask(s.project!.id, s.businessId, { stepKey: "a", title: "Write copy", owner: "logan" }), newTask(s.project!.id, s.businessId, { stepKey: "b", position: 1, title: "Draft", owner: "claude" })]);
+  await logActivity(env.DB, s.businessId, "note" as never, "Called Pat");
+  await createApproval(env.DB, { kind: "lead.note", title: "Note", preview: "p", payload: { businessId: s.businessId, text: "hello" }, record_type: "business", record_id: s.businessId, drafted_by: "mcp" });
+  ids = { businessId: s.businessId, dealId: s.dealId, siteId: s.site!.id, projectId: s.project!.id, meetingId };
+});
+
+/** Every tool with every id it accepts, in the order a session would call them (the timeline last, so it also carries what the other calls logged). */
+const calls = (): [string, unknown][] => [
+  ["search_leads", { query: "ace" }], ["search_leads", {}], ["get_lead", { id: ids.businessId }], ["list_approvals", {}], ["list_approvals", { status: "approved" }],
+  ["search_clients", {}], ["search_clients", { query: "ace.com" }], ["get_client", { id: ids.businessId }], ["get_site", { id: ids.siteId }],
+  ["list_projects", {}], ["list_projects", { business_id: ids.businessId }], ["get_project", { id: ids.projectId }],
+  ["list_open_tasks", {}], ["list_open_tasks", { owner: "logan" }], ["list_open_tasks", { owner: "claude" }], ["list_open_tasks", { owner: "client" }],
+  ["get_deal", { id: ids.dealId }], ["list_invoices", {}], ["list_invoices", { business_id: ids.businessId }], ["list_invoices", { status: "open" }],
+  ["list_meetings", {}], ["list_meetings", { business_id: ids.businessId }], ["get_meeting", { id: ids.meetingId }],
+  ["get_timeline", { record_type: "business", record_id: ids.businessId }], ["get_timeline", { record_type: "project", record_id: ids.projectId }],
+];
+
+describe("what no tool may say", () => {
+  it("the sentinels are really in the data the tools read", async () => {
+    expect((await env.DB.prepare(`SELECT vault_item, note FROM site_access_items WHERE site_id = ? AND key = 'hosting'`).bind(ids.siteId).first())).toEqual({ vault_item: SENTINELS.vaultName, note: SENTINELS.accessNote });
+    expect((await env.DB.prepare(`SELECT text_value FROM onboarding_items WHERE key = 'access_hosting'`).first<{ text_value: string }>())!.text_value).toBe(SENTINELS.clientAnswer);
+    expect((await env.DB.prepare(`SELECT hosted_url, stripe_invoice_id FROM invoices WHERE business_id = ?`).bind(ids.businessId).first())).toEqual({ hosted_url: SENTINELS.hostedUrl, stripe_invoice_id: SENTINELS.stripeInvoice });
+    expect((await env.DB.prepare(`SELECT token FROM change_orders WHERE business_id = ?`).bind(ids.businessId).first<{ token: string }>())!.token).toBe(SENTINELS.changeOrderToken);
+  });
+
+  it("no read tool, and none of the existing ones, shows a secret, whichever id it is given", async () => {
+    for (const [name, args] of calls()) {
+      const r = await tool(name, args);
+      expect(r.isError, `${name} ${JSON.stringify(args)}: ${r.text.slice(0, 200)}`).toBe(false);
+      for (const [what, value] of Object.entries(SENTINELS)) expect(r.text, `${name} ${JSON.stringify(args)} shows ${what}`).not.toContain(value);
+      expect(r.text, `${name} shows the transcript`).not.toContain(TRANSCRIPT);
+    }
+  });
+
+  it("only get_meeting with include_transcript carries the transcript", async () => {
+    const r = await tool("get_meeting", { id: ids.meetingId, include_transcript: true });
+    expect(r.text).toContain(TRANSCRIPT);
+    for (const [what, value] of Object.entries(SENTINELS)) expect(r.text, `shows ${what}`).not.toContain(value);
+  });
+});

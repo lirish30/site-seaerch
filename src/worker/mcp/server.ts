@@ -15,7 +15,8 @@ const APP_PROPOSED = ["video.publish", "proposal.send", "onboarding.welcome", "o
   "invoice.send", "invoice.reminder", "invoice.pause_notice", "subscription.start", "subscription.term_notice", "meeting.followup"];
 /** The kinds an agent may propose: all but those the app proposes itself. */
 const proposableKinds = () => registeredKinds().filter((k) => !APP_PROPOSED.includes(k));
-import { logAgentAction } from "../db/agentActions";
+import { makeCtx } from "./tools/context";
+import { registerReadTools } from "./tools/read";
 import { getBusiness } from "../db/businesses";
 import { isKnownRecipient } from "../db/contacts";
 import { latestAudit, latestAuditsFor } from "../db/audits";
@@ -28,15 +29,12 @@ import { getTaskKind, registeredTaskKinds } from "../queue/registry";
 const MAX_LEADS = 50;
 /** Tasks skipped in one call because their target is gone (each is closed, so the loop always makes progress). */
 const MAX_SKIPPED = 10;
-const text = (v: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(v) }] });
-const fail = (msg: string) => ({ isError: true as const, content: [{ type: "text" as const, text: msg }] });
 
 /** Read, propose, and work the Claude task queue. There is deliberately no approve, reject, send or execute tool: completing a task can only create approvals. */
 export function buildMcpServer(env: Env): McpServer {
-  const db = env.DB;
+  const ctx = makeCtx(env);
+  const { db, log, text, fail } = ctx;
   const server = new McpServer({ name: "agency-os", version: "1.0.0" });
-  const log = (tool: string, summary: string, record?: { type: string; id: string }) =>
-    logAgentAction(db, { actor: "mcp", tool, summary, record_type: record?.type, record_id: record?.id });
 
   server.registerTool("search_leads", {
     description: "Search leads by name/domain text and/or lead status. Returns up to 50.",
@@ -215,5 +213,6 @@ export function buildMcpServer(env: Env): McpServer {
     return text(Object.fromEntries(Object.entries(counts).map(([kind, c]) => [kind, { ...c, suggested_model: getTaskKind(kind)?.suggestedModel ?? null }])));
   });
 
+  registerReadTools(server, ctx);
   return server;
 }
