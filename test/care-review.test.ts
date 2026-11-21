@@ -255,10 +255,34 @@ describe("POST /api/care/checks/:id/ok", () => {
     expect(await incidents()).toEqual([]);
   });
 
-  it("answers 409 when the page is not pending, and 404 for an unknown id", async () => {
+  it.each(["unsure", "broken"])("Logan's OK overrides a %s look: logan_ok, the incident stays open", async (review) => {
+    const s = await canaryWithChangedPage();
+    await env.DB.prepare(`UPDATE care_page_checks SET review = ? WHERE id = ?`).bind(review, s.check.id).run();
+    expect((await call(`/care/checks/${s.check.id}/ok`)).status).toBe(200);
+    expect(await reviewOf(s.check.id)).toBe("logan_ok");
+  });
+
+  it("an unsure group released by Logan gets its wave 2 once the batch is still open", async () => {
+    await mk("c.com", 9000, "booking"); await mk("d.com", 5000, "booking"); await mk("e.com", 9500, "booking");
+    const s = await canaryWithChangedPage();
+    await env.DB.prepare(`UPDATE care_page_checks SET review = 'unsure' WHERE id = ?`).bind(s.check.id).run();
+    expect((await call(`/care/checks/${s.check.id}/ok`)).status).toBe(200);
+    expect(await wave2()).toBe(0); // the brochure canary is still running
+    for (const r of await runsFor(env.DB, s.batch.id)) if (r.id !== s.run.id) await setRunStatus(env.DB, r.id, ["queued", "running"], "ok", { summary: "x" }, iso(Date.now()));
+    await onRunDone(env, s.batch.id);
+    expect(await wave2()).toBe(1);
+    const [, w2] = (await env.DB.prepare(`SELECT preview FROM approvals WHERE kind = 'care.updates' ORDER BY created_at, rowid`).all<{ preview: string }>()).results;
+    expect(w2.preview).toContain("e.com");
+  });
+
+  it("answers 409 when the page is fine, logan_ok or never flagged, and 404 for an unknown id", async () => {
     const s = await canaryWithChangedPage();
     expect((await call(`/care/checks/${s.check.id}/ok`)).status).toBe(200);
     expect((await call(`/care/checks/${s.check.id}/ok`)).status).toBe(409);
+    for (const r of ["fine", "none"]) {
+      await env.DB.prepare(`UPDATE care_page_checks SET review = ? WHERE id = ?`).bind(r, s.check.id).run();
+      expect((await call(`/care/checks/${s.check.id}/ok`)).status).toBe(409);
+    }
     expect((await call(`/care/checks/${crypto.randomUUID()}/ok`)).status).toBe(404);
   });
 

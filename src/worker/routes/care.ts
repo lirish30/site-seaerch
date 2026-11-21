@@ -68,13 +68,13 @@ careRoutes.put("/sites/:id/monitoring", async (c) => {
 });
 
 /**
- * Logan looked at a page that changed after updates and it is fine: pending becomes `logan_ok`, Claude's open look at it is closed and the batch moves on.
- * 404 for a page check nobody has; 409 when it is not waiting for a look.
+ * Logan looked at a page that changed after updates and it is fine: pending, unsure or broken (his look overrides Claude's) becomes `logan_ok`, Claude's open look at it is closed and the batch moves on.
+ * 404 for a page check nobody has; 409 when it is fine, already `logan_ok` or was never flagged. An open incident stays open: Logan closes it himself.
  */
 careRoutes.post("/care/checks/:id/ok", async (c) => {
   const check = await getPageCheck(c.env.DB, c.req.param("id"));
   if (!check) return c.json(NOT_FOUND, 404);
-  if (!(await setReview(c.env.DB, check.id, ["pending"], "logan_ok"))) return c.json({ error: "This page is not waiting for a look." }, 409);
+  if (!(await setReview(c.env.DB, check.id, ["pending", "unsure", "broken"], "logan_ok"))) return c.json({ error: "This page is not waiting for a look or open to your OK." }, 409);
   await cancelTasksFor(c.env.DB, CARE_REVIEW_TARGET, check.id);
   const run = await getRun(c.env.DB, check.runId);
   if (run) await onRunDone(c.env, run.batchId);
