@@ -62,6 +62,12 @@ describe("uptimeOf", () => {
   it("is one decimal: 12 failed of 288 is 95.8", () => {
     expect(uptimeOf([{ day: "2026-11-01", checks: 288, okChecks: 276 }]).percent).toBe(95.8);
   });
+  it("shows 100 only for a perfect record: one failed check among 8640 is 99.9, never a rounded-up 100", () => {
+    expect(uptimeOf([{ day: "2026-11-01", checks: 8640, okChecks: 8639 }]).percent).toBe(99.9); // 99.988 rounds to 100.0 as a plain number
+    expect(uptimeOf([{ day: "2026-11-01", checks: 2000, okChecks: 1999 }]).percent).toBe(99.9); // exactly 99.95
+    expect(uptimeOf([{ day: "2026-11-01", checks: 8640, okChecks: 8640 }]).percent).toBe(100);
+    expect(uptimeOf([{ day: "2026-11-01", checks: 288, okChecks: 288 }, { day: "2026-11-02", checks: 288, okChecks: 287 }]).percent).toBe(99.8); // 575 of 576
+  });
 });
 
 describe("rollupUptime", () => {

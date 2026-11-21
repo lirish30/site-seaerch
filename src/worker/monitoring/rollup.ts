@@ -59,12 +59,14 @@ export async function rollupUptime(env: Pick<Env, "DB">, now: Date): Promise<num
 
 /**
  * The uptime of a set of days. Only days with at least MIN_CHECKS_FOR_A_DAY checks are covered; `percent` is one decimal of ok checks over all checks of the covered days,
- * and null (never 100) when none is covered. `firstDay` is the earliest covered day.
+ * and null (never 100) when none is covered. 100 means a perfect record: with any failed check the percent is at most 99.9, so rounding never turns a real outage into "100%".
+ * `firstDay` is the earliest covered day.
  */
 export function uptimeOf(days: { day: string; checks: number; okChecks: number }[]): { percent: number | null; coveredDays: number; firstDay: string | null } {
   const covered = days.filter((d) => d.checks >= MIN_CHECKS_FOR_A_DAY);
   if (covered.length === 0) return { percent: null, coveredDays: 0, firstDay: null };
   const checks = covered.reduce((n, d) => n + d.checks, 0);
   const ok = covered.reduce((n, d) => n + d.okChecks, 0);
-  return { percent: Math.round(((ok * 100) / checks) * 10) / 10, coveredDays: covered.length, firstDay: covered.map((d) => d.day).sort()[0] };
+  const rounded = Math.round(((ok * 100) / checks) * 10) / 10;
+  return { percent: ok < checks ? Math.min(rounded, 99.9) : rounded, coveredDays: covered.length, firstDay: covered.map((d) => d.day).sort()[0] };
 }
