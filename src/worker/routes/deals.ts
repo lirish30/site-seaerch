@@ -4,7 +4,7 @@ import type { Env } from "../env";
 import { getBusiness } from "../db/businesses";
 import { logActivity } from "../db/activity";
 import { requestCallPrep } from "../queue/callPrep";
-import { matchedMeetingFor } from "../meetings/link";
+import { recordingFor } from "../meetings/link";
 import { OptionsEditSchema, offerOf, optionProblems, requestCallRecap } from "../queue/callRecap";
 import { parseConfig } from "../booking/config";
 import { bookRecommendation, suggestFollowups } from "../booking/followup";
@@ -23,10 +23,10 @@ export const dealRoutes = new Hono<{ Bindings: Env }>();
 
 dealRoutes.get("/", async (c) => c.json(await listDeals(c.env.DB, { openOnly: c.req.query("open") === "1" })));
 
-/** The deal, and whether its discovery call was recorded and matched (so "Draft recap" can work without notes). Only the yes or no: never the meeting, its transcript or its key. */
+/** The deal, and whether its discovery call was recorded, matched and has a transcript (so "Draft recap" can work without notes). Only the yes or no: never the meeting, its transcript or its key. */
 dealRoutes.get("/:id", async (c) => {
   const deal = await getDeal(c.env.DB, c.req.param("id"));
-  return deal ? c.json({ ...deal, hasRecording: (await matchedMeetingFor(c.env.DB, deal)) !== null }) : c.json({ error: "not found" }, 404);
+  return deal ? c.json({ ...deal, hasRecording: (await recordingFor(c.env, deal)) !== null }) : c.json({ error: "not found" }, 404);
 });
 
 dealRoutes.post("/:id/move", async (c) => {
@@ -94,7 +94,7 @@ dealRoutes.post("/:id/recap", async (c) => {
   const deal = await getDeal(c.env.DB, c.req.param("id"));
   if (!deal) return c.json({ error: "not found" }, 404);
   if (isClosed(deal)) return c.json({ error: "the deal is closed" }, 409);
-  if (!hasNotes(deal.notes) && !(await matchedMeetingFor(c.env.DB, deal))) return c.json({ error: "write the call notes first, or record the call: the recap is built from the owner's own words" }, 409);
+  if (!hasNotes(deal.notes) && !(await recordingFor(c.env, deal))) return c.json({ error: "write the call notes first, or record the call: the recap is built from the owner's own words" }, 409);
   const { taskId, created } = await requestCallRecap(c.env.DB, deal.id);
   if (created) await logActivity(c.env.DB, deal.businessId, "call_recap", "Call recap requested");
   return c.json({ queued: true, created, taskId });
