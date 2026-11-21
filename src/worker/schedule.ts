@@ -15,11 +15,12 @@ import { activityStmt } from "./db/activity";
 import { sweepOnboardings } from "./onboarding/sweep";
 import { sweepProjects } from "./projects/sweep";
 import { sweepBilling } from "./billing/sweep";
+import { sweepDomains, sweepUptime } from "./monitoring/sweep";
 
 /** The cron strings in wrangler.jsonc. The daily one MUST stay first there: test/radar-info.test.ts reads the first entry. */
 export const DAILY_CRON = "17 13 * * *";
 export const MAIL_SYNC_CRON = "*/15 * * * *";
-/** Every five minutes: only the booking reminders, which need a finer tick than the mail sync gives (a "10 minutes before" mail cannot land on a 15-minute one). */
+/** Every five minutes: the booking reminders, which need a finer tick than the mail sync gives (a "10 minutes before" mail cannot land on a 15-minute one), then the Care uptime probe. */
 export const REMINDER_CRON = "*/5 * * * *";
 
 /**
@@ -43,13 +44,13 @@ async function expireProposals(env: Env, now: Date): Promise<number> {
 }
 
 /**
- * Routes one Cron Trigger. The 15-minute cron only syncs mail and queues the Mac helper's Meetily pull (a failure of one never stops the other), and the 5-minute one only sends due booking reminders. Any other cron (the daily one) does, in order:
+ * Routes one Cron Trigger. The 15-minute cron only syncs mail and queues the Mac helper's Meetily pull (a failure of one never stops the other), and the 5-minute one sends due booking reminders and then probes the monitored Care sites (records checks and opens or closes down incidents; sends nothing). Any other cron (the daily one) does, in order:
  * starts due radars, scans for due sequence steps, gives up on Claude tasks and Mac helper jobs nobody picked up in 14 days, expires proposals past their date,
  * re-queues CRO roadmaps that were never handed over, sweeps the open client onboardings (drafts the reminder or Friday update that is due, as an approval,
  * and notes 14 days of silence), and sweeps the projects (makes this period's recurring tasks, starts the projects a paid proposal never got, sends the Claude steps that are
  * ready, expires change orders past their date, and saves a timer left running past its cap), and last sweeps the billing (drafts the milestone invoices a hook never made, plans and
  * proposes subscriptions, drafts the reminders and pause notices that are due and places the holds, notices or converts the terms that end, and settles the open invoices whose webhook never
- * came). This is unattended work: it can only start searches, create approvals and holds, queue Claude steps and close queue tasks, never send, and it never throws.
+ * came), then looks up the expiry of the monitored sites' domains and deletes old uptime checks. This is unattended work: it can only start searches, create approvals and holds, queue Claude steps and close queue tasks, never send, and it never throws.
  */
 export async function runScheduled(env: Env, cron: string, now: Date): Promise<void> {
   if (cron === MAIL_SYNC_CRON) {
@@ -61,6 +62,8 @@ export async function runScheduled(env: Env, cron: string, now: Date): Promise<v
   if (cron === REMINDER_CRON) {
     // Quiet unless a reminder went out or was held back: it runs 288 times a day.
     await part("booking reminders", async () => { const r = await sendDueReminders(env, now); return r.sent || r.skipped ? r : undefined; }, true);
+    // Quiet unless an incident opened or closed: the probe records a check per site on every tick.
+    await part("uptime", async () => { const r = await sweepUptime(env, now); return r.opened || r.closed ? r : undefined; }, true);
     return;
   }
   await part("radar run", () => runDueRadars({ db: env.DB, now: () => now, startWorkflow: searchWorkflowStarter(env) }));
@@ -72,4 +75,5 @@ export async function runScheduled(env: Env, cron: string, now: Date): Promise<v
   await part("onboarding sweep", () => sweepOnboardings(env, now));
   await part("project sweep", () => sweepProjects(env, now));
   await part("billing sweep", () => sweepBilling(env, now));
+  await part("domain expiry", () => sweepDomains(env, now));
 }

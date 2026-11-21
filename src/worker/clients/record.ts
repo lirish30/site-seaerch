@@ -14,11 +14,14 @@ import { listSubscriptions, type Subscription } from "../db/subscriptions";
 import { zoneOf } from "../sop/cadence";
 import { ACCESS_ITEM_PREFIX, cleanText } from "../onboarding/templates";
 import { siteFlags, type SiteFlag } from "../sites/access";
+import { monitoringViews, type SiteMonitoringView } from "../monitoring/fleet";
+import { computeHealth, type Health } from "./health";
+import { healthFor, healthInputs } from "./healthData";
 import type { Activity, Business, Person } from "../types";
 
 /** A subscription is live (billing, or late on a bill) in these states. */
-const LIVE = ["active", "past_due"] as const;
-const CARE_KEYS = ["care", "care_plus", "care_fallback"] as const;
+export const LIVE = ["active", "past_due"] as const;
+export const CARE_KEYS = ["care", "care_plus", "care_fallback"] as const;
 const CARE_NAMES: Record<(typeof CARE_KEYS)[number], string> = { care: "Care", care_plus: "Care Plus", care_fallback: "Care" };
 
 /**
@@ -70,17 +73,19 @@ export const nextRenewalOn = (subs: Subscription[]): string | null =>
 
 export interface ClientRow {
   id: string; name: string; /** True for a rehearsal client (see `testClientSql`); such rows only come back with `includeTest`. */ test: boolean; careLabel: string | null; mrrCents: number; siteCount: number; accessMissing: number; openInvoiceCents: number; held: boolean; nextRenewalOn: string | null;
+  /** The client health score (0 to 100), the same number the Care board shows; null for a client with no live Care and no switched-on site, and for a rehearsal client. */
+  healthScore: number | null;
 }
 
 interface ListRow {
-  id: string; name: string; is_test: number; mrr_cents: number; site_count: number; access_missing: number; open_cents: number; held: number; next_renewal_on: string | null;
+  id: string; name: string; is_test: number; mrr_cents: number; site_count: number; access_missing: number; open_cents: number; held: number; next_renewal_on: string | null; switched_on: number;
 }
 
 /**
  * Every client, by name. The numbers come from one query (each is a subquery of the business row), plus one read of the live subscriptions for the Care label, so the list costs two
- * reads however many clients there are. Test records are left out unless `includeTest`.
+ * reads however many clients there are, plus the health inputs of the clients that have a score (in chunks). Test records are left out unless `includeTest`. `now` decides the scores.
  */
-export async function listClients(db: D1Database, o: { includeTest?: boolean } = {}): Promise<ClientRow[]> {
+export async function listClients(db: D1Database, o: { includeTest?: boolean; now?: Date } = {}): Promise<ClientRow[]> {
   const [rows, active] = await Promise.all([
     db.prepare(
       `SELECT b.id, b.name, ${testClientSql("b")} AS is_test,
@@ -90,7 +95,8 @@ export async function listClients(db: D1Database, o: { includeTest?: boolean } =
             WHERE s.business_id = b.id AND s.archived_at IS NULL AND i.status NOT IN ('received', 'verified', 'not_applicable')) AS access_missing,
          (SELECT COALESCE(SUM(v.amount_cents), 0) FROM invoices v WHERE v.business_id = b.id AND v.test = 0 AND v.status IN ('open', 'failed')) AS open_cents,
          EXISTS (SELECT 1 FROM billing_holds h WHERE h.business_id = b.id AND h.lifted_at IS NULL) AS held,
-         (SELECT MIN(u.term_ends_on) FROM subscriptions u WHERE u.business_id = b.id AND u.test = 0 AND u.status IN ('active', 'past_due') AND u.term_ends_on IS NOT NULL) AS next_renewal_on
+         (SELECT MIN(u.term_ends_on) FROM subscriptions u WHERE u.business_id = b.id AND u.test = 0 AND u.status IN ('active', 'past_due') AND u.term_ends_on IS NOT NULL) AS next_renewal_on,
+         EXISTS (SELECT 1 FROM sites s WHERE s.business_id = b.id AND s.archived_at IS NULL AND s.test = 0 AND s.url IS NOT NULL AND s.url <> '' AND s.monitoring = 1) AS switched_on
        FROM businesses b
        WHERE ${clientSql("b")}${o.includeTest ? "" : ` AND NOT ${testClientSql("b")}`}
        ORDER BY b.name COLLATE NOCASE, b.id`,
@@ -99,9 +105,12 @@ export async function listClients(db: D1Database, o: { includeTest?: boolean } =
   ]);
   const byBusiness = new Map<string, Subscription[]>();
   for (const s of active) byBusiness.set(s.businessId, [...(byBusiness.get(s.businessId) ?? []), s]);
+  // A score only for the clients on the Care board (a live Care subscription or a site switched on), computed exactly as the board does.
+  const scored = rows.results.filter((r) => r.is_test !== 1 && (careLabel(byBusiness.get(r.id) ?? []) !== null || r.switched_on === 1)).map((r) => r.id);
+  const inputs = await healthInputs(db, scored, o.now ?? new Date());
   return rows.results.map((r) => ({
     id: r.id, name: r.name, test: r.is_test === 1, careLabel: careLabel(byBusiness.get(r.id) ?? []), mrrCents: r.mrr_cents, siteCount: r.site_count, accessMissing: r.access_missing,
-    openInvoiceCents: r.open_cents, held: r.held === 1, nextRenewalOn: r.next_renewal_on,
+    openInvoiceCents: r.open_cents, held: r.held === 1, nextRenewalOn: r.next_renewal_on, healthScore: inputs.has(r.id) ? computeHealth(inputs.get(r.id)!).score : null,
   }));
 }
 
@@ -123,8 +132,10 @@ export type ClientAccessItem = AccessItem & { clientAnswer: string | null };
 export interface ClientRecord {
   business: Business;
   people: Person[];
-  /** Live sites only. `access` is the six checklist items with the owner-only vault names and notes: this record is for the owner and nobody else. */
-  sites: { site: Site; access: ClientAccessItem[]; flags: SiteFlag[] }[];
+  /** Live sites only. `access` is the six checklist items with the owner-only vault names and notes: this record is for the owner and nobody else. `monitoring` is the Care view of the site (its domain, never its address). */
+  sites: { site: Site; access: ClientAccessItem[]; flags: SiteFlag[]; monitoring: SiteMonitoringView }[];
+  /** The client's health score and its reasons: the same number the Care board shows, for any client. */
+  health: Health;
   subscriptions: ClientSubscription[];
   mrrCents: number;
   careLabel: string | null;
@@ -145,6 +156,13 @@ const toChangeOrder = (c: ChangeOrder): ClientChangeOrder => ({
   id: c.id, projectId: c.projectId, seq: c.seq, status: c.status, test: c.test, reference: c.content.reference, title: c.content.title, priceCents: c.content.priceCents,
   sentAt: c.sentAt, signedAt: c.signedAt, paidAt: c.paidAt, createdAt: c.createdAt,
 });
+
+/** An invoice the client still owes: a real one that is open or failed. */
+export const isOwed = (i: { test: boolean; status: string }): boolean => !i.test && (i.status === "open" || i.status === "failed");
+/** An owed invoice is overdue once its due date (YYYY-MM-DD, booking time zone) is before `today` (the same kind of date). No due date is never overdue. */
+export const isOverdue = (i: { dueOn: string | null }, today: string): boolean => i.dueOn !== null && i.dueOn < today;
+/** The booking-time-zone calendar date of `now`: what "overdue" is measured against. */
+export const todayKey = (settings: Parameters<typeof zoneOf>[0], now: Date): string => dayKey(now.getTime(), zoneOf(settings));
 
 /** The most the owner's record shows of what a client typed. */
 const ANSWER_MAX = 400;
@@ -170,7 +188,7 @@ export async function getClientRecord(db: D1Database, businessId: string, now: D
   const [business, client] = await Promise.all([getBusiness(db, businessId), isClient(db, businessId)]);
   if (!business || !client) return null;
   const settings = await getSettings(db);
-  const today = dayKey(now.getTime(), zoneOf(settings));
+  const today = todayKey(settings, now);
   const [people, subs, projects, invoices, documents, changeOrders, held, activity, sites] = await Promise.all([
     listPeople(db, businessId), listSubscriptions(db, { businessId }), listProjects(db, { businessId }), listInvoices(db, { businessId }), listForBusiness(db, businessId),
     listChangeOrdersForBusiness(db, businessId), isOnHold(db, businessId), listActivity(db, businessId), listSites(db, { businessId }),
@@ -179,17 +197,18 @@ export async function getClientRecord(db: D1Database, businessId: string, now: D
   const answers = sites.length > 0 ? await clientAnswers(db, businessId) : new Map<string, string>();
   // The client's answers are about their website as a whole, so they sit on the primary site only (the oldest live one when there is no primary), never repeated on a second site.
   const answerSiteId = (sites.find((s) => s.seedKey === "primary") ?? sites[0])?.id;
-  const withAccess = await Promise.all(sites.map(async (site) => {
+  const [health, monitoring] = await Promise.all([healthFor(db, businessId, now), monitoringViews(db, sites, new Set(care ? [businessId] : []), now)]);
+  const withAccess = await Promise.all(sites.map(async (site, n) => {
     const items = await listAccess(db, site.id);
     const access = items.map((i) => ({ ...i, clientAnswer: site.id === answerSiteId ? (answers.get(`${ACCESS_ITEM_PREFIX}${i.key}`) ?? null) : null }));
-    return { site, access, flags: siteFlags({ site, items, careActive: care !== null }) };
+    return { site, access, flags: siteFlags({ site, items, careActive: care !== null }), monitoring: monitoring[n] };
   }));
-  const owed = invoices.filter((i) => !i.test && (i.status === "open" || i.status === "failed"));
+  const owed = invoices.filter(isOwed);
   return {
-    business, people, sites: withAccess, subscriptions: subs.map(toSubscription), mrrCents: clientMrrCents(subs), careLabel: care, projects,
+    business, people, sites: withAccess, health, subscriptions: subs.map(toSubscription), mrrCents: clientMrrCents(subs), careLabel: care, projects,
     invoices: {
       openCents: owed.reduce((n, i) => n + i.amountCents, 0),
-      overdueCount: owed.filter((i) => i.dueOn !== null && i.dueOn < today).length,
+      overdueCount: owed.filter((i) => isOverdue(i, today)).length,
       paidCents: invoices.filter((i) => !i.test && i.status === "paid").reduce((n, i) => n + i.amountCents, 0),
     },
     documents: documents.map(toDocument), changeOrders: changeOrders.map(toChangeOrder), held, nextRenewalOn: nextRenewalOn(subs), activity,

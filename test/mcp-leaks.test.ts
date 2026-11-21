@@ -14,6 +14,7 @@ import { insertBookingIfFree } from "../src/worker/db/bookings";
 import { insertMeetingIfNew } from "../src/worker/db/meetings";
 import { createOnboarding, listItems, saveItemText } from "../src/worker/db/onboardings";
 import { setAccess } from "../src/worker/db/sites";
+import { openIncident } from "../src/worker/db/monitoring";
 import { markSubscription } from "../src/worker/db/subscriptions";
 import { markSent } from "../src/worker/db/changeOrders";
 import { sha256Hex, canonicalJson } from "../src/worker/documents/hash";
@@ -85,6 +86,8 @@ beforeAll(async () => {
     endedAt: "2026-12-01T17:30:00.000Z", transcriptKey: key, notes: NOTES,
   });
   await insertTasks(env.DB, [newTask(s.project!.id, s.businessId, { stepKey: "a", title: "Write copy", owner: "logan" }), newTask(s.project!.id, s.businessId, { stepKey: "b", position: 1, title: "Draft", owner: "claude" })]);
+  // An open down incident on the client's site, so the Care tools have something to show.
+  await openIncident(env.DB, { siteId: s.site!.id, businessId: s.businessId, kind: "down", detail: "HTTP 503", now: "2026-12-05T09:00:00.000Z" });
   await logActivity(env.DB, s.businessId, "note" as never, "Called Pat");
   await createApproval(env.DB, { kind: "lead.note", title: "Note", preview: "p", payload: { businessId: s.businessId, text: "hello" }, record_type: "business", record_id: s.businessId, drafted_by: "mcp" });
   ids = { businessId: s.businessId, dealId: s.dealId, siteId: s.site!.id, projectId: s.project!.id, meetingId };
@@ -98,6 +101,7 @@ const calls = (): [string, unknown][] => [
   ["list_open_tasks", {}], ["list_open_tasks", { owner: "logan" }], ["list_open_tasks", { owner: "claude" }], ["list_open_tasks", { owner: "client" }],
   ["get_deal", { id: ids.dealId }], ["list_invoices", {}], ["list_invoices", { business_id: ids.businessId }], ["list_invoices", { status: "open" }],
   ["list_meetings", {}], ["list_meetings", { business_id: ids.businessId }], ["get_meeting", { id: ids.meetingId }],
+  ["get_care_overview", {}], ["list_incidents", {}], ["list_incidents", { open: true }], ["list_incidents", { open: false }], ["list_incidents", { clientId: ids.businessId }],
   ["get_timeline", { record_type: "business", record_id: ids.businessId }], ["get_timeline", { record_type: "project", record_id: ids.projectId }],
 ];
 
@@ -130,6 +134,14 @@ describe("what no tool may say", () => {
       expect(r.text, `${name} shows the transcript`).not.toContain(TRANSCRIPT);
       if (name !== "get_meeting") expect(r.text, `${name} shows Meetily's notes`).not.toContain(NOTES);
     }
+  });
+
+  it("the Care tools show the incident and the client, but never the site's address or a link", async () => {
+    const overview = await tool("get_care_overview", {});
+    expect(JSON.parse(overview.text).clients).toEqual([expect.objectContaining({ clientId: ids.businessId, openIncidents: 1 })]);
+    const incidents = await tool("list_incidents", { open: true });
+    expect(JSON.parse(incidents.text).incidents).toEqual([expect.objectContaining({ clientId: ids.businessId, domain: "ace.com", kind: "down", detail: "HTTP 503" })]);
+    for (const r of [overview, incidents]) for (const bad of ["http", "vault", "url", "ace.com/", "token", "stripe"]) expect(r.text).not.toContain(bad);
   });
 
   it("only get_meeting with include_transcript carries the transcript", async () => {

@@ -6,6 +6,7 @@ import { addressProblem, carePastDue, latestOnly, moneyLabel, problemText, renew
 import ActivityTab from "../components/ActivityTab";
 import Icon from "../components/Icon";
 import MeetingsPanel from "../components/MeetingsPanel";
+import CarePanel from "../components/client/CarePanel";
 import LinkedPanel from "../components/client/LinkedPanel";
 import SitePanel from "../components/client/SitePanel";
 import { workError } from "../workData";
@@ -52,7 +53,7 @@ function AddSite({ clientId, onAdded }: { clientId: string; onAdded: () => Promi
  */
 export default function ClientPage() {
   const { id = "" } = useParams();
-  const { today } = useOwnerClock();
+  const { today, tz } = useOwnerClock();
   const [client, setClient] = useState<ClientRecord | null>(null);
   const [failed, setFailed] = useState<"" | "missing" | "error">("");
   const [userName, setUserName] = useState("");
@@ -151,6 +152,7 @@ export default function ClientPage() {
           </div>
 
           <div className="cl-col">
+            <CarePanel businessId={b.id} health={client.health} sites={client.sites.map(({ site, monitoring }) => ({ site, monitoring }))} zone={tz} onChanged={refresh} />
             <MeetingsPanel businessId={b.id} />
             <section className="cl-card" aria-label="Timeline">
               <h2>Timeline</h2>

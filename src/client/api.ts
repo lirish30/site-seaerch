@@ -1,6 +1,7 @@
 import type { PublicSubscription } from "../worker/billing/checkout";
 import type { ClientRecord, ClientRow } from "../worker/clients/record";
 import type { AccessItem, AccessKey, AccessStatus, Site, SiteFields } from "../worker/db/sites";
+import type { CareRow, IncidentView, SiteMonitoringView } from "../worker/monitoring/fleet";
 export class ApiError extends Error { constructor(public status: number, message: string, public fields: string[] = [], public code = "", public body: unknown = undefined) { super(message); } }
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -47,6 +48,16 @@ export const clientsApi = {
   /** One checklist line: a new status, the NAME of a password manager item, or the owner note. Only the keys given change; null clears. */
   setAccess: (id: string, siteId: string, key: AccessKey, patch: { status?: AccessStatus; vaultItem?: string | null; note?: string | null }) =>
     api.put<{ item: AccessItem }>(`/clients/${encodeURIComponent(id)}/sites/${encodeURIComponent(siteId)}/access/${key}`, patch).then((r) => r.item),
+};
+
+/** The Care routes (Plan 11): the board, one client's incidents, and the monitoring switch. A site's address never comes back, only its domain. */
+export const careApi = {
+  /** Every client on the Care board, worst health first. */
+  fleet: () => api.get<{ clients: CareRow[] }>("/care").then((r) => r.clients),
+  /** One client's incidents, newest first (open and closed). */
+  incidents: (businessId: string) => api.get<{ incidents: IncidentView[] }>(`/incidents?businessId=${encodeURIComponent(businessId)}`).then((r) => r.incidents),
+  /** Switches monitoring on or off for one site. A site whose address can't be monitored is a 409 with a plain sentence. */
+  setMonitoring: (siteId: string, enabled: boolean) => api.put<{ site: SiteMonitoringView }>(`/sites/${encodeURIComponent(siteId)}/monitoring`, { enabled }).then((r) => r.site),
 };
 
 // The client's subscription page (`/s/<token>`). Public: it deliberately bypasses `req`, whose 401 handling sends the visitor to the owner's login. No cookie is sent.

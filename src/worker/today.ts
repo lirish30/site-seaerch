@@ -3,7 +3,7 @@ import { listTodayCandidates } from "./db/businesses";
 import { suppressedLeadIds } from "./db/suppression";
 import { openProposalsSentBefore } from "./db/documents";
 import { listOpenItems, listOpenOnboardings } from "./db/onboardings";
-import { silentDays, stageOf } from "./onboarding/schedule";
+import { isWaitingOnClient, silentDays } from "./onboarding/schedule";
 import { projectAttention } from "./projects/progress";
 import { calendarDateIn, calendarDaysBetween } from "./billing/dates";
 import { activeHolds } from "./db/holds";
@@ -14,8 +14,10 @@ import { ACCESS_KEYS, type AccessStatus } from "./db/sites";
 import { liveProjectSql } from "./db/projects";
 import { clientSql, testClientSql } from "./clients/record";
 import { ACCESS_LABELS, unresolved } from "./sites/access";
+import { listIncidents, type Incident } from "./db/monitoring";
+import { domainDaysLeft } from "./monitoring/incidents";
 
-export const TODAY_KINDS = ["follow_up_due", "draft_unsent", "stalled_deal", "starred_idle", "promising_quick_scan", "proposal_follow_up", "onboarding_attention", "project_attention", "billing_attention", "access_missing"] as const;
+export const TODAY_KINDS = ["follow_up_due", "draft_unsent", "stalled_deal", "starred_idle", "promising_quick_scan", "proposal_follow_up", "onboarding_attention", "project_attention", "billing_attention", "access_missing", "site_incident"] as const;
 export type TodayKind = (typeof TODAY_KINDS)[number];
 export const isTodayKind = (s: string): s is TodayKind => (TODAY_KINDS as readonly string[]).includes(s);
 
@@ -50,7 +52,7 @@ export function parseSnooze(detail: string | null): { kind: TodayKind; until: nu
 // deal_created, deal_moved, call_prep, call_recap and followup_booked are the owner filing a deal (or the queue prepping or recapping a call), not contact with the prospect.
 // meeting_recorded is the sync filing a recording a day or so later, not contact made now.
 // video_watch is deliberately NOT in this set: a prospect watching the video is engagement and does un-stall a deal.
-const NOT_CONTACT = new Set(["today_done", "snoozed", "bulk", "starred", "unstarred", "job_found", "deal_created", "deal_moved", "call_prep", "call_recap", "followup_booked", "proposal_viewed", "proposal_signed", "proposal_void", "deposit_paid",
+const NOT_CONTACT = new Set(["today_done", "snoozed", "bulk", "starred", "unstarred", "job_found", "deal_created", "deal_moved", "call_prep", "call_recap", "followup_booked", "site_down", "site_back", "domain_expiring", "proposal_viewed", "proposal_signed", "proposal_void", "deposit_paid",
   "project_started", "project_milestone", "project_done", "change_order_sent", "change_order_signed", "change_order_paid", "change_order_void", "change_order_declined", "invoice_sent", "invoice_paid", "billing_hold_placed", "meeting_recorded"]);
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -103,6 +105,59 @@ async function accessAttention(db: D1Database, now: Date): Promise<Map<string, {
   return out;
 }
 
+/** "47 minutes", "1 hour 5 minutes", "2 hours", then whole days from 24 hours on. Under a minute is "less than a minute". */
+export function outageLength(ms: number): string {
+  const minutes = Math.max(0, Math.floor(ms / 60_000));
+  if (minutes < 1) return "less than a minute";
+  if (minutes < 60) return plural(minutes, "minute");
+  if (minutes < 24 * 60) return `${plural(Math.floor(minutes / 60), "hour")}${minutes % 60 ? ` ${plural(minutes % 60, "minute")}` : ""}`;
+  return plural(Math.floor(minutes / (24 * 60)), "day");
+}
+
+/**
+ * A client's site that is down or whose domain is about to lapse, one row per client: a site that is down (priority 90) beats a domain close to expiring (66). Only open incidents on live,
+ * real sites of real clients (listIncidents already leaves out test clients and test sites). It is the owner's own work, so it stays for a suppressed lead.
+ * The reason is built here from our own numbers (the open time, the site's expiry date) and never from `incident.detail`: that text is frozen when the incident opens, so a domain count would go stale,
+ * and it is never shown. With several sites down the one down longest is named and the others counted. `openedAt` is when the client's newest open incident opened.
+ */
+async function incidentAttention(db: D1Database, now: Date): Promise<Map<string, { reason: string; priority: number; openedAt: number }>> {
+  const incidents = await listIncidents(db, { open: true, limit: 1000 });
+  const out = new Map<string, { reason: string; priority: number; openedAt: number }>();
+  if (!incidents.length) return out;
+  const sites = new Map<string, { domain: string | null; expiresOn: string | null }>();
+  for (const part of chunks([...new Set(incidents.map((i) => i.siteId))])) {
+    const rows = (await db.prepare(`SELECT id, domain, domain_expires_on FROM sites WHERE archived_at IS NULL AND id IN (${part.map(() => "?").join(",")})`).bind(...part)
+      .all<{ id: string; domain: string | null; domain_expires_on: string | null }>()).results;
+    for (const r of rows) sites.set(r.id, { domain: r.domain, expiresOn: r.domain_expires_on });
+  }
+  const zone = zoneOf(await getSettings(db));
+  const byClient = new Map<string, Incident[]>();
+  for (const i of incidents) if (sites.has(i.siteId)) (byClient.get(i.businessId) ?? byClient.set(i.businessId, []).get(i.businessId)!).push(i);
+  for (const [businessId, list] of byClient) {
+    // Done and snooze answer the incidents that were open when they were pressed, so the row also carries when the newest open one opened (see `hidden`).
+    const openedAt = Math.max(...list.map((i) => ms(i.openedAt)));
+    const name = (i: Incident) => sites.get(i.siteId)!.domain ?? "A site"; // never an address: a URL can carry a login
+    const downs = list.filter((i) => i.kind === "down").sort((a, c) => ms(a.openedAt) - ms(c.openedAt));
+    if (downs.length) {
+      const others = downs.length - 1;
+      const tail = others === 0 ? "" : `, and ${others} other ${others === 1 ? "site is" : "sites are"} down too`;
+      out.set(businessId, { reason: `${name(downs[0])} has been down for ${outageLength(now.getTime() - ms(downs[0].openedAt))}${tail}`, priority: 90, openedAt });
+      continue;
+    }
+    // The nearest expiry speaks.
+    const withDays = list.filter((i) => i.kind === "domain_expiring").map((i) => ({ i, days: sites.get(i.siteId)!.expiresOn ? domainDaysLeft(sites.get(i.siteId)!.expiresOn!, now, zone) : null }));
+    if (!withDays.length) continue;
+    withDays.sort((a, c) => (a.days ?? Infinity) - (c.days ?? Infinity));
+    const { i, days } = withDays[0];
+    const reason = days === null ? `${name(i)} domain is close to expiring`
+      : days < 0 ? `${name(i)} expired ${plural(-days, "day")} ago`
+      : days === 0 ? `${name(i)} expires today`
+      : `${name(i)} expires in ${plural(days, "day")}`;
+    out.set(businessId, { reason, priority: 66, openedAt });
+  }
+  return out;
+}
+
 interface ActivityRow { business_id: string; kind: string; detail: string | null; created_at: string; }
 
 /** One activity query per chunk of ids: everything recent, plus every `export` (a draft can be arbitrarily old). */
@@ -147,7 +202,7 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
       const items = itemsOf.get(o.id) ?? [], toReview = items.filter((i) => i.status === "received").length, created = ms(o.createdAt);
       const reason = toReview ? `${plural(toReview, "item")} from ${names.get(o.businessId) ?? "the client"} to review`
         : !o.welcomeSentAt && Number.isFinite(created) && t - created > WELCOME_WAITING_DAYS * DAY ? "Welcome email is waiting for you"
-        : stageOf(o, items, nowDate) === "waiting_on_client" ? `No reply for ${plural(silentDays(o, nowDate), "day")}: back of the queue`
+        : isWaitingOnClient(o, items, nowDate) ? `No reply for ${plural(silentDays(o, nowDate), "day")}: back of the queue`
         : null;
       if (reason) onboarding.set(o.businessId, reason);
     }
@@ -158,22 +213,29 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
   const billing = await billingAttention(db, now);
   // A client's site access still missing: the owner's own work (like a project), so it stays for a suppressed lead.
   const access = await accessAttention(db, now);
+  // A client's site that is down or whose domain is about to expire: the owner's own work, so it stays for a suppressed lead.
+  const incidents = await incidentAttention(db, now);
   const activity = await recentActivity(db, candidates.map((b) => b.id), new Date(t - ACTIVITY_WINDOW_DAYS * DAY).toISOString());
 
   const lastContact = new Map<string, number>(), lastExport = new Map<string, number>();
-  const queueAction = new Map<string, { hiddenUntil: number }>(); // `${businessId}|${kind}` -> the latest done/snooze, rows arrive oldest first
+  const queueAction = new Map<string, { hiddenUntil: number; at: number }>(); // `${businessId}|${kind}` -> the latest done/snooze and when it was pressed, rows arrive oldest first
   for (const a of activity) {
     const at = ms(a.created_at);
     if (!Number.isFinite(at)) continue;
     if (a.kind === "export") lastExport.set(a.business_id, Math.max(lastExport.get(a.business_id) ?? -Infinity, at));
     if (!NOT_CONTACT.has(a.kind)) lastContact.set(a.business_id, Math.max(lastContact.get(a.business_id) ?? -Infinity, at));
-    if (a.kind === "today_done" && a.detail && isTodayKind(a.detail)) queueAction.set(`${a.business_id}|${a.detail}`, { hiddenUntil: at + DONE_HIDES_DAYS * DAY });
+    if (a.kind === "today_done" && a.detail && isTodayKind(a.detail)) queueAction.set(`${a.business_id}|${a.detail}`, { hiddenUntil: at + DONE_HIDES_DAYS * DAY, at });
     if (a.kind === "snoozed") {
       const s = parseSnooze(a.detail);
-      if (s) queueAction.set(`${a.business_id}|${s.kind}`, { hiddenUntil: s.until });
+      if (s) queueAction.set(`${a.business_id}|${s.kind}`, { hiddenUntil: s.until, at });
     }
   }
-  const hidden = (businessId: string, kind: TodayKind) => (queueAction.get(`${businessId}|${kind}`)?.hiddenUntil ?? -Infinity) > t;
+  // `since`: a done or snooze only counts when it was pressed after that time. A site incident passes when its newest open incident opened, so a new outage after the owner marked
+  // the old one done shows at once instead of staying hidden for the rest of the week.
+  const hidden = (businessId: string, kind: TodayKind, since = -Infinity) => {
+    const a = queueAction.get(`${businessId}|${kind}`);
+    return !!a && a.at > since && a.hiddenUntil > t;
+  };
 
   const items: TodayItem[] = [];
   const quick: { item: TodayItem; score: number }[] = [];
@@ -209,6 +271,8 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
     if (owed && !hidden(b.id, "billing_attention")) items.push(push("billing_attention", b, owed.reason, null, owed.priority));
     const noAccess = access.get(b.id);
     if (noAccess && !hidden(b.id, "access_missing")) items.push(push("access_missing", b, noAccess.reason, null, noAccess.priority));
+    const incident = incidents.get(b.id);
+    if (incident && !hidden(b.id, "site_incident", incident.openedAt)) items.push(push("site_incident", b, incident.reason, null, incident.priority));
     // A paying client's onboarding is the owner's own work (like a stalled deal), so it stays for a suppressed lead.
     const attention = onboarding.get(b.id);
     if (attention && !hidden(b.id, "onboarding_attention")) items.push(push("onboarding_attention", b, attention, null, 70));

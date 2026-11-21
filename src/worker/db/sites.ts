@@ -12,6 +12,8 @@ export interface Site {
   id: string; businessId: string; seedKey: "primary" | null; url: string | null; domain: string | null; cms: Cms; hostProvider: string | null; registrar: string | null;
   dnsProvider: string | null; adminUrl: string | null; hostingTier: HostingTier; accessMethod: AccessMethod; notes: string | null; test: boolean;
   archivedAt: string | null; createdAt: string; updatedAt: string;
+  /** Monitoring is switched on by hand (a live Care subscription also turns it on). `domainExpiresOn` is a YYYY-MM-DD date; `domainCheckedAt` is when the registry was last asked. */
+  monitoring: boolean; domainExpiresOn: string | null; domainCheckedAt: string | null;
 }
 
 /** One line of a site's access checklist. `vaultItem` is the NAME of a password-manager item, never a login. */
@@ -31,20 +33,21 @@ export class SiteConflictError extends Error {
   constructor(message = "this client already has a live site with that domain") { super(message); this.name = "SiteConflictError"; }
 }
 
-interface SiteRow {
+export interface SiteRow {
   id: string; business_id: string; seed_key: "primary" | null; url: string | null; domain: string | null; cms: Cms; host_provider: string | null; registrar: string | null;
   dns_provider: string | null; admin_url: string | null; hosting_tier: HostingTier; access_method: AccessMethod; notes: string | null; test: number;
-  archived_at: string | null; created_at: string; updated_at: string;
+  archived_at: string | null; created_at: string; updated_at: string; monitoring: number; domain_expires_on: string | null; domain_checked_at: string | null;
 }
 interface AccessRow {
   site_id: string; key: AccessKey; status: AccessStatus; vault_item: string | null; note: string | null;
   requested_at: string | null; received_at: string | null; verified_at: string | null; updated_at: string;
 }
 
-const toSite = (r: SiteRow): Site => ({
+export const toSite = (r: SiteRow): Site => ({
   id: r.id, businessId: r.business_id, seedKey: r.seed_key, url: r.url, domain: r.domain, cms: r.cms, hostProvider: r.host_provider, registrar: r.registrar,
   dnsProvider: r.dns_provider, adminUrl: r.admin_url, hostingTier: r.hosting_tier, accessMethod: r.access_method, notes: r.notes, test: !!r.test,
   archivedAt: r.archived_at, createdAt: r.created_at, updatedAt: r.updated_at,
+  monitoring: !!r.monitoring, domainExpiresOn: r.domain_expires_on, domainCheckedAt: r.domain_checked_at,
 });
 const toAccess = (r: AccessRow): AccessItem => ({
   siteId: r.site_id, key: r.key, status: r.status, vaultItem: r.vault_item, note: r.note,
@@ -103,7 +106,11 @@ export async function listSites(db: D1Database, o: { businessId?: string; includ
   return rows.map(toSite);
 }
 
-/** Changes the fields given. A new `url` without a `domain` re-derives the domain. Returns null for an unknown site; throws SiteConflictError on a duplicate live domain. */
+/**
+ * Changes the fields given. A new `url` without a `domain` re-derives the domain. Returns null for an unknown site; throws SiteConflictError on a duplicate live domain.
+ * Care monitoring follows the address: clearing it closes the site's open incidents, and a changed domain forgets the old domain's expiry (date and lookup time) and closes its
+ * `domain_expiring` incident, so the next daily look asks the registry about the new one. Both closes are silent, as in `closeUnmonitoredIncidents`.
+ */
 export async function updateSite(db: D1Database, id: string, patch: Partial<SiteFields>, now: string): Promise<Site | null> {
   const p: Partial<SiteFields> = { ...patch };
   if (p.domain !== undefined) p.domain = siteDomain(p.domain);
@@ -114,19 +121,31 @@ export async function updateSite(db: D1Database, id: string, patch: Partial<Site
     sets.push(`${COLUMNS[k]} = ?`); binds.push(p[k]);
   }
   if (sets.length === 0) return getSite(db, id);
+  const before = p.url !== undefined || p.domain !== undefined ? await getSite(db, id) : null;
+  const domainChanged = !!before && p.domain !== undefined && p.domain !== before.domain;
+  if (domainChanged) sets.push("domain_expires_on = NULL", "domain_checked_at = NULL");
   try {
     await db.prepare(`UPDATE sites SET ${sets.join(", ")}, updated_at = ? WHERE id = ?`).bind(...binds, now, id).run();
   } catch (e) {
     if (isUnique(e)) throw new SiteConflictError();
     throw e;
   }
+  if (before && p.url !== undefined && (p.url === null || p.url.trim() === "")) await closeSiteIncidents(db, id, now);
+  else if (domainChanged) await closeSiteIncidents(db, id, now, "domain_expiring");
   return getSite(db, id);
 }
 
-/** Archives a live site (its domain is freed). False when it is unknown or already archived. */
+/** Closes the site's open incidents (all of them, or one kind) without a word in the activity log. Plain SQL here: db/monitoring.ts imports this file. */
+async function closeSiteIncidents(db: D1Database, siteId: string, now: string, kind?: "domain_expiring"): Promise<void> {
+  await db.prepare(`UPDATE site_incidents SET closed_at = ? WHERE site_id = ? AND closed_at IS NULL${kind ? " AND kind = ?" : ""}`).bind(...(kind ? [now, siteId, kind] : [now, siteId])).run();
+}
+
+/** Archives a live site (its domain is freed) and closes its open incidents. False when it is unknown or already archived. */
 export async function archiveSite(db: D1Database, id: string, now: string): Promise<boolean> {
   const res = await db.prepare(`UPDATE sites SET archived_at = ?, updated_at = ? WHERE id = ? AND archived_at IS NULL`).bind(now, now, id).run();
-  return (res.meta.changes ?? 0) === 1;
+  if ((res.meta.changes ?? 0) !== 1) return false;
+  await closeSiteIncidents(db, id, now);
+  return true;
 }
 
 /**

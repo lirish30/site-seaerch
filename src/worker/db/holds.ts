@@ -56,6 +56,14 @@ export async function isOnHold(db: D1Database, businessId: string): Promise<bool
   return !!(await db.prepare(`SELECT 1 AS x FROM billing_holds WHERE business_id = ? AND lifted_at IS NULL LIMIT 1`).bind(businessId).first());
 }
 
+/** The ids among `businessIds` that have an open hold: `isOnHold` for many businesses at once. The caller keeps the list short (one chunk). */
+export async function heldBusinessIds(db: D1Database, businessIds: string[]): Promise<Set<string>> {
+  if (businessIds.length === 0) return new Set();
+  const rows = (await db.prepare(`SELECT DISTINCT business_id FROM billing_holds WHERE lifted_at IS NULL AND business_id IN (${businessIds.map(() => "?").join(",")})`)
+    .bind(...businessIds).all<{ business_id: string }>()).results;
+  return new Set(rows.map((r) => r.business_id));
+}
+
 /** A SQL condition for a query whose row (named `alias`) has a business_id: true when that business has no open hold. */
 export const holdFreeSql = (alias: string): string =>
   `NOT EXISTS (SELECT 1 FROM billing_holds h WHERE h.business_id = ${alias}.business_id AND h.lifted_at IS NULL)`;
