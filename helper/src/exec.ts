@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 
 export interface RunOptions { timeoutMs?: number; cwd?: string; env?: NodeJS.ProcessEnv }
-export type Exec = (file: string, args: string[], opts?: RunOptions) => Promise<{ stdout: string }>;
+export type Exec = (file: string, args: string[], opts?: RunOptions) => Promise<{ stdout: string; stderr?: string }>;
 
 const KEEP = 1_000_000;
 /** The last few lines of a process's stderr: where the reason for a failure is. */
@@ -27,7 +27,7 @@ export const runProcess: Exec = (file, args, opts = {}) =>
     child.on("close", (code, signal) => {
       if (timer) clearTimeout(timer);
       if (timedOut) return reject(new Error(`${file} took longer than ${Math.round((opts.timeoutMs ?? 0) / 1000)} seconds and was stopped`));
-      if (code === 0) return resolve({ stdout });
+      if (code === 0) return resolve({ stdout, stderr });
       const why = tail(stderr) || tail(stdout) || "no output";
       reject(new Error(`${file} ${signal ? `was killed (${signal})` : `exited with code ${code}`}: ${why}`));
     });
