@@ -1,0 +1,66 @@
+import { dayKey } from "../booking/slots";
+import { getReportByToken, recordView } from "../db/careReports";
+import { getSettings } from "../db/settings";
+import { isClientToken } from "../documents/token";
+import type { Env } from "../env";
+import { zoneOf } from "../sop/cadence";
+import { ReportFacts } from "./reportFacts";
+
+// What a client sees at `/m/<token>` (Plan 13): the monthly report, field by field. Nothing is spread from the stored facts and nothing is added to them here, so a field that is not
+// listed in `PublicReport` can never reach a client: no id, no approval or task id, no raw facts, no alias, WordPress folder, backup or vault name, no token.
+
+export interface PublicReportSite {
+  domain: string;
+  uptimePercent: number | null;
+  coveredDays: number;
+  monitoredSince: string | null;
+  incidents: number;
+  longestOutageMinutes: number | null;
+  updatesApplied: number;
+  updatesRolledBack: number;
+  backups: number;
+  speedScore: number | null;
+}
+
+export interface PublicReport {
+  clientName: string;
+  /** `November 2026`. */
+  label: string;
+  summary: string;
+  recommendation: string;
+  sites: PublicReportSite[];
+  edits: { usedMinutes: number; allowanceMinutes: number; state: "ok" | "warn" | "over"; requestsDone: number } | null;
+  renewals: { what: "domain" | "certificate" | "subscription_term" | "annual_renewal"; domain: string | null; on: string }[];
+  /** The day the report was sent, `YYYY-MM-DD` in the booking zone. */
+  sentOn: string;
+}
+
+/**
+ * The report behind a link, or null. Null is one answer for a malformed token (never looked up), an unknown one, and every report that is not `sent` (collecting, ready, revoked,
+ * cancelled), so the caller cannot tell them apart. A view is counted only on a `sent` report, and only when the page can be shown.
+ */
+export async function publicReport(env: Pick<Env, "DB">, token: string, now: Date): Promise<PublicReport | null> {
+  if (!isClientToken(token)) return null;
+  const report = await getReportByToken(env.DB, token);
+  if (!report || report.status !== "sent") return null;
+  const parsed = ReportFacts.safeParse(report.facts);
+  if (!parsed.success) return null;
+  const f = parsed.data;
+
+  const tz = zoneOf(await getSettings(env.DB));
+  await recordView(env.DB, report.id, now.toISOString());
+
+  return {
+    clientName: f.clientName,
+    label: f.label,
+    summary: report.summary,
+    recommendation: report.recommendation,
+    sites: f.sites.map((s) => ({
+      domain: s.domain, uptimePercent: s.uptimePercent, coveredDays: s.coveredDays, monitoredSince: s.monitoredSince, incidents: s.incidents, longestOutageMinutes: s.longestOutageMinutes,
+      updatesApplied: s.updatesApplied, updatesRolledBack: s.updatesRolledBack, backups: s.backups, speedScore: s.speedScore,
+    })),
+    edits: f.edits ? { usedMinutes: f.edits.usedMinutes, allowanceMinutes: f.edits.allowanceMinutes, state: f.edits.state, requestsDone: f.edits.requestsDone } : null,
+    renewals: f.renewals.map((r) => ({ what: r.what, domain: r.domain, on: r.on })),
+    sentOn: dayKey(Date.parse(report.sentAt ?? "") || now.getTime(), tz),
+  };
+}

@@ -4,6 +4,7 @@ import type { AccessItem, AccessKey, AccessStatus, Site, SiteFields } from "../w
 import type { CareRow, IncidentView, SiteMonitoringView } from "../worker/monitoring/fleet";
 import type { CareRunDetail, CareUpdateView, CareUpdatesBoard } from "../worker/care/views";
 import type { CareBatch } from "../worker/db/careUpdates";
+import type { PublicReport } from "../worker/care/reportPublic";
 export class ApiError extends Error { constructor(public status: number, message: string, public fields: string[] = [], public code = "", public body: unknown = undefined) { super(message); } }
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -83,6 +84,14 @@ export async function publicSubscription(token: string): Promise<{ status: numbe
   try {
     const res = await fetch(`/api/public/s/${token}`, { credentials: "omit", cache: "no-store" });
     return { status: res.status, page: res.ok ? ((await res.json()) as PublicSubscription) : null };
+  } catch { return { status: 0, page: null }; }
+}
+
+/** The client's monthly Care report (`/m/<token>`): `{ status, page }`, `page` only for a 200. A dropped connection is `status` 0. Public: no cookie is sent. */
+export async function publicCareReport(token: string): Promise<{ status: number; page: PublicReport | null }> {
+  try {
+    const res = await fetch(`/api/public/m/${token}`, { credentials: "omit", cache: "no-store" });
+    return { status: res.status, page: res.ok ? ((await res.json()) as PublicReport) : null };
   } catch { return { status: 0, page: null }; }
 }
 

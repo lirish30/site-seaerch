@@ -6,6 +6,7 @@ import { z } from "zod";
 import { BookingFormSchema, bookingPage, cancelByToken, createVisitorBooking } from "../booking/create";
 import { findSubscription, startCheckout, subscriptionPage } from "../billing/checkout";
 import { changeOrderPage, declineChangeOrderPublic, signChangeOrderPublic, type ChangeOrderWriteResult } from "../changeorders/public";
+import { publicReport as publicCareReport } from "../care/reportPublic";
 import { publicReport } from "../db/reports";
 import { ensureDepositInvoice } from "../documents/deposit";
 import { SignFormSchema, proposalPage, signProposal, signedProposalFor } from "../documents/public";
@@ -330,6 +331,17 @@ publicRoutes.delete("/o/:token/files/:fileId", async (c) => {
   const token = c.req.param("token");
   if (!TOKEN.test(token)) return c.json(NOT_FOUND, 404);
   return writeReply(c, await removeClientFile(c.env, token, c.req.param("fileId"), new Date()));
+});
+
+// The client's monthly Care report (Plan 13): read only. The same 404 for every link that is not live (unknown, malformed, not sent yet, revoked, cancelled), and a malformed token never
+// reaches the database. Only a sent report is shown, and showing it counts as a view.
+publicRoutes.use("/m/:token", clientLimited);
+
+publicRoutes.get("/m/:token", async (c) => {
+  const token = c.req.param("token");
+  if (!TOKEN.test(token)) return c.json(NOT_FOUND, 404);
+  const page = await publicCareReport(c.env, token, new Date());
+  return page ? c.json(page) : c.json(NOT_FOUND, 404);
 });
 
 publicRoutes.all("*", (c) => c.json({ error: "not found" }, 404));
