@@ -211,9 +211,16 @@ const meetingSummary: TaskKindDef<MeetingSummarizePayload, MeetingSummarizeResul
       }
     }
 
-    if (!(await approvalExists(env.DB, "meeting", meeting.id))) {
+    // The mail the approval shows is the mail the summary will hold, so the card is written from this result. A follow-up approval an earlier run left behind
+    // (a crash before the save, then a different result) has its title and preview refreshed while it is pending; a decided one is left as it is.
+    const followupTitle = `Follow-up to ${cap(t.businessName, 100)}: ${cap(r.followUp.subject, 100)}`;
+    const followupPreview = await describeFollowup(env, meeting, r.followUp);
+    if (await approvalExists(env.DB, "meeting", meeting.id)) {
+      await env.DB.prepare(`UPDATE approvals SET title = ?, preview = ? WHERE kind = 'meeting.followup' AND record_type = 'meeting' AND record_id = ? AND status = 'pending'`)
+        .bind(followupTitle, followupPreview, meeting.id).run();
+    } else {
       await createApprovalUnlessOpen(env.DB, {
-        kind: "meeting.followup", title: `Follow-up to ${cap(t.businessName, 100)}: ${cap(r.followUp.subject, 100)}`, preview: await describeFollowup(env, meeting, r.followUp),
+        kind: "meeting.followup", title: followupTitle, preview: followupPreview,
         payload: { meetingId: meeting.id }, record_type: "meeting", record_id: meeting.id, drafted_by: "job",
       }, 0);
     }

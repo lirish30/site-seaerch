@@ -297,6 +297,34 @@ describe("apply", () => {
     expect(await approvals("meeting.followup")).toHaveLength(1);
   });
 
+  it("after a crash and a retry with a different result, the pending follow-up card shows the mail that is stored, and a decided one is left alone", async () => {
+    const { meeting } = await seedMeeting();
+    const task = await queued(meeting.id);
+    const def = getTaskKind(MEETING_SUMMARIZE_KIND)!;
+    const parse = (o: Record<string, unknown>) => MeetingSummarySchema.omit({ generatedAt: true }).parse(result(o));
+    const mailA = { subject: "Recap A", body: "Text of mail A." }, mailB = { subject: "Recap B", body: "Text of mail B." };
+    await def.apply(env, { meetingId: meeting.id }, parse({ followUp: mailA }), task);
+    // Crash: everything done except the save. Claude runs again and sends a different result.
+    await env.DB.prepare(`UPDATE meetings SET status = 'received', summary = NULL, summarized_at = NULL WHERE id = ?`).bind(meeting.id).run();
+    await def.apply(env, { meetingId: meeting.id }, parse({ followUp: mailB }), task);
+    const rows = await approvals("meeting.followup");
+    expect(rows).toHaveLength(1);
+    const stored = (await getMeeting(env.DB, meeting.id))!.summary!.followUp;
+    expect(stored).toEqual(mailB);
+    expect(rows[0].preview).toContain(`Subject: ${stored.subject}`);
+    expect(rows[0].preview).toContain(stored.body);
+    expect(rows[0].preview).not.toContain("mail A");
+    expect(rows[0].title).toContain("Recap B");
+    expect(JSON.parse(rows[0].payload)).toEqual({ meetingId: meeting.id });
+    // Once the card is decided it is not rewritten, and no second one is made.
+    await env.DB.prepare(`UPDATE approvals SET status = 'approved' WHERE id = ?`).bind(rows[0].id).run();
+    await env.DB.prepare(`UPDATE meetings SET status = 'received', summary = NULL, summarized_at = NULL WHERE id = ?`).bind(meeting.id).run();
+    await def.apply(env, { meetingId: meeting.id }, parse({ followUp: { subject: "Recap C", body: "Text of mail C." } }), task);
+    const after = await approvals("meeting.followup");
+    expect(after).toHaveLength(1);
+    expect(after[0].preview).toBe(rows[0].preview);
+  });
+
   it("shows who the follow-up goes to: the booking's contact, or the owner for a test client", async () => {
     const { client, meeting } = await seedMeeting();
     const booking = (await insertBookingIfFree(env.DB, { businessId: client.businessId, dealId: null, kind: "discovery", startAt: "2026-12-01T17:00:00.000Z", endAt: "2026-12-01T17:20:00.000Z",
