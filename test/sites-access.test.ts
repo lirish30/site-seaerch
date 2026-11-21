@@ -9,7 +9,8 @@ const all = (status: AccessStatus): AccessItem[] => ACCESS_KEYS.map((k) => item(
 const site = (o: Partial<Site> = {}): Site => ({
   id: "s1", businessId: "b1", seedKey: "primary", url: "https://acme.com", domain: "acme.com", cms: "wordpress", hostProvider: null, registrar: null,
   dnsProvider: null, adminUrl: null, hostingTier: "logan_hosted", accessMethod: "unknown", notes: null, test: false,
-  archivedAt: null, createdAt: "2026-11-20T00:00:00.000Z", updatedAt: "2026-11-20T00:00:00.000Z", ...o,
+  archivedAt: null, createdAt: "2026-11-20T00:00:00.000Z", updatedAt: "2026-11-20T00:00:00.000Z",
+  monitoring: false, domainExpiresOn: null, domainCheckedAt: null, ...o,
 });
 
 describe("ACCESS_LABELS", () => {

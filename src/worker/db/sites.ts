@@ -12,6 +12,8 @@ export interface Site {
   id: string; businessId: string; seedKey: "primary" | null; url: string | null; domain: string | null; cms: Cms; hostProvider: string | null; registrar: string | null;
   dnsProvider: string | null; adminUrl: string | null; hostingTier: HostingTier; accessMethod: AccessMethod; notes: string | null; test: boolean;
   archivedAt: string | null; createdAt: string; updatedAt: string;
+  /** Monitoring is switched on by hand (a live Care subscription also turns it on). `domainExpiresOn` is a YYYY-MM-DD date; `domainCheckedAt` is when the registry was last asked. */
+  monitoring: boolean; domainExpiresOn: string | null; domainCheckedAt: string | null;
 }
 
 /** One line of a site's access checklist. `vaultItem` is the NAME of a password-manager item, never a login. */
@@ -31,20 +33,21 @@ export class SiteConflictError extends Error {
   constructor(message = "this client already has a live site with that domain") { super(message); this.name = "SiteConflictError"; }
 }
 
-interface SiteRow {
+export interface SiteRow {
   id: string; business_id: string; seed_key: "primary" | null; url: string | null; domain: string | null; cms: Cms; host_provider: string | null; registrar: string | null;
   dns_provider: string | null; admin_url: string | null; hosting_tier: HostingTier; access_method: AccessMethod; notes: string | null; test: number;
-  archived_at: string | null; created_at: string; updated_at: string;
+  archived_at: string | null; created_at: string; updated_at: string; monitoring: number; domain_expires_on: string | null; domain_checked_at: string | null;
 }
 interface AccessRow {
   site_id: string; key: AccessKey; status: AccessStatus; vault_item: string | null; note: string | null;
   requested_at: string | null; received_at: string | null; verified_at: string | null; updated_at: string;
 }
 
-const toSite = (r: SiteRow): Site => ({
+export const toSite = (r: SiteRow): Site => ({
   id: r.id, businessId: r.business_id, seedKey: r.seed_key, url: r.url, domain: r.domain, cms: r.cms, hostProvider: r.host_provider, registrar: r.registrar,
   dnsProvider: r.dns_provider, adminUrl: r.admin_url, hostingTier: r.hosting_tier, accessMethod: r.access_method, notes: r.notes, test: !!r.test,
   archivedAt: r.archived_at, createdAt: r.created_at, updatedAt: r.updated_at,
+  monitoring: !!r.monitoring, domainExpiresOn: r.domain_expires_on, domainCheckedAt: r.domain_checked_at,
 });
 const toAccess = (r: AccessRow): AccessItem => ({
   siteId: r.site_id, key: r.key, status: r.status, vaultItem: r.vault_item, note: r.note,

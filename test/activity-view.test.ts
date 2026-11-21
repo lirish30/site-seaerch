@@ -53,6 +53,9 @@ describe("activityView", () => {
     expect(describeActivity({ kind: "site_added", detail: "Site added: no domain yet" })).toMatchObject({ title: "Site added", detail: "no domain yet" });
     expect(describeActivity({ kind: "site_changed", detail: "Site updated: address, host" })).toMatchObject({ title: "Site changed", detail: "address, host" });
     expect(describeActivity({ kind: "site_changed", detail: "Site archived" })).toMatchObject({ title: "Site archived", detail: null });
+    expect(describeActivity({ kind: "site_down", detail: "ace.com: HTTP 500" })).toMatchObject({ title: "Site down", tone: "critical", detail: "ace.com: HTTP 500" });
+    expect(describeActivity({ kind: "site_back", detail: "ace.com" })).toMatchObject({ title: "Site back up", tone: "positive" });
+    expect(describeActivity({ kind: "domain_expiring", detail: "ace.com: 12 days" })).toMatchObject({ title: "Domain expiring", tone: "warning" });
     expect(describeActivity({ kind: "access_changed", detail: "Hosting: requested" })).toMatchObject({ title: "Access changed", detail: "Hosting: requested" });
     expect(describeActivity({ kind: "access_changed", detail: "DNS: details updated" }).detail).toBe("DNS: details updated");
   });

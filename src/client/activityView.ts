@@ -87,6 +87,9 @@ export function describeActivity(a: Pick<Activity, "kind" | "detail">): Activity
       if (d === "Site archived") return { icon: "globe", tone: "neutral", title: "Site archived", detail: null, bubble: false };
       return { icon: "globe", tone: "neutral", title: "Site changed", detail: d?.replace(/^Site updated:\s*/, "") || null, bubble: false };
     case "meeting_recorded": return { icon: "calendar", tone: "info", title: "Meeting recorded", detail: d?.replace(/^Meeting recorded:\s*/, "") || null, bubble: false };
+    case "site_down": return { icon: "ban", tone: "critical", title: "Site down", detail: d, bubble: false };
+    case "site_back": return { icon: "check", tone: "positive", title: "Site back up", detail: d, bubble: false };
+    case "domain_expiring": return { icon: "clock", tone: "warning", title: "Domain expiring", detail: d, bubble: false };
     case "access_changed": return { icon: "key", tone: "info", title: "Access changed", detail: d, bubble: false };
     case "snoozed": return { icon: "clock", tone: "neutral", title: "Snoozed", detail: d, bubble: false };
     default: return { icon: "info", tone: "neutral", title: upperFirst(a.kind.replace(/_/g, " ")), detail: d, bubble: false };

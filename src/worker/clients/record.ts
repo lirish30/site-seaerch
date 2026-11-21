@@ -17,8 +17,8 @@ import { siteFlags, type SiteFlag } from "../sites/access";
 import type { Activity, Business, Person } from "../types";
 
 /** A subscription is live (billing, or late on a bill) in these states. */
-const LIVE = ["active", "past_due"] as const;
-const CARE_KEYS = ["care", "care_plus", "care_fallback"] as const;
+export const LIVE = ["active", "past_due"] as const;
+export const CARE_KEYS = ["care", "care_plus", "care_fallback"] as const;
 const CARE_NAMES: Record<(typeof CARE_KEYS)[number], string> = { care: "Care", care_plus: "Care Plus", care_fallback: "Care" };
 
 /**
