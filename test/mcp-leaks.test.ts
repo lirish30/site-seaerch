@@ -1,6 +1,12 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import "../src/worker/approvals/leadNote";
+import "../src/worker/approvals/changeOrderSend";
+import "../src/worker/approvals/proposalSend";
+import "../src/worker/approvals/subscriptionStart";
+import { createWelcomeApproval } from "../src/worker/approvals/onboardingWelcome";
+import { proposeSubscription } from "../src/worker/billing/subscriptions";
+import { getOnboarding } from "../src/worker/db/onboardings";
 import { createApproval } from "../src/worker/db/approvals";
 import { logActivity } from "../src/worker/db/activity";
 import { attachStripeInvoice } from "../src/worker/db/invoices";
@@ -15,22 +21,27 @@ import { addChangeOrder, seedClient } from "./fixtures/clients";
 import { insertTasks } from "../src/worker/db/tasks";
 import { newTask, resetProjectWork } from "./fixtures/projects";
 import { tool } from "./fixtures/mcp";
+import { redactLinks } from "../src/worker/mcp/tools/views";
 
 /** Every value an agent must never read, each unmistakable in a response. */
 const SENTINELS = {
   vaultName: "VAULT-NAME-SENTINEL", accessNote: "ACCESS-NOTE-SENTINEL", clientAnswer: "CLIENT-ANSWER-SENTINEL", subscriptionToken: "SUBSCRIPTION-TOKEN-SENTINEL",
   documentToken: "DOCUMENT-TOKEN-SENTINEL", bookingCancelToken: "BOOKING-CANCEL-TOKEN-SENTINEL", onboardingToken: "ONBOARDING-TOKEN-SENTINEL",
   changeOrderToken: "CHANGE-ORDER-TOKEN-SENTINEL", hostedUrl: "https://invoice.stripe.com/i/HOSTED-URL-SENTINEL", stripeInvoice: "in_STRIPE-INVOICE-SENTINEL",
-  stripeCustomer: "cus_STRIPE-CUSTOMER-SENTINEL", stripeSubscription: "sub_STRIPE-SUBSCRIPTION-SENTINEL", transcriptKey: "transcript.json", mailboxOut: "pw-out", mailboxMain: "pw-main",
-} as const;
+  stripeCustomer: "cus_STRIPE-CUSTOMER-SENTINEL", stripeSubscription: "sub_STRIPE-SUBSCRIPTION-SENTINEL", transcriptKey: "transcript.json",
+  mailboxOut: env.MAILBOX_OUTREACH_PASSWORD, mailboxMain: env.MAILBOX_MAIN_PASSWORD,
+};
 const TRANSCRIPT = "TRANSCRIPT-SENTINEL";
+/** Meetily's notes: `get_meeting` shows them (the owner decided so), no other tool may. */
+const NOTES = "MEETING-NOTES-SENTINEL";
+const BASE = "https://clients.hellositeline.test";
 
 let ids: { businessId: string; dealId: string; siteId: string; projectId: string; meetingId: string };
 
 beforeAll(async () => {
   await env.DB.batch(["meetings", "invoices", "subscriptions", "bookings"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
   await resetProjectWork();
-  const s = await seedClient({ subs: [{ monthlyCents: 12900, key: "care" }], invoice: { cents: 50000 } });
+  const s = await seedClient({ subs: [{ monthlyCents: 12900, key: "care" }, { monthlyCents: 5000, key: "website_subscription", status: "planned" }], invoice: { cents: 50000 } });
   // Access: a vault item name and a note on the site.
   await setAccess(env.DB, s.site!.id, "hosting", { status: "received", vaultItem: SENTINELS.vaultName, note: SENTINELS.accessNote }, "2026-12-05T10:00:00.000Z");
   // The client's own answer to an access question, and the onboarding token.
@@ -40,8 +51,17 @@ beforeAll(async () => {
   });
   await saveItemText(env.DB, (await listItems(env.DB, onboarding.id))[0].id, SENTINELS.clientAnswer, "2026-12-05T10:00:00.000Z");
   await env.DB.prepare(`UPDATE onboardings SET token = ? WHERE id = ?`).bind(SENTINELS.onboardingToken, onboarding.id).run();
+  // The welcome approval the app builds itself: its preview is the mail, with the client's link (and the onboarding token) in it.
+  await createWelcomeApproval(env, (await getOnboarding(env.DB, onboarding.id))!);
   // Subscription token and Stripe ids.
   await markSubscription(env.DB, s.subIds[0], { token: SENTINELS.subscriptionToken, stripeCustomerId: SENTINELS.stripeCustomer, stripeSubscriptionId: SENTINELS.stripeSubscription });
+  // The subscription link approval the app builds itself (its link is made on approval, so its preview carries no token), and the links an approval could carry once a token exists.
+  await proposeSubscription(env, s.subIds[1], "2027-02-01");
+  for (const [kind, link] of [["subscription.start", `${BASE}/s/${SENTINELS.subscriptionToken}`], ["proposal.send", `${BASE}/p/${SENTINELS.documentToken}`],
+    ["change_order.send", `${BASE}/c/${SENTINELS.changeOrderToken}`], ["onboarding.nudge", `${BASE}/o/${SENTINELS.onboardingToken}`],
+    ["email.send", `https://go.hellositeline.test/r/${SENTINELS.bookingCancelToken}/book?cancel=${SENTINELS.bookingCancelToken}`]] as const) {
+    await createApproval(env.DB, { kind, title: `Send ${kind}`, preview: `To: Pat\n\nYour page:\n${link}\n\nThanks`, payload: { link }, record_type: "business", record_id: s.businessId, drafted_by: "logan" });
+  }
   // The document's client token.
   await env.DB.prepare(`UPDATE documents SET token = ? WHERE id = ?`).bind(SENTINELS.documentToken, s.documentId).run();
   // A booking's cancel token.
@@ -62,7 +82,7 @@ beforeAll(async () => {
   await env.RAW.put(key, JSON.stringify({ lines: [{ speaker: "Pat", atSec: 1, text: TRANSCRIPT }] }));
   await insertMeetingIfNew(env.DB, {
     id: meetingId, meetilyId: `m-${meetingId}`, businessId: s.businessId, bookingId: booking.id, windowKey: "w", title: "Kickoff call", startedAt: "2026-12-01T17:00:00.000Z",
-    endedAt: "2026-12-01T17:30:00.000Z", transcriptKey: key, notes: null,
+    endedAt: "2026-12-01T17:30:00.000Z", transcriptKey: key, notes: NOTES,
   });
   await insertTasks(env.DB, [newTask(s.project!.id, s.businessId, { stepKey: "a", title: "Write copy", owner: "logan" }), newTask(s.project!.id, s.businessId, { stepKey: "b", position: 1, title: "Draft", owner: "claude" })]);
   await logActivity(env.DB, s.businessId, "note" as never, "Called Pat");
@@ -83,10 +103,23 @@ const calls = (): [string, unknown][] => [
 
 describe("what no tool may say", () => {
   it("the sentinels are really in the data the tools read", async () => {
+    expect(SENTINELS.mailboxOut).toBeTruthy();
+    expect(SENTINELS.mailboxMain).toBeTruthy();
+    expect((await env.DB.prepare(`SELECT preview FROM approvals WHERE kind = 'onboarding.welcome'`).first<{ preview: string }>())!.preview).toContain(SENTINELS.onboardingToken);
+    expect((await env.DB.prepare(`SELECT notes FROM meetings WHERE id = ?`).bind(ids.meetingId).first<{ notes: string }>())!.notes).toBe(NOTES);
     expect((await env.DB.prepare(`SELECT vault_item, note FROM site_access_items WHERE site_id = ? AND key = 'hosting'`).bind(ids.siteId).first())).toEqual({ vault_item: SENTINELS.vaultName, note: SENTINELS.accessNote });
     expect((await env.DB.prepare(`SELECT text_value FROM onboarding_items WHERE key = 'access_hosting'`).first<{ text_value: string }>())!.text_value).toBe(SENTINELS.clientAnswer);
     expect((await env.DB.prepare(`SELECT hosted_url, stripe_invoice_id FROM invoices WHERE business_id = ?`).bind(ids.businessId).first())).toEqual({ hosted_url: SENTINELS.hostedUrl, stripe_invoice_id: SENTINELS.stripeInvoice });
     expect((await env.DB.prepare(`SELECT token FROM change_orders WHERE business_id = ?`).bind(ids.businessId).first<{ token: string }>())!.token).toBe(SENTINELS.changeOrderToken);
+  });
+
+  it("list_approvals shows the pending approvals with their client links cut to host and prefix, and no payload", async () => {
+    const r = JSON.parse((await tool("list_approvals", {})).text) as { kind: string; preview: string; payload?: unknown }[];
+    const kinds = r.map((a) => a.kind);
+    for (const k of ["onboarding.welcome", "subscription.start", "proposal.send", "change_order.send", "onboarding.nudge", "email.send"]) expect(kinds, k).toContain(k);
+    expect(r.every((a) => !("payload" in a))).toBe(true);
+    expect(r.find((a) => a.kind === "onboarding.welcome")!.preview).toContain(`${BASE}/o/[link]`);
+    expect(r.find((a) => a.kind === "proposal.send")!.preview).toContain(`${BASE}/p/[link]`);
   });
 
   it("no read tool, and none of the existing ones, shows a secret, whichever id it is given", async () => {
@@ -95,12 +128,27 @@ describe("what no tool may say", () => {
       expect(r.isError, `${name} ${JSON.stringify(args)}: ${r.text.slice(0, 200)}`).toBe(false);
       for (const [what, value] of Object.entries(SENTINELS)) expect(r.text, `${name} ${JSON.stringify(args)} shows ${what}`).not.toContain(value);
       expect(r.text, `${name} shows the transcript`).not.toContain(TRANSCRIPT);
+      if (name !== "get_meeting") expect(r.text, `${name} shows Meetily's notes`).not.toContain(NOTES);
     }
   });
 
   it("only get_meeting with include_transcript carries the transcript", async () => {
     const r = await tool("get_meeting", { id: ids.meetingId, include_transcript: true });
     expect(r.text).toContain(TRANSCRIPT);
+    expect(r.text).toContain(NOTES);
     for (const [what, value] of Object.entries(SENTINELS)) expect(r.text, `shows ${what}`).not.toContain(value);
+  });
+});
+
+describe("redactLinks", () => {
+  it("keeps the host and prefix, cuts the token, and leaves ordinary text and links alone", () => {
+    expect(redactLinks("Your page:\nhttps://c.example/o/AbCdEf123456_-xyz0123456789AbCdEf123456789")).toBe("Your page:\nhttps://c.example/o/[link]");
+    expect(redactLinks("https://c.example/r/tok_12345678/book?cancel=abc&x=1")).toBe("https://c.example/r/[link]/book?cancel=[link]&x=1");
+    expect(redactLinks("https://c.example/api/public/report/tok_12345678/media/preview.gif")).toBe("https://c.example/api/public/report/[link]/media/preview.gif");
+    expect(redactLinks("https://c.example/x/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")).toBe("https://c.example/x/[link]");
+    expect(redactLinks("https://invoice.stripe.com/i/acct_1/live_abc")).toBe("https://invoice.stripe.com/[link]");
+    expect(redactLinks("see /s/tok_12345678 now")).toBe("see /s/[link] now");
+    expect(redactLinks("https://c.example/s/(the link is made when you approve)")).toBe("https://c.example/s/(the link is made when you approve)");
+    expect(redactLinks("https://ace.com/about?page=2 and no links")).toBe("https://ace.com/about?page=2 and no links");
   });
 });

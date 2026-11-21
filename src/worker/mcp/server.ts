@@ -17,6 +17,7 @@ const APP_PROPOSED = ["video.publish", "proposal.send", "onboarding.welcome", "o
 const proposableKinds = () => registeredKinds().filter((k) => !APP_PROPOSED.includes(k));
 import { makeCtx } from "./tools/context";
 import { registerReadTools } from "./tools/read";
+import { approvalView } from "./tools/views";
 import { getBusiness } from "../db/businesses";
 import { isKnownRecipient } from "../db/contacts";
 import { latestAudit, latestAuditsFor } from "../db/audits";
@@ -79,7 +80,7 @@ export function buildMcpServer(env: Env): McpServer {
   }, async ({ status }) => {
     const rows = await listApprovals(db, { status: status ?? "pending", limit: 50 });
     await log("list_approvals", `list_approvals ${status ?? "pending"} -> ${rows.length}`);
-    return text(rows);
+    return text(rows.map(approvalView));
   });
 
   /**
@@ -128,7 +129,7 @@ export function buildMcpServer(env: Env): McpServer {
     const spec = buildEmailSendApproval({ ...p, title, drafted_by: "mcp" }, await getSettings(db), await mailboxFromEmail(db, p.mailbox));
     const created = await createApproval(db, spec);
     await log("propose_approval", `proposed email.send: ${title}`, { type: "business", id: p.businessId });
-    return text(created);
+    return text(approvalView(created));
   };
 
   server.registerTool("propose_approval", {
@@ -147,7 +148,7 @@ export function buildMcpServer(env: Env): McpServer {
       }
       const created = await createApproval(db, { ...a, drafted_by: "mcp" });
       await log("propose_approval", `proposed ${a.kind}: ${a.title}`, a.record_type && a.record_id ? { type: a.record_type, id: a.record_id } : undefined);
-      return text(created);
+      return text(approvalView(created));
     } catch (e) {
       if (e instanceof UnknownKindError) {
         await log("propose_approval", `rejected unknown kind ${a.kind.slice(0, 100)}`);

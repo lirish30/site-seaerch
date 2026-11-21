@@ -29,7 +29,7 @@ export function registerReadTools(server: McpServer, ctx: ToolCtx): void {
   const missing = async (tool: string, thing: string, key: string) => { await log(tool, `${tool} ${key.slice(0, 100)}: not found`); return fail(`${thing} not found: ${key}`); };
 
   server.registerTool("search_clients", {
-    description: "Search clients by name or site domain (all clients when no query). Test clients are left out. Returns up to 50 with MRR, open invoices and missing access counts.",
+    description: "Search clients by name or site domain (all clients when no query). Test clients are left out. Returns up to `limit` (default 20, at most 50) with MRR, open invoices and missing access counts.",
     inputSchema: { query: z.string().max(200).optional(), limit: z.number().int().min(1).max(MAX_ROWS).optional() },
   }, async ({ query, limit }) => {
     const [clients, sites] = await Promise.all([listClients(db), listSites(db)]);

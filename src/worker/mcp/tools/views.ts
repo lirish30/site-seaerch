@@ -1,5 +1,6 @@
 import type { ClientRecord, ClientRow } from "../../clients/record";
 import type { AgentAction } from "../../db/agentActions";
+import type { Approval } from "../../db/approvals";
 import type { ChangeOrder } from "../../db/changeOrders";
 import type { Deal } from "../../db/deals";
 import type { InvoiceRow } from "../../db/invoices";
@@ -19,10 +20,50 @@ import type { Activity } from "../../types";
 /** The most transcript characters one `get_meeting` answer carries. */
 export const TRANSCRIPT_CAP = 20_000;
 
-export const activityView = (a: Activity) => ({ id: a.id, kind: a.kind, detail: a.detail, createdAt: a.created_at });
+/** The first path segment of every client link the app mints (`PUBLIC_PAGE_PREFIXES` in mail/send.ts: report, proposal, onboarding, change order, subscription), and the report media route. */
+const LINK_PREFIXES = new Set(["r", "p", "o", "c", "s", "report"]);
+const AFTER_PREFIX = /^[A-Za-z0-9_.~-]{8,}$/;
+/** A run of 20 or more URL-safe characters is a token whatever precedes it. */
+const LONG_TOKEN = /^[A-Za-z0-9_-]{20,}$/;
+const SECRET_PARAM = /token|cancel|key|sig|code|secret/i;
+
+function redactPath(path: string): string {
+  const segs = path.split("/");
+  return segs.map((seg, i) => (LONG_TOKEN.test(seg) || (i > 0 && LINK_PREFIXES.has(segs[i - 1]) && AFTER_PREFIX.test(seg)) ? "[link]" : seg)).join("/");
+}
+
+function redactUrl(url: string): string {
+  const m = /^(https?:\/\/[^/?#]+)(\/[^?#]*)?(\?[^#]*)?(#.*)?$/i.exec(url);
+  if (!m) return url;
+  const [, host, path = "", query = "", hash = ""] = m;
+  // A Stripe hosted page is reached by its path alone.
+  const safePath = /stripe\.com$/i.test(host) && path.length > 1 ? "/[link]" : redactPath(path);
+  const safeQuery = query
+    ? "?" + query.slice(1).split("&").map((kv) => { const [k, ...v] = kv.split("="); return v.length && (SECRET_PARAM.test(k) || LONG_TOKEN.test(v.join("="))) ? `${k}=[link]` : kv; }).join("&")
+    : "";
+  return `${host}${safePath}${safeQuery}${hash ? "#[link]" : ""}`;
+}
+
+/**
+ * Text that may quote a client link (an approval's preview is the mail it will send): every URL keeps its host and its prefix but loses its token (`/o/[link]`), whichever
+ * link it is, and a bare `/o/<token>` path goes too. The ONE redaction every tool that shows such text uses.
+ */
+export function redactLinks(text: string): string {
+  return text
+    .replace(/https?:\/\/[^\s<>"')\]]+/gi, redactUrl)
+    .replace(/(^|[\s(])\/(r|p|o|c|s)\/[A-Za-z0-9_.~-]{8,}/g, "$1/$2/[link]");
+}
+
+export const activityView = (a: Activity) => ({ id: a.id, kind: a.kind, detail: a.detail === null ? null : redactLinks(a.detail), createdAt: a.created_at });
+
+/** An approval as an agent reads it: what it is and where it stands, and its preview with every client link token redacted. Never the payload, the error or the decision note. */
+export const approvalView = (a: Approval) => ({
+  id: a.id, kind: a.kind, title: redactLinks(a.title), preview: redactLinks(a.preview), status: a.status, record_type: a.record_type, record_id: a.record_id,
+  drafted_by: a.drafted_by, created_at: a.created_at, decided_at: a.decided_at,
+});
 
 export const agentActionView = (a: AgentAction) => ({
-  id: a.id, actor: a.actor, tool: a.tool, summary: a.summary, recordType: a.record_type, recordId: a.record_id, createdAt: a.created_at,
+  id: a.id, actor: a.actor, tool: a.tool, summary: redactLinks(a.summary), recordType: a.record_type, recordId: a.record_id, createdAt: a.created_at,
 });
 
 /** A site and its six access lines as `{ key, label, status }`: the vault item name and the note stay in the app. */

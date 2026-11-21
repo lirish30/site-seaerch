@@ -9,7 +9,10 @@ import { logActivity } from "../src/worker/db/activity";
 import { saveOptions } from "../src/worker/db/deals";
 import { addChangeOrder, seedClient } from "./fixtures/clients";
 import { seedDeal } from "./fixtures/documents";
-import { newTask, resetProjectWork, seedProject, seedSteps } from "./fixtures/projects";
+import { createProject } from "../src/worker/db/projects";
+import { seedBusiness } from "./fixtures/cro";
+import { seedDoc as seedBillingDoc, seedDraft } from "./fixtures/billing";
+import { T0, newTask, resetProjectWork, seedProject, seedSteps } from "./fixtures/projects";
 import { actionCount, mcp, ok, tool } from "./fixtures/mcp";
 
 const rename = (id: string, name: string) => env.DB.prepare(`UPDATE businesses SET name = ? WHERE id = ?`).bind(name, id).run();
@@ -45,6 +48,15 @@ describe("search_clients", () => {
     expect(byDomain.map((c) => c.id)).toContain(real.businessId);
     expect(byDomain.map((c) => c.id)).not.toContain(rehearsal.businessId);
     expect((await ok<{ id: string }[]>("search_clients", {})).map((c) => c.id)).not.toContain(rehearsal.businessId);
+  });
+
+  it("returns at most 50 clients", async () => {
+    for (let i = 0; i < 52; i++) {
+      const b = await seedBusiness({ name: `Capybara ${i}` });
+      await env.DB.prepare(`UPDATE businesses SET lead_status = 'won' WHERE id = ?`).bind(b.id).run();
+    }
+    expect(await ok<unknown[]>("search_clients", { query: "capybara", limit: 50 })).toHaveLength(50);
+    expect((await ok<unknown[]>("search_clients", { query: "capybara" })).length).toBe(20);
   });
 
   it("refuses a limit over 50 and logs one action", async () => {
@@ -103,6 +115,16 @@ describe("list_projects", () => {
     expect((await ok<any[]>("list_projects", { business_id: real.businessId }))[0]).toMatchObject({ id: real.project.id, status: "active", openTasks: 0 });
     expect(await ok<any[]>("list_projects", { business_id: real.businessId, status: "done" })).toEqual([]);
     await oneAction("list_projects", {});
+  });
+});
+
+describe("list_projects cap", () => {
+  it("returns at most 50 projects", async () => {
+    const b = await seedBusiness();
+    for (let i = 0; i < 52; i++) {
+      await createProject(env.DB, { businessId: b.id, dealId: null, documentId: null, onboardingId: null, kind: "custom", name: `Job ${i}`, test: false, templateKey: null, templateVersion: null, careDeferred: false, startedAt: T0 });
+    }
+    expect(await ok<unknown[]>("list_projects", { business_id: b.id })).toHaveLength(50);
   });
 });
 
@@ -206,6 +228,14 @@ describe("list_invoices", () => {
     expect(await ok<any[]>("list_invoices", { business_id: s.businessId, status: "paid" })).toEqual([]);
     expect(await ok<any[]>("list_invoices", { business_id: s.businessId, status: "open" })).toHaveLength(1);
     await oneAction("list_invoices", {});
+  });
+});
+
+describe("list_invoices cap", () => {
+  it("returns at most 50 invoices", async () => {
+    const seed = await seedBillingDoc();
+    for (let i = 0; i < 52; i++) await seedDraft({ seed, ref: `milestone:cap-${i}` });
+    expect(await ok<unknown[]>("list_invoices", { business_id: seed.businessId })).toHaveLength(50);
   });
 });
 
