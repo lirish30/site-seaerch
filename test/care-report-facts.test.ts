@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildFacts, monthRange, plainSummary, ReportFacts } from "../src/worker/care/reportFacts";
 import { openIncident, closeIncident, setCertExpiry, setDomainExpiry } from "../src/worker/db/monitoring";
 import { upsertUptimeDay } from "../src/worker/db/careReports";
+import { upsertSeen } from "../src/worker/db/careUpdates";
 import { createSite, updateSite } from "../src/worker/db/sites";
 import { insertTasks } from "../src/worker/db/tasks";
 import psi from "./fixtures/psi.json";
@@ -39,25 +40,35 @@ async function addSite(s: Client, url: string) {
 async function days(siteId: string, first: string, last: string, failed = 0) {
   for (let d = first; d <= last; d = plus(d, 1)) await upsertUptimeDay(env.DB, siteId, d, 288, 288 - failed);
 }
-/** One care run of a site that finished at `finishedAt`, with the updates it handled (slug and the status each has now). */
-async function run(siteId: string, finishedAt: string, o: { status?: string; backup?: string | null; updates?: { slug: string; status: string }[] } = {}) {
+/** What the run recorded for an update, as the helper's result names it. */
+type Outcome = "applied" | "skipped" | "failed" | "rolled_back" | "rollback_failed";
+const NOW_STATUS: Record<Outcome, string> = { applied: "applied", skipped: "available", failed: "failed", rolled_back: "rolled_back", rollback_failed: "failed" };
+/**
+ * One care run of a site that finished at `finishedAt`, with what the helper's result recorded for each update (`outcome`). A new update row gets the status the run left it in;
+ * an `id` reuses an update that an earlier run handled. The job's result is stored as `completeHelperJob` stores it.
+ */
+async function run(siteId: string, finishedAt: string, o: { status?: string; backup?: string | null; updates?: { slug: string; outcome: Outcome; id?: string }[] } = {}) {
   const runId = crypto.randomUUID(), jobId = crypto.randomUUID(), batchId = crypto.randomUUID();
   const ids: { id: string }[] = [];
   for (const u of o.updates ?? []) {
-    const id = crypto.randomUUID();
+    const id = u.id ?? crypto.randomUUID();
     ids.push({ id });
-    await env.DB.prepare(
-      `INSERT INTO care_updates (id, site_id, type, slug, name, from_version, to_version, risk, first_seen_at, last_seen_at, status) VALUES (?, ?, 'plugin', ?, ?, '1.0', ?, 'minor', ?, ?, ?)`,
-    ).bind(id, siteId, u.slug, `Name of ${u.slug}`, `2.${id.slice(0, 4)}`, finishedAt, finishedAt, u.status).run();
+    if (!u.id) {
+      await env.DB.prepare(
+        `INSERT INTO care_updates (id, site_id, type, slug, name, from_version, to_version, risk, first_seen_at, last_seen_at, status) VALUES (?, ?, 'plugin', ?, ?, '1.0', '2.0', 'minor', ?, ?, ?)`,
+      ).bind(id, siteId, u.slug, `Name of ${u.slug}`, finishedAt, finishedAt, NOW_STATUS[u.outcome]).run();
+    }
   }
+  const result = { backupFile: null, steps: (o.updates ?? []).map((u, i) => ({ id: ids[i].id, outcome: u.outcome, note: "" })), pages: [], rolledBack: false, retry: false };
   await env.DB.batch([
     env.DB.prepare(`INSERT INTO care_batches (id, period, kind, site_id, status, created_at, updated_at) VALUES (?, '2026-11', 'single', ?, 'done', ?, ?)`).bind(batchId, siteId, finishedAt, finishedAt),
-    env.DB.prepare(`INSERT INTO helper_jobs (id, kind, payload, status, created_at, done_at) VALUES (?, 'care.update', ?, 'done', ?, ?)`).bind(jobId, JSON.stringify({ runId, siteId, updates: ids }), finishedAt, finishedAt),
+    env.DB.prepare(`INSERT INTO helper_jobs (id, kind, payload, status, result, created_at, done_at) VALUES (?, 'care.update', ?, 'done', ?, ?, ?)`)
+      .bind(jobId, JSON.stringify({ runId, siteId, updates: ids }), JSON.stringify(result), finishedAt, finishedAt),
     env.DB.prepare(
       `INSERT INTO care_runs (id, batch_id, site_id, wave, helper_job_id, status, backup_file, summary, created_at, finished_at) VALUES (?, ?, ?, 0, ?, ?, ?, 'x', ?, ?)`,
     ).bind(runId, batchId, siteId, jobId, o.status ?? "ok", o.backup === undefined ? null : o.backup, finishedAt, finishedAt),
   ]);
-  return runId;
+  return { runId, ids: ids.map((x) => x.id) };
 }
 /** An edit-request task of the client, done at `doneAt` (or still open). */
 async function editTask(s: Client, doneAt: string | null) {
@@ -167,6 +178,18 @@ describe("buildFacts: incidents", () => {
     expect((await facts(s)).sites[0]).toMatchObject({ incidents: 3, longestOutageMinutes: 720 });
   });
 
+  it("stops an outage at the month end and at now: one that closed in December, or is still open when the report is made, counts no later time", async () => {
+    const s = await careClient();
+    const id = s.site!.id;
+    await openIncident(env.DB, { siteId: id, businessId: s.businessId, kind: "down", detail: "d", now: "2026-11-30T20:00:00.000Z" });
+    await closeIncident(env.DB, id, "down", "2026-12-02T10:00:00.000Z"); // 12 hours of November, then December
+    expect((await facts(s)).sites[0]).toMatchObject({ incidents: 1, longestOutageMinutes: 720 });
+    await env.DB.prepare(`DELETE FROM site_incidents`).run();
+    // Made on the 10th at 22:00Z for the month in progress: an outage still open has run two hours, not to the month end.
+    await openIncident(env.DB, { siteId: id, businessId: s.businessId, kind: "down", detail: "d", now: "2026-11-10T20:00:00.000Z" });
+    expect((await facts(s, { now: new Date("2026-11-10T22:00:00.000Z") })).sites[0]).toMatchObject({ incidents: 1, longestOutageMinutes: 120 });
+  });
+
   it("an incident opened at 23:30 local on the 30th is November's, one at 00:10 local on 1 December is December's", async () => {
     const s = await careClient();
     const id = s.site!.id;
@@ -183,19 +206,44 @@ describe("buildFacts: updates and backups", () => {
   it("counts a run in the month it finished, by the local clock: 23:40 on 30 November is November, 00:10 on 1 December is December", async () => {
     const s = await careClient();
     const id = s.site!.id;
-    await run(id, "2026-12-01T07:40:00.000Z", { backup: "b1", updates: [{ slug: "a", status: "applied" }, { slug: "b", status: "applied" }] }); // 23:40 on the 30th
-    await run(id, "2026-12-01T08:10:00.000Z", { backup: "b2", updates: [{ slug: "c", status: "applied" }] }); // 00:10 on the 1st
+    await run(id, "2026-12-01T07:40:00.000Z", { backup: "b1", updates: [{ slug: "a", outcome: "applied" }, { slug: "b", outcome: "applied" }] }); // 23:40 on the 30th
+    await run(id, "2026-12-01T08:10:00.000Z", { backup: "b2", updates: [{ slug: "c", outcome: "applied" }] }); // 00:10 on the 1st
     expect((await facts(s)).sites[0]).toMatchObject({ updatesApplied: 2, updatesRolledBack: 0, updatesFailed: 0, backups: 1 });
     expect((await facts(s, { period: "2026-12", now: new Date("2027-01-01T17:00:00.000Z") })).sites[0]).toMatchObject({ updatesApplied: 1, backups: 1 });
   });
 
-  it("counts a rolled-back run's updates under rolled back, failed ones under failed, and skips updates that are only waiting", async () => {
+  it("counts a rolled-back run's updates under rolled back, failed and rollback-failed ones under failed, and counts nothing for a skipped one", async () => {
     const s = await careClient();
     await run(s.site!.id, "2026-11-12T18:00:00.000Z", {
       status: "rolled_back", backup: "b",
-      updates: [{ slug: "a", status: "rolled_back" }, { slug: "b", status: "rolled_back" }, { slug: "c", status: "failed" }, { slug: "d", status: "applied" }, { slug: "e", status: "available" }],
+      updates: [{ slug: "a", outcome: "rolled_back" }, { slug: "b", outcome: "rolled_back" }, { slug: "c", outcome: "failed" }, { slug: "f", outcome: "rollback_failed" }, { slug: "d", outcome: "applied" }, { slug: "e", outcome: "skipped" }],
     });
-    expect((await facts(s)).sites[0]).toMatchObject({ updatesApplied: 1, updatesRolledBack: 2, updatesFailed: 1, backups: 1 });
+    expect((await facts(s)).sites[0]).toMatchObject({ updatesApplied: 1, updatesRolledBack: 2, updatesFailed: 2, backups: 1 });
+  });
+
+  it("counts what the run recorded, not the update's status now: an inventory read after a rolled-back run puts the update back to available and the count stays", async () => {
+    const s = await careClient();
+    const id = s.site!.id;
+    const r = await run(id, "2026-11-12T18:00:00.000Z", { status: "rolled_back", updates: [{ slug: "a", outcome: "rolled_back" }, { slug: "b", outcome: "failed" }] });
+    expect(r.ids).toHaveLength(2);
+    await upsertSeen(env.DB, id, [
+      { type: "plugin", slug: "a", name: "Name of a", fromVersion: "1.0", toVersion: "2.0", risk: "minor", rollbackable: true },
+      { type: "plugin", slug: "b", name: "Name of b", fromVersion: "1.0", toVersion: "2.0", risk: "minor", rollbackable: true },
+    ], "2026-11-20T18:00:00.000Z");
+    const now = await env.DB.prepare(`SELECT status FROM care_updates WHERE site_id = ? ORDER BY slug`).bind(id).all<{ status: string }>();
+    expect(now.results.map((x) => x.status)).toEqual(["available", "available"]); // the reset really happened
+    expect((await facts(s)).sites[0]).toMatchObject({ updatesApplied: 0, updatesRolledBack: 1, updatesFailed: 1 });
+    expect(plainSummary(await facts(s))).toMatch(/1 was rolled back/);
+  });
+
+  it("counts a retried update in each run's own month: failed in October, applied in November", async () => {
+    const s = await careClient();
+    const id = s.site!.id;
+    const first = await run(id, "2026-10-10T18:00:00.000Z", { status: "failed", updates: [{ slug: "a", outcome: "failed" }] });
+    await run(id, "2026-11-12T18:00:00.000Z", { updates: [{ slug: "a", outcome: "applied", id: first.ids[0] }] });
+    await env.DB.prepare(`UPDATE care_updates SET status = 'applied' WHERE id = ?`).bind(first.ids[0]).run();
+    expect((await facts(s)).sites[0]).toMatchObject({ updatesApplied: 1, updatesFailed: 0, updatesRolledBack: 0 });
+    expect((await facts(s, { period: "2026-10", now: new Date("2026-11-01T17:00:00.000Z") })).sites[0]).toMatchObject({ updatesApplied: 0, updatesFailed: 1, updatesRolledBack: 0 });
   });
 
   it("counts a backup only for a run with a backup file, per site, and not for another site's run or a run still going", async () => {
@@ -293,6 +341,24 @@ describe("buildFacts: speed", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("asks PageSpeed about at most three sites at a time, and one site's failure leaves the others' scores", async () => {
+    const s = await careClient();
+    for (let i = 0; i < 6; i++) await addSite(s, `https://ace-${i}.com`);
+    let open = 0, most = 0, n = 0;
+    fetchSpy.mockImplementation(async () => {
+      open++; most = Math.max(most, open);
+      await new Promise((r) => setTimeout(r, 5));
+      open--;
+      if (++n === 2) throw new Error("one site fails");
+      return answer();
+    });
+    const f = await facts(s, { speed: true });
+    expect(most).toBe(3);
+    expect(f.sites).toHaveLength(7);
+    expect(f.sites.filter((x) => x.speedScore === null)).toHaveLength(1);
+    expect(f.sites.filter((x) => x.speedScore === 34)).toHaveLength(6);
+  });
+
   it("is not asked for at all when `speed` is false", async () => {
     const s = await careClient();
     fetchSpy.mockResolvedValue(answer());
@@ -307,7 +373,7 @@ describe("what the facts never hold", () => {
     const id = s.site!.id;
     await updateSite(env.DB, id, { wpSshAlias: "mac-ssh-alias-7", wpPath: "/var/www/ace-wp" }, NOW.toISOString());
     await env.DB.prepare(`UPDATE site_access_items SET vault_item = 'Ace Hosting Login', note = 'ask Pat for the second factor' WHERE site_id = ? AND key = 'hosting'`).bind(id).run();
-    await run(id, "2026-11-12T18:00:00.000Z", { status: "rolled_back", backup: "siteline-backups/ace-2026-11-12.tar.gz", updates: [{ slug: "woo-secret-plugin-slug", status: "rolled_back" }, { slug: "seo-pack", status: "applied" }] });
+    await run(id, "2026-11-12T18:00:00.000Z", { status: "rolled_back", backup: "siteline-backups/ace-2026-11-12.tar.gz", updates: [{ slug: "woo-secret-plugin-slug", outcome: "rolled_back" }, { slug: "seo-pack", outcome: "applied" }] });
     await openIncident(env.DB, { siteId: id, businessId: s.businessId, kind: "down", detail: "The shop returned HTTP 500 on /checkout, secret-incident-sentence", now: "2026-11-05T10:00:00.000Z" });
     await closeIncident(env.DB, id, "down", "2026-11-05T10:20:00.000Z");
     await days(id, "2026-11-01", "2026-11-30", 1);

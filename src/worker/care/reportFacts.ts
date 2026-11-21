@@ -68,6 +68,8 @@ export type ReportFacts = z.infer<typeof ReportFacts>;
 const RENEWAL_DAYS = 60;
 const MAX_RENEWALS = 10;
 const SPEED_TIMEOUT_MS = 30_000;
+/** PageSpeed is asked about this many sites at a time. */
+const SPEED_AT_ONCE = 3;
 const SUMMARY_MAX = 600;
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
@@ -105,8 +107,18 @@ async function speedScore(env: Pick<Env, "PAGESPEED_API_KEY">, url: string): Pro
   }
 }
 
+/** Runs `fn` over `items`, at most `size` at a time, results in order. `fn` must not throw (a site's speed failure never reaches the others). Part of the speed cut line. */
+async function inPool<T, R>(items: T[], size: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(size, items.length) }, async () => {
+    while (next < items.length) { const i = next++; out[i] = await fn(items[i]); }
+  }));
+  return out;
+}
+
 /** One live monitored site's numbers for the month `r`. */
-async function siteFacts(env: Env, site: Site, r: ReturnType<typeof monthRange>): Promise<Omit<SiteFacts, "speedScore">> {
+async function siteFacts(env: Env, site: Site, r: ReturnType<typeof monthRange>, now: Date): Promise<Omit<SiteFacts, "speedScore">> {
   const db = env.DB;
   const uptime = uptimeOf(await uptimeDays(db, site.id, r.fromDay, r.toDay));
   // The start date is the first covered day ever, not the first of the month, so a site watched since October does not read as watched since 1 November.
@@ -115,19 +127,19 @@ async function siteFacts(env: Env, site: Site, r: ReturnType<typeof monthRange>)
   // The incident's own words (`detail`) are never read.
   const down = (await db.prepare(`SELECT opened_at, closed_at FROM site_incidents WHERE site_id = ? AND kind = 'down' AND opened_at >= ? AND opened_at < ?`)
     .bind(site.id, r.from, r.to).all<{ opened_at: string; closed_at: string | null }>()).results;
-  const endOfMonth = Date.parse(r.to);
-  const outages = down.map((i) => (Date.parse(i.closed_at ?? "") || endOfMonth) - Date.parse(i.opened_at)).filter((ms) => Number.isFinite(ms));
+  // An outage counts only the time inside the month and up to now: one that closed after the month end, or is still open, is cut there.
+  const stop = Math.min(Date.parse(r.to), now.getTime());
+  const outages = down.map((i) => Math.max(0, Math.min(Date.parse(i.closed_at ?? "") || stop, stop) - Date.parse(i.opened_at))).filter((ms) => Number.isFinite(ms));
   const longest = outages.length ? Math.max(1, Math.round(Math.max(...outages) / 60_000)) : null;
 
-  // The runs of the month are those that FINISHED in it. A run's updates are the ones its helper job was asked to apply (the run holds no list of its own), counted by the status each has now.
+  // The runs of the month are those that FINISHED in it. What happened to each update is what the run recorded: the helper's per-update `steps` stored in the job's result, not the update's
+  // status now (the next inventory read resets a failed or rolled-back update to available). A retried update counts its outcome in each run's own month; a skipped one counts nothing.
   const counted = (await db.prepare(
-    `SELECT u.status AS status, COUNT(DISTINCT u.id) AS n
-       FROM care_runs r JOIN helper_jobs j ON j.id = r.helper_job_id
-       JOIN json_each(j.payload, '$.updates') e JOIN care_updates u ON u.id = json_extract(e.value, '$.id') AND u.site_id = r.site_id
-      WHERE r.site_id = ? AND r.finished_at >= ? AND r.finished_at < ? AND u.status IN ('applied', 'rolled_back', 'failed')
-      GROUP BY u.status`,
-  ).bind(site.id, r.from, r.to).all<{ status: string; n: number }>()).results;
-  const nOf = (status: string) => counted.find((c) => c.status === status)?.n ?? 0;
+    `SELECT json_extract(s.value, '$.outcome') AS outcome, COUNT(*) AS n
+       FROM care_runs r JOIN helper_jobs j ON j.id = r.helper_job_id AND j.result IS NOT NULL JOIN json_each(j.result, '$.steps') s
+      WHERE r.site_id = ? AND r.finished_at >= ? AND r.finished_at < ? GROUP BY outcome`,
+  ).bind(site.id, r.from, r.to).all<{ outcome: string; n: number }>()).results;
+  const nOf = (...outcomes: string[]) => counted.filter((c) => outcomes.includes(c.outcome)).reduce((n, c) => n + c.n, 0);
   const backups = (await db.prepare(`SELECT COUNT(*) AS n FROM care_runs WHERE site_id = ? AND finished_at >= ? AND finished_at < ? AND backup_file IS NOT NULL AND backup_file <> ''`)
     .bind(site.id, r.from, r.to).first<{ n: number }>())?.n ?? 0;
 
@@ -135,7 +147,7 @@ async function siteFacts(env: Env, site: Site, r: ReturnType<typeof monthRange>)
     domain: site.domain ?? siteDomain(site.url) ?? "this site",
     monitoredSince: since?.day ?? null, uptimePercent: uptime.percent, coveredDays: uptime.coveredDays,
     incidents: down.length, longestOutageMinutes: longest,
-    updatesApplied: nOf("applied"), updatesRolledBack: nOf("rolled_back"), updatesFailed: nOf("failed"), backups,
+    updatesApplied: nOf("applied"), updatesRolledBack: nOf("rolled_back"), updatesFailed: nOf("failed", "rollback_failed"), backups,
   };
 }
 
@@ -171,9 +183,9 @@ export async function buildFacts(env: Env, businessId: string, period: string, n
     `SELECT s.* FROM sites s JOIN businesses b ON b.id = s.business_id WHERE s.business_id = ? AND ${monitoredSiteSql("s", "b")} ORDER BY s.created_at, s.id`,
   ).bind(businessId).all<SiteRow>()).results.map(toSite);
 
-  const speeds = await Promise.all(sites.map((s) => (o.speed !== false && s.url ? speedScore(env, s.url) : null)));
+  const speeds = await inPool(sites, SPEED_AT_ONCE, (s) => (o.speed !== false && s.url ? speedScore(env, s.url) : Promise.resolve(null)));
   const perSite: SiteFacts[] = [];
-  for (const [i, site] of sites.entries()) perSite.push({ ...(await siteFacts(env, site, range)), speedScore: speeds[i] });
+  for (const [i, site] of sites.entries()) perSite.push({ ...(await siteFacts(env, site, range, now)), speedScore: speeds[i] });
 
   const ledger = await editLedger(env, businessId, period, tz);
   const requestsDone = ledger
