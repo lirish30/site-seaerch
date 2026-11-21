@@ -170,7 +170,7 @@ async function settle(db: D1Database, batch: CareBatch): Promise<void> {
 // --- planning a wave -------------------------------------------------------------------------------------------------------------------------------------------------
 
 interface PlanSite { site: Site; updates: CareUpdate[] }
-interface Plan { sites: PlanSite[]; /** Groups held out for the week because every canary run of the group was dropped (no canary ran). */ noCanary?: GroupKey[]; /** A group is held back for a canary page still being reviewed: the wave is drafted again when the review lands. */ waiting: boolean }
+interface Plan { sites: PlanSite[]; /** Groups held out for the week because every canary run of the group was dropped (no canary ran). */ noCanary?: GroupKey[]; /** Groups held out for the week because a canary page's look ended broken or unsure: the canary did not pass. */ looked?: GroupKey[]; /** A group is held back for a canary page still being reviewed: the wave is drafted again when the review lands. */ waiting: boolean }
 
 /** What the client's live Care plan bills each month (a rehearsal client's own plan when it has no real one); the canary of a group is its cheapest. */
 async function careCentsOf(db: D1Database, businessId: string): Promise<number> {
@@ -227,6 +227,11 @@ async function planWave(env: Env, batch: CareBatch, wave: 0 | 1 | 2, now: Date):
   const ran = new Map<GroupKey, boolean>();
   for (const r of canaryRuns) { const g = await groupOf(r.siteId); ran.set(g, (ran.get(g) ?? false) || r.status !== "dropped"); }
   const noCanaryGroups = new Set<GroupKey>([...ran].filter(([, ok]) => !ok).map(([g]) => g));
+  const failedLook = (await db.prepare(
+    `SELECT DISTINCT r.site_id FROM care_page_checks c JOIN care_runs r ON r.id = c.run_id WHERE r.batch_id = ? AND r.wave = 1 AND c.review IN ('broken', 'unsure')`,
+  ).bind(batch.id).all<{ site_id: string }>()).results;
+  const lookedGroups = new Set<GroupKey>();
+  for (const p of failedLook) lookedGroups.add(await groupOf(p.site_id));
   const covered = new Set<string>();
   for (const a of (await db.prepare(`SELECT payload FROM approvals WHERE kind = ? AND status IN ('pending', 'rejected') AND json_extract(payload, '$.batchId') = ?`).bind(CARE_APPROVAL, batch.id).all<{ payload: string }>()).results) {
     for (const s of (JSON.parse(a.payload) as CareApprovalPayload).sites) covered.add(s.siteId);
@@ -239,14 +244,16 @@ async function planWave(env: Env, batch: CareBatch, wave: 0 | 1 | 2, now: Date):
   }
   const sites: PlanSite[] = [];
   const noCanary = new Set<GroupKey>();
+  const looked = new Set<GroupKey>();
   let waiting = false;
   for (const p of rest) {
     const g = await groupOf(p.site.id);
     if (noCanaryGroups.has(g)) noCanary.add(g);
+    else if (lookedGroups.has(g)) looked.add(g);
     else if (heldGroups.has(g)) waiting = true;
     else sites.push(p);
   }
-  return { sites, waiting, noCanary: [...noCanary].sort() };
+  return { sites, waiting, noCanary: [...noCanary].sort(), looked: [...looked].sort() };
 }
 
 // --- drafting a wave -------------------------------------------------------------------------------------------------------------------------------------------------
@@ -263,7 +270,7 @@ function describe(batch: CareBatch, wave: 0 | 1 | 2, plan: Plan): { title: strin
   const preview = sites.map((s) => [
     s.domain,
     ...s.updates.map((u) => `  ${u.slug} (${u.type}) ${u.from} to ${u.to}${u.risk === "security" ? " [security]" : ""}${u.risk === "major" || u.needsTick ? " [needs your OK]" : ""}`),
-  ].join("\n")).concat((plan.noCanary ?? []).map((g) => `waits until next week: no canary ran for the ${g} sites`)).join("\n\n");
+  ].join("\n")).concat((plan.noCanary ?? []).map((g) => `waits until next week: no canary ran for the ${g} sites`), (plan.looked ?? []).map((g) => `waits until next week: a page on the ${g} canary looked different`)).join("\n\n");
   return { title, preview, payload: { batchId: batch.id, wave, sites } };
 }
 
