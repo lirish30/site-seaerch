@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bandTone, formatUptime, healthLabel, incidentLine, siteStateLabel, sortCare } from "../src/client/careView";
+import { bandLabel, bandOfScore, bandTone, formatUptime, healthChipText, healthLabel, incidentLine, siteStateLabel, sortCare } from "../src/client/careView";
 import type { CareRow, IncidentView, SiteMonitoringView } from "../src/worker/monitoring/fleet";
 
 const NOW = new Date("2026-11-21T20:00:00Z");
@@ -22,6 +22,38 @@ describe("healthLabel", () => {
   it("is the score, and says so when there are no checks yet", () => {
     expect(healthLabel({ score: 82, band: "good", hasData: true })).toBe("Health 82");
     expect(healthLabel({ score: 82, band: "good", hasData: false })).toBe("Health 82 · no checks yet");
+  });
+});
+
+describe("bandLabel", () => {
+  it("names each band in words", () => {
+    expect(bandLabel("good")).toBe("Good");
+    expect(bandLabel("watch")).toBe("Watch");
+    expect(bandLabel("at_risk")).toBe("At risk");
+  });
+});
+
+describe("bandOfScore", () => {
+  it("puts 80 and up in good, 60 to 79 in watch, under 60 at risk", () => {
+    expect(bandOfScore(100)).toBe("good");
+    expect(bandOfScore(80)).toBe("good");
+    expect(bandOfScore(79)).toBe("watch");
+    expect(bandOfScore(60)).toBe("watch");
+    expect(bandOfScore(59)).toBe("at_risk");
+    expect(bandOfScore(0)).toBe("at_risk");
+  });
+});
+
+describe("healthChipText", () => {
+  it("says the band in words after the score, so colour never carries it alone", () => {
+    expect(healthChipText({ score: 90, band: "good", hasData: true })).toBe("Health 90 · good");
+    expect(healthChipText({ score: 70, band: "watch", hasData: true })).toBe("Health 70 · watch");
+    expect(healthChipText({ score: 40, band: "at_risk", hasData: true })).toBe("Health 40 · at risk");
+  });
+  it("keeps the no-checks note before the band", () => {
+    expect(healthChipText({ score: 90, band: "good", hasData: false })).toBe("Health 90 · no checks yet · good");
+    expect(healthChipText({ score: 70, band: "watch", hasData: false })).toBe("Health 70 · no checks yet · watch");
+    expect(healthChipText({ score: 40, band: "at_risk", hasData: false })).toBe("Health 40 · no checks yet · at risk");
   });
 });
 

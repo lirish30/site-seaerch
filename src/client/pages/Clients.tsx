@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { clientsApi } from "../api";
 import { useOwnerClock } from "../billingData";
+import { bandLabel, bandOfScore } from "../careView";
 import { latestOnly, moneyLabel, renewalLabel, sortClients, type ClientSort } from "../clientView";
 import Icon from "../components/Icon";
 import type { ClientRow } from "../../worker/clients/record";
@@ -88,7 +89,7 @@ export default function Clients() {
                     {r.held && <span className="badge2 warning"><i className="dot" />On hold</span>}
                   </th>
                   <td data-label="Care">{r.careLabel ?? <span className="muted">None</span>}</td>
-                  <td className="num" data-label="Health">{r.healthScore === null ? <span className="muted">–<span className="sr-only">No health score</span></span> : r.healthScore}</td>
+                  <td className="num" data-label="Health">{r.healthScore === null ? <span className="muted">–<span className="sr-only">No health score</span></span> : <>{r.healthScore}<span className="sr-only">, {bandLabel(bandOfScore(r.healthScore)).toLowerCase()}</span></>}</td>
                   <td className="num" data-label="MRR">{moneyLabel(r.mrrCents, { monthly: true })}</td>
                   <td className="num" data-label="Sites">{r.siteCount}</td>
                   <td className="num" data-label="Access missing">{r.accessMissing > 0 ? <span className="badge2 warning"><i className="dot" />{r.accessMissing} missing</span> : <span className="muted">None</span>}</td>

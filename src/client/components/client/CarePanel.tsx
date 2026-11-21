@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, careApi } from "../../api";
 import { shortDate } from "../../billingView";
-import { bandTone, formatUptime, healthLabel, incidentLine, siteStateLabel } from "../../careView";
+import { bandTone, formatUptime, healthChipText, incidentLine, siteStateLabel } from "../../careView";
 import type { Health } from "../../../worker/clients/health";
 import type { Site } from "../../../worker/db/sites";
 import type { IncidentView, SiteMonitoringView } from "../../../worker/monitoring/fleet";
 
 const BADGE = { ok: "positive", warn: "warning", bad: "critical" } as const;
 
-/** The health score as a coloured chip: "Health 82", or "Health 82 · no checks yet". All text is a React text node. */
+/** The health score as a coloured chip that also says its band in words: "Health 82 · good", or "Health 82 · no checks yet · good". All text is a React text node. */
 export function HealthChip({ health }: { health: Health }) {
-  return <span className={`badge2 ${BADGE[bandTone(health.band)]}`}><i className="dot" />{healthLabel(health)}</span>;
+  return <span className={`badge2 ${BADGE[bandTone(health.band)]}`}><i className="dot" aria-hidden="true" />{healthChipText(health)}</span>;
 }
 
 /** A site's state in a word or two, coloured: Up is green, Slow is amber, Down is red, the rest are plain. */

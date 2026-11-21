@@ -1,4 +1,4 @@
-import type { HealthBand } from "../worker/clients/health";
+import { GOOD_FROM, WATCH_FROM, type HealthBand } from "../worker/clients/health";
 import type { CareRow, IncidentView, SiteMonitoringView } from "../worker/monitoring/fleet";
 import { FALLBACK_ZONE } from "../worker/sop/cadence";
 
@@ -7,6 +7,21 @@ import { FALLBACK_ZONE } from "../worker/sop/cadence";
 /** "Health 82", or "Health 82 · no checks yet" while there is nothing behind the uptime part of the score. */
 export function healthLabel(h: { score: number; band: HealthBand; hasData: boolean }): string {
   return `Health ${h.score}${h.hasData ? "" : " · no checks yet"}`;
+}
+
+/** The band in words: "Good", "Watch" or "At risk". */
+export function bandLabel(b: HealthBand): string {
+  return b === "good" ? "Good" : b === "watch" ? "Watch" : "At risk";
+}
+
+/** The band a bare score falls in (the list gives only the score): the same cut-offs the server uses. */
+export function bandOfScore(score: number): HealthBand {
+  return score >= GOOD_FROM ? "good" : score >= WATCH_FROM ? "watch" : "at_risk";
+}
+
+/** The chip's whole text: "Health 40 · at risk", or "Health 40 · no checks yet · at risk". The colour only repeats what the words say. */
+export function healthChipText(h: { score: number; band: HealthBand; hasData: boolean }): string {
+  return `${healthLabel(h)} · ${bandLabel(h.band).toLowerCase()}`;
 }
 
 /** The colour family of a band: good is ok, watch is warn, at risk is bad. */
