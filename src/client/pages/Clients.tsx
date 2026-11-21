@@ -75,7 +75,7 @@ export default function Clients() {
             <caption className="sr-only">Clients, sorted by {SORTS.find(([k]) => k === sort)?.[1].toLowerCase()}</caption>
             <thead>
               <tr>
-                <th scope="col">Client</th><th scope="col">Care</th><th scope="col" className="num">MRR</th><th scope="col" className="num">Sites</th>
+                <th scope="col">Client</th><th scope="col">Care</th><th scope="col" className="num">Health</th><th scope="col" className="num">MRR</th><th scope="col" className="num">Sites</th>
                 <th scope="col" className="num">Access missing</th><th scope="col" className="num">Open invoices</th><th scope="col">Renewal</th>
               </tr>
             </thead>
@@ -88,6 +88,7 @@ export default function Clients() {
                     {r.held && <span className="badge2 warning"><i className="dot" />On hold</span>}
                   </th>
                   <td data-label="Care">{r.careLabel ?? <span className="muted">None</span>}</td>
+                  <td className="num" data-label="Health">{r.healthScore === null ? <span className="muted">–<span className="sr-only">No health score</span></span> : r.healthScore}</td>
                   <td className="num" data-label="MRR">{moneyLabel(r.mrrCents, { monthly: true })}</td>
                   <td className="num" data-label="Sites">{r.siteCount}</td>
                   <td className="num" data-label="Access missing">{r.accessMissing > 0 ? <span className="badge2 warning"><i className="dot" />{r.accessMissing} missing</span> : <span className="muted">None</span>}</td>
