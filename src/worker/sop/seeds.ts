@@ -232,4 +232,25 @@ const CARE_4: SopTemplateInput = {
   ]),
 };
 
-export const SEED_SOPS: SopTemplateInput[] = [BUILD, QUICKFIX, CARE_0, CARE_1, CARE_4];
+/** The checklist for a site that broke after an update. It is never started as a project: the incident task copies its steps. */
+const CARE_5: SopTemplateInput = {
+  key: "CARE-5",
+  name: "Care incident",
+  kind: "project",
+  cadence: null,
+  cadenceDay: null,
+  appliesTo: ["care", "care_plus", "care_fallback"],
+  active: true,
+  steps: stepsOf([
+    {
+      key: "incident", title: "Fix a broken site", steps: [
+        { key: "1.1", title: "Contain it", owner: C, est: 10, done: "The broken update is rolled back or switched off, the site loads again, and nothing else is changing on it." },
+        { key: "1.2", title: "Restore or clean up", owner: CL, est: 30, done: "If the rollback did not work, the site is restored from the update backup, or the damage is cleaned up. Pages, forms and checkout work, and the fix is checked on the live site.", requires: ["1.1"] },
+        { key: "1.3", title: "Tell the client", owner: CL, est: 5, done: "The client has a short, plain note saying what happened and that it is fixed, and Logan has approved it before it goes.", requires: ["1.2"] },
+        { key: "1.4", title: "Write the post-incident note", owner: CL, est: 10, done: "A short note on the site record says what broke, what fixed it and what to do differently next time, and the update that caused it is held if it should be.", requires: ["1.3"] },
+      ],
+    },
+  ]),
+};
+
+export const SEED_SOPS: SopTemplateInput[] = [BUILD, QUICKFIX, CARE_0, CARE_1, CARE_4, CARE_5];

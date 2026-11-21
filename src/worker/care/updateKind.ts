@@ -1,0 +1,233 @@
+import { z } from "zod";
+import type { Env } from "../env";
+import { logActivityOnce } from "../db/activity";
+import {
+  getRun, insertPageChecks, insertRun, pageChecksFor, setReview, setRunStatus, type CareRun, type CareUpdate, type RunStatus, type UpdateStatus,
+} from "../db/careUpdates";
+import { getSite, type Site } from "../db/sites";
+import { InvalidHelperJobError, enqueueHelperJob } from "../helper/jobs";
+import { HelperRefused, registerHelperKind, type HelperKindDef } from "../helper/registry";
+import { WP_ARG, SshTarget } from "./args";
+import { onRunDone } from "./batch";
+import { closeUpdateIncident, openUpdateIncident, FAILED_SENTENCE, rollbackFailedSentence, rolledBackSentence } from "./incidents";
+import { MAX_PATHS } from "./versions";
+
+/** The helper updates one client site's plugins, themes and core over SSH: backup, page checks, the updates, a put-back when a page breaks. Only ever queued from an approved run. */
+export const CARE_UPDATE_KIND = "care.update";
+
+export const MAX_UPDATES = 40;
+const MAX_NOTE = 500;
+const MAX_STEPS = MAX_UPDATES;
+const SAFE_WORD = /^[A-Za-z0-9._-]{1,100}$/;
+const RUN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** A backup file name the helper made: a relative path of plain characters, no `..`. */
+const BACKUP_FILE = /^(?!.*\.\.)[A-Za-z0-9._/-]{1,300}$/;
+
+const Version = z.string().regex(WP_ARG.version).refine((v) => !v.includes(".."), "That is not a valid version.");
+
+const Update = z.object({
+  id: z.string().regex(SAFE_WORD),
+  type: z.enum(["core", "plugin", "theme"]),
+  /** A core update's slug is "wordpress". Every slug is later put in a remote shell command, so each fits the fixed pattern. */
+  slug: z.string().regex(WP_ARG.slug),
+  from: Version,
+  to: Version,
+  rollbackable: z.boolean(),
+});
+
+const SiteUrl = z.string().max(300).refine((v) => {
+  try {
+    const u = new URL(v);
+    return (u.protocol === "https:" || u.protocol === "http:") && /^[a-z0-9.-]+$/i.test(u.hostname) && !u.hostname.includes("..") && u.hostname.length <= 100;
+  } catch { return false; }
+}, "That is not a valid site address.").transform((v) => new URL(v).origin);
+
+export const CareUpdatePayload = SshTarget.extend({
+  runId: z.string().regex(RUN_ID),
+  siteId: z.string().regex(SAFE_WORD),
+  siteUrl: SiteUrl,
+  paths: z.array(z.string().regex(WP_ARG.checkPath)).max(MAX_PATHS),
+  updates: z.array(Update).min(1).max(MAX_UPDATES),
+}).superRefine((p, ctx) => {
+  const ids = new Set<string>();
+  const components = new Set<string>();
+  for (const u of p.updates) {
+    const component = u.type === "core" ? "core" : `${u.type}:${u.slug}`;
+    if (ids.has(u.id) || components.has(component)) ctx.addIssue({ code: "custom", message: "The same update is listed twice.", path: ["updates"] });
+    ids.add(u.id);
+    components.add(component);
+  }
+});
+export type CareUpdatePayload = z.infer<typeof CareUpdatePayload>;
+
+/** A note is the helper's own fixed sentence, perhaps with a short reason; it is capped, never shown as a rule and never put in an incident. */
+const Note = z.string().transform((s) => s.slice(0, MAX_NOTE));
+const Read = z.object({ status: z.number().int().min(0).max(999).nullable(), fatal: z.boolean(), forms: z.number().int().min(0).max(100_000) });
+const Step = z.object({ id: z.string().min(1).max(100), outcome: z.enum(["applied", "skipped", "failed", "rolled_back", "rollback_failed"]), note: Note });
+const Page = z.object({
+  path: z.string().regex(WP_ARG.checkPath),
+  before: Read,
+  after: Read,
+  ssim: z.number().finite().nullable(),
+  verdict: z.enum(["ok", "changed", "broken"]),
+  uploaded: z.object({ before: z.boolean(), after: z.boolean(), diff: z.boolean() }),
+});
+
+/** Exactly what `helper/src/handlers/careUpdate.ts` returns. `pages` is empty on an early exit; on a retry every `before` is `{ status: null, fatal: false, forms: 0 }`. */
+export const CareUpdateResult = z.object({
+  backupFile: z.string().regex(BACKUP_FILE).nullable(),
+  steps: z.array(Step).max(MAX_STEPS),
+  pages: z.array(Page).max(MAX_PATHS),
+  rolledBack: z.boolean(),
+  retry: z.boolean(),
+});
+export type CareUpdateResult = z.infer<typeof CareUpdateResult>;
+
+/** Where the helper puts a page's three pictures. The run's id and the page's place in the list are in the name, so no other key can pass for one. */
+export const carePageKeys = (runId: string, i: number): { before: string; after: string; diff: string } => ({
+  before: `care/${runId}/${i}-before.jpg`, after: `care/${runId}/${i}-after.jpg`, diff: `care/${runId}/${i}-diff.jpg`,
+});
+
+const FINAL: readonly RunStatus[] = ["ok", "changed", "rolled_back", "failed", "dropped"];
+const OPEN: RunStatus[] = ["queued", "running"];
+
+const STEP_TO_UPDATE: Record<z.infer<typeof Step>["outcome"], UpdateStatus> = {
+  applied: "applied", failed: "failed", rollback_failed: "failed", rolled_back: "rolled_back", skipped: "available",
+};
+
+/** Sets the updates this run queued (and nobody has moved on) to `to`. One statement per update id, in one batch. */
+async function moveQueued(env: Env, siteId: string, to: (id: string) => UpdateStatus, ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  await env.DB.batch(ids.map((id) => env.DB.prepare(`UPDATE care_updates SET status = ? WHERE id = ? AND site_id = ? AND status = 'queued'`).bind(to(id), id, siteId)));
+}
+
+/**
+ * Queues one site's update run: checks the payload FIRST (a slug, version, alias or path with shell syntax throws `InvalidHelperJobError` and nothing is written),
+ * then inserts the run `queued`, marks its updates `queued` and queues the helper job. One open update job per site (`care.update:<siteId>`): when one is already open the run is
+ * kept as `dropped` and null comes back, and nothing else changes.
+ */
+export async function queueRun(
+  env: Env, o: { batchId: string; site: Site; wave: 0 | 1 | 2; approvalId: string | null; updates: CareUpdate[] },
+): Promise<CareRun | null> {
+  const db = env.DB;
+  const draft = (runId: string) => ({
+    runId, siteId: o.site.id, siteUrl: o.site.url ?? "", alias: o.site.wpSshAlias ?? "", path: o.site.wpPath ?? "", paths: o.site.carePaths,
+    updates: o.updates.filter((u) => u.siteId === o.site.id).map((u) => ({ id: u.id, type: u.type, slug: u.slug, from: u.fromVersion, to: u.toVersion, rollbackable: u.rollbackable })),
+  });
+  const check = CareUpdatePayload.safeParse(draft(crypto.randomUUID()));
+  if (!check.success) throw new InvalidHelperJobError(`invalid payload for ${CARE_UPDATE_KIND}:\n${check.error.issues.map((i) => `- ${i.path.join(".") || "value"}: ${i.message}`).join("\n")}`);
+
+  const now = new Date().toISOString();
+  const run = await insertRun(db, { batchId: o.batchId, siteId: o.site.id, wave: o.wave, approvalId: o.approvalId, status: "queued", now });
+  const job = await enqueueHelperJob(db, CARE_UPDATE_KIND, draft(run.id), { dedupeKey: `care.update:${o.site.id}` });
+  if (!job.created) {
+    await setRunStatus(db, run.id, ["queued"], "dropped", { summary: "another update is already waiting for this site's Mac helper" }, now);
+    return null;
+  }
+  await setRunStatus(db, run.id, ["queued"], "queued", { helperJobId: job.id }, now);
+  await moveQueuedFromAvailable(env, o.site.id, check.data.updates.map((u) => u.id));
+  return (await getRun(db, run.id))!;
+}
+
+async function moveQueuedFromAvailable(env: Env, siteId: string, ids: string[]): Promise<void> {
+  await env.DB.batch(ids.map((id) => env.DB.prepare(`UPDATE care_updates SET status = 'queued' WHERE id = ? AND site_id = ? AND status = 'available'`).bind(id, siteId)));
+}
+
+const careUpdate: HelperKindDef<CareUpdatePayload, CareUpdateResult> = {
+  kind: CARE_UPDATE_KIND,
+  payload: CareUpdatePayload,
+  result: CareUpdateResult,
+  inputs: () => [],
+  outputs: (p) => p.paths.flatMap((_, i) => Object.values(carePageKeys(p.runId, i))),
+
+  /**
+   * Records what the helper did. Refused (the job stays claimed, the helper is told why) when the run is not open, the site is gone, a page is not one of the run's pages, or a picture it
+   * says it uploaded is not in R2. Every effect before the final run-status move is safe to repeat, so a crash and retry finishes the job; a run that already has its final status is a replay and changes nothing.
+   * The words of an incident come from the stored payload and run, never from a note.
+   */
+  async apply(env, p, r) {
+    const db = env.DB;
+    const run = await getRun(db, p.runId);
+    if (!run || run.siteId !== p.siteId) throw new HelperRefused("that update run is gone");
+    if (run.status === "dropped") throw new HelperRefused("that update run was dropped, so its result is not taken");
+    if (FINAL.includes(run.status)) { await onRunDone(env, run.batchId); return; }
+    const site = await getSite(db, p.siteId);
+    if (!site) throw new HelperRefused("that site is gone");
+
+    // The pages must be this run's pages, in order, and every picture must really be there.
+    if (r.pages.length > p.paths.length) throw new HelperRefused("the result names more pages than this run checks");
+    for (const [i, pg] of r.pages.entries()) {
+      if (pg.path !== p.paths[i]) throw new HelperRefused(`page ${i + 1} is not one of this run's pages`);
+      const keys = carePageKeys(p.runId, i);
+      for (const kind of ["before", "after", "diff"] as const) {
+        if (pg.uploaded[kind] && !(await env.RAW.head(keys[kind]))) throw new HelperRefused(`the ${kind} picture of page ${i + 1} was never uploaded to ${keys[kind]}`);
+      }
+    }
+
+    const now = new Date();
+    const nowIso = now.toISOString();
+    if (r.pages.length && (await pageChecksFor(db, run.id)).length === 0) {
+      await insertPageChecks(db, run.id, r.pages.map((pg, i) => {
+        const keys = carePageKeys(p.runId, i);
+        return {
+          path: pg.path, beforeKey: pg.uploaded.before ? keys.before : null, afterKey: pg.uploaded.after ? keys.after : null, diffKey: pg.uploaded.diff ? keys.diff : null,
+          statusBefore: pg.before.status, statusAfter: pg.after.status,
+          // A retry did not read the page before the update, so its "before" is unknown, not zero forms.
+          formsBefore: r.retry ? null : pg.before.forms, formsAfter: pg.after.forms, ssim: pg.ssim, verdict: pg.verdict,
+        };
+      }));
+    }
+
+    // The updates: each one the helper named moves to what happened to it; the rest go back to waiting.
+    const outcome = new Map(r.steps.map((s) => [s.id, s.outcome] as const));
+    const ids = p.updates.map((u) => u.id);
+    await moveQueued(env, p.siteId, (id) => STEP_TO_UPDATE[outcome.get(id) ?? "skipped"], ids);
+
+    const outcomes = p.updates.map((u) => ({ u, o: outcome.get(u.id) ?? "skipped" as const }));
+    const slugsOf = (o: string) => outcomes.filter((x) => x.o === o).map((x) => x.u.slug);
+    const applied = slugsOf("applied").length;
+    const bad = r.rolledBack || outcomes.some((x) => x.o === "failed" || x.o === "rollback_failed");
+    const status: RunStatus = bad ? (r.rolledBack ? "rolled_back" : "failed") : r.pages.some((pg) => pg.verdict === "changed") ? "changed" : "ok";
+    const counts = { applied, skipped: slugsOf("skipped").length, failed: slugsOf("failed").length + slugsOf("rollback_failed").length, putBack: slugsOf("rolled_back").length };
+    const summary = `${counts.applied} applied, ${counts.skipped} skipped, ${counts.failed} failed, ${counts.putBack} put back`;
+    const tag = run.id.slice(0, 8);
+    const domain = site.domain ?? "site";
+
+    if (status === "rolled_back" || status === "failed") {
+      const stuck = slugsOf("rollback_failed");
+      const broken = r.pages.find((pg) => pg.verdict === "broken");
+      const putBack = slugsOf("rolled_back").concat(slugsOf("failed"));
+      const why = stuck.length ? rollbackFailedSentence(stuck, r.backupFile)
+        : r.rolledBack ? rolledBackSentence(putBack.length ? putBack : p.updates.map((u) => u.slug), broken ? broken.path : null)
+        : FAILED_SENTENCE;
+      await openUpdateIncident(env, run, site, why, now);
+      if (status === "rolled_back") await logActivityOnce(db, site.businessId, "care_rolled_back", `${domain}: updates rolled back (run ${tag})`);
+    } else {
+      if (status === "ok" && applied > 0) await closeUpdateIncident(env, site.id, now);
+      if (applied > 0) await logActivityOnce(db, site.businessId, "care_updated", `${domain}: ${applied} ${applied === 1 ? "update" : "updates"} applied (run ${tag})`);
+      if (status === "changed") for (const c of await pageChecksFor(db, run.id)) if (c.verdict === "changed") await setReview(db, c.id, ["none"], "pending");
+    }
+
+    // The commit point. Whoever lost a race for it (the run was dropped while the effects above ran) says so.
+    if (!(await setRunStatus(db, run.id, OPEN, status, { backupFile: r.backupFile, summary }, nowIso))) {
+      const now2 = await getRun(db, run.id);
+      if (!now2 || now2.status === "dropped") throw new HelperRefused("that update run was dropped, so its result is not taken");
+    }
+    await onRunDone(env, run.batchId);
+  },
+
+  /** The helper gave the job up: the run failed, its updates wait again. */
+  async onFail(env, p) { await endRun(env, p, "failed", FAILED_SENTENCE); },
+  /** Nobody picked the job up in time. */
+  async onExpire(env, p) { await endRun(env, p, "dropped", "your Mac helper didn't pick this up in time"); },
+};
+
+async function endRun(env: Env, p: CareUpdatePayload, status: "failed" | "dropped", summary: string): Promise<void> {
+  const run = await getRun(env.DB, p.runId);
+  if (!run) return;
+  if (!(await setRunStatus(env.DB, run.id, OPEN, status, { summary }, new Date().toISOString()))) return;
+  await moveQueued(env, p.siteId, () => "available", p.updates.map((u) => u.id));
+  await onRunDone(env, run.batchId);
+}
+
+registerHelperKind(careUpdate);

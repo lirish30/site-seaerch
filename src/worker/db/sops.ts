@@ -92,10 +92,13 @@ export async function setTemplateActive(db: D1Database, key: string, on: boolean
   return (res.meta.changes ?? 0) === 1;
 }
 
-/** The active project templates that apply to any of these packages, in catalog order. */
+/** Project-kind templates that are checklists, never started as a project (CARE-5, the incident checklist a fix task copies). */
+const CHECKLIST_ONLY: readonly string[] = ["CARE-5"];
+
+/** The active project templates that apply to any of these packages, in catalog order. A checklist-only template is never one of them. */
 export async function templatesForPackages(db: D1Database, keys: PackageKey[]): Promise<SopTemplate[]> {
   const want = new Set<string>(keys);
-  return (await listTemplates(db)).filter((t) => t.kind === "project" && t.appliesTo.some((k) => want.has(k)));
+  return (await listTemplates(db)).filter((t) => t.kind === "project" && !CHECKLIST_ONLY.includes(t.key) && t.appliesTo.some((k) => want.has(k)));
 }
 
 /**

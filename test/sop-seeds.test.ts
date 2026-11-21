@@ -13,7 +13,7 @@ beforeEach(async () => {
 
 describe("SEED_SOPS", () => {
   it("every seed passes validateTemplate", () => {
-    expect(SEED_SOPS.map((t) => t.key)).toEqual(["BUILD", "QUICKFIX", "CARE-0", "CARE-1", "CARE-4"]);
+    expect(SEED_SOPS.map((t) => t.key)).toEqual(["BUILD", "QUICKFIX", "CARE-0", "CARE-1", "CARE-4", "CARE-5"]);
     for (const t of SEED_SOPS) {
       expect(validateTemplate(t), t.key).toEqual([]);
       const parsed = SopTemplateInputSchema.safeParse(t);
@@ -119,15 +119,18 @@ describe("SEED_SOPS", () => {
     const c4 = SEED_SOPS.find((t) => t.key === "CARE-4")!;
     expect(c4).toMatchObject({ name: "Care monthly report", kind: "recurring", cadence: "monthly", cadenceDay: 5 });
     expect(c4.steps).toHaveLength(6);
+    const c5 = SEED_SOPS.find((t) => t.key === "CARE-5")!;
+    expect(c5).toMatchObject({ name: "Care incident", kind: "project", cadence: null, active: true, appliesTo: ["care", "care_plus", "care_fallback"] });
+    expect(c5.steps.map((s) => [s.title, s.owner])).toEqual([["Contain it", "claude"], ["Restore or clean up", "claude_drafts"], ["Tell the client", "claude_drafts"], ["Write the post-incident note", "claude_drafts"]]);
   });
 });
 
 describe("ensureSeedSops", () => {
-  it("ensureSeedSops inserts five and a second call inserts none", async () => {
-    expect(await ensureSeedSops(env.DB)).toBe(5);
+  it("ensureSeedSops inserts six and a second call inserts none", async () => {
+    expect(await ensureSeedSops(env.DB)).toBe(6);
     expect(await ensureSeedSops(env.DB)).toBe(0);
     const all = await listTemplates(env.DB);
-    expect(all.map((t) => t.key)).toEqual(["BUILD", "QUICKFIX", "CARE-0", "CARE-1", "CARE-4"]);
+    expect(all.map((t) => t.key)).toEqual(["BUILD", "QUICKFIX", "CARE-0", "CARE-1", "CARE-4", "CARE-5"]);
     expect(all.every((t) => t.version === 1 && t.active)).toBe(true);
     for (const seed of SEED_SOPS) {
       const stored = all.find((t) => t.key === seed.key)!;
