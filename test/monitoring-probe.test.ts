@@ -24,6 +24,10 @@ describe("monitorableUrl", () => {
   });
 
   const blocked = { ok: false, reason: ERROR_TEXT.blocked };
+  it("refuses an address with a username or a password in it, with the same fixed phrase", () => {
+    for (const bad of ["https://user:pass@acmeplumbing.com/", "https://user@acmeplumbing.com", "http://:secret@acmeplumbing.com", "user:pass@acmeplumbing.com/shop"])
+      expect(monitorableUrl(bad), bad).toEqual(blocked);
+  });
   it.each([
     "http://localhost",
     "http://localhost:8787/admin",

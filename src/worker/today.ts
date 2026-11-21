@@ -124,17 +124,17 @@ async function incidentAttention(db: D1Database, now: Date): Promise<Map<string,
   const incidents = await listIncidents(db, { open: true, limit: 1000 });
   const out = new Map<string, { reason: string; priority: number }>();
   if (!incidents.length) return out;
-  const sites = new Map<string, { domain: string | null; url: string | null; expiresOn: string | null }>();
+  const sites = new Map<string, { domain: string | null; expiresOn: string | null }>();
   for (const part of chunks([...new Set(incidents.map((i) => i.siteId))])) {
-    const rows = (await db.prepare(`SELECT id, domain, url, domain_expires_on FROM sites WHERE archived_at IS NULL AND id IN (${part.map(() => "?").join(",")})`).bind(...part)
-      .all<{ id: string; domain: string | null; url: string | null; domain_expires_on: string | null }>()).results;
-    for (const r of rows) sites.set(r.id, { domain: r.domain, url: r.url, expiresOn: r.domain_expires_on });
+    const rows = (await db.prepare(`SELECT id, domain, domain_expires_on FROM sites WHERE archived_at IS NULL AND id IN (${part.map(() => "?").join(",")})`).bind(...part)
+      .all<{ id: string; domain: string | null; domain_expires_on: string | null }>()).results;
+    for (const r of rows) sites.set(r.id, { domain: r.domain, expiresOn: r.domain_expires_on });
   }
   const zone = zoneOf(await getSettings(db));
   const byClient = new Map<string, Incident[]>();
   for (const i of incidents) if (sites.has(i.siteId)) (byClient.get(i.businessId) ?? byClient.set(i.businessId, []).get(i.businessId)!).push(i);
   for (const [businessId, list] of byClient) {
-    const name = (i: Incident) => sites.get(i.siteId)!.domain ?? sites.get(i.siteId)!.url ?? "A site";
+    const name = (i: Incident) => sites.get(i.siteId)!.domain ?? "A site"; // never an address: a URL can carry a login
     const downs = list.filter((i) => i.kind === "down").sort((a, c) => ms(a.openedAt) - ms(c.openedAt));
     if (downs.length) {
       const others = downs.length - 1;

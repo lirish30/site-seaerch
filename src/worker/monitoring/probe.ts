@@ -121,6 +121,8 @@ export function monitorableUrl(raw: string | null): MonitorableUrl {
     return BLOCKED;
   }
   if (u.protocol !== "http:" && u.protocol !== "https:") return BLOCKED;
+  // An address with a login in it ("https://user:pass@host/") would send that login with every check and could echo it back: never probed.
+  if (u.username !== "" || u.password !== "") return BLOCKED;
   if (blockedHost(u.hostname)) return BLOCKED;
   return { ok: true, url: u.href };
 }

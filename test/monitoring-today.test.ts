@@ -42,6 +42,15 @@ describe("site_incident", () => {
     }]);
   });
 
+  it("names a site with no domain as 'A site', never by its address", async () => {
+    const s = await seedClient();
+    await env.DB.prepare(`UPDATE sites SET domain = NULL, url = 'https://user:SECRET@ace.com/' WHERE id = ?`).bind(s.site!.id).run();
+    await down(s.site!, 47 * MIN);
+    const [item] = await rows();
+    expect(item.reason).toBe("A site has been down for 47 minutes");
+    expect(JSON.stringify(item)).not.toContain("SECRET");
+  });
+
   it("counts the length of an outage from when it opened: minutes, hours and minutes, then days", async () => {
     const s = await seedClient();
     const reasonFor = async (ms: number) => {
