@@ -101,10 +101,12 @@ export async function sweepDomains(env: Env, now: Date): Promise<DomainSweepResu
     });
     await inChunks(due, async (site) => {
       try {
-        // `null` (the registry could not be read) only stamps the lookup time: the last known date and the incidents stay as they were.
-        const expiresOn = await fetchDomainExpiry(site.domain!, (input, init) => monitoringDeps.fetch(input, init));
-        const t = await recordDomainExpiry(env, site, expiresOn, now);
+        // A lookup that failed (rate limit, server error, silence) stamps nothing, so the site is asked again at the next daily run. A registry that answered with no date stamps only
+        // the lookup time: the last known date and the incidents stay as they were. `checked` counts the lookups made, failed ones included.
+        const lookup = await fetchDomainExpiry(site.domain!, (input, init) => monitoringDeps.fetch(input, init));
         out.checked++;
+        if (lookup.kind === "failed") return;
+        const t = await recordDomainExpiry(env, site, lookup.kind === "found" ? lookup.expiresOn : null, now);
         if (t.opened) out.opened++;
         if (t.closed) out.closed++;
       } catch (e) {

@@ -50,7 +50,7 @@ describe("fetchDomainExpiry", () => {
 
   it("requests rdap.org with the rdap accept header and returns the expiry", async () => {
     const fetchFn = vi.fn(async () => json(doc));
-    expect(await fetchDomainExpiry("acmeplumbing.com", fetchFn as unknown as typeof fetch)).toBe("2027-03-14");
+    expect(await fetchDomainExpiry("acmeplumbing.com", fetchFn as unknown as typeof fetch)).toEqual({ kind: "found", expiresOn: "2027-03-14" });
     const [url, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://rdap.org/domain/acmeplumbing.com");
     expect(init.headers).toMatchObject({ accept: "application/rdap+json" });
@@ -59,22 +59,26 @@ describe("fetchDomainExpiry", () => {
   it("never requests a domain that fails the shape check", async () => {
     const fetchFn = vi.fn(async () => json(doc));
     for (const bad of ["not a domain", "", "localhost", "a.b/../c.com", "acme.com/x", "-.", "acme.c", "acme.com\n"]) {
-      expect(await fetchDomainExpiry(bad, fetchFn as unknown as typeof fetch)).toBeNull();
+      expect(await fetchDomainExpiry(bad, fetchFn as unknown as typeof fetch)).toEqual({ kind: "unknown" });
     }
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
-  it("gives null on a non-200, a bad body, or a throw", async () => {
-    expect(await fetchDomainExpiry("acmeplumbing.com", (async () => json(doc, 404)) as unknown as typeof fetch)).toBeNull();
-    expect(await fetchDomainExpiry("acmeplumbing.com", (async () => new Response("<html>", { status: 200 })) as unknown as typeof fetch)).toBeNull();
-    expect(
-      await fetchDomainExpiry("acmeplumbing.com", (async () => {
-        throw new TypeError("boom");
-      }) as unknown as typeof fetch),
-    ).toBeNull();
+  const lookup = (fetchFn: unknown) => fetchDomainExpiry("acmeplumbing.com", fetchFn as typeof fetch);
+
+  it("a clean 404 and a document with no expiration event are unknown: the registry answered, there is just no date", async () => {
+    expect(await lookup(async () => json(doc, 404))).toEqual({ kind: "unknown" });
+    expect(await lookup(async () => json({ events: [{ eventAction: "registration", eventDate: "2015-03-14T00:00:00Z" }] }))).toEqual({ kind: "unknown" });
+    expect(await lookup(async () => json({}))).toEqual({ kind: "unknown" });
   });
 
-  it("gives null after 5 seconds of silence", async () => {
+  it("a rate limit, a server error, a body that is not JSON and a throw are failed: to be tried again", async () => {
+    for (const status of [429, 500, 502, 503, 403]) expect(await lookup(async () => json(doc, status)), `status ${status}`).toEqual({ kind: "failed" });
+    expect(await lookup(async () => new Response("<html>", { status: 200 }))).toEqual({ kind: "failed" });
+    expect(await lookup(async () => { throw new TypeError("boom"); })).toEqual({ kind: "failed" });
+  });
+
+  it("is failed after 5 seconds of silence", async () => {
     vi.useFakeTimers();
     const fetchFn = ((_url: string, init: RequestInit) =>
       new Promise((_resolve, reject) => {
@@ -82,6 +86,6 @@ describe("fetchDomainExpiry", () => {
       })) as unknown as typeof fetch;
     const pending = fetchDomainExpiry("acmeplumbing.com", fetchFn);
     await vi.advanceTimersByTimeAsync(5_000);
-    expect(await pending).toBeNull();
+    expect(await pending).toEqual({ kind: "failed" });
   });
 });

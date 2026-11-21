@@ -230,9 +230,36 @@ describe("sweepDomains", () => {
     expect(r).toEqual({ checked: 1, opened: 0, closed: 0, pruned: 0 });
     const site = (await getSite(env.DB, s.site!.id))!;
     expect(site.domainExpiresOn).toBe("2027-02-11");
+    // The failed lookup is not stamped, so the site is asked again at the next run (updated: it used to be stamped like "no date known").
+    expect(site.domainCheckedAt).toBe(daysAgo(8));
     const open = await listIncidents(env.DB, { businessId: s.businessId, open: true });
     expect(open).toHaveLength(1);
     expect(open[0].detail).toBe("domain expires in 12 days");
+  });
+
+  it("a rate limited lookup is not stamped and is asked again the next run; a clean 404 is stamped and waits a week", async () => {
+    const limited = await careSite("https://limited.example.com/");
+    const missing = await careSite("https://missing.example.com/");
+    monitoringDeps.fetch = answering((url) => new Response(null, { status: url.includes("limited") ? 429 : 404 }));
+    expect(await sweepDomains(env, NOW)).toEqual({ checked: 2, opened: 0, closed: 0, pruned: 0 });
+    expect((await getSite(env.DB, limited.site!.id))!.domainCheckedAt).toBeNull();
+    expect((await getSite(env.DB, missing.site!.id))!.domainCheckedAt).toBe(NOW.toISOString());
+
+    calls = [];
+    const nextDay = new Date(NOW.getTime() + DAY);
+    monitoringDeps.fetch = answering(() => Response.json({ events: [{ eventAction: "expiration", eventDate: "2030-01-01T00:00:00Z" }] }));
+    expect(await sweepDomains(env, nextDay)).toEqual({ checked: 1, opened: 0, closed: 0, pruned: 0 });
+    expect(calls).toEqual(["https://rdap.org/domain/limited.example.com"]);
+    const retried = (await getSite(env.DB, limited.site!.id))!;
+    expect(retried.domainExpiresOn).toBe("2030-01-01");
+    expect(retried.domainCheckedAt).toBe(nextDay.toISOString());
+  });
+
+  it("a found date sets the expiry and the lookup time", async () => {
+    const s = await careSite("https://found.example.com/");
+    monitoringDeps.fetch = answering(() => Response.json({ events: [{ eventAction: "expiration", eventDate: "2031-05-06T00:00:00Z" }] }));
+    await sweepDomains(env, NOW);
+    expect(await getSite(env.DB, s.site!.id)).toMatchObject({ domainExpiresOn: "2031-05-06", domainCheckedAt: NOW.toISOString() });
   });
 
   it("one site's failure does not stop the others, and a fetch that throws changes nothing", async () => {

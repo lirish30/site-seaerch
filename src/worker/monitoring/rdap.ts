@@ -1,5 +1,7 @@
 // Domain expiry from RDAP (rdap.org bootstraps to the right registry). Pure: the fetch function is injected.
-// Any failure is a null; the caller treats "unknown" as "nothing to say", never as an error to show.
+// The answer says which of three things happened, because the caller must treat them differently: a date was found; the registry answered but has no date (not found, or a record
+// with no expiration event), which is worth remembering for a week; or the lookup failed (rate limit, a server error, silence, an unreadable answer), which must be tried again soon.
+// Nothing here is an error to show anyone.
 
 const DOMAIN_SHAPE = /^[a-z0-9.-]+\.[a-z]{2,}$/i;
 const RDAP_TIMEOUT_MS = 5_000;
@@ -24,8 +26,14 @@ export function parseRdapExpiry(json: unknown): string | null {
   return null;
 }
 
-export async function fetchDomainExpiry(domain: string, fetchFn: typeof fetch): Promise<string | null> {
-  if (!DOMAIN_SHAPE.test(domain)) return null;
+export type DomainLookup = { kind: "found"; expiresOn: string } | { kind: "unknown" } | { kind: "failed" };
+
+/**
+ * Asks the registry (through rdap.org) when the domain expires. `unknown`: a clean 404, or a document with no usable expiration event (also a name that is not a domain, which is never asked).
+ * `failed`: any other non-OK answer (429, 5xx), a throw, a timeout, or a body that is not JSON.
+ */
+export async function fetchDomainExpiry(domain: string, fetchFn: typeof fetch): Promise<DomainLookup> {
+  if (!DOMAIN_SHAPE.test(domain)) return { kind: "unknown" };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), RDAP_TIMEOUT_MS);
   try {
@@ -33,10 +41,12 @@ export async function fetchDomainExpiry(domain: string, fetchFn: typeof fetch): 
       signal: controller.signal,
       headers: { accept: "application/rdap+json" },
     });
-    if (!res.ok) return null;
-    return parseRdapExpiry(await res.json());
+    if (res.status === 404) return { kind: "unknown" };
+    if (!res.ok) return { kind: "failed" };
+    const expiresOn = parseRdapExpiry(await res.json());
+    return expiresOn === null ? { kind: "unknown" } : { kind: "found", expiresOn };
   } catch {
-    return null;
+    return { kind: "failed" };
   } finally {
     clearTimeout(timer);
   }
