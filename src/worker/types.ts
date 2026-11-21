@@ -125,7 +125,7 @@ export const ACTIVITY_KINDS = [
   "onboarding_started", "onboarding_welcome", "onboarding_submitted", "onboarding_received", "onboarding_waiting", "onboarding_resumed",
   "project_started", "project_milestone", "project_done", "change_order_sent", "change_order_signed", "change_order_paid", "change_order_void", "change_order_declined",
   "invoice_sent", "invoice_paid", "billing_hold_placed", "site_added", "access_changed", "site_changed", "meeting_recorded",
-  "site_down", "site_back", "domain_expiring",
+  "site_down", "site_back", "domain_expiring", "care_updated", "care_rolled_back",
 ] as const;
 export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
 export interface Activity { id: string; business_id: string; kind: ActivityKind; detail: string | null; created_at: string; }

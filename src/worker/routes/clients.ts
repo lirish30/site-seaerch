@@ -4,7 +4,7 @@ import { getClientRecord, isClient, isTestClient, listClients } from "../clients
 import { logActivity } from "../db/activity";
 import { settleAccessItem } from "../db/onboardings";
 import {
-  ACCESS_KEYS, SiteConflictError, archiveSite, createSite, getSite, listAccess, setAccess, updateSite,
+  ACCESS_KEYS, SiteConflictError, SiteInputError, archiveSite, createSite, getSite, listAccess, setAccess, updateSite,
   type AccessKey, type AccessStatus, type Site, type SiteFields,
 } from "../db/sites";
 import type { Env } from "../env";
@@ -14,7 +14,7 @@ import { ACCESS_LABELS, cleanVaultName, isHttpUrl, noteProblem, vaultNameProblem
 
 /** Mounted at /api (behind requireAuth): /clients, /clients/:id, /clients/:id/sites, /sites/:id, /sites/:id/access/:key (and the same site routes under /clients/:id/sites/:siteId). */
 export const clientRoutes = new Hono<{ Bindings: Env }>();
-clientRoutes.onError((e, c) => (e instanceof SiteConflictError ? c.json({ error: e.message }, 409) : ownerOnError(e, c)));
+clientRoutes.onError((e, c) => (e instanceof SiteConflictError ? c.json({ error: e.message }, 409) : e instanceof SiteInputError ? c.json({ error: e.message }, 400) : ownerOnError(e, c)));
 
 const SHORT = 120;
 const URL_MAX = 300;
@@ -72,7 +72,7 @@ const given = <T extends Record<string, unknown>>(b: T): Partial<SiteFields> => 
 /** What each site field is called in the activity line. Only these words are ever logged, never a value. */
 const FIELD_WORDS: Record<keyof SiteFields, string> = {
   url: "address", domain: "domain", cms: "platform", hostProvider: "host", registrar: "registrar", dnsProvider: "DNS provider", adminUrl: "admin address",
-  hostingTier: "hosting tier", accessMethod: "access method", notes: "notes",
+  hostingTier: "hosting tier", accessMethod: "access method", notes: "notes", wpSshAlias: "SSH alias", wpPath: "WordPress folder", carePaths: "pages to check",
 };
 
 /** The clients, by name; `?test=1` adds the rehearsal ones. */

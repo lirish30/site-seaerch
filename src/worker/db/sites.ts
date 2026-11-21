@@ -1,4 +1,7 @@
+import { WP_ARG } from "../care/args";
 import { siteDomain } from "./businesses";
+
+export { WP_ARG };
 
 export const ACCESS_KEYS = ["hosting", "dns", "registrar", "admin", "gbp", "analytics"] as const;
 export type AccessKey = (typeof ACCESS_KEYS)[number];
@@ -14,6 +17,8 @@ export interface Site {
   archivedAt: string | null; createdAt: string; updatedAt: string;
   /** Monitoring is switched on by hand (a live Care subscription also turns it on). `domainExpiresOn` is a YYYY-MM-DD date; `domainCheckedAt` is when the registry was last asked. */
   monitoring: boolean; domainExpiresOn: string | null; domainCheckedAt: string | null;
+  /** Care updates (Plan 12): the NAME of an ssh host alias and the WordPress folder (never a key), the pages screenshotted around an update, and the TLS certificate's expiry (YYYY-MM-DD) and when it was read. */
+  wpSshAlias: string | null; wpPath: string | null; carePaths: string[]; certExpiresOn: string | null; certCheckedAt: string | null;
 }
 
 /** One line of a site's access checklist. `vaultItem` is the NAME of a password-manager item, never a login. */
@@ -26,6 +31,12 @@ export interface AccessItem {
 export interface SiteFields {
   url: string | null; domain: string | null; cms: Cms; hostProvider: string | null; registrar: string | null; dnsProvider: string | null; adminUrl: string | null;
   hostingTier: HostingTier; accessMethod: AccessMethod; notes: string | null;
+  wpSshAlias: string | null; wpPath: string | null; carePaths: string[];
+}
+
+/** A site field that is not allowed (shell syntax in an alias or a path, a bad page list). The message is a plain sentence. */
+export class SiteInputError extends Error {
+  constructor(message: string) { super(message); this.name = "SiteInputError"; }
 }
 
 /** Another live site of the same business already has this domain. */
@@ -37,10 +48,20 @@ export interface SiteRow {
   id: string; business_id: string; seed_key: "primary" | null; url: string | null; domain: string | null; cms: Cms; host_provider: string | null; registrar: string | null;
   dns_provider: string | null; admin_url: string | null; hosting_tier: HostingTier; access_method: AccessMethod; notes: string | null; test: number;
   archived_at: string | null; created_at: string; updated_at: string; monitoring: number; domain_expires_on: string | null; domain_checked_at: string | null;
+  wp_ssh_alias: string | null; wp_path: string | null; care_paths: string; cert_expires_on: string | null; cert_checked_at: string | null;
 }
 interface AccessRow {
   site_id: string; key: AccessKey; status: AccessStatus; vault_item: string | null; note: string | null;
   requested_at: string | null; received_at: string | null; verified_at: string | null; updated_at: string;
+}
+
+/** The stored JSON list of page paths; anything unreadable falls back to the home page. */
+function parsePaths(raw: string): string[] {
+  try {
+    const v: unknown = JSON.parse(raw);
+    if (Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === "string")) return v as string[];
+  } catch { /* fall through */ }
+  return ["/"];
 }
 
 export const toSite = (r: SiteRow): Site => ({
@@ -48,6 +69,7 @@ export const toSite = (r: SiteRow): Site => ({
   dnsProvider: r.dns_provider, adminUrl: r.admin_url, hostingTier: r.hosting_tier, accessMethod: r.access_method, notes: r.notes, test: !!r.test,
   archivedAt: r.archived_at, createdAt: r.created_at, updatedAt: r.updated_at,
   monitoring: !!r.monitoring, domainExpiresOn: r.domain_expires_on, domainCheckedAt: r.domain_checked_at,
+  wpSshAlias: r.wp_ssh_alias, wpPath: r.wp_path, carePaths: parsePaths(r.care_paths), certExpiresOn: r.cert_expires_on, certCheckedAt: r.cert_checked_at,
 });
 const toAccess = (r: AccessRow): AccessItem => ({
   siteId: r.site_id, key: r.key, status: r.status, vaultItem: r.vault_item, note: r.note,
@@ -56,7 +78,7 @@ const toAccess = (r: AccessRow): AccessItem => ({
 
 const COLUMNS: Record<keyof SiteFields, string> = {
   url: "url", domain: "domain", cms: "cms", hostProvider: "host_provider", registrar: "registrar", dnsProvider: "dns_provider", adminUrl: "admin_url",
-  hostingTier: "hosting_tier", accessMethod: "access_method", notes: "notes",
+  hostingTier: "hosting_tier", accessMethod: "access_method", notes: "notes", wpSshAlias: "wp_ssh_alias", wpPath: "wp_path", carePaths: "care_paths",
 };
 const isUnique = (e: unknown) => /UNIQUE constraint failed/i.test(String((e as Error)?.message ?? e)) || /UNIQUE constraint failed/i.test(String((e as { cause?: { message?: string } })?.cause?.message ?? ""));
 
@@ -115,10 +137,16 @@ export async function updateSite(db: D1Database, id: string, patch: Partial<Site
   const p: Partial<SiteFields> = { ...patch };
   if (p.domain !== undefined) p.domain = siteDomain(p.domain);
   else if (p.url !== undefined) p.domain = siteDomain(p.url);
+  // These reach a remote shell later, so they are checked against fixed patterns before anything is saved.
+  if (p.wpSshAlias != null && !WP_ARG.alias.test(p.wpSshAlias)) throw new SiteInputError("The SSH alias can only use letters, numbers, dots, dashes and underscores, and must start with a letter or number.");
+  if (p.wpPath != null && !WP_ARG.path.test(p.wpPath)) throw new SiteInputError("The WordPress folder must be a plain path starting with / (letters, numbers, dots, dashes, underscores and slashes only, no ..).");
+  if (p.carePaths !== undefined && (!Array.isArray(p.carePaths) || p.carePaths.length < 1 || p.carePaths.length > 5 || !p.carePaths.every((x) => typeof x === "string" && WP_ARG.checkPath.test(x)))) {
+    throw new SiteInputError("Pick one to five pages to check, each a plain path starting with / (no spaces or ..).");
+  }
   const sets: string[] = [], binds: unknown[] = [];
   for (const k of Object.keys(COLUMNS) as (keyof SiteFields)[]) {
     if (p[k] === undefined) continue;
-    sets.push(`${COLUMNS[k]} = ?`); binds.push(p[k]);
+    sets.push(`${COLUMNS[k]} = ?`); binds.push(k === "carePaths" ? JSON.stringify(p.carePaths) : p[k]);
   }
   if (sets.length === 0) return getSite(db, id);
   const before = p.url !== undefined || p.domain !== undefined ? await getSite(db, id) : null;

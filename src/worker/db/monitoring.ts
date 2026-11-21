@@ -4,7 +4,7 @@ import { getSite, toSite, type Site, type SiteRow } from "./sites";
 // Care monitoring data (Plan 11): the probe's checks, the incidents they open and close, and which sites are watched.
 // Times are UTC ISO strings with milliseconds. No secret is stored: a check keeps a status, a time and a short error word, never a body or a header.
 
-export type IncidentKind = "down" | "domain_expiring";
+export type IncidentKind = "down" | "domain_expiring" | "update_failed" | "cert_expiring";
 
 export interface SiteCheck { id: string; siteId: string; checkedAt: string; ok: boolean; status: number | null; ms: number | null; error: string | null }
 export interface Incident { id: string; siteId: string; businessId: string; kind: IncidentKind; openedAt: string; closedAt: string | null; detail: string }
