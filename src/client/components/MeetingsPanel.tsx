@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
-import { actionItemLines, changeOrderLines, countsLine, followupState, meetingRow } from "../meetingsView";
+import { actionItemLines, canSummarizeAgain, changeOrderLines, countsLine, followupState, meetingRow } from "../meetingsView";
 import { workError } from "../workData";
 import type { MeetingDetailResponse, MeetingListItem } from "../../worker/routes/meetings";
 
@@ -29,7 +29,7 @@ function MeetingBody({ id, onChanged }: { id: string; onChanged: () => void }) {
   if (!data) return <p className="muted small">Loading…</p>;
   const m = data.meeting;
   const s = m.summary;
-  const canAsk = m.status === "failed" || (m.status === "received" && !m.summarizing);
+  const canAsk = canSummarizeAgain(m);
   const items = s ? actionItemLines(s) : [];
   const orders = s ? changeOrderLines(s) : [];
 

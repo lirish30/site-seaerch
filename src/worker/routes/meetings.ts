@@ -14,6 +14,8 @@ export interface MeetingListItem {
   /** The summary's first sentence; null until there is one. */
   summary: string | null;
   actionItems: number; changeOrders: number; followupSent: boolean;
+  /** A summary task is queued or being worked on right now (the same as `MeetingDetail.summarizing`). */
+  summarizing: boolean;
 }
 
 /** One meeting in full, as the panel shows it. The transcript is not here: it comes only when asked for (`?transcript=1`). */
@@ -43,11 +45,18 @@ function headline(s: string): string {
   return first.length > HEADLINE_CAP ? `${first.slice(0, HEADLINE_CAP - 1).trimEnd()}…` : first;
 }
 
-const listItem = (m: Meeting): MeetingListItem => ({
+const listItem = (m: Meeting, summarizing: Set<string>): MeetingListItem => ({
   id: m.id, title: m.title, startedAt: m.startedAt, endedAt: m.endedAt, status: m.status,
   summary: m.summary ? headline(m.summary.summary) || null : null,
   actionItems: m.summary?.actionItems.length ?? 0, changeOrders: m.summary?.possibleChangeOrders.length ?? 0, followupSent: m.followupSentAt !== null,
+  summarizing: summarizing.has(m.id),
 });
+
+/** The ids of the meetings a summary task is open for (queued or claimed): one query for the whole list. */
+async function summarizingIds(db: D1Database): Promise<Set<string>> {
+  const { results } = await db.prepare(`SELECT dedupe_key FROM claude_tasks WHERE kind = ? AND status IN ('pending','claimed')`).bind(MEETING_SUMMARIZE_KIND).all<{ dedupe_key: string | null }>();
+  return new Set(results.map((r) => r.dedupe_key).filter((k): k is string => !!k));
+}
 
 async function detail(db: D1Database, m: Meeting): Promise<MeetingDetail> {
   const [pending, task] = await Promise.all([
@@ -81,7 +90,8 @@ meetingRoutes.get("/meetings/sync-status", async (c) => {
 /** A client's meetings, newest first (`?businessId=`; without it, everyone's). */
 meetingRoutes.get("/meetings", async (c) => {
   const businessId = c.req.query("businessId") || undefined;
-  return c.json({ meetings: (await listMeetings(c.env.DB, { businessId })).map(listItem) });
+  const [rows, summarizing] = await Promise.all([listMeetings(c.env.DB, { businessId }), summarizingIds(c.env.DB)]);
+  return c.json({ meetings: rows.map((m) => listItem(m, summarizing)) });
 });
 
 /** One meeting with its summary and Meetily's notes. The transcript text comes only with `?transcript=1`, cut at 60 000 characters (`truncated: true`). The transcript's storage key is never sent. */

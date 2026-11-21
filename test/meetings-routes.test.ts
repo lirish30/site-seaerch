@@ -82,6 +82,17 @@ describe("GET /meetings", () => {
     expect(text).not.toContain("Someone else");
   });
 
+  it("says on each row whether a summary task is open for it, so the panel can hide Summarize again", async () => {
+    const b = await seedBusiness({ name: "Ace" });
+    const waiting = await seedMeeting(b.id, { title: "Queued", startedAt: "2026-12-02T17:00:00.000Z" });
+    const idle = await seedMeeting(b.id, { title: "Nobody asked", startedAt: "2026-12-01T17:00:00.000Z" });
+    const done = await seedMeeting(b.id, { title: "Done", startedAt: "2026-11-30T17:00:00.000Z" });
+    await saveSummary(env.DB, done.id, SUMMARY, "2026-12-01T20:00:00.000Z");
+    expect((await call("POST", `/api/meetings/${waiting.id}/summarize`)).status).toBe(200);
+    const { meetings } = await json<{ meetings: { id: string; summarizing: boolean }[] }>(await call("GET", `/api/meetings?businessId=${b.id}`));
+    expect(meetings.map((m) => [m.id, m.summarizing])).toEqual([[waiting.id, true], [idle.id, false], [done.id, false]]);
+  });
+
   it("is an empty list for a client with no meetings", async () => {
     const b = await seedBusiness();
     expect(await json(await call("GET", `/api/meetings?businessId=${b.id}`))).toEqual({ meetings: [] });

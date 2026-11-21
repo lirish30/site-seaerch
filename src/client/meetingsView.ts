@@ -11,11 +11,14 @@ const STATUS_WORDS: Record<MeetingListItem["status"], string> = { received: "Wai
 
 /** One meeting in the list: its title, when it started (Pacific, zone named), where it stands, and the one line under it. */
 export function meetingRow(m: MeetingListItem, tz = CALLS_ZONE): { title: string; when: string; status: string; headline: string } {
-  const headline = m.status === "received" ? "No summary yet. It is queued for Claude."
-    : m.status === "failed" ? "The summary did not run. Use Summarize again."
+  const headline = m.status === "received" ? (m.summarizing ? "No summary yet. It is queued for Claude." : "No summary yet. Nothing is working on it. Use Summarize again.")
+    : m.status === "failed" ? (m.summarizing ? "The summary did not run. A new one is queued for Claude." : "The summary did not run. Use Summarize again.")
     : m.summary || "Summarized.";
   return { title: m.title.trim() || "Untitled meeting", when: formatSlot(m.startedAt, tz), status: STATUS_WORDS[m.status], headline };
 }
+
+/** "Summarize again" is offered for a failed meeting or one still waiting, and only when no summary task is already open for it (asking then is refused). */
+export const canSummarizeAgain = (m: { status: MeetingListItem["status"]; summarizing: boolean }): boolean => (m.status === "failed" || m.status === "received") && !m.summarizing;
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 

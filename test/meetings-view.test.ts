@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { actionItemLines, changeOrderLines, countsLine, followupState, meetilyLine, meetingRow } from "../src/client/meetingsView";
+import { actionItemLines, canSummarizeAgain, changeOrderLines, countsLine, followupState, meetilyLine, meetingRow } from "../src/client/meetingsView";
 import type { MeetingListItem } from "../src/worker/routes/meetings";
 import type { MeetingSummary } from "../src/worker/meetings/summary";
 
 const item = (over: Partial<MeetingListItem> = {}): MeetingListItem => ({
   id: "m1", title: "Kickoff call", startedAt: "2026-12-01T17:00:00.000Z", endedAt: "2026-12-01T17:30:00.000Z", status: "summarized",
-  summary: "We agreed the scope for the new site.", actionItems: 2, changeOrders: 1, followupSent: false, ...over,
+  summary: "We agreed the scope for the new site.", actionItems: 2, changeOrders: 1, followupSent: false, summarizing: false, ...over,
 });
 
 const summary = (over: Partial<MeetingSummary> = {}): MeetingSummary => ({
@@ -20,10 +20,25 @@ describe("meetingRow", () => {
     expect(meetingRow(item())).toEqual({ title: "Kickoff call", when: "Tue, Dec 1, 9:00 AM PST", status: "Summarized", headline: "We agreed the scope for the new site." });
   });
 
-  it("says a received meeting has no summary yet", () => {
-    const r = meetingRow(item({ status: "received", summary: null, actionItems: 0, changeOrders: 0 }));
-    expect(r.status).toBe("Waiting for its summary");
-    expect(r.headline).toBe("No summary yet. It is queued for Claude.");
+  it("says a received meeting is queued for Claude only when a summary task is open for it", () => {
+    const queued = meetingRow(item({ status: "received", summary: null, actionItems: 0, changeOrders: 0, summarizing: true }));
+    expect(queued.status).toBe("Waiting for its summary");
+    expect(queued.headline).toBe("No summary yet. It is queued for Claude.");
+    const idle = meetingRow(item({ status: "received", summary: null, actionItems: 0, changeOrders: 0, summarizing: false }));
+    expect(idle.headline).toBe("No summary yet. Nothing is working on it. Use Summarize again.");
+    expect(idle.headline).not.toMatch(/queued for Claude/);
+  });
+
+  it("says a failed meeting is queued again once Summarize again was used", () => {
+    expect(meetingRow(item({ status: "failed", summary: null, actionItems: 0, changeOrders: 0, summarizing: true })).headline).toBe("The summary did not run. A new one is queued for Claude.");
+  });
+
+  it("offers Summarize again for a failed or waiting meeting that nothing is working on, and never while a summary task is open", () => {
+    expect(canSummarizeAgain({ status: "failed", summarizing: false })).toBe(true);
+    expect(canSummarizeAgain({ status: "received", summarizing: false })).toBe(true);
+    expect(canSummarizeAgain({ status: "failed", summarizing: true })).toBe(false);
+    expect(canSummarizeAgain({ status: "received", summarizing: true })).toBe(false);
+    expect(canSummarizeAgain({ status: "summarized", summarizing: false })).toBe(false);
   });
 
   it("says a failed meeting needs another go", () => {

@@ -19,3 +19,6 @@ CREATE TABLE meetings (
   summarized_at TEXT
 );
 CREATE INDEX idx_meetings_business ON meetings(business_id, started_at);
+-- A booking's meeting is looked up by booking (the booking page, the deal's recording check), and the sync reads meetings by start time.
+CREATE INDEX idx_meetings_booking ON meetings(booking_id);
+CREATE INDEX idx_meetings_started ON meetings(started_at);
