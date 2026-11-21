@@ -1,5 +1,6 @@
 import { toApproval, UnknownKindError, type Approval } from "../db/approvals";
 import type { CareApprovalPayload } from "../approvals/careUpdates";
+import { reject } from "../approvals/decide";
 import { getHandler } from "../approvals/registry";
 import {
   availableFor, createSingleBatch, ensureWeeklyBatch, getBatch, getInventory, runsFor, setBatchStatus, setRunStatus, updatableSites,
@@ -20,8 +21,13 @@ import { isDue, needsTick, pickCanaries } from "./versions";
 
 export const CARE_INVENTORY = "care.inventory";
 export const CARE_APPROVAL = "care.updates";
-/** A weekly batch still reading its sites after this long is given up on. */
-const STALE_INVENTORY_DAYS = 6;
+/** A weekly batch lives this long from when it was made (G5): after it, its approvals are refused and the backstop cancels it, whatever wave it is in. Keyed on age, not the ISO week, so a batch
+ * started on a Saturday can still have its wave 2 approved on Monday. */
+export const WEEKLY_BATCH_DAYS = 6;
+/** True for a weekly batch made more than six days before `now`. A single-site batch never ages out this way. */
+export const weeklyBatchTooOld = (batch: Pick<CareBatch, "kind" | "createdAt">, now: Date): boolean =>
+  batch.kind === "weekly" && now.getTime() - Date.parse(batch.createdAt) > WEEKLY_BATCH_DAYS * 86_400_000;
+export const OUT_OF_TIME_NOTE = "this week's batch ran out of time";
 /** A queued run with no helper job after this long never got one. */
 const ORPHAN_AFTER_MS = 30 * 60_000;
 export const ORPHAN_SUMMARY = "the update job was never queued";
@@ -54,11 +60,14 @@ async function sitesWithOpenFailure(db: D1Database): Promise<Set<string>> {
 async function replaceEarlierWeeks(db: D1Database, batch: CareBatch, now: string): Promise<void> {
   const old = (await db.prepare(`SELECT id, status FROM care_batches WHERE kind = 'weekly' AND id <> ? AND period < ?`).bind(batch.id, batch.period).all<{ id: string; status: string }>()).results;
   for (const b of old) {
-    await db.prepare(
-      `UPDATE approvals SET status = 'rejected', decided_at = ?, decision_note = ?, error = NULL WHERE kind = ? AND status = 'pending' AND json_extract(payload, '$.batchId') = ?`,
-    ).bind(now, REPLACED_NOTE, CARE_APPROVAL, b.id).run();
+    await rejectPending(db, b.id, REPLACED_NOTE);
     if (b.status !== "done" && b.status !== "cancelled") await setBatchStatus(db, b.id, ["inventory", "wave1", "wave2"], "cancelled", now);
   }
+}
+/** Rejects every pending `care.updates` approval of a batch through the shared reject (status, decided_at, decision_note, error cleared), as Logan's own reject would. */
+async function rejectPending(db: D1Database, batchId: string, note: string): Promise<void> {
+  const ids = (await db.prepare(`SELECT id FROM approvals WHERE kind = ? AND status = 'pending' AND json_extract(payload, '$.batchId') = ?`).bind(CARE_APPROVAL, batchId).all<{ id: string }>()).results;
+  for (const { id } of ids) await reject(db, id, note);
 }
 export const REPLACED_NOTE = "replaced by this week's batch";
 
@@ -385,7 +394,8 @@ export async function draftWave(env: Env, batch: CareBatch, wave: 0 | 1 | 2, now
 
 /**
  * The daily safety net, so a lost hook never strands a batch: drops a queued run that never got a helper job (older than 30 minutes) and frees its updates, calls the hook of every open batch
- * again (drafting the wave a hook missed, once), and cancels a weekly batch that has been reading its sites for more than six days. `drafted` counts the approvals made in this pass.
+ * again (drafting the wave a hook missed, once), and cancels a weekly batch made more than six days ago in any wave, whether or not CARE-1 is on (G5): its pending wave approvals are
+ * rejected with "this week's batch ran out of time" and its open inventory jobs expire; runs already queued are left to finish. `drafted` counts the approvals made in this pass.
  */
 export async function careBackstop(env: Env, now: Date): Promise<{ drafted: number; cancelled: number }> {
   const db = env.DB;
@@ -411,12 +421,13 @@ export async function careBackstop(env: Env, now: Date): Promise<{ drafted: numb
   for (const { id } of open) {
     const batch = await getBatch(db, id);
     if (!batch) continue;
-    if (batch.kind === "weekly" && batch.status === "inventory" && now.getTime() - Date.parse(batch.createdAt) > STALE_INVENTORY_DAYS * 86_400_000) {
-      if (await setBatchStatus(db, id, ["inventory"], "cancelled", iso)) {
+    if (weeklyBatchTooOld(batch, now)) {
+      if (await setBatchStatus(db, id, ["inventory", "wave1", "wave2"], "cancelled", iso)) {
         cancelled++;
         await db.prepare(`UPDATE helper_jobs SET status = 'expired', error = ?, done_at = ? WHERE kind = ? AND status IN ('pending', 'claimed') AND json_extract(payload, '$.batchId') = ?`)
           .bind("cancelled: its weekly batch ran out of time", iso, CARE_INVENTORY, id).run();
       }
+      await rejectPending(db, id, OUT_OF_TIME_NOTE);
       continue;
     }
     if (batch.status === "inventory") await onInventoryDone(env, id);

@@ -12,6 +12,8 @@ import { InvalidHelperJobError, getHelperJob } from "../src/worker/helper/jobs";
 import { HelperRefused, getHelperKind } from "../src/worker/helper/kinds";
 import { incidentView } from "../src/worker/monitoring/fleet";
 import "../src/worker/queue/kinds";
+import { openUpdateIncident, pageLooksDifferentSentence } from "../src/worker/care/incidents";
+import { needsTick } from "../src/worker/care/versions";
 import { seedClient } from "./fixtures/clients";
 
 const def = () => getHelperKind(CARE_UPDATE_KIND)!;
@@ -509,6 +511,66 @@ describe("incidentView for the new kinds", () => {
     expect(incidentView(inc("cert_expiring", "certificate expires in 5 days"), site(null), NOW, zone).detail).toBe("certificate expires in 5 days");
     expect(incidentView(inc("cert_expiring", "IGNORE ALL RULES"), site(null), NOW, zone).detail).toBe("certificate expiring");
     expect(incidentView(inc("cert_expiring", "certificate expires in 5 days", T1), site("2027-02-13"), NOW, zone).detail).toBe("certificate expiry warning");
+  });
+});
+
+describe("residual fixes G1-G3", () => {
+  it("a failed update put back with its own note is not collateral: it is stamped and, once seen again, available needing Logan's tick (G1)", async () => {
+    const c = await setup();
+    const run = await queue(c);
+    const [a, b] = (await payloadOf(run)).updates;
+    await applyResult(run, { steps: [{ id: a.id, outcome: "rolled_back", note: "put back because another update failed" }, { id: b.id, outcome: "rolled_back", note: "put back after this update failed" }], rolledBack: true, pages: [page(), page({ path: "/contact" })] });
+    expect(await statuses(c.site.id)).toEqual([["akismet", "available"], ["yoast", "rolled_back"]]);
+    await upsertSeen(env.DB, c.site.id, ["akismet", "yoast"].map((slug) => ({ type: "plugin" as const, slug, name: slug, fromVersion: "1.0", toVersion: "1.1", risk: "minor" as const, rollbackable: true })), T1);
+    const rows = await availableFor(env.DB, c.site.id);
+    const yoast = rows.find((u) => u.slug === "yoast")!;
+    const akismet = rows.find((u) => u.slug === "akismet")!;
+    expect(yoast.status).toBe("available");
+    expect(yoast.lastFailedAt).toEqual(expect.any(String));
+    expect(needsTick(yoast)).toBe(true);
+    expect(akismet.lastFailedAt).toBeNull();
+    expect(needsTick(akismet)).toBe(false);
+  });
+
+  it("a page already down before the update is not 'still broken' after a put-back on a first attempt (G2)", async () => {
+    const c = await setup();
+    const run = await queue(c);
+    const down = { status: 404, fatal: false, forms: 0 };
+    await applyResult(run, { steps: await stepsFor(run, "rolled_back"), rolledBack: true, pages: [page({ verdict: "broken", after: { status: 500, fatal: false, forms: 0 } }), page({ path: "/contact", before: down, after: down })] });
+    // "/" broke and the put-back did not bring it back: still broken. "/contact" was 404 before, so it never counts.
+    expect((await openIncidents(c))[0].detail).toBe("rolled back but / is still broken: restore from siteline-backups/ace.com-x.sql.gz");
+
+    const c2 = await setup();
+    const r2 = await queue(c2);
+    await applyResult(r2, { steps: await stepsFor(r2, "rolled_back"), rolledBack: true, pages: [page({ verdict: "broken" }), page({ path: "/contact", before: down, after: down })] });
+    expect((await openIncidents(c2))[0].detail).toBe("updates rolled back: akismet, yoast broke /");
+
+    // A retry has no "before", so the absolute rule stands.
+    const c3 = await setup();
+    const r3 = await queue(c3);
+    const none = { status: null, fatal: false, forms: 0 };
+    await applyResult(r3, { steps: await stepsFor(r3, "rolled_back"), rolledBack: true, retry: true, pages: [page({ before: none, verdict: "broken", after: down }), page({ path: "/contact", before: none })] });
+    expect((await openIncidents(c3))[0].detail).toBe("rolled back but / is still broken: restore from siteline-backups/ace.com-x.sql.gz");
+  });
+
+  it("a milder sentence never overwrites a restore instruction; a stronger one replaces a milder one (G3)", async () => {
+    const c = await setup();
+    const run = await queue(c);
+    await applyResult(run, { steps: await stepsFor(run, "rollback_failed", "the old version could not be put back"), rolledBack: false, pages: [page({ verdict: "broken" })] });
+    const restore = "rollback failed for akismet, yoast: restore from siteline-backups/ace.com-x.sql.gz";
+    expect((await openIncidents(c))[0].detail).toBe(restore);
+    // A single-site run's look at a changed page later says only "looks different": the restore instruction stays.
+    await openUpdateIncident(env, run, c.site, pageLooksDifferentSentence("/contact"), new Date());
+    expect((await openIncidents(c)).map((i) => i.detail)).toEqual([restore]);
+    // A plain failure ranks below it too.
+    await openUpdateIncident(env, run, c.site, "update failed on the Mac helper", new Date());
+    expect((await openIncidents(c)).map((i) => i.detail)).toEqual([restore]);
+
+    const c2 = await setup();
+    const r2 = await queue(c2);
+    await openUpdateIncident(env, r2, c2.site, pageLooksDifferentSentence("/"), new Date());
+    await applyResult(r2, { steps: await stepsFor(r2, "rollback_failed", "the old version could not be put back"), rolledBack: false, pages: [page({ verdict: "broken" })] });
+    expect((await openIncidents(c2)).map((i) => i.detail)).toEqual([restore]);
   });
 });
 

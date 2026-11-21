@@ -1,10 +1,8 @@
 import { z } from "zod";
-import { onRunDone } from "../care/batch";
+import { onRunDone, weeklyBatchTooOld } from "../care/batch";
 import { tickApproved } from "../care/tasks";
 import { queueRun } from "../care/updateKind";
 import { availableFor, getBatch, insertRun, runsFor, setRunStatus, updatableSites } from "../db/careUpdates";
-import { getSettings } from "../db/settings";
-import { periodKey, zoneOf } from "../sop/cadence";
 import type { Approval } from "../db/approvals";
 import type { Env } from "../env";
 import { InvalidHelperJobError } from "../helper/jobs";
@@ -28,7 +26,7 @@ export const NOTHING_LEFT = "nothing left to update here: what was planned was a
 export const UNSAFE = "its address or an update name did not pass the safety check";
 /** Refusals of the whole approval (it goes back to pending with this as its error; nothing is queued). */
 export const BATCH_OVER = "This update batch is already finished or cancelled, so nothing was queued.";
-export const OLD_WEEK = "This update batch is from an earlier week, so nothing was queued. This week's batch has its own approvals.";
+export const OLD_WEEK = "This update batch was made more than six days ago, so nothing was queued. This week's batch has its own approvals.";
 export const WRONG_SHAPE = "This approval does not match its update batch, so nothing was queued.";
 
 registerHandler({
@@ -47,7 +45,8 @@ registerHandler({
     // A single-site run is wave 0 of a single batch and names only its own site; a weekly wave is never wave 0 (an MCP-made approval cannot pass for either).
     if ((p.wave === 0) !== (batch.kind === "single") || (p.wave === 0 && p.sites.some((s) => s.siteId !== batch.siteId))) throw new Error(WRONG_SHAPE);
     if (batch.status === "done" || batch.status === "cancelled") throw new Error(BATCH_OVER);
-    if (batch.kind === "weekly" && batch.period !== periodKey("weekly", new Date(), zoneOf(await getSettings(db)))) throw new Error(OLD_WEEK);
+    // A weekly batch's approvals keep six days from when the batch was made (its age, not the ISO week: a Saturday batch's wave 2 may be approved on Monday) (G5).
+    if (weeklyBatchTooOld(batch, new Date())) throw new Error(OLD_WEEK);
     const sites = await updatableSites(db, { includeTest: p.wave === 0 });
     const done = new Set((await runsFor(db, p.batchId)).filter((r) => r.approvalId === a.id).map((r) => r.siteId));
     const drop = async (siteId: string, why: string) => {

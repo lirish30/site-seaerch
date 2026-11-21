@@ -106,10 +106,11 @@ export function pageUrl(siteUrl: string, path: string): string {
 export type CheckTag = "before" | "after" | "recheck";
 
 /**
- * `pageUrl` (same origin, checked path) plus `siteline-check=<runId>-<i>-<tag>`, so WP Rocket, a host's Varnish or Cloudflare cannot answer from a copy cached before the update.
+ * `pageUrl` (same origin, checked path) plus `siteline-check=<runId>-<attempt>-<i>-<tag>`, so WP Rocket, a host's Varnish or Cloudflare cannot answer from a copy cached before the update,
+ * and a retried job never asks for an address an earlier attempt already put in a cache.
  * The query is added after pageUrl's checks, with `&` when the path already has one.
  */
-export function checkUrl(siteUrl: string, path: string, runId: string, i: number, tag: CheckTag): string {
+export function checkUrl(siteUrl: string, path: string, runId: string, attempt: number, i: number, tag: CheckTag): string {
   const url = pageUrl(siteUrl, path);
-  return `${url}${url.includes("?") ? "&" : "?"}siteline-check=${encodeURIComponent(`${runId}-${i}-${tag}`)}`;
+  return `${url}${url.includes("?") ? "&" : "?"}siteline-check=${encodeURIComponent(`${runId}-${attempt}-${i}-${tag}`)}`;
 }

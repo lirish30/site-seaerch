@@ -230,7 +230,8 @@ const careUpdate: HelperKindDef<CareUpdatePayload, CareUpdateResult> = {
       const stuck = slugsOf("rollback_failed");
       const putBack = slugsOf("rolled_back").concat(slugsOf("failed"));
       // After a put-back the helper read every page again: one still null/404/410/5xx/fatal means the old code did not fix it, and only the backup can (I7).
-      const stillBroken = r.rolledBack ? r.pages.find((pg) => stillDown(pg.after)) : undefined;
+      // On a first attempt a page that was already down before the update is not the update's doing (G2); a retry has no "before", so the absolute rule stands.
+      const stillBroken = r.rolledBack ? r.pages.find((pg) => stillDown(pg.after) && (r.retry || !stillDown(pg.before))) : undefined;
       const why = stuck.length ? rollbackFailedSentence(stuck, r.backupFile)
         : stillBroken ? stillBrokenSentence(stillBroken.path, r.backupFile)
         : r.rolledBack ? rolledBackSentence(putBack.length ? putBack : p.updates.map((u) => u.slug), broken ? broken.path : null)

@@ -151,13 +151,13 @@ describe("care.update", () => {
     const calls = s.log.filter((l) => l !== "touch");
     expect(calls).toEqual([
       "wp plugin get akismet --field=version", "wp plugin get hello --field=version",
-      "fetch /", `chrome https://acme.com/?siteline-check=${RUN}-0-before`, "fetch /contact/", `chrome https://acme.com/contact/?siteline-check=${RUN}-1-before`,
+      "fetch /", `chrome https://acme.com/?siteline-check=${RUN}-1-0-before`, "fetch /contact/", `chrome https://acme.com/contact/?siteline-check=${RUN}-1-1-before`,
       `remote test -e ${GZ}`,
     ].concat([
       "remote mkdir -m 700 -p siteline-backups", `wp db export ${BASE}`, `remote gzip -f ${BASE}`, "remote find siteline-backups -name *.sql.gz -mtime +28 -delete",
       "wp plugin update akismet --version=5.1", "wp plugin get akismet --field=version", "wp plugin update hello --version=1.1", "wp plugin get hello --field=version",
       "wp cache flush",
-      "fetch /", `chrome https://acme.com/?siteline-check=${RUN}-0-after`, "fetch /contact/", `chrome https://acme.com/contact/?siteline-check=${RUN}-1-after`,
+      "fetch /", `chrome https://acme.com/?siteline-check=${RUN}-1-0-after`, "fetch /contact/", `chrome https://acme.com/contact/?siteline-check=${RUN}-1-1-after`,
       "ffmpeg ssim", "ffmpeg jpg", "ffmpeg jpg", "ffmpeg jpg",
       "ffmpeg ssim", "ffmpeg jpg", "ffmpeg jpg", "ffmpeg jpg",
       ...keysFor(2).map((k) => `upload ${k}`),
@@ -526,11 +526,11 @@ describe("care.update on cached sites (C1)", () => {
     const s = setup({ ...BASIC, pages: { "/": [200, 500, 200] } });
     await s.run();
     const urls = s.fetched.map((f) => f.url);
-    expect(urls.filter((u) => u.startsWith("https://acme.com/?"))).toEqual(["before", "after", "recheck"].map((t) => `https://acme.com/?siteline-check=${RUN}-0-${t}`));
+    expect(urls.filter((u) => u.startsWith("https://acme.com/?"))).toEqual(["before", "after", "recheck"].map((t) => `https://acme.com/?siteline-check=${RUN}-1-0-${t}`));
     expect(new Set(urls).size).toBe(urls.length);
     for (const f of s.fetched) expect(f.init.headers).toEqual({ "cache-control": "no-cache", pragma: "no-cache" });
     const shots = s.log.filter((l) => l.startsWith("chrome "));
-    expect(shots.every((l) => /\?siteline-check=[0-9a-f-]+-\d-(before|after)$/.test(l))).toBe(true);
+    expect(shots.every((l) => /\?siteline-check=[0-9a-f-]+-1-\d-(before|after)$/.test(l))).toBe(true);
   });
   it("runs wp cache flush once, after the updates and before the after-shots", async () => {
     const s = setup(BASIC);
@@ -600,5 +600,35 @@ describe("care.update backup folder and read errors (M4, M5)", () => {
     const long = setup({ ...BASIC, readError: "x".repeat(500) });
     const e = await long.run().catch((x) => x as Error);
     expect(e.message.length).toBeLessThanOrEqual("could not read the current version: ".length + 300);
+  });
+});
+
+describe("care.update keeps a failed update's own identity when it is put back (G1)", () => {
+  it("a failing update whose version moved is put back with its own note; only the applied one says another update failed", async () => {
+    const s = setup({ ...BASIC, halfInstall: ["hello"] });
+    const r = await s.run();
+    expect(r.pages.every((x: any) => x.verdict !== "broken")).toBe(true);
+    expect(r.steps[1]).toEqual({ id: "u-hello", outcome: "rolled_back", note: "put back after this update failed" });
+    expect(r.steps[0]).toEqual({ id: "u-akismet", outcome: "rolled_back", note: "put back because another update failed" });
+  });
+  it("the same when a page broke too: the failed one keeps its own note", async () => {
+    const s = setup({ ...BASIC, halfInstall: ["hello"], pages: { "/": [200, 500, 200] } });
+    const r = await s.run();
+    expect(r.steps[1]).toEqual({ id: "u-hello", outcome: "rolled_back", note: "put back after this update failed" });
+    expect(r.steps[0]).toEqual({ id: "u-akismet", outcome: "rolled_back", note: "the site broke after this update" });
+  });
+});
+
+describe("care.update check URLs carry the attempt (G4)", () => {
+  it("attempt 1 and attempt 2 ask for different addresses", async () => {
+    const one = setup({ ...BASIC, pages: { "/": [200, 500, 200] } });
+    await one.run();
+    const two = setup({ versions: { "plugin:akismet": "5.1", "plugin:hello": "1.1" }, backupExists: true, pages: { "/": [500, 200] } }, PAYLOAD(), undefined, 2);
+    await two.run();
+    const u1 = one.fetched.map((f) => f.url);
+    const u2 = two.fetched.map((f) => f.url);
+    expect(u1).toContain(`https://acme.com/?siteline-check=${RUN}-1-0-after`);
+    expect(u2).toContain(`https://acme.com/?siteline-check=${RUN}-2-0-after`);
+    expect(u2.filter((u) => u1.includes(u))).toEqual([]);
   });
 });

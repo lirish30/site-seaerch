@@ -183,13 +183,14 @@ describe("pageUrl", () => {
 describe("checkUrl (C1)", () => {
   const RUN = "123e4567-e89b-12d3-a456-426614174000";
   it("gives each read its own siteline-check query on the site's origin", () => {
-    expect(checkUrl("https://acme.com/shop", "/contact/", RUN, 1, "before")).toBe(`https://acme.com/contact/?siteline-check=${RUN}-1-before`);
-    const all = (["before", "after", "recheck"] as const).map((tag) => checkUrl("https://acme.com", "/", RUN, 0, tag));
+    expect(checkUrl("https://acme.com/shop", "/contact/", RUN, 1, 1, "before")).toBe(`https://acme.com/contact/?siteline-check=${RUN}-1-1-before`);
+    const all = (["before", "after", "recheck"] as const).map((tag) => checkUrl("https://acme.com", "/", RUN, 1, 0, tag));
     expect(new Set(all).size).toBe(3);
-    for (const u of all) expect(new URL(u).searchParams.get("siteline-check")).toMatch(new RegExp(`^${RUN}-0-(before|after|recheck)$`));
+    for (const u of all) expect(new URL(u).searchParams.get("siteline-check")).toMatch(new RegExp(`^${RUN}-1-0-(before|after|recheck)$`));
+    expect(checkUrl("https://acme.com", "/", RUN, 2, 0, "after")).not.toBe(checkUrl("https://acme.com", "/", RUN, 1, 0, "after"));
   });
   it("keeps pageUrl's checks", () => {
-    expect(() => checkUrl("https://acme.com", "//evil.com/", RUN, 0, "after")).toThrow();
-    expect(() => checkUrl("https://acme.com", "/a/../b", RUN, 0, "after")).toThrow();
+    expect(() => checkUrl("https://acme.com", "//evil.com/", RUN, 1, 0, "after")).toThrow();
+    expect(() => checkUrl("https://acme.com", "/a/../b", RUN, 1, 0, "after")).toThrow();
   });
 });

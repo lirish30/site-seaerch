@@ -33,6 +33,7 @@ const SAY = {
   refused: "wp-cli refused the update",
   broke: "the site broke after this update",
   otherFailed: "put back because another update failed",
+  ownFailed: "put back after this update failed",
   notStarted: "not started: an earlier update failed",
   noPutBack: "the old version could not be put back",
   noRead: "could not read the current version",
@@ -136,7 +137,7 @@ export function careUpdateHandler(
         }
       };
       /** Page i's URL for one read: its own cache-busting query each time. */
-      const urlOf = (i: number, tag: CheckTag): string => checkUrl(p.siteUrl, p.paths[i], p.runId, i, tag);
+      const urlOf = (i: number, tag: CheckTag): string => checkUrl(p.siteUrl, p.paths[i], p.runId, job.attempts, i, tag);
       /** A read that got no answer at all (`status: null`) is tried once more, 2 s later, before it counts. */
       const read = async (i: number, tag: CheckTag): Promise<Read> => {
         const r = await readPage(fetchFn, urlOf(i, tag));
@@ -147,11 +148,15 @@ export function careUpdateHandler(
       const backupExists = async (): Promise<boolean> => {
         try { await rem(["test", "-e", gz]); await rem(["gzip", "-t", gz]); return true; } catch { return false; }
       };
-      /** Puts the old code back, in the reverse of the order it was changed. The database is never imported. True when at least one put-back command ran. */
+      /**
+       * Puts the old code back, in the reverse of the order it was changed. The database is never imported. True when at least one put-back command ran.
+       * A step that itself failed keeps that identity: its note says it was put back after it failed, never `why` (the Worker treats only "another update failed" as collateral).
+       */
       const putBack = async (order: number[], why: string): Promise<boolean> => {
         let ran = false;
         for (const i of [...order].reverse()) {
           const u = p.updates[i];
+          const own = steps[i]?.outcome === "failed" ? SAY.ownFailed : why;
           if (!u.rollbackable) { stepOf(i, "rollback_failed", SAY.noPutBack); await tick(); continue; }
           ran = true;
           try {
@@ -159,7 +164,7 @@ export function careUpdateHandler(
               await wpRaw(exec, t, ["core", "update", `--version=${u.from}`, "--force"], o);
               await wpRaw(exec, t, ["core", "update-db"], o);
             } else await wpRaw(exec, t, [u.type, "install", u.slug, `--version=${u.from}`, "--force"], o);
-            stepOf(i, "rolled_back", why);
+            stepOf(i, "rolled_back", own);
           } catch (e) {
             stepOf(i, "rollback_failed", withWhy(SAY.noPutBack, e));
           }

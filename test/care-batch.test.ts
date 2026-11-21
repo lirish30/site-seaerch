@@ -27,7 +27,7 @@ const DAY = 86_400_000;
 const iso = (ms: number) => new Date(ms).toISOString();
 const daysAgo = (n: number) => iso(Date.now() - n * DAY);
 
-// An approval of a weekly batch only executes in the batch's own week (I2): the clock is that week's Wednesday, and it keeps running.
+// An approval of a weekly batch only executes within six days of the batch being made (I2, G5): the clock is that week's Wednesday, and it keeps running.
 let realClock: (() => void) | null = null;
 afterEach(() => { realClock?.(); realClock = null; });
 beforeEach(async () => {
@@ -631,5 +631,64 @@ describe("a site with an open update_failed sits out the weekly batch (I6)", () 
     await finishRun((await runsFor(env.DB, batch.id))[0].id, "ok");
     expect((await approvalsOf())[1].payload.sites.map((x) => x.siteId)).toEqual([a.siteId]);
     void b;
+  });
+});
+
+describe("a weekly batch's approvals keep for six days, not one ISO week (G5)", () => {
+  const entry = async (siteId: string) => ({ siteId, domain: "x", updates: (await availableFor(env.DB, siteId)).map((u) => ({ id: u.id, type: u.type, slug: u.slug, name: u.name, from: u.fromVersion, to: u.toVersion, risk: u.risk, needsTick: false })) });
+  const handMade = async (payload: unknown) => createApproval(env.DB, { kind: "care.updates", title: "x", preview: "x", payload, drafted_by: "mcp" });
+  const useClock = (at: Date) => { realClock?.(); realClock = tickingClock(at); };
+
+  it("a Saturday batch's wave 2 approved on Monday (the next ISO week) is queued", async () => {
+    const a = await mk("a.com", 5000);
+    const SAT = new Date("2026-11-28T18:00:00.000Z"); // Saturday 10:00 in Los Angeles, ISO week 2026-W48
+    const { batch } = await ensureWeeklyBatch(env.DB, "2026-W48", SAT.toISOString());
+    await setBatchStatus(env.DB, batch.id, ["inventory"], "wave2", SAT.toISOString());
+    const ap = await handMade({ batchId: batch.id, wave: 2, sites: [await entry(a.siteId)] });
+    useClock(new Date("2026-11-30T17:00:00.000Z")); // Monday 09:00, ISO week 2026-W49
+    expect(await approve(env, ap.id)).toEqual({ ok: true });
+    expect(await jobsOf("care.update")).toHaveLength(1);
+  });
+
+  it("an approval of a batch made more than six days ago is refused, even inside the same ISO week", async () => {
+    const a = await mk("a.com", 5000);
+    const MON = new Date("2026-11-30T08:30:00.000Z"); // Monday 00:30 in Los Angeles, 2026-W49
+    const { batch } = await ensureWeeklyBatch(env.DB, "2026-W49", MON.toISOString());
+    await setBatchStatus(env.DB, batch.id, ["inventory"], "wave2", MON.toISOString());
+    const ap = await handMade({ batchId: batch.id, wave: 2, sites: [await entry(a.siteId)] });
+    useClock(new Date("2026-12-07T06:00:00.000Z")); // Sunday 22:00 the same ISO week, 6 days 21.5 hours later
+    expect(await approve(env, ap.id)).toMatchObject({ ok: false, error: OLD_WEEK });
+    expect(await jobsOf("care.update")).toHaveLength(0);
+  });
+
+  it("the backstop cancels a weekly batch older than six days in any wave, with CARE-1 off, rejects its pending waves and leaves queued runs to finish", async () => {
+    await mk("a.com", 7000); await mk("b.com", 5000);
+    const batch = await inventoried();
+    const [wave1] = await approvalsOf();
+    expect(await approve(env, wave1.id)).toEqual({ ok: true });
+    const [run] = await runsFor(env.DB, batch.id);
+    const pending = await handMade({ batchId: batch.id, wave: 2, sites: [wave1.payload.sites[0]] });
+    await env.DB.prepare(`UPDATE sop_templates SET active = 0 WHERE key = 'CARE-1'`).run();
+    const later = new Date(WED.getTime() + 7 * DAY);
+    const r = await careBackstop(env, later);
+    expect(r.cancelled).toBe(1);
+    expect((await getBatch(env.DB, batch.id))!.status).toBe("cancelled");
+    const row = await env.DB.prepare(`SELECT status, decision_note, decided_at, error FROM approvals WHERE id = ?`).bind(pending.id).first<{ status: string; decision_note: string; decided_at: string | null; error: string | null }>();
+    expect(row).toMatchObject({ status: "rejected", decision_note: "this week's batch ran out of time", error: null });
+    expect(row!.decided_at).toEqual(expect.any(String));
+    expect((await getRun(env.DB, run.id))!.status).toBe("queued");
+    expect((await getHelperJob(env.DB, run.helperJobId!))!.status).toBe("pending");
+    expect((await careBackstop(env, later)).cancelled).toBe(0);
+  });
+
+  it("a new week's batch rejects earlier waves the way Logan's reject does (decided_at set)", async () => {
+    const a = await mk("a.com", 5000);
+    const { batch: old } = await ensureWeeklyBatch(env.DB, "2026-W48", "2026-11-25T17:00:00.000Z");
+    await setBatchStatus(env.DB, old.id, ["inventory"], "wave2", WED.toISOString());
+    const stale = await handMade({ batchId: old.id, wave: 2, sites: [await entry(a.siteId)] });
+    await startWeeklyBatch(env, WED);
+    const row = await env.DB.prepare(`SELECT status, decision_note, decided_at, error FROM approvals WHERE id = ?`).bind(stale.id).first<{ decided_at: string | null }>();
+    expect(row).toMatchObject({ status: "rejected", decision_note: "replaced by this week's batch", error: null });
+    expect(row!.decided_at).toEqual(expect.any(String));
   });
 });
