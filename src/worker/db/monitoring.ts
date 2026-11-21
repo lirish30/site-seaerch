@@ -43,15 +43,20 @@ export async function pruneChecks(db: D1Database, beforeIso: string): Promise<nu
 
 /**
  * Opens an incident for the site and kind. At most one is open at a time (a unique index): when one already is, nothing changes and `created` is false.
+ * One INSERT ... ON CONFLICT DO NOTHING RETURNING: the row that comes back is the one this call made. On a conflict the open one is read; if it was closed in between (a race), the insert is tried once more.
  */
 export async function openIncident(
   db: D1Database, i: { siteId: string; businessId: string; kind: IncidentKind; detail: string; now: string },
 ): Promise<{ incident: Incident; created: boolean }> {
-  const res = await db.prepare(
-    `INSERT INTO site_incidents (id, site_id, business_id, kind, opened_at, closed_at, detail) VALUES (?, ?, ?, ?, ?, NULL, ?) ON CONFLICT DO NOTHING`,
-  ).bind(crypto.randomUUID(), i.siteId, i.businessId, i.kind, i.now, i.detail).run();
-  const row = (await db.prepare(`SELECT * FROM site_incidents WHERE site_id = ? AND kind = ? AND closed_at IS NULL`).bind(i.siteId, i.kind).first<IncidentRow>())!;
-  return { incident: toIncident(row), created: (res.meta.changes ?? 0) === 1 };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const made = await db.prepare(
+      `INSERT INTO site_incidents (id, site_id, business_id, kind, opened_at, closed_at, detail) VALUES (?, ?, ?, ?, ?, NULL, ?) ON CONFLICT DO NOTHING RETURNING *`,
+    ).bind(crypto.randomUUID(), i.siteId, i.businessId, i.kind, i.now, i.detail).first<IncidentRow>();
+    if (made) return { incident: toIncident(made), created: true };
+    const open = await db.prepare(`SELECT * FROM site_incidents WHERE site_id = ? AND kind = ? AND closed_at IS NULL`).bind(i.siteId, i.kind).first<IncidentRow>();
+    if (open) return { incident: toIncident(open), created: false };
+  }
+  throw new Error("could not open the incident");
 }
 
 /** Closes the open incident for the site and kind and returns it as closed; null when none was open. One statement, so two closers cannot both win. */

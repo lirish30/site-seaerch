@@ -69,6 +69,28 @@ describe("incidents", () => {
     expect((await openIncident(env.DB, { siteId: s.site!.id, businessId: s.businessId, kind: "domain_expiring", detail: "12 days", now: T1 })).created).toBe(true);
   });
 
+  it("two concurrent openIncident calls make exactly one incident and exactly one says created", async () => {
+    const s = await seedClient();
+    const open = (detail: string) => openIncident(env.DB, { siteId: s.site!.id, businessId: s.businessId, kind: "down", detail, now: T0 });
+    const [a, b] = await Promise.all([open("a"), open("b")]);
+    expect([a.created, b.created].sort()).toEqual([false, true]);
+    expect(a.incident.id).toBe(b.incident.id);
+    expect(await count(`SELECT COUNT(*) AS n FROM site_incidents WHERE site_id = ? AND kind = 'down'`, s.site!.id)).toBe(1);
+  });
+
+  it("an incident that is closed between the conflict and the read is opened again, never a crash", async () => {
+    const s = await seedClient();
+    await openIncident(env.DB, { siteId: s.site!.id, businessId: s.businessId, kind: "down", detail: "first", now: T0 });
+    let closedOnce = false;
+    const racing = { prepare: (sql: string) => {
+      if (!closedOnce && sql.startsWith("SELECT * FROM site_incidents")) { closedOnce = true; return { bind: () => ({ first: async () => { await closeIncident(env.DB, s.site!.id, "down", T1); return null; } }) }; }
+      return env.DB.prepare(sql);
+    } } as unknown as D1Database;
+    const again = await openIncident(racing, { siteId: s.site!.id, businessId: s.businessId, kind: "down", detail: "second", now: T2 });
+    expect(again.created).toBe(true);
+    expect(again.incident).toMatchObject({ detail: "second", closedAt: null });
+  });
+
   it("closeIncident returns the closed one, null when none is open, and a later open is new", async () => {
     const s = await seedClient();
     expect(await closeIncident(env.DB, s.site!.id, "down", T1)).toBeNull();
