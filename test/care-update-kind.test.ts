@@ -110,6 +110,62 @@ describe("queueRun", () => {
   });
 });
 
+describe("queueRun when the job cannot be queued", () => {
+  it("leaves no queued updates and a dropped run", async () => {
+    const c = await setup();
+    await env.DB.prepare(`CREATE TRIGGER no_jobs BEFORE INSERT ON helper_jobs BEGIN SELECT RAISE(ABORT, 'boom'); END`).run();
+    try {
+      await expect(queueRun(env, { batchId: c.batch.id, site: c.site, wave: 0, approvalId: null, updates: await availableFor(env.DB, c.site.id) })).rejects.toThrow();
+    } finally { await env.DB.prepare(`DROP TRIGGER no_jobs`).run(); }
+    expect(await statuses(c.site.id)).toEqual([["akismet", "available"], ["yoast", "available"]]);
+    const runs = (await env.DB.prepare(`SELECT status, summary FROM care_runs WHERE site_id = ?`).bind(c.site.id).all<{ status: string; summary: string }>()).results;
+    expect(runs).toEqual([{ status: "dropped", summary: "the update could not be queued for the Mac helper" }]);
+  });
+});
+
+describe("crash repair", () => {
+  it("an incident opened before the crash, with no task, gets exactly one task on the retry", async () => {
+    const c = await setup();
+    const run = await queue(c);
+    await openIncident(env.DB, { siteId: c.site.id, businessId: c.businessId, kind: "update_failed", detail: "update failed on the Mac helper", now: new Date().toISOString() });
+    expect(await tasksOf(c)).toEqual([]);
+    await applyResult(run, { steps: await stepsFor(run, "failed"), pages: [] });
+    await applyResult(run, { steps: await stepsFor(run, "failed"), pages: [] });
+    expect(await openIncidents(c)).toHaveLength(1);
+    expect(await tasksOf(c)).toHaveLength(1);
+  });
+
+  it("an incident that was open before the run does not get a task from it", async () => {
+    const c = await setup();
+    await openIncident(env.DB, { siteId: c.site.id, businessId: c.businessId, kind: "update_failed", detail: "update failed on the Mac helper", now: "2020-01-01T00:00:00.000Z" });
+    const run = await queue(c);
+    await applyResult(run, { steps: await stepsFor(run, "failed"), pages: [] });
+    expect(await tasksOf(c)).toEqual([]);
+  });
+
+  it("applying twice with the run forced back to running leaves one incident, one task and one set of page checks", async () => {
+    const c = await setup();
+    const run = await queue(c);
+    const o = { steps: await stepsFor(run, "rolled_back"), rolledBack: true, pages: [page({ verdict: "broken" }), page({ path: "/contact" })] };
+    await applyResult(run, o);
+    await env.DB.prepare(`UPDATE care_runs SET status = 'running', finished_at = NULL WHERE id = ?`).bind(run.id).run();
+    await applyResult(run, o);
+    expect(await getRun(env.DB, run.id)).toMatchObject({ status: "rolled_back" });
+    expect(await openIncidents(c)).toHaveLength(1);
+    expect(await tasksOf(c)).toHaveLength(1);
+    expect(await pageChecksFor(env.DB, run.id)).toHaveLength(2);
+    expect((await activityKinds(c.businessId)).filter((k) => k === "care_rolled_back")).toHaveLength(1);
+  });
+
+  it("updates left available by a crashed queueRun are still moved by apply", async () => {
+    const c = await setup();
+    const run = await queue(c);
+    await env.DB.prepare(`UPDATE care_updates SET status = 'available' WHERE site_id = ?`).bind(c.site.id).run();
+    await applyResult(run);
+    expect(await statuses(c.site.id)).toEqual([["akismet", "applied"], ["yoast", "applied"]]);
+  });
+});
+
 describe("payload and result shapes", () => {
   const good = { runId: crypto.randomUUID(), siteId: "s1", siteUrl: "https://ace.com", alias: "ace-host", path: "/var/www/ace", paths: ["/"], updates: [{ id: "u1", type: "core", slug: "wordpress", from: "6.4", to: "6.5", rollbackable: true }] };
   it("takes a good payload, an uppercase slug and the core slug", () => {

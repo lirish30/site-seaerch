@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { logActivityOnce } from "../db/activity";
 import {
-  getRun, insertPageChecks, insertRun, pageChecksFor, setReview, setRunStatus, type CareRun, type CareUpdate, type RunStatus, type UpdateStatus,
+  getRun, insertPageChecks, pageChecksFor, setReview, setRunStatus, type CareRun, type CareUpdate, type RunStatus, type UpdateStatus,
 } from "../db/careUpdates";
 import { getSite, type Site } from "../db/sites";
 import { InvalidHelperJobError, enqueueHelperJob } from "../helper/jobs";
@@ -100,7 +100,7 @@ const STEP_TO_UPDATE: Record<z.infer<typeof Step>["outcome"], UpdateStatus> = {
 /** Sets the updates this run queued (and nobody has moved on) to `to`. One statement per update id, in one batch. */
 async function moveQueued(env: Env, siteId: string, to: (id: string) => UpdateStatus, ids: string[]): Promise<void> {
   if (!ids.length) return;
-  await env.DB.batch(ids.map((id) => env.DB.prepare(`UPDATE care_updates SET status = ? WHERE id = ? AND site_id = ? AND status = 'queued'`).bind(to(id), id, siteId)));
+  await env.DB.batch(ids.map((id) => env.DB.prepare(`UPDATE care_updates SET status = ? WHERE id = ? AND site_id = ? AND status IN ('queued', 'available')`).bind(to(id), id, siteId)));
 }
 
 /**
@@ -119,20 +119,31 @@ export async function queueRun(
   const check = CareUpdatePayload.safeParse(draft(crypto.randomUUID()));
   if (!check.success) throw new InvalidHelperJobError(`invalid payload for ${CARE_UPDATE_KIND}:\n${check.error.issues.map((i) => `- ${i.path.join(".") || "value"}: ${i.message}`).join("\n")}`);
 
+  // The run and its updates' `queued` mark go in one batch BEFORE the job exists, so a crash can never leave a running job whose updates still look available.
   const now = new Date().toISOString();
-  const run = await insertRun(db, { batchId: o.batchId, siteId: o.site.id, wave: o.wave, approvalId: o.approvalId, status: "queued", now });
-  const job = await enqueueHelperJob(db, CARE_UPDATE_KIND, draft(run.id), { dedupeKey: `care.update:${o.site.id}` });
+  const runId = crypto.randomUUID();
+  await db.batch([
+    db.prepare(`INSERT INTO care_runs (id, batch_id, site_id, wave, approval_id, helper_job_id, status, created_at) VALUES (?, ?, ?, ?, ?, NULL, 'queued', ?)`)
+      .bind(runId, o.batchId, o.site.id, o.wave, o.approvalId, now),
+    ...check.data.updates.map((u) => db.prepare(`UPDATE care_updates SET status = 'queued' WHERE id = ? AND site_id = ? AND status = 'available'`).bind(u.id, o.site.id)),
+  ]);
+  const undo = async (summary: string): Promise<void> => {
+    await setRunStatus(db, runId, ["queued"], "dropped", { summary }, now);
+    await moveQueued(env, o.site.id, () => "available", check.data.updates.map((u) => u.id));
+  };
+  let job: { id: string; created: boolean };
+  try {
+    job = await enqueueHelperJob(db, CARE_UPDATE_KIND, draft(runId), { dedupeKey: `care.update:${o.site.id}` });
+  } catch (e) {
+    await undo("the update could not be queued for the Mac helper");
+    throw e;
+  }
   if (!job.created) {
-    await setRunStatus(db, run.id, ["queued"], "dropped", { summary: "another update is already waiting for this site's Mac helper" }, now);
+    await undo("another update is already waiting for this site's Mac helper");
     return null;
   }
-  await setRunStatus(db, run.id, ["queued"], "queued", { helperJobId: job.id }, now);
-  await moveQueuedFromAvailable(env, o.site.id, check.data.updates.map((u) => u.id));
-  return (await getRun(db, run.id))!;
-}
-
-async function moveQueuedFromAvailable(env: Env, siteId: string, ids: string[]): Promise<void> {
-  await env.DB.batch(ids.map((id) => env.DB.prepare(`UPDATE care_updates SET status = 'queued' WHERE id = ? AND site_id = ? AND status = 'available'`).bind(id, siteId)));
+  await setRunStatus(db, runId, ["queued"], "queued", { helperJobId: job.id }, now);
+  return (await getRun(db, runId))!;
 }
 
 const careUpdate: HelperKindDef<CareUpdatePayload, CareUpdateResult> = {
