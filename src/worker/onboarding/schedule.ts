@@ -32,6 +32,9 @@ export function stageOf(o: Onboarding, items: OnboardingItem[], now: Date): Stag
   return o.questionnaireSubmittedAt ? "collecting" : "questionnaire";
 }
 
+/** True while the onboarding is waiting on the client (welcome sent, no word for the silence clause's days). Today's "back of the queue" reason and the health score both use it. */
+export const isWaitingOnClient = (o: Onboarding, items: OnboardingItem[], now: Date): boolean => stageOf(o, items, now) === "waiting_on_client";
+
 /** The due dates a welcome sent at `sentAt` sets: the questionnaire, and the end of each phase. */
 export function dueDatesFor(sentAt: Date): { questionnaireDueAt: string; phaseDue: { 1: string; 2: string } } {
   const plus = (days: number) => new Date(sentAt.getTime() + days * DAY).toISOString();

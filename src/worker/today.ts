@@ -3,7 +3,7 @@ import { listTodayCandidates } from "./db/businesses";
 import { suppressedLeadIds } from "./db/suppression";
 import { openProposalsSentBefore } from "./db/documents";
 import { listOpenItems, listOpenOnboardings } from "./db/onboardings";
-import { silentDays, stageOf } from "./onboarding/schedule";
+import { isWaitingOnClient, silentDays } from "./onboarding/schedule";
 import { projectAttention } from "./projects/progress";
 import { calendarDateIn, calendarDaysBetween } from "./billing/dates";
 import { activeHolds } from "./db/holds";
@@ -147,7 +147,7 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
       const items = itemsOf.get(o.id) ?? [], toReview = items.filter((i) => i.status === "received").length, created = ms(o.createdAt);
       const reason = toReview ? `${plural(toReview, "item")} from ${names.get(o.businessId) ?? "the client"} to review`
         : !o.welcomeSentAt && Number.isFinite(created) && t - created > WELCOME_WAITING_DAYS * DAY ? "Welcome email is waiting for you"
-        : stageOf(o, items, nowDate) === "waiting_on_client" ? `No reply for ${plural(silentDays(o, nowDate), "day")}: back of the queue`
+        : isWaitingOnClient(o, items, nowDate) ? `No reply for ${plural(silentDays(o, nowDate), "day")}: back of the queue`
         : null;
       if (reason) onboarding.set(o.businessId, reason);
     }

@@ -146,6 +146,13 @@ const toChangeOrder = (c: ChangeOrder): ClientChangeOrder => ({
   sentAt: c.sentAt, signedAt: c.signedAt, paidAt: c.paidAt, createdAt: c.createdAt,
 });
 
+/** An invoice the client still owes: a real one that is open or failed. */
+export const isOwed = (i: { test: boolean; status: string }): boolean => !i.test && (i.status === "open" || i.status === "failed");
+/** An owed invoice is overdue once its due date (YYYY-MM-DD, booking time zone) is before `today` (the same kind of date). No due date is never overdue. */
+export const isOverdue = (i: { dueOn: string | null }, today: string): boolean => i.dueOn !== null && i.dueOn < today;
+/** The booking-time-zone calendar date of `now`: what "overdue" is measured against. */
+export const todayKey = (settings: Parameters<typeof zoneOf>[0], now: Date): string => dayKey(now.getTime(), zoneOf(settings));
+
 /** The most the owner's record shows of what a client typed. */
 const ANSWER_MAX = 400;
 
@@ -170,7 +177,7 @@ export async function getClientRecord(db: D1Database, businessId: string, now: D
   const [business, client] = await Promise.all([getBusiness(db, businessId), isClient(db, businessId)]);
   if (!business || !client) return null;
   const settings = await getSettings(db);
-  const today = dayKey(now.getTime(), zoneOf(settings));
+  const today = todayKey(settings, now);
   const [people, subs, projects, invoices, documents, changeOrders, held, activity, sites] = await Promise.all([
     listPeople(db, businessId), listSubscriptions(db, { businessId }), listProjects(db, { businessId }), listInvoices(db, { businessId }), listForBusiness(db, businessId),
     listChangeOrdersForBusiness(db, businessId), isOnHold(db, businessId), listActivity(db, businessId), listSites(db, { businessId }),
@@ -184,12 +191,12 @@ export async function getClientRecord(db: D1Database, businessId: string, now: D
     const access = items.map((i) => ({ ...i, clientAnswer: site.id === answerSiteId ? (answers.get(`${ACCESS_ITEM_PREFIX}${i.key}`) ?? null) : null }));
     return { site, access, flags: siteFlags({ site, items, careActive: care !== null }) };
   }));
-  const owed = invoices.filter((i) => !i.test && (i.status === "open" || i.status === "failed"));
+  const owed = invoices.filter(isOwed);
   return {
     business, people, sites: withAccess, subscriptions: subs.map(toSubscription), mrrCents: clientMrrCents(subs), careLabel: care, projects,
     invoices: {
       openCents: owed.reduce((n, i) => n + i.amountCents, 0),
-      overdueCount: owed.filter((i) => i.dueOn !== null && i.dueOn < today).length,
+      overdueCount: owed.filter((i) => isOverdue(i, today)).length,
       paidCents: invoices.filter((i) => !i.test && i.status === "paid").reduce((n, i) => n + i.amountCents, 0),
     },
     documents: documents.map(toDocument), changeOrders: changeOrders.map(toChangeOrder), held, nextRenewalOn: nextRenewalOn(subs), activity,

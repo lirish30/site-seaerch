@@ -94,6 +94,23 @@ export async function listOpenItems(db: D1Database): Promise<Map<string, Onboard
   return out;
 }
 
+/** The open onboardings of these businesses (one chunk of ids), real and rehearsal alike: the caller filters. */
+export async function listOpenOnboardingsFor(db: D1Database, businessIds: string[]): Promise<Onboarding[]> {
+  if (businessIds.length === 0) return [];
+  return (await db.prepare(`SELECT * FROM onboardings WHERE closed_at IS NULL AND business_id IN (${businessIds.map(() => "?").join(",")}) ORDER BY created_at, id`)
+    .bind(...businessIds).all<Row>()).results.map(toOnboarding);
+}
+
+/** The items of these onboardings (one chunk of ids), keyed by onboarding id, each list in checklist order. */
+export async function listItemsFor(db: D1Database, onboardingIds: string[]): Promise<Map<string, OnboardingItem[]>> {
+  const out = new Map<string, OnboardingItem[]>();
+  if (onboardingIds.length === 0) return out;
+  const rows = (await db.prepare(`SELECT * FROM onboarding_items WHERE onboarding_id IN (${onboardingIds.map(() => "?").join(",")}) ORDER BY onboarding_id, position, id`)
+    .bind(...onboardingIds).all<ItemRow>()).results;
+  for (const r of rows) (out.get(r.onboarding_id) ?? out.set(r.onboarding_id, []).get(r.onboarding_id)!).push(toItem(r));
+  return out;
+}
+
 export async function getItem(db: D1Database, id: string): Promise<OnboardingItem | null> {
   const r = await db.prepare(`SELECT * FROM onboarding_items WHERE id = ?`).bind(id).first<ItemRow>();
   return r ? toItem(r) : null;
