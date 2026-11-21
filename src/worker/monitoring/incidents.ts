@@ -55,7 +55,8 @@ export function domainDaysLeft(expiresOn: string, now: Date, zone: string): numb
   return Math.round(toDay(expiresOn) - toDay(dayKey(now.getTime(), zone)));
 }
 
-const detailFor = (days: number): string =>
+/** The one sentence for a domain incident: the same words the incident is opened with. */
+export const domainDetail = (days: number): string =>
   days < 0 ? `domain expired ${-days} ${-days === 1 ? "day" : "days"} ago`
   : days === 0 ? "domain expires today"
   : `domain expires in ${days} ${days === 1 ? "day" : "days"}`;
@@ -77,7 +78,7 @@ export async function recordDomainExpiry(env: Env, site: Site, expiresOn: string
   if (days > DOMAIN_WARN_DAYS) {
     return (await closeIncident(db, site.id, "domain_expiring", nowIso)) ? { opened: false, closed: true } : NONE;
   }
-  const detail = detailFor(days);
+  const detail = domainDetail(days);
   const { created } = await openIncident(db, { siteId: site.id, businessId: site.businessId, kind: "domain_expiring", detail, now: nowIso });
   if (!created) return NONE;
   await logActivity(db, site.businessId, "domain_expiring", detail);

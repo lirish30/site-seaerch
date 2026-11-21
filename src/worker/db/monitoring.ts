@@ -73,6 +73,15 @@ export async function listIncidents(db: D1Database, o: { businessId?: string; op
   return rows.map(toIncident);
 }
 
+/** The open incidents of these businesses (at most IN_CHUNK ids per call), newest first. Not filtered by site: the caller keeps the ones whose site is on its list. */
+export async function openIncidentsFor(db: D1Database, businessIds: string[]): Promise<Incident[]> {
+  if (businessIds.length === 0) return [];
+  const rows = (await db.prepare(
+    `SELECT * FROM site_incidents WHERE business_id IN (${businessIds.map(() => "?").join(",")}) AND closed_at IS NULL ORDER BY opened_at DESC, rowid DESC`,
+  ).bind(...businessIds).all<IncidentRow>()).results;
+  return rows.map(toIncident);
+}
+
 /** Records the domain's expiry date (YYYY-MM-DD, or null when it could not be found) and when it was looked up. */
 export async function setDomainExpiry(db: D1Database, siteId: string, expiresOn: string | null, checkedAt: string): Promise<void> {
   await db.prepare(`UPDATE sites SET domain_expires_on = ?, domain_checked_at = ? WHERE id = ?`).bind(expiresOn, checkedAt, siteId).run();
