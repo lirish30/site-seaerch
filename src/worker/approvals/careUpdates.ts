@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { onRunDone } from "../care/batch";
+import { tickApproved } from "../care/tasks";
 import { queueRun } from "../care/updateKind";
 import { availableFor, getBatch, insertRun, runsFor, setRunStatus, updatableSites } from "../db/careUpdates";
 import type { Approval } from "../db/approvals";
@@ -56,6 +57,7 @@ registerHandler({
         await drop(site.id, UNSAFE);
       }
     }
+    await tickApproved(env, p.batchId, p.sites.map((s) => s.siteId)); // Logan approved these sites: 1.4 for each client
     await onRunDone(env, p.batchId); // every site may have been dropped, and no job will ever report
   },
 });

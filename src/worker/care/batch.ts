@@ -12,6 +12,7 @@ import { getTemplate } from "../db/sops";
 import type { Env } from "../env";
 import { InvalidHelperJobError, enqueueHelperJob, getHelperJob } from "../helper/jobs";
 import { periodKey, zoneOf } from "../sop/cadence";
+import { tickPlanned, tickRuns } from "./tasks";
 import { isDue, needsTick, pickCanaries } from "./versions";
 
 // The weekly Care update batch (Plan 12): read every site, send the canaries first, then the rest, each wave as one approval Logan decides.
@@ -134,6 +135,11 @@ export async function onInventoryDone(env: Env, batchId: string): Promise<void> 
  * wave 2 is drafted; once everything is final the batch is done. A rejected first wave stops the batch (the canaries never ran, so the rest must not either). Safe to call any number of times.
  */
 export async function onRunDone(env: Env, batchId: string): Promise<void> {
+  await advance(env, batchId);
+  await tickRuns(env, batchId); // after the batch moved on, so a wave drafted just now already counts as waiting
+}
+
+async function advance(env: Env, batchId: string): Promise<void> {
   const db = env.DB;
   const batch = await getBatch(db, batchId);
   if (!batch) return;
@@ -290,6 +296,7 @@ export async function draftWave(env: Env, batch: CareBatch, wave: 0 | 1 | 2, now
     if (cur.status === "inventory") await setBatchStatus(db, cur.id, ["inventory"], "wave1", now.toISOString());
     const after = await getBatch(db, cur.id);
     if (!after || after.status !== "wave1") return null;
+    if (wave === 1) await tickPlanned(env, after, now); // the sites are known: the list is sorted and the test sites picked (idempotent)
     if ((await approvalsOf(db, cur.id, wave)).length > 0) return null;
     const plan = await planWave(env, after, wave, now);
     if (plan.sites.length === 0) {
