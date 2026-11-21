@@ -68,6 +68,15 @@ describe("GET /care/updates", () => {
     for (const bad of [ALIAS, WPPATH, "wp_ssh_alias", "wpSshAlias", "wpPath", "wp_path"]) expect(text).not.toContain(bad);
   });
 
+  it("an update that failed last time is back on the board with the day it failed and needs Logan's OK (I3)", async () => {
+    const a = await wp("alpha.com");
+    const at = "2026-11-18T20:00:00.000Z";
+    await env.DB.prepare(`UPDATE care_updates SET status = 'failed', last_failed_at = ? WHERE site_id = ?`).bind(at, a.siteId).run();
+    await upsertSeen(env.DB, a.siteId, [{ type: "plugin", slug: "akismet", name: "akismet", fromVersion: "1.0", toVersion: "1.1", risk: "minor", rollbackable: true }], new Date().toISOString());
+    const b = await json<Board>("GET", "/care/updates");
+    expect(b.sites.find((x) => x.siteId === a.siteId)!.updates).toEqual([expect.objectContaining({ slug: "akismet", lastFailedAt: at, needsTick: true })]);
+  });
+
   it("says a client on billing hold cannot update", async () => {
     const a = await wp("alpha.com");
     const s = await seedClient({ subs: [{ key: "care", monthlyCents: 12_900 }], invoice: { cents: 50_000 } });

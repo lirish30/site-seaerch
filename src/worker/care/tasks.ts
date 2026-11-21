@@ -83,7 +83,8 @@ export async function tickApproved(env: Env, batchId: string, siteIds: string[],
 
 /**
  * Brings each client's task in line with the batch's runs: 1.3 once a canary (wave 1) run of the batch has ended (for every client with a run); when every run of the client is final (and no approval of the batch still waits on one of its
- * sites, and the batch is settled) 1.5, and with no failed or rolled-back run 1.6 too and the task is completed once every item is ticked. A failed client keeps 1.6 for Logan.
+ * sites, and the batch is settled) 1.5, and with no failed or rolled-back run 1.6 too and the task is completed once every item is ticked. A failed client keeps 1.6 for Logan, and so does
+ * one whose page look ended broken or unsure, or whose `changed` run's site has an open update_failed incident: the site is not known to be fine.
  */
 export async function tickRuns(env: Env, batchId: string, now: Date = new Date()): Promise<void> {
   await guarded("tick the run steps", async () => {
@@ -96,6 +97,10 @@ export async function tickRuns(env: Env, batchId: string, now: Date = new Date()
     for (const a of (await env.DB.prepare(`SELECT payload FROM approvals WHERE kind = 'care.updates' AND status = 'pending' AND json_extract(payload, '$.batchId') = ?`).bind(batchId).all<{ payload: string }>()).results) {
       for (const s of (JSON.parse(a.payload) as { sites?: { siteId: string }[] }).sites ?? []) { const b = owner.get(s.siteId) ?? (await businessesOf(env, [s.siteId])).get(s.siteId); if (b) waiting.add(b); }
     }
+    const lookedBad = new Set((await env.DB.prepare(
+      `SELECT DISTINCT r.site_id FROM care_page_checks c JOIN care_runs r ON r.id = c.run_id WHERE r.batch_id = ? AND c.review IN ('broken', 'unsure')`,
+    ).bind(batchId).all<{ site_id: string }>()).results.map((r) => r.site_id));
+    const failing = new Set((await env.DB.prepare(`SELECT DISTINCT site_id FROM site_incidents WHERE kind = 'update_failed' AND closed_at IS NULL`).all<{ site_id: string }>()).results.map((r) => r.site_id));
     const byClient = new Map<string, typeof runs>();
     for (const r of runs) { const b = owner.get(r.siteId); if (b) byClient.set(b, [...(byClient.get(b) ?? []), r]); }
     // 1.3 is the canary step of the whole batch: once a canary run has ended, it is done for every client that has a run, not only for the canaries (a wave-2 client's checklist would never finish).
@@ -105,7 +110,7 @@ export async function tickRuns(env: Env, batchId: string, now: Date = new Date()
         if (canaryRan) await tickCare1(env, businessId, batch.period, ["1.3"], now);
         if (batch.status !== "done" && batch.status !== "cancelled") return; // a client's later wave may not be planned yet: only a settled batch finishes the week
         if (waiting.has(businessId) || mine.some((r) => r.status === "queued" || r.status === "running")) return;
-        const bad = mine.some((r) => r.status === "failed" || r.status === "rolled_back");
+        const bad = mine.some((r) => r.status === "failed" || r.status === "rolled_back" || lookedBad.has(r.siteId) || (r.status === "changed" && failing.has(r.siteId)));
         await tickCare1(env, businessId, batch.period, bad ? ["1.5"] : ["1.5", "1.6"], now);
         if (!bad) await finishIfTicked(env, businessId, batch.period, now);
       });

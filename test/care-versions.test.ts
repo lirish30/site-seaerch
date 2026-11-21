@@ -4,7 +4,7 @@ import type { CareUpdate } from "../src/worker/db/careUpdates";
 
 const upd = (o: Partial<CareUpdate> = {}): CareUpdate => ({
   id: "u1", siteId: "s1", type: "plugin", slug: "akismet", name: "Akismet", fromVersion: "1.0.0", toVersion: "1.0.1", risk: "minor",
-  rollbackable: true, security: false, held: false, firstSeenAt: "2026-11-01T00:00:00.000Z", lastSeenAt: "2026-11-01T00:00:00.000Z", status: "available", ...o,
+  rollbackable: true, security: false, held: false, firstSeenAt: "2026-11-01T00:00:00.000Z", lastSeenAt: "2026-11-01T00:00:00.000Z", status: "available", lastFailedAt: null, ...o,
 });
 
 describe("constants", () => {
@@ -31,6 +31,14 @@ describe("riskOf", () => {
   });
   it("reads leading digits of each part", () => {
     expect(riskOf("plugin", "3.2.1-beta", "3.2.2rc1")).toBe("minor");
+  });
+});
+
+describe("needsTick after a failure (I3)", () => {
+  it("is true for an update a run failed or rolled back before, however small", () => {
+    expect(needsTick({ type: "plugin", slug: "akismet", risk: "minor", rollbackable: true, lastFailedAt: null })).toBe(false);
+    expect(needsTick({ type: "plugin", slug: "akismet", risk: "minor", rollbackable: true, lastFailedAt: "2026-11-01T00:00:00.000Z" })).toBe(true);
+    expect(needsTick(upd({ lastFailedAt: "2026-11-01T00:00:00.000Z" }))).toBe(true);
   });
 });
 

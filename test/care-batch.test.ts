@@ -1,5 +1,5 @@
 import { env } from "cloudflare:test";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DAILY_CRON, runScheduled } from "../src/worker/schedule";
 import { approve, reject } from "../src/worker/approvals/decide";
 import { getHandler } from "../src/worker/approvals/registry";
@@ -9,12 +9,17 @@ import {
   availableFor, getBatch, getRun, insertPageChecks, insertRun, runsFor, saveInventory, setRunStatus, setReview, setUpdateFlag, upsertSeen, type CareBatch, type GroupKey,
 } from "../src/worker/db/careUpdates";
 import { archiveSite } from "../src/worker/db/sites";
+import { createApproval } from "../src/worker/db/approvals";
+import { openIncident } from "../src/worker/db/monitoring";
+import { BATCH_OVER, OLD_WEEK, WRONG_SHAPE } from "../src/worker/approvals/careUpdates";
+import { createSingleBatch, ensureWeeklyBatch, setBatchStatus } from "../src/worker/db/careUpdates";
 import { ensureSeedSops } from "../src/worker/db/sops";
 import { markSubscription } from "../src/worker/db/subscriptions";
 import "../src/worker/helper/kinds";
 import { claimHelperJob, completeHelperJob, getHelperJob } from "../src/worker/helper/jobs";
 import { createDevice } from "../src/worker/helper/auth";
 import { seedClient } from "./fixtures/clients";
+import { tickingClock } from "./fixtures/clock";
 
 const WED = new Date("2026-12-02T17:00:00.000Z"); // a Wednesday in Los Angeles
 const TUE = new Date("2026-12-01T17:00:00.000Z");
@@ -22,9 +27,13 @@ const DAY = 86_400_000;
 const iso = (ms: number) => new Date(ms).toISOString();
 const daysAgo = (n: number) => iso(Date.now() - n * DAY);
 
+// An approval of a weekly batch only executes in the batch's own week (I2): the clock is that week's Wednesday, and it keeps running.
+let realClock: (() => void) | null = null;
+afterEach(() => { realClock?.(); realClock = null; });
 beforeEach(async () => {
+  realClock = tickingClock(WED);
   await env.DB.batch([
-    "care_page_checks", "care_runs", "care_batches", "care_updates", "site_inventories", "helper_jobs", "approvals",
+    "care_page_checks", "care_runs", "care_batches", "care_updates", "site_inventories", "helper_jobs", "approvals", "site_incidents",
   ].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
   await env.DB.prepare(`UPDATE sites SET archived_at = '2020-01-01T00:00:00.000Z' WHERE archived_at IS NULL`).run(); // sites of earlier tests stay out of the week
   await env.DB.batch([env.DB.prepare(`DELETE FROM sop_template_steps`), env.DB.prepare(`DELETE FROM sop_templates`)]);
@@ -528,5 +537,99 @@ describe("the last inventory, completed the way the helper route does it", () =>
     expect((await getBatch(env.DB, batch!.id))!.status).toBe("wave1");
     expect((await approvalsOf()).map((x) => x.title)).toEqual(["Care updates: wave 1 (1 site, 1 update)"]);
     void a; void b;
+  });
+});
+
+describe("execute refuses an approval that does not fit its batch (I1, I2)", () => {
+  const entry = async (siteId: string) => ({ siteId, domain: "x", updates: (await availableFor(env.DB, siteId)).map((u) => ({ id: u.id, type: u.type, slug: u.slug, name: u.name, from: u.fromVersion, to: u.toVersion, risk: u.risk, needsTick: false })) });
+  const handMade = async (payload: unknown) => createApproval(env.DB, { kind: "care.updates", title: "x", preview: "x", payload, drafted_by: "mcp" });
+  const nothingQueued = async () => expect([(await jobsOf("care.update")).length, (await env.DB.prepare(`SELECT COUNT(*) AS n FROM care_runs`).first<{ n: number }>())!.n]).toEqual([0, 0]);
+
+  it("a wave 0 for a weekly batch, a weekly wave for a single batch, and a wave 0 naming another site are refused", async () => {
+    const a = await mk("a.com", 5000); const b = await mk("b.com", 6000);
+    const { batch: weekly } = await ensureWeeklyBatch(env.DB, "2026-W49", WED.toISOString());
+    const single = await createSingleBatch(env.DB, a.siteId, "2026-W49", WED.toISOString());
+    for (const payload of [
+      { batchId: weekly.id, wave: 0, sites: [await entry(a.siteId)] },
+      { batchId: single.id, wave: 1, sites: [await entry(a.siteId)] },
+      { batchId: single.id, wave: 0, sites: [await entry(b.siteId)] },
+      { batchId: single.id, wave: 0, sites: [await entry(a.siteId), await entry(b.siteId)] },
+    ]) {
+      const ap = await handMade(payload);
+      expect(await approve(env, ap.id)).toEqual({ ok: false, error: WRONG_SHAPE, status: 502 });
+      expect((await env.DB.prepare(`SELECT status, error FROM approvals WHERE id = ?`).bind(ap.id).first())).toEqual({ status: "pending", error: WRONG_SHAPE });
+    }
+    await nothingQueued();
+    const ok = await handMade({ batchId: single.id, wave: 0, sites: [await entry(a.siteId)] });
+    expect(await approve(env, ok.id)).toEqual({ ok: true });
+  });
+
+  it("a done or cancelled batch is refused with a plain sentence and nothing queued", async () => {
+    const a = await mk("a.com", 5000);
+    for (const to of ["done", "cancelled"] as const) {
+      const single = await createSingleBatch(env.DB, a.siteId, "2026-W49", WED.toISOString());
+      await setBatchStatus(env.DB, single.id, ["inventory"], to, WED.toISOString());
+      const ap = await handMade({ batchId: single.id, wave: 0, sites: [await entry(a.siteId)] });
+      expect(await approve(env, ap.id)).toMatchObject({ ok: false, error: BATCH_OVER });
+    }
+    await nothingQueued();
+  });
+
+  it("a wave of last week's weekly batch is refused (the clock is this week)", async () => {
+    const a = await mk("a.com", 5000);
+    const { batch } = await ensureWeeklyBatch(env.DB, "2026-W48", "2026-11-25T17:00:00.000Z");
+    await setBatchStatus(env.DB, batch.id, ["inventory"], "wave1", WED.toISOString());
+    const ap = await handMade({ batchId: batch.id, wave: 1, sites: [await entry(a.siteId)] });
+    expect(await approve(env, ap.id)).toMatchObject({ ok: false, error: OLD_WEEK });
+    await nothingQueued();
+  });
+
+  it("a new week's batch rejects last week's pending waves with a note and cancels that batch; a settled one is left alone", async () => {
+    const a = await mk("a.com", 5000);
+    const { batch: old } = await ensureWeeklyBatch(env.DB, "2026-W48", "2026-11-25T17:00:00.000Z");
+    await setBatchStatus(env.DB, old.id, ["inventory"], "wave2", WED.toISOString());
+    const { batch: older } = await ensureWeeklyBatch(env.DB, "2026-W47", "2026-11-18T17:00:00.000Z");
+    await setBatchStatus(env.DB, older.id, ["inventory"], "done", WED.toISOString());
+    const single = await createSingleBatch(env.DB, a.siteId, "2026-W48", "2026-11-25T17:00:00.000Z");
+    const stale = await handMade({ batchId: old.id, wave: 2, sites: [await entry(a.siteId)] });
+    const rehearsal = await handMade({ batchId: single.id, wave: 0, sites: [await entry(a.siteId)] });
+    const { batch } = await startWeeklyBatch(env, WED);
+    expect(batch!.period).toBe("2026-W49");
+    expect(await env.DB.prepare(`SELECT status, decision_note FROM approvals WHERE id = ?`).bind(stale.id).first()).toEqual({ status: "rejected", decision_note: "replaced by this week's batch" });
+    expect((await env.DB.prepare(`SELECT status FROM approvals WHERE id = ?`).bind(rehearsal.id).first<{ status: string }>())!.status).toBe("pending"); // a single run is not a week's batch
+    expect((await getBatch(env.DB, old.id))!.status).toBe("cancelled");
+    expect((await getBatch(env.DB, older.id))!.status).toBe("done");
+    expect((await getBatch(env.DB, single.id))!.status).toBe("inventory");
+  });
+});
+
+describe("a site with an open update_failed sits out the weekly batch (I6)", () => {
+  it("gets no inventory and is in no wave; a single-site run may still take it", async () => {
+    const a = await mk("a.com", 5000); const b = await mk("b.com", 6000);
+    await openIncident(env.DB, { siteId: a.siteId, businessId: a.businessId, kind: "update_failed", detail: "update failed on the Mac helper", now: WED.toISOString() });
+    const batch = await inventoried();
+    const inv = (await jobsOf("care.inventory")).map((j) => (JSON.parse(j.payload) as { siteId: string }).siteId);
+    expect(inv).toEqual([b.siteId]);
+    const w1 = (await approvalsOf())[0];
+    expect(w1.payload.sites.map((x) => x.siteId)).toEqual([b.siteId]);
+    await approve(env, w1.id);
+    await finishRun((await runsFor(env.DB, batch.id))[0].id, "ok");
+    expect((await approvalsOf()).flatMap((x) => x.payload.sites.map((y) => y.siteId))).not.toContain(a.siteId);
+    expect((await getBatch(env.DB, batch.id))!.status).toBe("done");
+    const single = await startSingleRun(env, a.siteId, WED);
+    await doneJobs("care.inventory");
+    await onInventoryDone(env, single.id);
+    const ap = (await approvalsOf()).find((x) => x.payload.batchId === single.id)!;
+    expect(ap.payload.sites.map((x) => x.siteId)).toEqual([a.siteId]);
+  });
+
+  it("a site whose incident opens after wave 1 is left out of wave 2", async () => {
+    const a = await mk("a.com", 7000); const b = await mk("b.com", 5000); const c = await mk("c.com", 6000);
+    const batch = await inventoried();
+    await approve(env, (await approvalsOf())[0].id);
+    await openIncident(env.DB, { siteId: c.siteId, businessId: c.businessId, kind: "update_failed", detail: "update failed on the Mac helper", now: WED.toISOString() });
+    await finishRun((await runsFor(env.DB, batch.id))[0].id, "ok");
+    expect((await approvalsOf())[1].payload.sites.map((x) => x.siteId)).toEqual([a.siteId]);
+    void b;
   });
 });

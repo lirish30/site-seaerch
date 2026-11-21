@@ -16,6 +16,7 @@ import { clientSql, testClientSql } from "./clients/record";
 import { ACCESS_LABELS, unresolved } from "./sites/access";
 import { listIncidents, type Incident } from "./db/monitoring";
 import { lastRunsFor } from "./db/careUpdates";
+import { UPDATE_DETAIL, isStillBroken } from "./care/incidents";
 import { domainDaysLeft } from "./monitoring/incidents";
 
 export const TODAY_KINDS = ["follow_up_due", "draft_unsent", "stalled_deal", "starred_idle", "promising_quick_scan", "proposal_follow_up", "onboarding_attention", "project_attention", "billing_attention", "access_missing", "site_incident"] as const;
@@ -119,7 +120,7 @@ export function outageLength(ms: number): string {
  * A client's site that is down or whose domain is about to lapse, one row per client: a site that is down (priority 90) beats a domain close to expiring (66). Only open incidents on live,
  * real sites of real clients (listIncidents already leaves out test clients and test sites). It is the owner's own work, so it stays for a suppressed lead.
  * The reason is built here from our own numbers (the open time, the site's expiry date) and never from `incident.detail`: that text is frozen when the incident opens, so a domain count would go stale,
- * and it is never shown. With several sites down the one down longest is named and the others counted. `openedAt` is when the client's newest open incident opened.
+ * and it is never shown. The one exception: an `update_failed` whose (whitelisted) detail is the still-broken-after-rollback sentence picks its own fixed reason, still built only from the domain. With several sites down the one down longest is named and the others counted. `openedAt` is when the client's newest open incident opened.
  */
 async function incidentAttention(db: D1Database, now: Date): Promise<Map<string, { reason: string; priority: number; openedAt: number }>> {
   const incidents = await listIncidents(db, { open: true, limit: 1000 });
@@ -154,7 +155,9 @@ async function incidentAttention(db: D1Database, now: Date): Promise<Map<string,
     const fails = list.filter((i) => i.kind === "update_failed").sort((a, c) => ms(a.openedAt) - ms(c.openedAt));
     if (fails.length) {
       const f = fails[0];
-      found.push({ reason: lastRuns.get(f.siteId)?.status === "rolled_back" ? `updates broke ${name(f)}: rolled back` : `updates need a look on ${name(f)}`, priority: 85 });
+      const reason = UPDATE_DETAIL.test(f.detail) && isStillBroken(f.detail) ? `${name(f)} is still broken after rollback`
+        : lastRuns.get(f.siteId)?.status === "rolled_back" ? `updates broke ${name(f)}: rolled back` : `updates need a look on ${name(f)}`;
+      found.push({ reason, priority: 85 });
     }
     if (looks.has(businessId)) found.push({ reason: "a page changed after updates and is waiting for a look", priority: 70 });
     // The nearest expiry speaks.

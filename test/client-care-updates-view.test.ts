@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { riskLabel, runLabel, whyLabel } from "../src/client/careUpdatesView";
+import { lastFailedLabel, riskLabel, runLabel, whyLabel } from "../src/client/careUpdatesView";
 import type { CareRunView, CareUpdateView } from "../src/worker/care/views";
 
 const NOW = new Date("2026-11-21T20:00:00Z");
@@ -7,7 +7,15 @@ const daysAgo = (d: number) => new Date(NOW.getTime() - d * 86_400_000).toISOStr
 
 const update = (over: Partial<CareUpdateView> = {}): CareUpdateView => ({
   id: "u1", type: "plugin", slug: "akismet", name: "Akismet", fromVersion: "5.0", toVersion: "5.1", risk: "minor",
-  rollbackable: true, security: false, held: false, needsTick: false, due: true, firstSeenAt: daysAgo(1), ...over,
+  rollbackable: true, security: false, held: false, needsTick: false, due: true, firstSeenAt: daysAgo(1), lastFailedAt: null, ...over,
+});
+
+describe("lastFailedLabel (I3)", () => {
+  it("says the day a run last failed it, in the zone, and nothing when it never did", () => {
+    expect(lastFailedLabel(update({ lastFailedAt: "2026-11-18T03:00:00Z" }), "America/Los_Angeles")).toBe("failed last time on 17 Nov");
+    expect(lastFailedLabel(update({ lastFailedAt: "2026-11-18T03:00:00Z" }), "Australia/Sydney")).toBe("failed last time on 18 Nov");
+    expect(lastFailedLabel(update(), "America/Los_Angeles")).toBe("");
+  });
 });
 
 describe("riskLabel", () => {

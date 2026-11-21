@@ -34,13 +34,18 @@ export const brokenPageSentence = (path: string): string => `a page is broken af
 /** "rollback failed for a: restore from siteline-backups/x.sql.gz". */
 export const rollbackFailedSentence = (slugs: string[], backupFile: string | null): string => `rollback failed for ${list(slugs)}: ${backupFile ? `restore from ${backupFile}` : NO_BACKUP}`;
 
+/** "rolled back but /contact is still broken: restore from siteline-backups/x.sql.gz" (the old code is back and a page is still down, so the backup is the way back). */
+export const stillBrokenSentence = (path: string, backupFile: string | null): string => `rolled back but ${path} is still broken: ${backupFile ? `restore from ${backupFile}` : NO_BACKUP}`;
+/** True for the still-broken sentence (Today words it on its own). */
+export const isStillBroken = (detail: string): boolean => detail.startsWith("rolled back but ");
+
 /** "a page looks different after updates: /contact" (Claude, or nobody, could not say the changed page is fine). */
 export const pageLooksDifferentSentence = (path: string): string => `a page looks different after updates: ${path}`;
 
 const SLUGS = "[A-Za-z0-9._, +-]{1,300}";
 /** Every sentence an `update_failed` incident may carry. `incidentView` shows nothing else. */
 export const UPDATE_DETAIL = new RegExp(
-  `^(updates rolled back: ${SLUGS}( broke \\/[A-Za-z0-9._~\\/%-]{0,200}| failed)|rollback failed for ${SLUGS}: (restore from [A-Za-z0-9._\\/-]{1,300}|${NO_BACKUP})|${FAILED_SENTENCE}|${BACKUP_FAILED_SENTENCE}|a page is broken after updates: \\/[A-Za-z0-9._~\\/%-]{0,200}|a page looks different after updates: \\/[A-Za-z0-9._~\\/%-]{0,200})$`,
+  `^(updates rolled back: ${SLUGS}( broke \\/[A-Za-z0-9._~\\/%-]{0,200}| failed)|rollback failed for ${SLUGS}: (restore from [A-Za-z0-9._\\/-]{1,300}|${NO_BACKUP})|rolled back but \\/[A-Za-z0-9._~\\/%-]{0,200} is still broken: (restore from [A-Za-z0-9._\\/-]{1,300}|${NO_BACKUP})|${FAILED_SENTENCE}|${BACKUP_FAILED_SENTENCE}|a page is broken after updates: \\/[A-Za-z0-9._~\\/%-]{0,200}|a page looks different after updates: \\/[A-Za-z0-9._~\\/%-]{0,200})$`,
 );
 
 /** The booking zone's calendar date for `d` (YYYY-MM-DD). */
@@ -50,15 +55,15 @@ function dateIn(zone: string, d: Date): string {
 
 /**
  * Opens the site's `update_failed` incident (one open at a time) with `why`, which must be one of the fixed sentences (anything else is replaced by the plain "update failed" one).
- * When the incident is new, also makes ONE CARE-5 task on the client's live Care project (none when it has no live Care project): owner Logan, "Fix: <domain> after updates",
- * the template's steps as the checklist, `periodKey` the incident's id, so a rerun of the same result adds none. A crash between the incident and the task is mended by the rerun,
- * which finds the incident opened after this run began and makes the task (the unique index keeps it to one).
+ * When one is already open, a later failure replaces its detail with the new sentence (the newest failure is the one that matters). Either way the incident gets ONE CARE-5 task on the
+ * client's live Care project when it has none (none at all when the client has no live Care project): owner Logan, "Fix: <domain> after updates", the template's steps as the checklist,
+ * `periodKey` the incident's id, so a rerun of the same result, or a later failure, adds none (the unique index keeps it to one). Only Logan closes the incident.
  */
 export async function openUpdateIncident(env: Env, run: CareRun, site: Site, why: string, now: Date): Promise<void> {
   const db = env.DB;
   const detail = UPDATE_DETAIL.test(why) ? why : FAILED_SENTENCE;
   const { incident, created } = await openIncident(db, { siteId: site.id, businessId: site.businessId, kind: "update_failed", detail, now: now.toISOString() });
-  if (!created && incident.openedAt < run.createdAt) return;
+  if (!created && incident.detail !== detail) await db.prepare(`UPDATE site_incidents SET detail = ? WHERE id = ? AND closed_at IS NULL`).bind(detail, incident.id).run();
 
   const project = (await listProjects(db, { businessId: site.businessId })).find((p) => p.kind === "care_onboarding" && projectIsLive(p));
   if (!project) {
@@ -80,7 +85,7 @@ export async function openUpdateIncident(env: Env, run: CareRun, site: Site, why
   await insertTasks(db, [task], { ignoreDuplicates: true });
 }
 
-/** Closes the site's open `update_failed` incident, if any. The fix task stays: it is Logan's to close. */
+/** Closes the site's open `update_failed` incident, if any (Logan's close, POST /incidents/:id/close; no run closes one). The fix task stays: it is Logan's to close. */
 export async function closeUpdateIncident(env: Env, siteId: string, now: Date): Promise<void> {
   await closeIncident(env.DB, siteId, "update_failed", now.toISOString());
 }

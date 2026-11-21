@@ -269,3 +269,19 @@ describe("add_note", () => {
     for (const row of rows.results) expect(row.summary).not.toContain("hunter2");
   });
 });
+
+describe("propose_approval and care.updates (I1)", () => {
+  it("refuses care.updates: only the app drafts a care update wave, and nothing is written", async () => {
+    await import("../src/worker/approvals/careUpdates");
+    const count = async () => (await env.DB.prepare(`SELECT COUNT(*) AS n FROM approvals WHERE kind = 'care.updates'`).first<{ n: number }>())!.n;
+    const before = await count();
+    const r = await tool("propose_approval", {
+      kind: "care.updates", title: "Care updates", preview: "x",
+      payload: { batchId: "b1", wave: 0, sites: [{ siteId: "s1", domain: "x", updates: [{ id: "u1", type: "plugin", slug: "akismet", name: "a", from: "1", to: "2", risk: "minor", needsTick: false }] }] },
+    });
+    expect(r.isError).toBe(true);
+    expect(r.text).toMatch(/care\.updates/);
+    expect(await count()).toBe(before);
+    expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM agent_actions WHERE tool = 'propose_approval' AND summary LIKE '%refused care.updates%'`).first<{ n: number }>())!.n).toBeGreaterThan(0);
+  });
+});

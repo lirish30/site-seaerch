@@ -173,6 +173,17 @@ describe("sweepUptime", () => {
     expect(row).toEqual({ ok: 0, status: null, error: ERROR_TEXT.connect });
   });
 
+  it("an update_failed on an unmonitored test site survives an uptime tick; its down incident is closed (I5)", async () => {
+    const s = await careSite("https://rehearse.example.com");
+    await env.DB.prepare(`UPDATE sites SET test = 1 WHERE id = ?`).bind(s.site!.id).run(); // a rehearsal site: never watched
+    for (const kind of ["update_failed", "down", "domain_expiring", "cert_expiring"] as const) {
+      await openIncident(env.DB, { siteId: s.site!.id, businessId: s.businessId, kind, detail: "x", now: NOW.toISOString() });
+    }
+    await sweepUptime(env, NOW);
+    const open = (await env.DB.prepare(`SELECT kind FROM site_incidents WHERE site_id = ? AND closed_at IS NULL`).bind(s.site!.id).all<{ kind: string }>()).results.map((r) => r.kind);
+    expect(open).toEqual(["update_failed"]);
+  });
+
   it("two ticks of 503 open one incident on the second", async () => {
     const s = await careSite("https://flaky.example.com/");
     monitoringDeps.fetch = answering(503);

@@ -1,11 +1,12 @@
 import { env } from "cloudflare:test";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSite } from "../src/worker/db/sites";
 import { approve } from "../src/worker/approvals/decide";
 import "../src/worker/approvals/careUpdates";
 import { onInventoryDone, startSingleRun, startWeeklyBatch } from "../src/worker/care/batch";
 import { tickCare1 } from "../src/worker/care/tasks";
-import { getBatch, getRun, runsFor, saveInventory, setRunStatus, upsertSeen, type CareBatch } from "../src/worker/db/careUpdates";
+import { getBatch, getRun, insertPageChecks, runsFor, saveInventory, setRunStatus, upsertSeen, type CareBatch } from "../src/worker/db/careUpdates";
+import { openIncident } from "../src/worker/db/monitoring";
 import { addCadence } from "../src/worker/db/projects";
 import { ensureSeedSops } from "../src/worker/db/sops";
 import { listTasks, patchTask } from "../src/worker/db/tasks";
@@ -13,14 +14,19 @@ import "../src/worker/helper/kinds";
 import { generateRecurring } from "../src/worker/projects/sweep";
 import { onRunDone } from "../src/worker/care/batch";
 import { seedClient } from "./fixtures/clients";
+import { tickingClock } from "./fixtures/clock";
 
 const WED = new Date("2026-12-02T17:00:00.000Z"); // a Wednesday in Los Angeles, week 2026-W49
 const LAST_WEEK = new Date("2026-11-25T17:00:00.000Z"); // 2026-W48
 const iso = (ms: number) => new Date(ms).toISOString();
 
+// An approval of a weekly batch only executes in the batch's own week (I2): the clock is that week's Wednesday, and it keeps running.
+let realClock: (() => void) | null = null;
+afterEach(() => { realClock?.(); realClock = null; });
 beforeEach(async () => {
+  realClock = tickingClock(WED);
   await env.DB.batch([
-    "care_page_checks", "care_runs", "care_batches", "care_updates", "site_inventories", "helper_jobs", "approvals", "tasks", "project_cadences",
+    "care_page_checks", "care_runs", "care_batches", "care_updates", "site_inventories", "helper_jobs", "approvals", "tasks", "project_cadences", "site_incidents",
   ].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
   await env.DB.prepare(`UPDATE sites SET archived_at = '2020-01-01T00:00:00.000Z' WHERE archived_at IS NULL`).run();
   await env.DB.batch([env.DB.prepare(`DELETE FROM sop_template_steps`), env.DB.prepare(`DELETE FROM sop_templates`)]);
@@ -60,7 +66,7 @@ async function inventoried(): Promise<CareBatch> {
 const approveAll = async () => {
   for (const a of (await env.DB.prepare(`SELECT id FROM approvals WHERE kind = 'care.updates' AND status = 'pending' ORDER BY created_at, rowid`).all<{ id: string }>()).results) await approve(env, a.id);
 };
-const finishRun = async (runId: string, status: "ok" | "rolled_back" | "failed") => {
+const finishRun = async (runId: string, status: "ok" | "changed" | "rolled_back" | "failed") => {
   const run = (await getRun(env.DB, runId))!;
   await setRunStatus(env.DB, run.id, ["queued", "running"], status, { summary: "x" }, iso(Date.now()));
   await env.DB.prepare(`UPDATE helper_jobs SET status = 'done' WHERE id = ?`).bind(run.helperJobId).run();
@@ -68,6 +74,40 @@ const finishRun = async (runId: string, status: "ok" | "rolled_back" | "failed")
 };
 
 describe("the batch ticks the CARE-1 task", () => {
+  const changedPage = (review: "fine" | "unsure" | "broken") => ({ path: "/", beforeKey: null, afterKey: null, diffKey: null, statusBefore: 200, statusAfter: 200, formsBefore: 1, formsAfter: 1, ssim: 0.9, verdict: "changed" as const, review });
+  it.each(["unsure", "broken"] as const)("a client whose page look ended %s keeps 1.6 open and the task not done (M2)", async (review) => {
+    const a = await mk("a.com");
+    const batch = await inventoried();
+    await approveAll();
+    const run = (await runsFor(env.DB, batch.id))[0];
+    await insertPageChecks(env.DB, run.id, [changedPage(review)]);
+    await finishRun(run.id, "changed");
+    expect((await getBatch(env.DB, batch.id))!.status).toBe("done");
+    expect(await ticks(a.project!.id)).toEqual([true, true, true, true, true, false]);
+    expect((await care1(a.project!.id)).status).not.toBe("done");
+  });
+  it("a changed run whose site has an open update_failed keeps 1.6 open (M2)", async () => {
+    const a = await mk("a.com");
+    const batch = await inventoried();
+    await approveAll();
+    const run = (await runsFor(env.DB, batch.id))[0];
+    await insertPageChecks(env.DB, run.id, [changedPage("fine")]);
+    await openIncident(env.DB, { siteId: a.siteId, businessId: a.businessId, kind: "update_failed", detail: "update failed on the Mac helper", now: iso(Date.now()) });
+    await finishRun(run.id, "changed");
+    expect(await ticks(a.project!.id)).toEqual([true, true, true, true, true, false]);
+    expect((await care1(a.project!.id)).status).not.toBe("done");
+  });
+  it("a changed run Claude found fine, with no incident, finishes the task (M2 control)", async () => {
+    const a = await mk("a.com");
+    const batch = await inventoried();
+    await approveAll();
+    const run = (await runsFor(env.DB, batch.id))[0];
+    await insertPageChecks(env.DB, run.id, [changedPage("fine")]);
+    await finishRun(run.id, "changed");
+    expect(await ticks(a.project!.id)).toEqual([true, true, true, true, true, true]);
+    expect((await care1(a.project!.id)).status).toBe("done");
+  });
+
   it("a clean week ticks every item and finishes the task, step by step", async () => {
     const a = await mk("a.com");
     const batch = await inventoried();

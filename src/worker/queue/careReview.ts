@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Env } from "../env";
+import { WP_ARG } from "../care/args";
 import { onRunDone } from "../care/batch";
 import { openUpdateIncident, pageLooksDifferentSentence } from "../care/incidents";
 import { getPageCheck, getRun, setReview, type PageCheck } from "../db/careUpdates";
@@ -42,7 +43,7 @@ async function updatedSlugs(env: Env, helperJobId: string | null): Promise<strin
   if (!row) return [];
   try {
     const p = JSON.parse(row.payload) as { updates?: { slug?: unknown }[] };
-    return (p.updates ?? []).map((u) => u.slug).filter((s): s is string => typeof s === "string" && /^[a-z0-9][a-z0-9._-]{0,99}$/.test(s));
+    return (p.updates ?? []).map((u) => u.slug).filter((s): s is string => typeof s === "string" && WP_ARG.slug.test(s));
   } catch { return []; }
 }
 

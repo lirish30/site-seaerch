@@ -47,9 +47,9 @@ const isRisky = (slug: string): boolean => {
   return RISKY_SLUGS.some((r) => (typeof r === "string" ? s === r : r.test(s)));
 };
 
-/** Needs Logan's tick even after the canary passed: every major, core, anything that can't be rolled back and every risky slug. */
-export function needsTick(u: Pick<CareUpdate, "type" | "slug" | "risk" | "rollbackable">): boolean {
-  return u.type === "core" || u.risk === "major" || !u.rollbackable || isRisky(u.slug);
+/** Needs Logan's tick even after the canary passed: every major, core, anything that can't be rolled back, every risky slug and anything that failed or was rolled back before. */
+export function needsTick(u: Pick<CareUpdate, "type" | "slug" | "risk" | "rollbackable"> & { lastFailedAt?: string | null }): boolean {
+  return u.type === "core" || u.risk === "major" || !u.rollbackable || isRisky(u.slug) || !!u.lastFailedAt;
 }
 
 /** Ready to go in a batch: not held; security at once; a major once it has been seen for the wait; anything else at once. */

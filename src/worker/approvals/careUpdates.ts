@@ -3,6 +3,8 @@ import { onRunDone } from "../care/batch";
 import { tickApproved } from "../care/tasks";
 import { queueRun } from "../care/updateKind";
 import { availableFor, getBatch, insertRun, runsFor, setRunStatus, updatableSites } from "../db/careUpdates";
+import { getSettings } from "../db/settings";
+import { periodKey, zoneOf } from "../sop/cadence";
 import type { Approval } from "../db/approvals";
 import type { Env } from "../env";
 import { InvalidHelperJobError } from "../helper/jobs";
@@ -24,6 +26,10 @@ export type CareApprovalPayload = z.infer<typeof Payload>;
 export const SITE_GONE = "this site no longer takes updates (archived, its Care plan ended, on hold or its access changed)";
 export const NOTHING_LEFT = "nothing left to update here: what was planned was applied by hand, held or replaced by a newer version since this was drafted";
 export const UNSAFE = "its address or an update name did not pass the safety check";
+/** Refusals of the whole approval (it goes back to pending with this as its error; nothing is queued). */
+export const BATCH_OVER = "This update batch is already finished or cancelled, so nothing was queued.";
+export const OLD_WEEK = "This update batch is from an earlier week, so nothing was queued. This week's batch has its own approvals.";
+export const WRONG_SHAPE = "This approval does not match its update batch, so nothing was queued.";
 
 registerHandler({
   kind: "care.updates",
@@ -36,7 +42,12 @@ registerHandler({
    */
   async execute(env: Env, p: CareApprovalPayload, a: Approval) {
     const db = env.DB;
-    if (!(await getBatch(db, p.batchId))) throw new Error("This update batch was not found.");
+    const batch = await getBatch(db, p.batchId);
+    if (!batch) throw new Error("This update batch was not found.");
+    // A single-site run is wave 0 of a single batch and names only its own site; a weekly wave is never wave 0 (an MCP-made approval cannot pass for either).
+    if ((p.wave === 0) !== (batch.kind === "single") || (p.wave === 0 && p.sites.some((s) => s.siteId !== batch.siteId))) throw new Error(WRONG_SHAPE);
+    if (batch.status === "done" || batch.status === "cancelled") throw new Error(BATCH_OVER);
+    if (batch.kind === "weekly" && batch.period !== periodKey("weekly", new Date(), zoneOf(await getSettings(db)))) throw new Error(OLD_WEEK);
     const sites = await updatableSites(db, { includeTest: p.wave === 0 });
     const done = new Set((await runsFor(db, p.batchId)).filter((r) => r.approvalId === a.id).map((r) => r.siteId));
     const drop = async (siteId: string, why: string) => {

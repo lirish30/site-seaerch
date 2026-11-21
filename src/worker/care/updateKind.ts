@@ -9,7 +9,7 @@ import { InvalidHelperJobError, enqueueHelperJob } from "../helper/jobs";
 import { HelperRefused, registerHelperKind, type HelperKindDef } from "../helper/registry";
 import { WP_ARG, SshTarget } from "./args";
 import { onRunDone } from "./batch";
-import { BACKUP_FAILED_SENTENCE, FAILED_SENTENCE, brokenPageSentence, closeUpdateIncident, openUpdateIncident, rollbackFailedSentence, rolledBackSentence } from "./incidents";
+import { BACKUP_FAILED_SENTENCE, FAILED_SENTENCE, brokenPageSentence, openUpdateIncident, rollbackFailedSentence, rolledBackSentence, stillBrokenSentence } from "./incidents";
 import { queueReview } from "../queue/careReview";
 import { MAX_PATHS } from "./versions";
 
@@ -91,17 +91,28 @@ export const carePageKeys = (runId: string, i: number): { before: string; after:
 
 const EXPIRED_SUMMARY = "your Mac helper didn't pick this up in time";
 const BACKUP_NOTE = "the backup failed, nothing was updated";
+/** The helper's note on an update it put back only because ANOTHER update failed: nothing is wrong with this one, so it waits again (I3). */
+const COLLATERAL_NOTE = "put back because another update failed";
 const FINAL: readonly RunStatus[] = ["ok", "changed", "rolled_back", "failed", "dropped"];
 const OPEN: RunStatus[] = ["queued", "running"];
+
+/** The absolute rule (no "before" to compare with): no answer, 404, 410, 5xx or the critical-error text. */
+const stillDown = (a: { status: number | null; fatal: boolean }): boolean => a.status === null || a.status === 404 || a.status === 410 || a.status >= 500 || a.fatal;
 
 const STEP_TO_UPDATE: Record<z.infer<typeof Step>["outcome"], UpdateStatus> = {
   applied: "applied", failed: "failed", rollback_failed: "failed", rolled_back: "rolled_back", skipped: "available",
 };
 
-/** Sets the updates this run queued (and nobody has moved on) to `to`. One statement per update id, in one batch. */
+/** Sets the updates this run queued (and nobody has moved on) to `to`. One statement per update id, in one batch. A move to failed or rolled back stamps `last_failed_at`. */
 async function moveQueued(env: Env, siteId: string, to: (id: string) => UpdateStatus, ids: string[]): Promise<void> {
   if (!ids.length) return;
-  await env.DB.batch(ids.map((id) => env.DB.prepare(`UPDATE care_updates SET status = ? WHERE id = ? AND site_id = ? AND status IN ('queued', 'available')`).bind(to(id), id, siteId)));
+  const now = new Date().toISOString();
+  await env.DB.batch(ids.map((id) => {
+    const status = to(id);
+    const failed = status === "failed" || status === "rolled_back";
+    return env.DB.prepare(`UPDATE care_updates SET status = ?, last_failed_at = CASE WHEN ? = 1 THEN ? ELSE last_failed_at END WHERE id = ? AND site_id = ? AND status IN ('queued', 'available')`)
+      .bind(status, failed ? 1 : 0, now, id, siteId);
+  }));
 }
 
 /**
@@ -195,8 +206,9 @@ const careUpdate: HelperKindDef<CareUpdatePayload, CareUpdateResult> = {
 
     // The updates: each one the helper named moves to what happened to it; the rest go back to waiting.
     const outcome = new Map(r.steps.map((s) => [s.id, s.outcome] as const));
+    const collateral = new Set(r.steps.filter((s) => s.outcome === "rolled_back" && s.note.startsWith(COLLATERAL_NOTE)).map((s) => s.id));
     const ids = p.updates.map((u) => u.id);
-    await moveQueued(env, p.siteId, (id) => STEP_TO_UPDATE[outcome.get(id) ?? "skipped"], ids);
+    await moveQueued(env, p.siteId, (id) => (collateral.has(id) ? "available" : STEP_TO_UPDATE[outcome.get(id) ?? "skipped"]), ids);
 
     const outcomes = p.updates.map((u) => ({ u, o: outcome.get(u.id) ?? "skipped" as const }));
     const slugsOf = (o: string) => outcomes.filter((x) => x.o === o).map((x) => x.u.slug);
@@ -217,7 +229,10 @@ const careUpdate: HelperKindDef<CareUpdatePayload, CareUpdateResult> = {
     if (status === "rolled_back" || status === "failed") {
       const stuck = slugsOf("rollback_failed");
       const putBack = slugsOf("rolled_back").concat(slugsOf("failed"));
+      // After a put-back the helper read every page again: one still null/404/410/5xx/fatal means the old code did not fix it, and only the backup can (I7).
+      const stillBroken = r.rolledBack ? r.pages.find((pg) => stillDown(pg.after)) : undefined;
       const why = stuck.length ? rollbackFailedSentence(stuck, r.backupFile)
+        : stillBroken ? stillBrokenSentence(stillBroken.path, r.backupFile)
         : r.rolledBack ? rolledBackSentence(putBack.length ? putBack : p.updates.map((u) => u.slug), broken ? broken.path : null)
         : backupFailed ? BACKUP_FAILED_SENTENCE
         : broken ? brokenPageSentence(broken.path)
@@ -225,7 +240,7 @@ const careUpdate: HelperKindDef<CareUpdatePayload, CareUpdateResult> = {
       await openUpdateIncident(env, run, site, why, now);
       if (status === "rolled_back") await logActivityOnce(db, site.businessId, "care_rolled_back", `${domain}: updates rolled back (run ${tag})`);
     } else if (status !== "dropped") {
-      if (status === "ok" && applied > 0) await closeUpdateIncident(env, site.id, now);
+      // An ok run never closes an open update_failed incident (the site may be mid-restore): only Logan does.
       if (applied > 0) await logActivityOnce(db, site.businessId, "care_updated", `${domain}: ${applied} ${applied === 1 ? "update" : "updates"} applied (run ${tag})`);
       // A changed page waits for Claude's look. A retry finds the review already pending and still queues (the task's dedupe key is the check id, so never two).
       if (status === "changed") {

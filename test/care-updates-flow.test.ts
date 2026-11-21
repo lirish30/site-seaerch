@@ -305,7 +305,8 @@ describe("care updates, end to end", () => {
     await complete(jobC, {
       backupFile: `siteline-backups/charlie-salon.example.com-${jobC.payload.runId}.sql.gz`,
       steps: jobC.payload.updates.map((u: { id: string }) => ({ id: u.id, outcome: "rolled_back", note: "put back after a page broke" })),
-      pages: [page("/"), page("/contact", { afterStatus: 500, verdict: "broken", ssim: 0.4, up: { after: true } })],
+      // The after-shot read 500 (verdict broken); `after` is the read made once the plugin was back, and the page came back (a page still down would say "still broken: restore from").
+      pages: [page("/"), page("/contact", { afterStatus: 200, verdict: "broken", ssim: 0.4, up: { after: true } })],
       rolledBack: true, retry: false,
     });
     expect(await updatesOf(c.siteId)).toEqual([["x", "rolled_back"]]);

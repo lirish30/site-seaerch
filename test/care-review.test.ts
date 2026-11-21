@@ -1,5 +1,5 @@
 import { createExecutionContext, env } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import worker from "../src/worker/index";
 import { approve } from "../src/worker/approvals/decide";
 import "../src/worker/approvals/careUpdates";
@@ -15,13 +15,18 @@ import { CARE_REVIEW_KIND, CareReviewResult, queueReview } from "../src/worker/q
 import { getTaskKind } from "../src/worker/queue/registry";
 import "../src/worker/queue/kinds";
 import { seedClient } from "./fixtures/clients";
+import { tickingClock } from "./fixtures/clock";
 import { E } from "./fixtures/close";
 import { claimById } from "./fixtures/draftTask";
 
 const WED = new Date("2026-12-02T17:00:00.000Z");
 const iso = (ms: number) => new Date(ms).toISOString();
 
+// An approval of a weekly batch only executes in the batch's own week (I2): the clock is that week's Wednesday, and it keeps running.
+let realClock: (() => void) | null = null;
+afterEach(() => { realClock?.(); realClock = null; });
 beforeEach(async () => {
+  realClock = tickingClock(WED);
   await env.DB.prepare(`DELETE FROM claude_tasks WHERE kind = 'care.review'`).run();
   await env.DB.batch([
     "care_page_checks", "care_runs", "care_batches", "care_updates", "site_inventories", "site_incidents", "helper_jobs", "approvals",
@@ -42,8 +47,9 @@ async function mk(domain: string, cents: number, group: GroupKey = "brochure", s
 }
 
 /** Two brochure sites: a.com (7000) and b.com (5000, the canary). Wave 1 is approved and the canary's run ends `changed` with one page waiting for a look. */
-async function canaryWithChangedPage(o: { pictures?: boolean } = {}) {
-  await mk("a.com", 7000, "brochure", ["akismet", "yoast"]); await mk("b.com", 5000, "brochure", ["akismet", "yoast"]);
+async function canaryWithChangedPage(o: { pictures?: boolean; slugs?: string[] } = {}) {
+  const slugs = o.slugs ?? ["akismet", "yoast"];
+  await mk("a.com", 7000, "brochure", slugs); await mk("b.com", 5000, "brochure", slugs);
   const { batch } = await startWeeklyBatch(env, WED);
   await env.DB.prepare(`UPDATE helper_jobs SET status = 'done' WHERE kind = 'care.inventory'`).run();
   await onInventoryDone(env, batch!.id);
@@ -87,6 +93,16 @@ describe("the care.review kind", () => {
     const s = await canaryWithChangedPage();
     await queueReview(env, s.check.id); await queueReview(env, s.check.id);
     expect(await reviewTasks()).toMatchObject([{ status: "pending", dedupe_key: s.check.id, target_type: "care_page_check", target_id: s.check.id }]);
+  });
+
+  it("keeps an uppercase plugin slug in the untrusted block (M1)", async () => {
+    const s = await canaryWithChangedPage({ slugs: ["WP-Rocket", "akismet"] });
+    const task = await claim(s);
+    const built = await kind().build(env, task.payload, task);
+    if ("stale" in built) throw new Error(built.stale);
+    const text = built.untrusted.filter((p) => p.type === "text").map((p) => (p as { text: string }).text).join("\n");
+    expect(text).toContain("WP-Rocket");
+    expect(text).toContain("akismet");
   });
 
   it("queues nothing for a page that is not pending", async () => {

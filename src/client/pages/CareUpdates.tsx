@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ApiError, careApi } from "../api";
 import { useOwnerClock } from "../billingData";
-import { batchLabel, canMarkFine, pageFacts, reviewLabel, riskLabel, runLabel, verdictLabel, whyLabel } from "../careUpdatesView";
+import { batchLabel, canMarkFine, lastFailedLabel, pageFacts, reviewLabel, riskLabel, runLabel, verdictLabel, whyLabel } from "../careUpdatesView";
 import { latestOnly } from "../clientView";
 import { incidentLine } from "../careView";
 import Icon from "../components/Icon";
@@ -28,6 +28,7 @@ function UpdateRow({ u, now, zone, onChanged }: { u: CareUpdateView; now: Date; 
         <span className="muted small">{u.type} · {u.fromVersion} → {u.toVersion}</span>
         <span className={`badge2${u.risk === "security" ? " critical" : u.held ? "" : u.needsTick ? " warning" : ""}`}><i className="dot" aria-hidden="true" />{riskLabel(u, now, zone)}</span>
         {!u.rollbackable && <span className="badge2 outline">can’t roll back</span>}
+        {u.lastFailedAt && <span className="badge2 warning">{lastFailedLabel(u, zone)}</span>}
       </div>
       <div className="cu-switches">
         <label className="switch cr-switch">

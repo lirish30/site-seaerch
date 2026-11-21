@@ -19,6 +19,8 @@ export type GroupKey = "woocommerce" | "booking" | "builder" | "brochure";
 export interface CareUpdate {
   id: string; siteId: string; type: UpdateType; slug: string; name: string; fromVersion: string; toVersion: string; risk: Risk;
   rollbackable: boolean; security: boolean; held: boolean; firstSeenAt: string; lastSeenAt: string; status: UpdateStatus;
+  /** When a run last marked it failed or rolled back (null when never). */
+  lastFailedAt: string | null;
 }
 /** What the helper reports for one update; the rest of a CareUpdate is ours to keep. */
 export interface SeenUpdate { type: UpdateType; slug: string; name: string; fromVersion: string; toVersion: string; risk: Risk; rollbackable: boolean }
@@ -37,7 +39,7 @@ export interface Inventory { siteId: string; wpVersion: string | null; phpVersio
 
 interface UpdateRow {
   id: string; site_id: string; type: UpdateType; slug: string; name: string; from_version: string; to_version: string; risk: Risk;
-  rollbackable: number; security: number; held: number; first_seen_at: string; last_seen_at: string; status: UpdateStatus;
+  rollbackable: number; security: number; held: number; first_seen_at: string; last_seen_at: string; status: UpdateStatus; last_failed_at: string | null;
 }
 interface BatchRow { id: string; period: string; kind: BatchKind; site_id: string | null; status: BatchStatus; created_at: string; updated_at: string }
 interface RunRow {
@@ -53,6 +55,7 @@ interface InventoryRow { site_id: string; wp_version: string | null; php_version
 const toUpdate = (r: UpdateRow): CareUpdate => ({
   id: r.id, siteId: r.site_id, type: r.type, slug: r.slug, name: r.name, fromVersion: r.from_version, toVersion: r.to_version, risk: r.risk,
   rollbackable: !!r.rollbackable, security: !!r.security, held: !!r.held, firstSeenAt: r.first_seen_at, lastSeenAt: r.last_seen_at, status: r.status,
+  lastFailedAt: r.last_failed_at ?? null,
 });
 const toBatch = (r: BatchRow): CareBatch => ({ id: r.id, period: r.period, kind: r.kind, siteId: r.site_id, status: r.status, createdAt: r.created_at, updatedAt: r.updated_at });
 const toRun = (r: RunRow): CareRun => ({
@@ -78,6 +81,7 @@ const marks = (n: number) => Array.from({ length: n }, () => "?").join(",");
 /**
  * Records what the helper just read for a site. A new update goes in `available` with `first_seen_at = now`; one seen before only has `last_seen_at` (and its looks) refreshed.
  * An `available` update that is not in `seen` any more (applied by hand, or a newer version replaced it) becomes `gone`. `security` and `held` are Logan's marks and are never reset.
+ * A `failed` or `rolled_back` update still seen at the same version is `available` again (it would otherwise be stuck for good), keeping `last_failed_at` so it needs Logan's tick.
  */
 export async function upsertSeen(db: D1Database, siteId: string, seen: SeenUpdate[], now: string): Promise<void> {
   const key = (type: string, slug: string, to: string) => JSON.stringify([type, slug, to]);
@@ -88,7 +92,7 @@ export async function upsertSeen(db: D1Database, siteId: string, seen: SeenUpdat
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, 'available')
      ON CONFLICT (site_id, type, slug, to_version) DO UPDATE SET
        last_seen_at = excluded.last_seen_at, name = excluded.name, from_version = excluded.from_version, risk = excluded.risk, rollbackable = excluded.rollbackable,
-       status = CASE WHEN care_updates.status = 'gone' THEN 'available' ELSE care_updates.status END`,
+       status = CASE WHEN care_updates.status IN ('gone', 'failed', 'rolled_back') THEN 'available' ELSE care_updates.status END`,
   ).bind(crypto.randomUUID(), siteId, u.type, u.slug, u.name, u.fromVersion, u.toVersion, u.risk, u.rollbackable ? 1 : 0, now, now));
   for (const o of open) if (!keep.has(key(o.type, o.slug, o.to_version))) stmts.push(db.prepare(`UPDATE care_updates SET status = 'gone' WHERE id = ? AND status = 'available'`).bind(o.id));
   if (stmts.length) await db.batch(stmts);

@@ -24,6 +24,12 @@ export function riskLabel(u: CareUpdateView, now: Date, zone: string): string {
   return u.needsTick ? `${label} · needs your OK` : label;
 }
 
+/** "failed last time on 9 Dec" (the day in the zone) for an update a run failed or rolled back before; empty when it never did. */
+export function lastFailedLabel(u: Pick<CareUpdateView, "lastFailedAt">, zone: string): string {
+  const at = u.lastFailedAt ? Date.parse(u.lastFailedAt) : NaN;
+  return Number.isFinite(at) ? `failed last time on ${dayIn(at, zone)}` : "";
+}
+
 const RUN: Record<CareRunView["status"], string> = {
   queued: "Waiting for the helper to start",
   running: "Updating now",

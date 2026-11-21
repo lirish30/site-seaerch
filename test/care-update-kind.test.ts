@@ -137,12 +137,14 @@ describe("crash repair", () => {
     expect(await tasksOf(c)).toHaveLength(1);
   });
 
-  it("an incident that was open before the run does not get a task from it", async () => {
+  it("an incident that was open before the run, with no task, gets its task and the new failure's sentence (I6)", async () => {
     const c = await setup();
-    await openIncident(env.DB, { siteId: c.site.id, businessId: c.businessId, kind: "update_failed", detail: "update failed on the Mac helper", now: "2020-01-01T00:00:00.000Z" });
+    await openIncident(env.DB, { siteId: c.site.id, businessId: c.businessId, kind: "update_failed", detail: "a page looks different after updates: /", now: "2020-01-01T00:00:00.000Z" });
     const run = await queue(c);
     await applyResult(run, { steps: await stepsFor(run, "failed"), pages: [] });
-    expect(await tasksOf(c)).toEqual([]);
+    expect((await openIncidents(c)).map((i) => i.detail)).toEqual(["update failed on the Mac helper"]);
+    expect(await tasksOf(c)).toHaveLength(1);
+    expect((await tasksOf(c))[0].periodKey).toBe((await openIncidents(c))[0].id);
   });
 
   it("applying twice with the run forced back to running leaves one incident, one task and one set of page checks", async () => {
@@ -242,7 +244,8 @@ describe("apply", () => {
     const c = await setup();
     const run = await queue(c);
     const steps = [{ id: (await payloadOf(run)).updates[0].id, outcome: "rolled_back", note: "the site broke after this update" }, { id: (await payloadOf(run)).updates[1].id, outcome: "rolled_back", note: "x" }];
-    const o = { steps, rolledBack: true, pages: [page({ verdict: "broken", after: { status: 500, fatal: true, forms: 0 } }), page({ path: "/contact" })] };
+    // `after` is the read made once the old code was back: the page came back.
+    const o = { steps, rolledBack: true, pages: [page({ verdict: "broken", after: { status: 200, fatal: false, forms: 1 } }), page({ path: "/contact" })] };
     await applyResult(run, o);
     expect(await getRun(env.DB, run.id)).toMatchObject({ status: "rolled_back" });
     expect(await statuses(c.site.id)).toEqual([["akismet", "rolled_back"], ["yoast", "rolled_back"]]);
@@ -299,7 +302,7 @@ describe("apply", () => {
     expect((await tasksOf(c))[0].description).not.toContain("IGNORE");
   });
 
-  it("a later ok run on the site closes the incident and leaves the task", async () => {
+  it("a later ok run on the site does NOT close the incident: only Logan does (I6)", async () => {
     const c = await setup();
     const bad = await queue(c);
     await applyResult(bad, { steps: (await stepsFor(bad, "failed")), pages: [] });
@@ -308,8 +311,51 @@ describe("apply", () => {
     const good = await queue(c, { updates: (await availableFor(env.DB, c.site.id)).filter((u) => u.slug === "later") });
     await applyResult(good, { steps: await stepsFor(good), pages: [page()] });
     expect(await getRun(env.DB, good.id)).toMatchObject({ status: "ok" });
-    expect((await openIncidents(c))[0].closed_at).not.toBeNull();
+    expect((await openIncidents(c))[0].closed_at).toBeNull();
     expect(await tasksOf(c)).toHaveLength(1);
+  });
+
+  it("a later, different failure replaces the open incident's sentence and adds no second task (I6)", async () => {
+    const c = await setup();
+    const one = await queue(c);
+    await applyResult(one, { steps: await stepsFor(one, "failed"), pages: [] });
+    expect((await openIncidents(c))[0].detail).toBe("update failed on the Mac helper");
+    await upsertSeen(env.DB, c.site.id, [{ type: "plugin", slug: "later", name: "later", fromVersion: "1", toVersion: "2", risk: "minor", rollbackable: true }], T1);
+    const two = await queue(c, { updates: (await availableFor(env.DB, c.site.id)).filter((u) => u.slug === "later") });
+    const [u] = (await payloadOf(two)).updates;
+    await applyResult(two, { steps: [{ id: u.id, outcome: "rollback_failed", note: "" }], rolledBack: false, pages: [page({ verdict: "broken", after: { status: 500, fatal: false, forms: 0 } })] });
+    const inc = await openIncidents(c);
+    expect(inc).toHaveLength(1);
+    expect(inc[0].detail).toBe("rollback failed for later: restore from siteline-backups/ace.com-x.sql.gz");
+    expect(await tasksOf(c)).toHaveLength(1);
+  });
+
+  it("rolled back with a page still broken after the put-back names the page and the backup (I7)", async () => {
+    const c = await setup();
+    const run = await queue(c);
+    const o = { steps: await stepsFor(run, "rolled_back"), rolledBack: true, pages: [page(), page({ path: "/contact", verdict: "broken", after: { status: 500, fatal: false, forms: 0 } })] };
+    await applyResult(run, o);
+    expect(await getRun(env.DB, run.id)).toMatchObject({ status: "rolled_back" });
+    const d = (await openIncidents(c))[0].detail;
+    expect(d).toBe("rolled back but /contact is still broken: restore from siteline-backups/ace.com-x.sql.gz");
+    for (const after of [{ status: null, fatal: false, forms: 0 }, { status: 404, fatal: false, forms: 0 }, { status: 410, fatal: false, forms: 0 }, { status: 200, fatal: true, forms: 0 }]) {
+      const c2 = await setup();
+      const r2 = await queue(c2);
+      await applyResult(r2, { steps: await stepsFor(r2, "rolled_back"), rolledBack: true, pages: [page({ verdict: "broken", after })], backupFile: null });
+      expect((await openIncidents(c2))[0].detail).toBe("rolled back but / is still broken: no backup file was recorded");
+    }
+    expect(incidentView({ id: "i", siteId: c.site.id, businessId: c.businessId, kind: "update_failed", openedAt: T0, closedAt: null, detail: d }, c.site, new Date(T1), "America/Los_Angeles").detail).toBe(d);
+  });
+
+  it("an update put back only because another failed waits again; the culprit is failed and stamped (I3)", async () => {
+    const c = await setup();
+    const run = await queue(c);
+    const [a, b] = (await payloadOf(run)).updates;
+    await applyResult(run, { steps: [{ id: a.id, outcome: "rolled_back", note: "put back because another update failed" }, { id: b.id, outcome: "failed", note: "wp-cli refused the update: x" }], rolledBack: true, pages: [page(), page({ path: "/contact" })] });
+    expect(await statuses(c.site.id)).toEqual([["akismet", "available"], ["yoast", "failed"]]);
+    const rows = (await env.DB.prepare(`SELECT slug, last_failed_at FROM care_updates WHERE site_id = ? ORDER BY slug`).bind(c.site.id).all<{ slug: string; last_failed_at: string | null }>()).results;
+    expect(rows[0].last_failed_at).toBeNull();
+    expect(rows[1].last_failed_at).toEqual(expect.any(String));
   });
 
   it("an incident already open gets no second task from the next failure", async () => {

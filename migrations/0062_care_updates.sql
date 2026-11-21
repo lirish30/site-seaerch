@@ -53,6 +53,8 @@ CREATE TABLE care_updates (
   first_seen_at TEXT NOT NULL,
   last_seen_at TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'available' CHECK (status IN ('available', 'queued', 'applied', 'failed', 'rolled_back', 'gone')),
+  -- When a run last marked this update failed or rolled back. Kept when the next inventory makes it available again, so it needs Logan's tick (and the board says so).
+  last_failed_at TEXT,
   UNIQUE (site_id, type, slug, to_version)
 );
 CREATE INDEX idx_care_updates_site ON care_updates(site_id, status);

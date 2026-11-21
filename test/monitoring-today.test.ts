@@ -52,6 +52,13 @@ describe("site_incident from Care updates", () => {
     expect(await rows()).toEqual([expect.objectContaining({ kind: "site_incident", reason: "updates broke ace.com: rolled back", priority: 85 })]);
   });
 
+  it("a site still broken after its rollback says so (I7)", async () => {
+    const s = await seedClient();
+    await run(s.site!, "rolled_back");
+    await openIncident(env.DB, { siteId: s.site!.id, businessId: s.businessId, kind: "update_failed", detail: "rolled back but /contact is still broken: restore from siteline-backups/ace.com-x.sql.gz", now: ago(MIN) });
+    expect(await rows()).toEqual([expect.objectContaining({ reason: "ace.com is still broken after rollback", priority: 85 })]);
+  });
+
   it("an update_failed without a rollback says the updates need a look", async () => {
     const s = await seedClient();
     await run(s.site!, "failed");

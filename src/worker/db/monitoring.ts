@@ -149,11 +149,12 @@ export async function monitoredSites(db: D1Database, limit: number): Promise<Sit
  * Closes, silently (no activity line: nothing came back, the watching just stopped), every open incident whose site is not watched any more: Care ended, the switch is off, the address
  * was cleared, the site was archived or marked test. One statement, so it is safe to run on every tick and when two runs overlap; an incident of a watched site is never touched.
  * `siteId` narrows it to one site (the switch route). Returns how many incidents it closed.
+ * Only the watching kinds (down, domain_expiring, cert_expiring) close this way: an `update_failed` is about a site an update touched, and only Logan closes it.
  */
 export async function closeUnmonitoredIncidents(db: D1Database, now: string, siteId?: string): Promise<number> {
   const res = await db.prepare(
     `UPDATE site_incidents SET closed_at = ?
-     WHERE closed_at IS NULL ${siteId === undefined ? "" : "AND site_id = ?"}
+     WHERE closed_at IS NULL AND kind IN ('down', 'domain_expiring', 'cert_expiring') ${siteId === undefined ? "" : "AND site_id = ?"}
        AND NOT EXISTS (SELECT 1 FROM sites s JOIN businesses b ON b.id = s.business_id WHERE s.id = site_incidents.site_id AND ${monitoredSiteSql("s", "b")})`,
   ).bind(...(siteId === undefined ? [now] : [now, siteId])).run();
   return res.meta.changes ?? 0;

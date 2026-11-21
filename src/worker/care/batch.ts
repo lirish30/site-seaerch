@@ -41,6 +41,27 @@ export class CareRunRefused extends Error {
 const oneLine = (s: string, max = 100): string => s.replace(/\s+/g, " ").trim().slice(0, max);
 const plural = (n: number, w: string): string => `${n} ${w}${n === 1 ? "" : "s"}`;
 
+/** Sites with an open `update_failed` incident: a weekly batch leaves them out until Logan closes it (a single-site run may still target one). */
+async function sitesWithOpenFailure(db: D1Database): Promise<Set<string>> {
+  const rows = (await db.prepare(`SELECT DISTINCT site_id FROM site_incidents WHERE kind = 'update_failed' AND closed_at IS NULL`).all<{ site_id: string }>()).results;
+  return new Set(rows.map((r) => r.site_id));
+}
+
+/**
+ * A new week's batch replaces what is still open of earlier weeks: every pending `care.updates` approval of an earlier weekly batch is rejected with "replaced by this week's batch",
+ * and an earlier weekly batch that is not settled is cancelled. Idempotent.
+ */
+async function replaceEarlierWeeks(db: D1Database, batch: CareBatch, now: string): Promise<void> {
+  const old = (await db.prepare(`SELECT id, status FROM care_batches WHERE kind = 'weekly' AND id <> ? AND period < ?`).bind(batch.id, batch.period).all<{ id: string; status: string }>()).results;
+  for (const b of old) {
+    await db.prepare(
+      `UPDATE approvals SET status = 'rejected', decided_at = ?, decision_note = ?, error = NULL WHERE kind = ? AND status = 'pending' AND json_extract(payload, '$.batchId') = ?`,
+    ).bind(now, REPLACED_NOTE, CARE_APPROVAL, b.id).run();
+    if (b.status !== "done" && b.status !== "cancelled") await setBatchStatus(db, b.id, ["inventory", "wave1", "wave2"], "cancelled", now);
+  }
+}
+export const REPLACED_NOTE = "replaced by this week's batch";
+
 // --- starting a batch ------------------------------------------------------------------------------------------------------------------------------------------------
 
 async function queueInventory(db: D1Database, site: Site, batchId: string, dedupeKey: string): Promise<boolean> {
@@ -77,9 +98,12 @@ async function beginWeekly(env: Env, now: Date, tz: string): Promise<{ batch: Ca
   const db = env.DB;
   const period = periodKey("weekly", now, tz);
   const { batch } = await ensureWeeklyBatch(db, period, now.toISOString());
+  await replaceEarlierWeeks(db, batch, now.toISOString());
   if (batch.status !== "inventory") return { batch, queued: 0 };
   let queued = 0;
+  const failing = await sitesWithOpenFailure(db);
   for (const site of await updatableSites(db, { includeTest: false })) {
+    if (failing.has(site.id)) continue; // an open update_failed: left out until Logan closes it
     const key = `care.inventory:${site.id}:${period}`;
     if (await db.prepare(`SELECT 1 AS x FROM helper_jobs WHERE kind = ? AND dedupe_key = ? LIMIT 1`).bind(CARE_INVENTORY, key).first()) continue;
     try {
@@ -230,7 +254,9 @@ async function brokenComponents(db: D1Database, runs: CareRun[]): Promise<Set<st
 
 async function planWave(env: Env, batch: CareBatch, wave: 0 | 1 | 2, now: Date): Promise<Plan> {
   const db = env.DB;
-  const eligible = (await updatableSites(db, { includeTest: wave === 0 })).filter((s) => wave !== 0 || s.id === batch.siteId);
+  // A wave of the weekly batch leaves out a site with an open update_failed; a single-site run is Logan's own choice and may target one.
+  const failing = wave === 0 ? new Set<string>() : await sitesWithOpenFailure(db);
+  const eligible = (await updatableSites(db, { includeTest: wave === 0 })).filter((s) => (wave === 0 ? s.id === batch.siteId : !failing.has(s.id)));
   const due: PlanSite[] = [];
   for (const site of eligible) {
     const updates = (await availableFor(db, site.id)).filter((u) => isDue(u, now));

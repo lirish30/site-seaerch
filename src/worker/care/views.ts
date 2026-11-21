@@ -14,6 +14,8 @@ import { isDue, needsTick } from "./versions";
 export interface CareUpdateView {
   id: string; type: UpdateType; slug: string; name: string; fromVersion: string; toVersion: string; risk: Risk;
   rollbackable: boolean; security: boolean; held: boolean; needsTick: boolean; due: boolean; firstSeenAt: string;
+  /** When a run last marked it failed or rolled back (null when never): the board says "failed last time on <date>". */
+  lastFailedAt: string | null;
 }
 export interface CareRunView { id: string; batchId: string; wave: 0 | 1 | 2; status: RunStatus; summary: string | null; createdAt: string; finishedAt: string | null }
 export interface CareSiteView {
@@ -34,6 +36,7 @@ export function updateView(u: CareUpdate, now: Date): CareUpdateView {
   return {
     id: u.id, type: u.type, slug: u.slug, name: u.name, fromVersion: u.fromVersion, toVersion: u.toVersion, risk: u.security ? "security" : u.risk,
     rollbackable: u.rollbackable, security: u.security, held: u.held, needsTick: needsTick(u), due: isDue(u, now), firstSeenAt: u.firstSeenAt,
+    lastFailedAt: u.lastFailedAt,
   };
 }
 

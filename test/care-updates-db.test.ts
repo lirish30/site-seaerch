@@ -67,6 +67,31 @@ describe("upsertSeen", () => {
   });
 });
 
+describe("upsertSeen and a failed update (I3)", () => {
+  it("a failed or rolled back update still seen at the same version is available again, keeping last_failed_at", async () => {
+    const s = await seedClient();
+    await upsertSeen(env.DB, s.site!.id, [seen(), seen({ slug: "yoast" }), seen({ slug: "other" })], T0);
+    const [a, o, y] = await availableFor(env.DB, s.site!.id);
+    await env.DB.batch([
+      env.DB.prepare(`UPDATE care_updates SET status = 'failed', last_failed_at = ? WHERE id = ?`).bind(T1, a.id),
+      env.DB.prepare(`UPDATE care_updates SET status = 'rolled_back', last_failed_at = ? WHERE id = ?`).bind(T1, y.id),
+      env.DB.prepare(`UPDATE care_updates SET status = 'applied' WHERE id = ?`).bind(o.id),
+    ]);
+    await upsertSeen(env.DB, s.site!.id, [seen(), seen({ slug: "yoast" }), seen({ slug: "other" })], T2);
+    const back = await availableFor(env.DB, s.site!.id);
+    expect(back.map((u) => [u.slug, u.status, u.lastFailedAt])).toEqual([["akismet", "available", T1], ["yoast", "available", T1]]);
+    expect((await env.DB.prepare(`SELECT status FROM care_updates WHERE id = ?`).bind(o.id).first<{ status: string }>())!.status).toBe("applied");
+  });
+  it("a failed update the next read no longer sees stays failed (a newer version is its own row)", async () => {
+    const s = await seedClient();
+    await upsertSeen(env.DB, s.site!.id, [seen()], T0);
+    const [a] = await availableFor(env.DB, s.site!.id);
+    await env.DB.prepare(`UPDATE care_updates SET status = 'failed', last_failed_at = ? WHERE id = ?`).bind(T1, a.id).run();
+    await upsertSeen(env.DB, s.site!.id, [seen({ toVersion: "5.2" })], T2);
+    expect((await rows(s.site!.id)).map((r) => [r.to_version, r.status])).toEqual([["5.1", "failed"], ["5.2", "available"]]);
+  });
+});
+
 describe("batches and runs", () => {
   it("ensureWeeklyBatch twice for one period is created then not, and single batches are separate", async () => {
     const a = await ensureWeeklyBatch(env.DB, "2027-W09", T0);
