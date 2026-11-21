@@ -282,6 +282,69 @@ describe("waves", () => {
   });
 });
 
+describe("fix round 1", () => {
+  const dropCanary = async (batchId: string, siteId: string) => {
+    const run = (await runsFor(env.DB, batchId)).find((r) => r.siteId === siteId)!;
+    await setRunStatus(env.DB, run.id, ["queued", "running"], "dropped", { summary: "x" }, daysAgo(0));
+    await env.DB.prepare(`UPDATE helper_jobs SET status = 'done' WHERE id = ?`).bind(run.helperJobId).run();
+    return run;
+  };
+
+  it("a group whose only canary was dropped is absent from wave 2 and named in the preview; another group goes ahead", async () => {
+    await mk("a.com", 7000, { group: "brochure" }); const b = await mk("b.com", 5000, { group: "brochure" });
+    await mk("c.com", 9000, { group: "booking" }); await mk("d.com", 5000, { group: "booking" });
+    const batch = await inventoried();
+    await approve(env, (await approvalsOf())[0].id);
+    const runs = await runsFor(env.DB, batch.id);
+    await dropCanary(batch.id, b.siteId);
+    await finishRun(runs.find((r) => r.siteId !== b.siteId)!.id, "ok");
+    const all = await approvalsOf();
+    expect(all).toHaveLength(2);
+    expect(slugsIn(all[1])).toEqual([["c.com", ["akismet"]]]);
+    expect(all[1].preview).toContain("waits until next week: no canary ran for the brochure sites");
+  });
+
+  it("when every group's canary was dropped there is no wave 2 and the batch is done", async () => {
+    await mk("a.com", 7000); const b = await mk("b.com", 5000);
+    const batch = await inventoried();
+    await approve(env, (await approvalsOf())[0].id);
+    await dropCanary(batch.id, b.siteId);
+    await onRunDone(env, batch.id);
+    expect(await approvalsOf()).toHaveLength(1);
+    expect((await getBatch(env.DB, batch.id))!.status).toBe("done");
+  });
+
+  it("a group with one dropped and one ok canary goes ahead", async () => {
+    const sites: Site[] = [];
+    for (const [d, c] of [["a.com", 5000], ["b.com", 5100], ["c.com", 5200], ["d.com", 5300], ["e.com", 5400], ["f.com", 5500], ["g.com", 9000]] as const) sites.push(await mk(d, c));
+    const batch = await inventoried(); // six or more in a group: two canaries (a, b)
+    await approve(env, (await approvalsOf())[0].id);
+    await dropCanary(batch.id, sites[0].siteId);
+    await finishRun((await runsFor(env.DB, batch.id)).find((r) => r.siteId === sites[1].siteId)!.id, "ok");
+    const w2 = (await approvalsOf())[1];
+    expect(w2.payload.sites.map((s) => s.domain).sort()).toEqual(["c.com", "d.com", "e.com", "f.com", "g.com"]);
+  });
+
+  it("a site in a rejected wave-2 approval is not offered again", async () => {
+    await mk("a.com", 7000, { group: "brochure" }); const b = await mk("b.com", 5000, { group: "brochure" });
+    const batch = await inventoried();
+    await approve(env, (await approvalsOf())[0].id);
+    await finishRun((await runsFor(env.DB, batch.id))[0].id, "ok");
+    const w2 = (await approvalsOf())[1];
+    expect(await reject(env.DB, w2.id)).toBe(true);
+    await onRunDone(env, batch.id);
+    await careBackstop(env, new Date());
+    expect(await approvalsOf()).toHaveLength(2);
+    expect((await getBatch(env.DB, batch.id))!.status).toBe("done");
+    void b;
+  });
+
+  it("Tuesday evening in Los Angeles is not Wednesday", async () => {
+    await mk("a.com", 5000);
+    expect(await startWeeklyBatch(env, new Date("2026-12-02T03:00:00Z"))).toEqual({ batch: null, queued: 0 });
+  });
+});
+
 describe("executing an approval later", () => {
   /** Four sites: a canary that passes, then a wave 2 for the other three. */
   async function wave2() {
