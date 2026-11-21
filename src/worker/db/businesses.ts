@@ -117,7 +117,7 @@ export type TodayCandidate = Business & { latest_draft_at: string | null; latest
 
 /**
  * Non-archived leads that could produce a Today item as of `nowIso`, from one query: a due follow-up, a new/reviewed lead with a draft,
- * a contacted/replied lead with a deal value, a starred open lead, a quick-scanned lead whose latest audit scores at least `minQuickScore`, a sent proposal waiting, an open real onboarding, a real live project, an open invoice or billing hold, or an open incident on a real, live site.
+ * a contacted/replied lead with a deal value, a starred open lead, a quick-scanned lead whose latest audit scores at least `minQuickScore`, a sent proposal waiting, an open real onboarding, a real live project, an open invoice or billing hold, or an open incident on a real, live site with an address.
  * The draft time and latest score are sub-selects so no per-lead query is needed; the caller applies the finer rules.
  */
 export async function listTodayCandidates(db: D1Database, nowIso: string, minQuickScore: number): Promise<TodayCandidate[]> {
@@ -135,7 +135,7 @@ export async function listTodayCandidates(db: D1Database, nowIso: string, minQui
       OR EXISTS (SELECT 1 FROM projects pr WHERE pr.business_id = businesses.id AND ${liveProjectSql("pr")} AND pr.test = 0)
       OR EXISTS (SELECT 1 FROM invoices iv WHERE iv.business_id = businesses.id AND iv.test = 0 AND iv.status IN ('draft','open','failed'))
       OR EXISTS (SELECT 1 FROM billing_holds bh WHERE bh.business_id = businesses.id AND bh.lifted_at IS NULL)
-      OR EXISTS (SELECT 1 FROM site_incidents si JOIN sites st ON st.id = si.site_id WHERE si.business_id = businesses.id AND si.closed_at IS NULL AND st.test = 0 AND st.archived_at IS NULL)
+      OR EXISTS (SELECT 1 FROM site_incidents si JOIN sites st ON st.id = si.site_id WHERE si.business_id = businesses.id AND si.closed_at IS NULL AND st.test = 0 AND st.archived_at IS NULL AND st.url IS NOT NULL AND st.url <> '')
     ) ORDER BY created_at, id`;
   const res = (await db.prepare(sql).bind(nowIso, minQuickScore).all<BusinessRow & { latest_draft_at: string | null; latest_score: number | null }>()).results;
   return res.map((r) => ({ ...fromBusinessRow(r), latest_draft_at: r.latest_draft_at ?? null, latest_score: r.latest_score ?? null }));

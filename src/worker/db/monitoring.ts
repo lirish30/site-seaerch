@@ -60,9 +60,9 @@ export async function closeIncident(db: D1Database, siteId: string, kind: Incide
   return row ? toIncident(row) : null;
 }
 
-/** Incidents newest first (default 50). Test clients and test sites are left out. `open` true keeps the ones still open, false the closed ones. */
+/** Incidents newest first (default 50). Test clients, test sites, archived sites and sites with no address are left out (the same sites the Care board shows), so a limit counts only what is shown. `open` true keeps the ones still open, false the closed ones. */
 export async function listIncidents(db: D1Database, o: { businessId?: string; open?: boolean; limit?: number }): Promise<Incident[]> {
-  const where: string[] = [`s.test = 0`, `NOT ${testClientSql("b")}`], binds: unknown[] = [];
+  const where: string[] = [`s.test = 0`, `s.archived_at IS NULL`, `s.url IS NOT NULL`, `s.url <> ''`, `NOT ${testClientSql("b")}`], binds: unknown[] = [];
   if (o.businessId !== undefined) { where.push("i.business_id = ?"); binds.push(o.businessId); }
   if (o.open === true) where.push("i.closed_at IS NULL");
   if (o.open === false) where.push("i.closed_at IS NOT NULL");

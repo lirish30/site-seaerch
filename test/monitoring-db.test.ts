@@ -102,6 +102,36 @@ describe("incidents", () => {
   });
 });
 
+describe("listIncidents and sites the owner never sees", () => {
+  it("leaves out an incident on an archived site and on a site whose address is NULL or empty, open or closed", async () => {
+    const live = await seedClient();
+    const archived = await seedClient();
+    const nulled = await seedClient();
+    const emptied = await seedClient();
+    const kept = await openIncident(env.DB, { siteId: live.site!.id, businessId: live.businessId, kind: "down", detail: "HTTP 503", now: T0 });
+    for (const [c, now] of [[archived, T1], [nulled, T2], [emptied, T3]] as const) await openIncident(env.DB, { siteId: c.site!.id, businessId: c.businessId, kind: "down", detail: "HTTP 503", now });
+    await closeIncident(env.DB, emptied.site!.id, "down", T4);
+    await archiveSite(env.DB, archived.site!.id, T4);
+    await env.DB.prepare(`UPDATE sites SET url = NULL WHERE id = ?`).bind(nulled.site!.id).run();
+    await env.DB.prepare(`UPDATE sites SET url = '' WHERE id = ?`).bind(emptied.site!.id).run();
+    expect((await listIncidents(env.DB, {})).map((i) => i.id)).toEqual([kept.incident.id]);
+    expect((await listIncidents(env.DB, { open: true })).map((i) => i.id)).toEqual([kept.incident.id]);
+    expect((await listIncidents(env.DB, { open: false }))).toEqual([]);
+    for (const c of [archived, nulled, emptied]) expect(await listIncidents(env.DB, { businessId: c.businessId })).toEqual([]);
+    // They are still in the table: only the owner's views leave them out.
+    expect(await count(`SELECT COUNT(*) AS n FROM site_incidents`)).toBe(4);
+  });
+
+  it("a limit counts only the incidents that are shown", async () => {
+    const live = await seedClient();
+    const gone = await seedClient();
+    const kept = await openIncident(env.DB, { siteId: live.site!.id, businessId: live.businessId, kind: "down", detail: "HTTP 503", now: T0 });
+    await openIncident(env.DB, { siteId: gone.site!.id, businessId: gone.businessId, kind: "down", detail: "HTTP 503", now: T2 }); // newer, so it would take the one place
+    await archiveSite(env.DB, gone.site!.id, T3);
+    expect((await listIncidents(env.DB, { limit: 1 })).map((i) => i.id)).toEqual([kept.incident.id]);
+  });
+});
+
 describe("site fields", () => {
   it("monitoring defaults off and setMonitoring flips it; setDomainExpiry stores the date and when it was checked", async () => {
     const s = await seedClient();

@@ -252,6 +252,26 @@ describe("GET /incidents", () => {
     expect((await json<{ incidents: any[] }>("GET", `/incidents?open=1&businessId=${a.businessId}`)).incidents.map((i) => i.siteId)).toEqual([a.site!.id]);
   });
 
+  it("leaves out an open incident on a site with no address (NULL or empty) or an archived site", async () => {
+    const shown = await careClient({ name: "Shown" });
+    await openIncident(env.DB, { siteId: shown.site!.id, businessId: shown.businessId, kind: "down", detail: "HTTP 503", now: ago(DAY) });
+    const hidden: string[] = [];
+    for (const url of [null, ""]) {
+      const c = await careClient({ name: `No address ${url === null ? "null" : "empty"}` });
+      await openIncident(env.DB, { siteId: c.site!.id, businessId: c.businessId, kind: "down", detail: "HTTP 502", now: ago(DAY) });
+      await env.DB.prepare(`UPDATE sites SET url = ? WHERE id = ?`).bind(url, c.site!.id).run();
+      hidden.push(c.businessId);
+    }
+    const arch = await careClient({ name: "Archived" });
+    await openIncident(env.DB, { siteId: arch.site!.id, businessId: arch.businessId, kind: "down", detail: "HTTP 502", now: ago(DAY) });
+    await archiveSite(env.DB, arch.site!.id, ago(0));
+    hidden.push(arch.businessId);
+    for (const path of ["/incidents", "/incidents?open=1"]) {
+      expect((await json<{ incidents: any[] }>("GET", path)).incidents.map((i) => i.siteId), path).toEqual([shown.site!.id]);
+    }
+    for (const id of hidden) expect((await json<{ incidents: any[] }>("GET", `/incidents?businessId=${id}`)).incidents).toEqual([]);
+  });
+
   it("shows a closed domain incident with a fixed phrase, never a number from the renewed expiry date or its stored text", async () => {
     const s = await careClient();
     await setDomainExpiry(env.DB, s.site!.id, "2028-01-07", ago(0)); // renewed: about 340 days away

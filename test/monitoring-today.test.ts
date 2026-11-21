@@ -197,4 +197,15 @@ describe("site_incident", () => {
     await down(testClient.site!, 47 * MIN);
     expect(await rows()).toEqual([]);
   });
+
+  it("a client with no project whose only incident is on a site with no address (NULL or empty) gets no row", async () => {
+    for (const url of [null, ""]) {
+      const c = await seedClient({ project: false });
+      await down(c.site!, 47 * MIN);
+      await env.DB.prepare(`UPDATE sites SET url = ? WHERE id = ?`).bind(url, c.site!.id).run();
+    }
+    const shown = await seedClient({ project: false });
+    await down(shown.site!, 47 * MIN);
+    expect((await rows()).map((i) => i.businessId)).toEqual([shown.businessId]);
+  });
 });

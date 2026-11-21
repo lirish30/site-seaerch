@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { closeIncident, insertCheck, openIncident } from "../src/worker/db/monitoring";
-import { ACCESS_KEYS, setAccess } from "../src/worker/db/sites";
+import { ACCESS_KEYS, archiveSite, setAccess } from "../src/worker/db/sites";
 import { seedClient } from "./fixtures/clients";
 import { resetProjectWork } from "./fixtures/projects";
 import { actionCount, mcp, ok, tool } from "./fixtures/mcp";
@@ -112,6 +112,40 @@ describe("list_incidents", () => {
     const all = (await ok<Incidents>("list_incidents", {})).incidents;
     expect(all.map((i) => i.clientId)).not.toContain(rehearsal.businessId);
     expect((await ok<Incidents>("list_incidents", { clientId: rehearsal.businessId })).incidents).toEqual([]);
+  });
+
+  // A site whose address was cleared or that was archived after its incident opened: the incident stays in the table, but the owner's screens and the agent never see it.
+  it.each([["no address (NULL)", null], ["an empty address", ""]])("leaves out an open incident on a site with %s, and the overview agrees", async (_what, url) => {
+    const { sick } = await seedFleet();
+    const other = await careClient("Other Plumbing");
+    await openIncident(env.DB, { siteId: other.site!.id, businessId: other.businessId, kind: "down", detail: "HTTP 502", now: iso(HOUR) });
+    await env.DB.prepare(`UPDATE sites SET url = ? WHERE id = ?`).bind(url, other.site!.id).run();
+    const { incidents } = await ok<Incidents>("list_incidents", { open: true });
+    expect(incidents.map((i) => i.clientId)).toEqual([sick.businessId]);
+    expect((await ok<Incidents>("list_incidents", { clientId: other.businessId })).incidents).toEqual([]);
+    const { clients } = await ok<Overview>("get_care_overview", {});
+    expect(clients.reduce((n, c) => n + c.openIncidents, 0)).toBe(incidents.length);
+    expect(clients.find((c) => c.clientId === other.businessId)?.openIncidents ?? 0).toBe(0);
+  });
+
+  it("leaves out an open incident on an archived site, and the overview agrees", async () => {
+    const { sick } = await seedFleet();
+    const other = await careClient("Archived Plumbing");
+    await openIncident(env.DB, { siteId: other.site!.id, businessId: other.businessId, kind: "down", detail: "HTTP 502", now: iso(HOUR) });
+    await archiveSite(env.DB, other.site!.id, iso(0));
+    const { incidents } = await ok<Incidents>("list_incidents", {});
+    expect(incidents.map((i) => i.clientId)).toEqual([sick.businessId]);
+    expect((await ok<Incidents>("list_incidents", { clientId: other.businessId })).incidents).toEqual([]);
+    const { clients } = await ok<Overview>("get_care_overview", {});
+    expect(clients.reduce((n, c) => n + c.openIncidents, 0)).toBe(1);
+  });
+
+  it("a hostile client id is an empty list and is not echoed", async () => {
+    await seedFleet();
+    const r = await tool("list_incidents", { clientId: "' OR 1=1 --" });
+    expect(r.isError).toBe(false);
+    expect(JSON.parse(r.text)).toEqual({ incidents: [] });
+    expect(r.text).not.toContain("OR 1=1");
   });
 
   it("an unknown client id is an empty list and the id is not echoed", async () => {
