@@ -9,7 +9,7 @@ import { InvalidHelperJobError, enqueueHelperJob } from "../helper/jobs";
 import { HelperRefused, registerHelperKind, type HelperKindDef } from "../helper/registry";
 import { WP_ARG, SshTarget } from "./args";
 import { onRunDone } from "./batch";
-import { closeUpdateIncident, openUpdateIncident, FAILED_SENTENCE, rollbackFailedSentence, rolledBackSentence } from "./incidents";
+import { BACKUP_FAILED_SENTENCE, FAILED_SENTENCE, brokenPageSentence, closeUpdateIncident, openUpdateIncident, rollbackFailedSentence, rolledBackSentence } from "./incidents";
 import { MAX_PATHS } from "./versions";
 
 /** The helper updates one client site's plugins, themes and core over SSH: backup, page checks, the updates, a put-back when a page breaks. Only ever queued from an approved run. */
@@ -88,6 +88,8 @@ export const carePageKeys = (runId: string, i: number): { before: string; after:
   before: `care/${runId}/${i}-before.jpg`, after: `care/${runId}/${i}-after.jpg`, diff: `care/${runId}/${i}-diff.jpg`,
 });
 
+const EXPIRED_SUMMARY = "your Mac helper didn't pick this up in time";
+const BACKUP_NOTE = "the backup failed, nothing was updated";
 const FINAL: readonly RunStatus[] = ["ok", "changed", "rolled_back", "failed", "dropped"];
 const OPEN: RunStatus[] = ["queued", "running"];
 
@@ -149,7 +151,8 @@ const careUpdate: HelperKindDef<CareUpdatePayload, CareUpdateResult> = {
     const db = env.DB;
     const run = await getRun(db, p.runId);
     if (!run || run.siteId !== p.siteId) throw new HelperRefused("that update run is gone");
-    if (run.status === "dropped") throw new HelperRefused("that update run was dropped, so its result is not taken");
+    // A run the helper's own result dropped (nothing happened) is a replay; one that expired or was dropped at queue time is refused.
+    if (run.status === "dropped" && (run.summary === EXPIRED_SUMMARY || !!run.summary?.startsWith("another update"))) throw new HelperRefused("that update run was dropped, so its result is not taken");
     if (FINAL.includes(run.status)) { await onRunDone(env, run.batchId); return; }
     const site = await getSite(db, p.siteId);
     if (!site) throw new HelperRefused("that site is gone");
@@ -186,23 +189,30 @@ const careUpdate: HelperKindDef<CareUpdatePayload, CareUpdateResult> = {
     const outcomes = p.updates.map((u) => ({ u, o: outcome.get(u.id) ?? "skipped" as const }));
     const slugsOf = (o: string) => outcomes.filter((x) => x.o === o).map((x) => x.u.slug);
     const applied = slugsOf("applied").length;
-    const bad = r.rolledBack || outcomes.some((x) => x.o === "failed" || x.o === "rollback_failed");
-    const status: RunStatus = bad ? (r.rolledBack ? "rolled_back" : "failed") : r.pages.some((pg) => pg.verdict === "changed") ? "changed" : "ok";
+    const backupFailed = r.steps.length > 0 && r.steps.every((x) => x.outcome === "skipped" && x.note.startsWith(BACKUP_NOTE));
+    const broken = r.pages.find((pg) => pg.verdict === "broken");
+    const stepBad = outcomes.some((x) => x.o === "failed" || x.o === "rollback_failed");
+    const status: RunStatus = r.rolledBack ? "rolled_back"
+      : stepBad || broken || backupFailed ? "failed"
+      : r.pages.some((pg) => pg.verdict === "changed") ? "changed"
+      : applied > 0 ? "ok" : "dropped";
     const counts = { applied, skipped: slugsOf("skipped").length, failed: slugsOf("failed").length + slugsOf("rollback_failed").length, putBack: slugsOf("rolled_back").length };
-    const summary = `${counts.applied} applied, ${counts.skipped} skipped, ${counts.failed} failed, ${counts.putBack} put back`;
+    const notes = [...new Set(r.steps.filter((x) => x.outcome === "skipped" && x.note.trim()).map((x) => x.note.trim()))].join("; ").slice(0, 300);
+    const summary = status === "dropped" ? (notes || "nothing was updated") : `${counts.applied} applied, ${counts.skipped} skipped, ${counts.failed} failed, ${counts.putBack} put back`;
     const tag = run.id.slice(0, 8);
     const domain = site.domain ?? "site";
 
     if (status === "rolled_back" || status === "failed") {
       const stuck = slugsOf("rollback_failed");
-      const broken = r.pages.find((pg) => pg.verdict === "broken");
       const putBack = slugsOf("rolled_back").concat(slugsOf("failed"));
       const why = stuck.length ? rollbackFailedSentence(stuck, r.backupFile)
         : r.rolledBack ? rolledBackSentence(putBack.length ? putBack : p.updates.map((u) => u.slug), broken ? broken.path : null)
+        : backupFailed ? BACKUP_FAILED_SENTENCE
+        : broken ? brokenPageSentence(broken.path)
         : FAILED_SENTENCE;
       await openUpdateIncident(env, run, site, why, now);
       if (status === "rolled_back") await logActivityOnce(db, site.businessId, "care_rolled_back", `${domain}: updates rolled back (run ${tag})`);
-    } else {
+    } else if (status !== "dropped") {
       if (status === "ok" && applied > 0) await closeUpdateIncident(env, site.id, now);
       if (applied > 0) await logActivityOnce(db, site.businessId, "care_updated", `${domain}: ${applied} ${applied === 1 ? "update" : "updates"} applied (run ${tag})`);
       if (status === "changed") for (const c of await pageChecksFor(db, run.id)) if (c.verdict === "changed") await setReview(db, c.id, ["none"], "pending");
@@ -217,17 +227,23 @@ const careUpdate: HelperKindDef<CareUpdatePayload, CareUpdateResult> = {
   },
 
   /** The helper gave the job up: the run failed, its updates wait again. */
-  async onFail(env, p) { await endRun(env, p, "failed", FAILED_SENTENCE); },
+  async onFail(env, p) {
+    const run = await endRun(env, p, "failed", FAILED_SENTENCE);
+    // A job that died may have half-updated the site, so it is an incident (and a fix task) like any failed run.
+    const site = run && (await getSite(env.DB, p.siteId));
+    if (run && site) await openUpdateIncident(env, run, site, FAILED_SENTENCE, new Date());
+  },
   /** Nobody picked the job up in time. */
-  async onExpire(env, p) { await endRun(env, p, "dropped", "your Mac helper didn't pick this up in time"); },
+  async onExpire(env, p) { await endRun(env, p, "dropped", EXPIRED_SUMMARY); },
 };
 
-async function endRun(env: Env, p: CareUpdatePayload, status: "failed" | "dropped", summary: string): Promise<void> {
+async function endRun(env: Env, p: CareUpdatePayload, status: "failed" | "dropped", summary: string): Promise<CareRun | null> {
   const run = await getRun(env.DB, p.runId);
-  if (!run) return;
-  if (!(await setRunStatus(env.DB, run.id, OPEN, status, { summary }, new Date().toISOString()))) return;
+  if (!run) return null;
+  if (!(await setRunStatus(env.DB, run.id, OPEN, status, { summary }, new Date().toISOString()))) return null;
   await moveQueued(env, p.siteId, () => "available", p.updates.map((u) => u.id));
   await onRunDone(env, run.batchId);
+  return run;
 }
 
 registerHelperKind(careUpdate);

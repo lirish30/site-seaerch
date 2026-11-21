@@ -268,14 +268,36 @@ describe("apply", () => {
     expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM tasks WHERE cadence_key = 'CARE-5'`).first<{ n: number }>())!.n).toBe(0);
   });
 
-  it("an all-skipped result does not close an open incident", async () => {
+  it("an all-skipped result is dropped, keeps the notes, opens no incident and does not close an open one", async () => {
     const c = await setup();
     await openIncident(env.DB, { siteId: c.site.id, businessId: c.businessId, kind: "update_failed", detail: "update failed on the Mac helper", now: T0 });
     const run = await queue(c);
-    await applyResult(run, { steps: await stepsFor(run, "skipped", "the backup failed, nothing was updated"), pages: [], backupFile: null });
-    expect((await listIncidents(env.DB, {})).length).toBe(1);
+    await applyResult(run, { steps: await stepsFor(run, "skipped", "changed by hand since the plan"), pages: [], backupFile: null });
+    expect(await getRun(env.DB, run.id)).toMatchObject({ status: "dropped", summary: "changed by hand since the plan" });
+    expect(await openIncidents(c)).toHaveLength(1);
     expect((await openIncidents(c))[0].closed_at).toBeNull();
+    expect(await tasksOf(c)).toEqual([]);
     expect(await statuses(c.site.id)).toEqual([["akismet", "available"], ["yoast", "available"]]);
+    await applyResult(run, { steps: await stepsFor(run, "skipped", "changed by hand since the plan"), pages: [], backupFile: null }); // a replay is not refused
+  });
+
+  it("a failed backup is a failed run with an incident and one task", async () => {
+    const c = await setup();
+    const run = await queue(c);
+    await applyResult(run, { steps: await stepsFor(run, "skipped", "the backup failed, nothing was updated"), pages: [], backupFile: null });
+    expect(await getRun(env.DB, run.id)).toMatchObject({ status: "failed" });
+    expect((await openIncidents(c))[0].detail).toBe("backup failed, nothing was updated");
+    expect(await tasksOf(c)).toHaveLength(1);
+    expect(await statuses(c.site.id)).toEqual([["akismet", "available"], ["yoast", "available"]]);
+  });
+
+  it("a broken page with nothing put back is a failed run naming the page", async () => {
+    const c = await setup();
+    const run = await queue(c);
+    await applyResult(run, { pages: [page(), page({ path: "/contact", verdict: "broken", after: { status: 500, fatal: true, forms: 0 } })] });
+    expect(await getRun(env.DB, run.id)).toMatchObject({ status: "failed" });
+    expect((await openIncidents(c))[0].detail).toBe("a page is broken after updates: /contact");
+    expect(await tasksOf(c)).toHaveLength(1);
   });
 
   it("refuses a picture that was never uploaded, and leaves the run running", async () => {
@@ -337,6 +359,24 @@ describe("onExpire and onFail", () => {
     await def().onFail!(env, await payloadOf(r2), "late");
     expect(await getRun(env.DB, r2.id)).toMatchObject({ status: "ok" });
     expect(await statuses(done.site.id)).toEqual([["akismet", "applied"], ["yoast", "applied"]]);
+    expect(await openIncidents(done)).toEqual([]);
+  });
+
+  it("fail opens an update_failed incident and one task; failing twice adds no second", async () => {
+    const c = await setup();
+    const run = await queue(c);
+    await def().onFail!(env, await payloadOf(run), "gave up");
+    await def().onFail!(env, await payloadOf(run), "gave up");
+    expect((await openIncidents(c)).map((i) => i.detail)).toEqual(["update failed on the Mac helper"]);
+    expect(await tasksOf(c)).toHaveLength(1);
+  });
+
+  it("expire opens no incident and no task", async () => {
+    const c = await setup();
+    const run = await queue(c);
+    await def().onExpire!(env, await payloadOf(run));
+    expect(await openIncidents(c)).toEqual([]);
+    expect(await tasksOf(c)).toEqual([]);
   });
 });
 

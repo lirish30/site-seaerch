@@ -18,6 +18,7 @@ import { SEED_SOPS } from "../sop/seeds";
 export const CARE_5_KEY = "CARE-5";
 
 export const FAILED_SENTENCE = "update failed on the Mac helper";
+export const BACKUP_FAILED_SENTENCE = "backup failed, nothing was updated";
 const NO_BACKUP = "no backup file was recorded";
 const MAX_SLUGS = 5;
 
@@ -28,13 +29,15 @@ const list = (slugs: string[]): string => {
 
 /** "updates rolled back: a, b broke /contact"; with no broken page named, "updates rolled back: a, b failed". */
 export const rolledBackSentence = (slugs: string[], path: string | null): string => `updates rolled back: ${list(slugs)} ${path === null ? "failed" : `broke ${path}`}`;
+/** "a page is broken after updates: /contact" (a page broke and nothing could be put back). */
+export const brokenPageSentence = (path: string): string => `a page is broken after updates: ${path}`;
 /** "rollback failed for a: restore from siteline-backups/x.sql.gz". */
 export const rollbackFailedSentence = (slugs: string[], backupFile: string | null): string => `rollback failed for ${list(slugs)}: ${backupFile ? `restore from ${backupFile}` : NO_BACKUP}`;
 
 const SLUGS = "[A-Za-z0-9._, +-]{1,300}";
 /** Every sentence an `update_failed` incident may carry. `incidentView` shows nothing else. */
 export const UPDATE_DETAIL = new RegExp(
-  `^(updates rolled back: ${SLUGS}( broke \\/[A-Za-z0-9._~\\/%-]{0,200}| failed)|rollback failed for ${SLUGS}: (restore from [A-Za-z0-9._\\/-]{1,300}|${NO_BACKUP})|${FAILED_SENTENCE})$`,
+  `^(updates rolled back: ${SLUGS}( broke \\/[A-Za-z0-9._~\\/%-]{0,200}| failed)|rollback failed for ${SLUGS}: (restore from [A-Za-z0-9._\\/-]{1,300}|${NO_BACKUP})|${FAILED_SENTENCE}|${BACKUP_FAILED_SENTENCE}|a page is broken after updates: \\/[A-Za-z0-9._~\\/%-]{0,200})$`,
 );
 
 /** The booking zone's calendar date for `d` (YYYY-MM-DD). */
