@@ -389,11 +389,11 @@ const call = async (name: string, args: unknown) =>
   (await rpcJson("tools/call", { name, arguments: args })).result as { isError?: boolean; content: { type: string; text?: string; data?: string; mimeType?: string }[] };
 
 describe("mcp queue tools", () => {
-  it("mcp lists the task, lead and read tools", async () => {
+  it("mcp lists the task, lead, read and act tools", async () => {
     const j = await rpcJson("tools/list", {});
     expect(j.result.tools.map((t: { name: string }) => t.name).sort()).toEqual(
-      ["complete_claude_task", "get_client", "get_deal", "get_lead", "get_meeting", "get_project", "get_site", "get_timeline", "list_approvals", "list_invoices", "list_meetings",
-        "list_open_tasks", "list_projects", "next_claude_task", "propose_approval", "queue_status", "release_claude_task", "search_clients", "search_leads"],
+      ["add_note", "add_task", "add_task_comment", "complete_claude_task", "get_client", "get_deal", "get_lead", "get_meeting", "get_project", "get_site", "get_timeline", "list_approvals", "list_invoices", "list_meetings",
+        "list_open_tasks", "list_projects", "log_time", "next_claude_task", "propose_approval", "queue_status", "release_claude_task", "run_audit", "search_clients", "search_leads"],
     );
   });
 

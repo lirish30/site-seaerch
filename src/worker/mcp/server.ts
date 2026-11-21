@@ -16,6 +16,7 @@ const APP_PROPOSED = ["video.publish", "proposal.send", "onboarding.welcome", "o
 /** The kinds an agent may propose: all but those the app proposes itself. */
 const proposableKinds = () => registeredKinds().filter((k) => !APP_PROPOSED.includes(k));
 import { makeCtx } from "./tools/context";
+import { registerActTools } from "./tools/act";
 import { registerReadTools } from "./tools/read";
 import { approvalView } from "./tools/views";
 import { getBusiness } from "../db/businesses";
@@ -215,5 +216,6 @@ export function buildMcpServer(env: Env): McpServer {
   });
 
   registerReadTools(server, ctx);
+  registerActTools(server, ctx);
   return server;
 }
