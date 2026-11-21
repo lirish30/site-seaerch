@@ -123,8 +123,11 @@ export async function startSingleRun(env: Env, siteId: string, now: Date): Promi
 
 // --- reading what is open --------------------------------------------------------------------------------------------------------------------------------------------
 
-const openInventoryJobs = async (db: D1Database, batchId: string): Promise<number> =>
-  (await db.prepare(`SELECT COUNT(*) AS n FROM helper_jobs WHERE kind = ? AND status IN ('pending', 'claimed') AND json_extract(payload, '$.batchId') = ?`).bind(CARE_INVENTORY, batchId).first<{ n: number }>())!.n;
+/** Inventory jobs of the batch still open. `exceptSiteId` leaves one site's job out: the job whose result is being applied is still `claimed` until `apply` returns. */
+const openInventoryJobs = async (db: D1Database, batchId: string, exceptSiteId?: string): Promise<number> =>
+  (await db.prepare(
+    `SELECT COUNT(*) AS n FROM helper_jobs WHERE kind = ? AND status IN ('pending', 'claimed') AND json_extract(payload, '$.batchId') = ?${exceptSiteId === undefined ? "" : " AND json_extract(payload, '$.siteId') <> ?"}`,
+  ).bind(...[CARE_INVENTORY, batchId, ...(exceptSiteId === undefined ? [] : [exceptSiteId])]).first<{ n: number }>())!.n;
 
 interface WaveApproval { id: string; status: "pending" | "approved" | "rejected"; wave: number }
 const approvalsOf = async (db: D1Database, batchId: string, wave?: number): Promise<WaveApproval[]> =>
@@ -148,12 +151,13 @@ async function busy(db: D1Database, batchId: string, wave?: number): Promise<boo
 
 /**
  * A site's inventory job ended (read, failed or expired). When no inventory job of the batch is open any more, the first wave is drafted: wave 1 for a weekly batch, wave 0 for a one-site run.
- * Safe to call again (a replay, the backstop): the batch moves on once and the approval is made once.
+ * Safe to call again (a replay, the backstop): the batch moves on once and the approval is made once. A result being applied passes its own `siteId`, because its job is still claimed
+ * until `apply` returns and must not count as open.
  */
-export async function onInventoryDone(env: Env, batchId: string): Promise<void> {
+export async function onInventoryDone(env: Env, batchId: string, exceptSiteId?: string): Promise<void> {
   const batch = await getBatch(env.DB, batchId);
   if (!batch || batch.status !== "inventory") return;
-  if ((await openInventoryJobs(env.DB, batchId)) > 0) return;
+  if ((await openInventoryJobs(env.DB, batchId, exceptSiteId)) > 0) return;
   await draftWave(env, batch, batch.kind === "weekly" ? 1 : 0);
 }
 

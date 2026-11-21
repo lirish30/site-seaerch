@@ -12,7 +12,8 @@ import { archiveSite } from "../src/worker/db/sites";
 import { ensureSeedSops } from "../src/worker/db/sops";
 import { markSubscription } from "../src/worker/db/subscriptions";
 import "../src/worker/helper/kinds";
-import { getHelperJob } from "../src/worker/helper/jobs";
+import { claimHelperJob, completeHelperJob, getHelperJob } from "../src/worker/helper/jobs";
+import { createDevice } from "../src/worker/helper/auth";
 import { seedClient } from "./fixtures/clients";
 
 const WED = new Date("2026-12-02T17:00:00.000Z"); // a Wednesday in Los Angeles
@@ -509,5 +510,23 @@ describe("the daily cron", () => {
       await runScheduled(env, DAILY_CRON, WED);
       expect(await jobsOf("care.inventory")).toHaveLength(1);
     } finally { vi.restoreAllMocks(); }
+  });
+});
+
+describe("the last inventory, completed the way the helper route does it", () => {
+  it("drafts wave 1 when the last inventory job is completed, though that job is still claimed while its result is applied", async () => {
+    const a = await mk("a.com", 5000), b = await mk("b.com", 6000);
+    const { batch } = await startWeeklyBatch(env, WED);
+    const device = (await createDevice(env.DB, "Test Mac")).device.id;
+    const result = { wpVersion: "6.4", phpVersion: "8.2", core: null, plugins: [{ slug: "akismet", name: "Akismet", status: "active", version: "1.0", updateVersion: "1.1", fromWporg: true }], themes: [], activeTheme: null, dropped: 0 };
+    const first = (await claimHelperJob(env, device, new Date(), ["care.inventory"]))!;
+    const second = (await claimHelperJob(env, device, new Date(), ["care.inventory"]))!;
+    expect(await completeHelperJob(env, first.id, device, result)).toEqual({ ok: true });
+    expect(await approvalsOf()).toHaveLength(0); // the other site is still being read
+    expect((await getBatch(env.DB, batch!.id))!.status).toBe("inventory");
+    expect(await completeHelperJob(env, second.id, device, result)).toEqual({ ok: true });
+    expect((await getBatch(env.DB, batch!.id))!.status).toBe("wave1");
+    expect((await approvalsOf()).map((x) => x.title)).toEqual(["Care updates: wave 1 (1 site, 1 update)"]);
+    void a; void b;
   });
 });

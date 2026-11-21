@@ -79,7 +79,7 @@ const careInventory: HelperKindDef<CareInventoryPayload, CareInventoryResult> = 
       plugins: r.plugins.filter((i) => isActive(i.status)).map((i) => i.slug),
     });
     await upsertSeen(env.DB, site.id, seenFrom(r), now);
-    await onInventoryDone(env, p.batchId);
+    await onInventoryDone(env, p.batchId, p.siteId); // this job is still claimed until apply returns
   },
   async onFail(env, p) { await onInventoryDone(env, p.batchId); },
   async onExpire(env, p) { await onInventoryDone(env, p.batchId); },
