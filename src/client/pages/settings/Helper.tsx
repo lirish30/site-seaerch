@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { api, ApiError } from "../../api";
 import SettingsPage, { Callout, Card, Field } from "../../components/SettingsPage";
 import { helperLine, type HelperStatus } from "../../helperView";
+import { meetilyLine } from "../../meetingsView";
+import type { MeetilySyncStatus } from "../../../worker/routes/meetings";
 
 interface Device { id: string; name: string; created_at: string; last_seen_at: string | null }
 const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
@@ -9,6 +11,9 @@ const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month
 /** Settings > Mac helper: whether it is running, the Macs paired to it, and pairing a new one. A pairing token is shown once and never again. */
 export default function Helper() {
   const [status, setStatus] = useState<HelperStatus | null | false>(null);
+  const [meetily, setMeetily] = useState<MeetilySyncStatus | null | false>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState("");
   const [devices, setDevices] = useState<Device[] | null | false>(null);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -16,6 +21,7 @@ export default function Helper() {
   const [fresh, setFresh] = useState<{ name: string; token: string } | null>(null);
   const load = useCallback(() => {
     api.get<HelperStatus>("/helper/status").then(setStatus).catch(() => setStatus(false));
+    api.get<MeetilySyncStatus>("/meetings/sync-status").then(setMeetily).catch(() => setMeetily(false));
     api.get<{ devices: Device[] }>("/helper/devices").then((r) => setDevices(r.devices)).catch(() => setDevices(false));
   }, []);
   useEffect(load, [load]);
@@ -27,6 +33,15 @@ export default function Helper() {
       setFresh({ name: made.device.name, token: made.token }); setName(""); load();
     } catch (e) { setMsg(e instanceof ApiError ? e.message : "Couldn't pair that Mac."); }
     setBusy(false);
+  }
+  async function syncNow() {
+    setSyncing(true); setSyncMsg("");
+    try {
+      const r = await api.post<{ queued: boolean; reason?: "no windows" | "already queued" }>("/meetings/sync");
+      setSyncMsg(r.queued ? "Asked your Mac to look at Meetily. It runs the next time the helper checks in." : r.reason === "already queued" ? "A sync is already waiting for your Mac." : "Nothing to look for: no booked call or calendar meeting in the last three days.");
+      load();
+    } catch (e) { setSyncMsg(e instanceof ApiError ? e.message : "Couldn't ask for a sync."); }
+    setSyncing(false);
   }
   async function remove(id: string) {
     setMsg("");
@@ -40,6 +55,13 @@ export default function Helper() {
           {status === null && <p className="st-loading">Loading…</p>}
           {status === false && <Callout tone="critical" icon="alert">Couldn't load the helper's state.</Callout>}
           {status && <p>{helperLine(status)}{status.lastSeenAt ? ` Last seen ${new Date(status.lastSeenAt).toLocaleString()}.` : ""}</p>}
+        </Card>
+        <Card title="Meetily" sub="Your Mac reads Meetily's recordings and sends the ones that match a booked call or a calendar meeting. It also looks every 15 minutes by itself.">
+          {meetily === null && <p className="st-loading">Loading…</p>}
+          {meetily === false && <Callout tone="critical" icon="alert">Couldn't load Meetily's sync state.</Callout>}
+          {meetily && <p>{meetilyLine(meetily)}</p>}
+          <button type="button" className="btn" disabled={syncing} onClick={() => void syncNow()}>{syncing ? "Asking…" : "Sync now"}</button>
+          {syncMsg && <p className="help" role="status">{syncMsg}</p>}
         </Card>
         <Card title="Paired Macs" sub="Removing a Mac stops its token working at once.">
           {devices === null && <p className="st-loading">Loading…</p>}

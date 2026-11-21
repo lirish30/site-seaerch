@@ -5,6 +5,7 @@ import { useOwnerClock } from "../billingData";
 import { addressProblem, carePastDue, latestOnly, moneyLabel, problemText, renewalLabel, safeHref } from "../clientView";
 import ActivityTab from "../components/ActivityTab";
 import Icon from "../components/Icon";
+import MeetingsPanel from "../components/MeetingsPanel";
 import LinkedPanel from "../components/client/LinkedPanel";
 import SitePanel from "../components/client/SitePanel";
 import { workError } from "../workData";
@@ -150,6 +151,7 @@ export default function ClientPage() {
           </div>
 
           <div className="cl-col">
+            <MeetingsPanel businessId={b.id} />
             <section className="cl-card" aria-label="Timeline">
               <h2>Timeline</h2>
               <ActivityTab items={client.activity} userName={userName} followUp={b.follow_up_at}
