@@ -123,13 +123,16 @@ export async function proposeReportApproval(env: Env, report: CareReport): Promi
   return id;
 }
 
-/** What follows the mail: the report is `sent` (a no-op when it already is), the timeline says so once, and CARE-4's 1.2 and 1.3 are ticked on the task of the month the mail went out in. Safe to repeat. */
-async function afterMail(env: Env, report: CareReport, to: string): Promise<void> {
+/**
+ * What follows the mail: the report is `sent` (a no-op when it already is), the timeline says so once, and CARE-4's 1.2 and 1.3 are ticked on the task of the month the mail went out in. `sentAt` is when it
+ * really went (a retry passes the mail row's own time, so a retry across a month boundary neither moves `sent_at` nor ticks the next month's task). Safe to repeat.
+ */
+async function afterMail(env: Env, report: CareReport, to: string, sentAt: Date): Promise<void> {
   const db = env.DB;
-  const sentAt = getMailDeps().now();
   await markSent(db, report.id, sentAt.toISOString());
   await logActivityOnce(db, report.businessId, "care_report_sent", `${periodLabel("monthly", report.period)} report sent to ${to}${report.test ? " (test)" : ""}`);
-  await tickCare4(env, report.businessId, periodKey("monthly", sentAt, zoneOf(await getSettings(db))), ["1.2", "1.3"], sentAt);
+  const ticked = await tickCare4(env, report.businessId, periodKey("monthly", sentAt, zoneOf(await getSettings(db))), ["1.2", "1.3"], sentAt);
+  if (!ticked) console.error("care report: the monthly report task was not ticked after the mail went out");
 }
 
 const NOT_READY: Record<Exclude<CareReport["status"], "ready">, string> = {
@@ -145,16 +148,16 @@ registerHandler({
   parse: (p) => Payload.parse(p),
   /**
    * Everything is read again at approval, because days may have passed: only the report id is trusted from the payload. A mail that already went out under this approval only finishes what comes after it (marks
-   * the report sent, logs once, ticks CARE-4). Otherwise a report that is no longer `ready`, a client with no live Care project (or, for a real report, no live Care subscription), a real client now on billing hold and a
-   * link base that is not usable get nothing, and the timeline says why (that approval is then used up: it will not send that report). A mailbox that cannot send, a contact with no email and a blocked address throw,
-   * so the approval goes back to pending. The mail goes with the approval id as the once-only key; a test report goes to the owner only, with "[Test] " on the subject. CARE-4 is ticked only after the mail really went.
+   * the report sent, logs once, ticks CARE-4, from the mail's own time). Otherwise a report that is no longer `ready`, a client with no live Care project (or, for a real report, no live Care subscription) gets
+   * nothing, and the timeline says why (those cannot clear up, so that approval is used up). What can clear up throws, so the approval goes back to pending and is approved again once it does: a billing hold, a link base that
+   * is not usable, a mailbox that cannot send, a contact with no email and a blocked address. The mail goes with the approval id as the once-only key; a test report goes to the owner only, with "[Test] " on the subject. CARE-4 is ticked only after the mail really went.
    */
   async execute(env: Env, p: CareReportApprovalPayload, a: Approval) {
     const db = env.DB;
     const report = await getReport(db, p.reportId);
     if (!report) throw new Error("This report was not found.");
     const mailed = await getByApproval(db, a.id);
-    if (mailed?.status === "sent") { await afterMail(env, report, mailed.counterpart); return; } // an earlier run of this approval mailed it and something after the mail failed
+    if (mailed?.status === "sent") { await afterMail(env, report, mailed.counterpart, mailed.sent_at ? new Date(mailed.sent_at) : getMailDeps().now()); return; } // an earlier run of this approval mailed it and something after the mail failed
 
     const label = periodLabel("monthly", report.period);
     const skip = async (why: string) => { await logActivityOnce(db, report.businessId, "note", `monthly report not sent: ${label}: ${why}, so nothing was mailed`); };
@@ -163,10 +166,10 @@ registerHandler({
     if (!projectId) { await skip("the client has no live Care project"); return; }
     if (!report.test) {
       if (!(await hasLiveCareSubscription(db, report.businessId))) { await skip("the client has no live Care subscription"); return; }
-      if (await isOnHold(db, report.businessId)) { await skip("the client is on a billing hold"); return; }
+      if (await isOnHold(db, report.businessId)) throw new Error("This client is on a billing hold, so the report was not mailed. Approve it again once the hold is lifted.");
     }
     const link = reportLink(clientBase(env) ?? undefined, report.token);
-    if (!link) { await skip(NO_LINK_BASE); return; }
+    if (!link) throw new Error(`The report was not mailed: ${NO_LINK_BASE}. Approve it again once that is fixed.`);
 
     const settings = await getSettings(db);
     const mailbox = await mainMailboxProblem(env);
@@ -186,6 +189,6 @@ registerHandler({
     await sendEmail(env, {
       mailbox: "main", to, subject: `${report.test ? "[Test] " : ""}${mail.subject}`, body: mail.body, includeFooter: false, ...(report.test ? {} : { businessId: report.businessId }),
     }, { approvalId: a.id, skipLimits: true });
-    await afterMail(env, report, to);
+    await afterMail(env, report, to, getMailDeps().now());
   },
 });

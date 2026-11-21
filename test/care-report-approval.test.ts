@@ -8,7 +8,7 @@ import * as reportsDb from "../src/worker/db/careReports";
 import { getReport, insertReport, revoke, cancel, setSummary, type CareReport } from "../src/worker/db/careReports";
 import { listActivity } from "../src/worker/db/activity";
 import { addDoNotContact } from "../src/worker/db/doNotContact";
-import { placeHold } from "../src/worker/db/holds";
+import { activeHolds, liftHold, placeHold } from "../src/worker/db/holds";
 import { addCadence, setProjectStatus } from "../src/worker/db/projects";
 import { markSubscription } from "../src/worker/db/subscriptions";
 import { saveSettings } from "../src/worker/db/settings";
@@ -238,6 +238,24 @@ describe("approving a care.report", () => {
     expect(await checklist(s.project!.id)).toEqual([[false, true, true, false, false, false]]);
   });
 
+  it("a retry across a month boundary keeps the mail's own sent time and ticks the task of the month it went in, not the next month's", async () => {
+    const s = await careClient();
+    const { report, id } = await proposed(s);
+    const spy = vi.spyOn(reportsDb, "markSent").mockRejectedValueOnce(new Error("database is busy"));
+    expect(await approve(ask(), id)).toMatchObject({ ok: false });
+    spy.mockRestore();
+    expect(mail.sent).toHaveLength(1);
+    // The task of January exists too; the retry comes in January (Los Angeles), the mail went in December.
+    await generateRecurring(e, new Date("2027-01-04T14:00:00.000Z"));
+    setMailDeps({ smtp: async () => { throw new Error("must not send"); }, now: () => new Date("2027-01-04T14:00:00.000Z") });
+    expect(await approve(ask(), id)).toEqual({ ok: true });
+    expect(mail.sent).toHaveLength(1);
+    expect((await getReport(env.DB, report.id))!.sentAt).toBe("2026-12-01T17:00:00.000Z");
+    const tasks = (await listTasks(env.DB, s.project!.id)).filter((t) => t.cadenceKey === "CARE-4").sort((x, y) => x.periodKey!.localeCompare(y.periodKey!));
+    expect(tasks.map((t) => t.periodKey)).toEqual(["2026-12", "2027-01"]);
+    expect(tasks.map((t) => t.checklist.map((c) => c.done))).toEqual([[false, true, true, false, false, false], [false, false, false, false, false, false]]);
+  });
+
   it("a revoked, a cancelled and a sent report send nothing and say why on the timeline", async () => {
     const cases: [string, (id: string) => Promise<unknown>, RegExp][] = [
       ["revoked", (id) => revoke(env.DB, id, NOW.toISOString()), /taken back/],
@@ -260,16 +278,25 @@ describe("approving a care.report", () => {
     }
   });
 
-  it("a client now on billing hold gets nothing", async () => {
+  it("a client now on billing hold sends nothing and the approval stays pending, so it can be approved again once the hold is lifted", async () => {
     const s = await seedClient({ subs: CARE, invoice: { cents: 5000 } });
     await addCadence(env.DB, s.project!.id, "CARE-4");
     await generateRecurring(e, NOW);
     const { report, id } = await proposed(s);
     expect(await placeHold(env.DB, { businessId: s.businessId, invoiceId: s.invoice!.id, now: NOW.toISOString() })).toBe(true);
-    expect(await approve(ask(), id)).toEqual({ ok: true });
+    const held = await approve(ask(), id);
+    expect(held).toMatchObject({ ok: false, status: 502 });
+    expect((held as { error: string }).error).toMatch(/billing hold/);
     expect(mail.sent).toHaveLength(0);
+    expect(await approvalRow(id)).toMatchObject({ status: "pending" });
     expect((await getReport(env.DB, report.id))!.status).toBe("ready");
-    expect((await refusals(s.businessId))[0]).toMatch(/billing hold/);
+    expect(await refusals(s.businessId)).toEqual([]);
+
+    const [hold] = await activeHolds(env.DB, s.businessId);
+    expect(await liftHold(env.DB, hold.id, "manual", NOW.toISOString())).toBe(true);
+    expect(await approve(ask(), id)).toEqual({ ok: true });
+    expect(mail.sent).toHaveLength(1);
+    expect((await getReport(env.DB, report.id))!.status).toBe("sent");
   });
 
   it("a client whose Care project ended, or whose Care subscription is no longer live, gets nothing", async () => {
@@ -289,15 +316,21 @@ describe("approving a care.report", () => {
     for (const x of [e1, e2]) expect((await getReport(env.DB, x.report.id))!.status).toBe("ready");
   });
 
-  it("an unusable link base sends nothing and says so", async () => {
-    for (const base of [undefined, "https://app.workers.dev", "http://clients.example.com", ""]) {
+  it("an unusable link base sends nothing and the approval stays pending, so it can be approved again once the base is fixed", async () => {
+    for (const [i, base] of [undefined, "https://app.workers.dev", "http://clients.example.com", ""].entries()) {
       const s = await careClient();
       const { report, id } = await proposed(s);
-      expect(await approve(ask({ CLIENT_LINK_BASE: base }), id), String(base)).toEqual({ ok: true });
-      expect(mail.sent).toHaveLength(0);
+      const r = await approve(ask({ CLIENT_LINK_BASE: base }), id);
+      expect(r, String(base)).toMatchObject({ ok: false, status: 502 });
+      expect((r as { error: string }).error).toMatch(/CLIENT_LINK_BASE/);
+      expect(mail.sent).toHaveLength(i); // only the earlier rounds' mails, none from this one
+      expect(await approvalRow(id)).toMatchObject({ status: "pending" });
       expect((await getReport(env.DB, report.id))!.status).toBe("ready");
-      expect((await refusals(s.businessId))[0]).toMatch(/CLIENT_LINK_BASE/);
+      expect(await refusals(s.businessId)).toEqual([]);
+      expect(await approve(ask(), id)).toEqual({ ok: true }); // the base is fixed
+      expect((await getReport(env.DB, report.id))!.status).toBe("sent");
     }
+    expect(mail.sent).toHaveLength(4);
   });
 
   it("a mailbox that cannot send leaves the approval pending and the report ready, and approving again later sends it", async () => {
