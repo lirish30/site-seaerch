@@ -10,8 +10,8 @@ export const MAX_PATHS = 5;
 
 /** Slugs that need Logan's tick even after the canary passed. One constant, so the list is easy to extend. */
 export const RISKY_SLUGS: readonly (string | RegExp)[] = [
-  /^woocommerce/, // WooCommerce and its extensions
-  /^elementor/,
+  /woocommerce|^woo-/, // WooCommerce and its extensions, wherever the word sits in the slug
+  /elementor/, // Elementor and its add-ons
   /^(beaver-builder|bb-plugin|bb-theme-builder)/,
   /^divi/,
   /^(wpbakery|js_composer)/,
@@ -42,7 +42,10 @@ export function riskOf(type: UpdateType, from: string, to: string): Exclude<Risk
   return second ? "mild" : "minor";
 }
 
-const isRisky = (slug: string): boolean => RISKY_SLUGS.some((r) => (typeof r === "string" ? slug === r : r.test(slug)));
+const isRisky = (slug: string): boolean => {
+  const s = slug.toLowerCase();
+  return RISKY_SLUGS.some((r) => (typeof r === "string" ? s === r : r.test(s)));
+};
 
 /** Needs Logan's tick even after the canary passed: every major, core, anything that can't be rolled back and every risky slug. */
 export function needsTick(u: Pick<CareUpdate, "type" | "slug" | "risk" | "rollbackable">): boolean {
@@ -69,13 +72,15 @@ export function groupOf(activePlugins: string[], theme: string | null): GroupKey
   return "brochure";
 }
 
+const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
 /** One canary per group, two when the group has six or more sites; the lowest Care price first, then domain. */
 export function pickCanaries(sites: { siteId: string; group: GroupKey; careCents: number; domain: string }[]): Set<string> {
   const byGroup = new Map<GroupKey, typeof sites>();
   for (const s of sites) byGroup.set(s.group, [...(byGroup.get(s.group) ?? []), s]);
   const picked = new Set<string>();
   for (const list of byGroup.values()) {
-    const sorted = [...list].sort((x, y) => x.careCents - y.careCents || (x.domain < y.domain ? -1 : x.domain > y.domain ? 1 : 0));
+    const sorted = [...list].sort((x, y) => x.careCents - y.careCents || cmp(x.domain.toLowerCase(), y.domain.toLowerCase()) || cmp(x.siteId, y.siteId));
     for (const s of sorted.slice(0, list.length >= 6 ? 2 : 1)) picked.add(s.siteId);
   }
   return picked;

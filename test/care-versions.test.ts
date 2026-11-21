@@ -43,6 +43,8 @@ describe("needsTick", () => {
     expect(needsTick({ type: "plugin", slug: "elementor-pro", risk: "minor", rollbackable: true })).toBe(true);
     expect(needsTick({ type: "plugin", slug: "contact-form-7", risk: "mild", rollbackable: true })).toBe(true);
     expect(needsTick({ type: "theme", slug: "divi", risk: "minor", rollbackable: true })).toBe(true);
+    for (const slug of ["yith-woocommerce-wishlist", "mailchimp-for-woocommerce", "facebook-for-woocommerce", "woo-gutenberg-products-block", "essential-addons-for-elementor-lite", "header-footer-elementor", "premium-addons-for-elementor", "Divi", "WooCommerce"])
+      expect(needsTick({ type: slug === "Divi" ? "theme" : "plugin", slug, risk: "minor", rollbackable: true }), slug).toBe(true);
     expect(needsTick({ type: "core", slug: "wordpress", risk: "minor", rollbackable: true })).toBe(true);
     expect(needsTick({ type: "plugin", slug: "akismet", risk: "major", rollbackable: true })).toBe(true);
     expect(needsTick({ type: "plugin", slug: "akismet", risk: "mild", rollbackable: false })).toBe(true);
@@ -103,6 +105,12 @@ describe("pickCanaries", () => {
       { siteId: "a", group: "brochure" as const, careCents: 500, domain: "alpha.example" },
     ];
     expect([...pickCanaries(s)]).toEqual(["a"]);
+  });
+  it("is independent of input order on equal price and domain", () => {
+    const a = { siteId: "b", group: "brochure" as const, careCents: 500, domain: "Same.example" };
+    const b = { siteId: "a", group: "brochure" as const, careCents: 500, domain: "same.example" };
+    expect([...pickCanaries([a, b])]).toEqual(["a"]);
+    expect([...pickCanaries([b, a])]).toEqual(["a"]);
   });
   it("keeps groups independent", () => {
     expect(pickCanaries([...mk(3, "brochure", "b", 900), ...mk(2, "builder", "d", 5000)])).toEqual(new Set(["b0", "d0"]));
