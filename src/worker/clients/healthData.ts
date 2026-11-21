@@ -29,6 +29,9 @@ const empty = (): HealthInput => ({
 /** The live, real sites of real clients among the ids: not archived, not a test site, not a test client. A function, not a constant: `record.ts` and this file import each other, so nothing may call `testClientSql` while the modules load. */
 const liveSites = (): string => `s.archived_at IS NULL AND s.test = 0 AND NOT ${testClientSql("b")}`;
 
+/** The live sites the probe can have an opinion about: the same as `liveSites` and with an address, as the Care board and `listIncidents` have it. A site with no address has no checks, no incident and no domain date to count. */
+const monitoredLook = (): string => `${liveSites()} AND s.url IS NOT NULL AND s.url <> ''`;
+
 /** One entry per id asked for, in the order given. `now` decides the 30-day window, how many days a domain has left and which invoices are overdue (booking time zone). */
 export async function healthInputs(db: D1Database, businessIds: string[], now: Date): Promise<Map<string, HealthInput>> {
   const out = new Map<string, HealthInput>();
@@ -44,15 +47,15 @@ export async function healthInputs(db: D1Database, businessIds: string[], now: D
   for (const part of chunks(ids, CHUNK)) {
     const inList = marks(part);
     const [sites, checks, down, access, invoices, held, pastDue, onboardings] = await Promise.all([
-      db.prepare(`SELECT s.* FROM sites s JOIN businesses b ON b.id = s.business_id WHERE s.business_id IN (${inList}) AND ${liveSites()}`).bind(...part).all<SiteRow>(),
+      db.prepare(`SELECT s.* FROM sites s JOIN businesses b ON b.id = s.business_id WHERE s.business_id IN (${inList}) AND ${monitoredLook()}`).bind(...part).all<SiteRow>(),
       db.prepare(
         `SELECT s.business_id AS business_id, COUNT(*) AS n, COALESCE(SUM(c.ok), 0) AS ok
          FROM site_checks c JOIN sites s ON s.id = c.site_id JOIN businesses b ON b.id = s.business_id
-         WHERE s.business_id IN (${inList}) AND ${liveSites()} AND c.checked_at >= ? GROUP BY s.business_id`,
+         WHERE s.business_id IN (${inList}) AND ${monitoredLook()} AND c.checked_at >= ? GROUP BY s.business_id`,
       ).bind(...part, since).all<{ business_id: string; n: number; ok: number }>(),
       db.prepare(
         `SELECT DISTINCT s.business_id AS business_id FROM site_incidents i JOIN sites s ON s.id = i.site_id JOIN businesses b ON b.id = s.business_id
-         WHERE s.business_id IN (${inList}) AND ${liveSites()} AND i.kind = 'down' AND i.closed_at IS NULL`,
+         WHERE s.business_id IN (${inList}) AND ${monitoredLook()} AND i.kind = 'down' AND i.closed_at IS NULL`,
       ).bind(...part).all<{ business_id: string }>(),
       db.prepare(
         `SELECT s.business_id AS business_id, a.status AS status FROM site_access_items a JOIN sites s ON s.id = a.site_id JOIN businesses b ON b.id = s.business_id

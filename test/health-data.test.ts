@@ -89,6 +89,18 @@ describe("healthInputs", () => {
     expect((await inputsOf(s.businessId)).openDown).toBe(false);
   });
 
+  it("a site whose address was cleared counts for nothing monitoring-related: no open down, no checks, no domain date; its access items still count", async () => {
+    const s = await seedClient();
+    await check(s.site!.id, 1, false);
+    await openIncident(env.DB, { siteId: s.site!.id, businessId: s.businessId, kind: "down", detail: "HTTP 503", now: daysAgo(0) });
+    await env.DB.prepare(`UPDATE sites SET domain_expires_on = '2027-02-05' WHERE id = ?`).bind(s.site!.id).run();
+    expect(await inputsOf(s.businessId)).toMatchObject({ openDown: true, checks30: 1, domainDaysLeft: 4 });
+    for (const cleared of [null, ""]) {
+      await env.DB.prepare(`UPDATE sites SET url = ? WHERE id = ?`).bind(cleared, s.site!.id).run();
+      expect(await inputsOf(s.businessId)).toMatchObject({ openDown: false, uptime30: null, checks30: 0, domainDaysLeft: null, accessUnresolved: 6 });
+    }
+  });
+
   it("domainDaysLeft is the soonest among live real sites, counted in the booking time zone; past is negative", async () => {
     const s = await seedClient();
     const { site: second } = await createSite(env.DB, { businessId: s.businessId, url: "https://ace-two.com" });
