@@ -142,7 +142,8 @@ async function afterMail(env: Env, report: CareReport, to: string, sentAt: Date)
   await markSent(db, report.id, sentAt.toISOString());
   await logActivityOnce(db, report.businessId, "care_report_sent", `${periodLabel("monthly", report.period)} report sent to ${to}${report.test ? " (test)" : ""}`);
   const ticked = await tickCare4(env, report.businessId, periodKey("monthly", sentAt, zoneOf(await getSettings(db))), ["1.2", "1.3"], sentAt);
-  if (!ticked) console.error("care report: the monthly report task was not ticked after the mail went out");
+  // A rehearsal client has no CARE-4 task (the daily sweep makes none for a test client), so a test report's mail is not an error.
+  if (!ticked && !report.test) console.error("care report: the monthly report task was not ticked after the mail went out");
 }
 
 const NOT_READY: Record<Exclude<CareReport["status"], "ready">, string> = {

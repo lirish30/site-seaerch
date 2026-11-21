@@ -394,6 +394,22 @@ describe("approving a care.report", () => {
     expect(await lines(s.businessId, "care_report_sent")).toEqual([`November 2026 report sent to ${OWNER_EMAIL} (test)`]);
   });
 
+  it("a test report's mail logs no error when the rehearsal client has no CARE-4 task (the daily sweep makes none for a test client), and a real report with none still does", async () => {
+    const s = await careClient({ test: true });
+    const { id } = await proposed(s, { test: true });
+    await env.DB.prepare(`DELETE FROM tasks WHERE business_id = ? AND cadence_key = 'CARE-4'`).bind(s.businessId).run();
+    errors.mockClear();
+    expect(await approve(ask(), id)).toEqual({ ok: true });
+    expect(mail.sent).toHaveLength(1);
+    expect(errors).not.toHaveBeenCalled();
+
+    const real = await careClient();
+    const { id: realId } = await proposed(real);
+    await env.DB.prepare(`DELETE FROM tasks WHERE business_id = ? AND cadence_key = 'CARE-4'`).bind(real.businessId).run();
+    expect(await approve(ask(), realId)).toEqual({ ok: true });
+    expect(errors).toHaveBeenCalledWith("care report: the monthly report task was not ticked after the mail went out");
+  });
+
   it("a test report with no owner email set throws and sends nothing", async () => {
     const s = await careClient({ test: true });
     const { id } = await proposed(s, { test: true });
