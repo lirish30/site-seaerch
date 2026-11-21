@@ -133,9 +133,12 @@ Radar re-runs saved searches on a schedule. Tick "Repeat this search (Radar)" on
 - **MCP.** `get_care_overview` (the board, worst first) and `list_incidents` (open or closed, one client or all) are read only. They show a domain, never an address, and no token, vault name or access note.
 - **Nothing is sent to anyone.** Monitoring writes checks, incidents and a timeline line (`site_down`, `site_back`, `domain_expiring`) and nothing else: no mail, no approval, no task. You see an incident on Today, `/care`, the client page and through MCP.
 - **Config.** None: no setting, key or secret.
+- **When monitoring stops.** An open incident closes by itself, without a timeline line, once its site is no longer monitored: Care ended, the switch turned off, the address cleared, the site archived or marked test. The 5-minute tick does it, and turning the switch off, clearing an address or archiving a site does it at once.
+- **Rollback.** The Worker can be rolled back safely onto the new schema (the old code ignores the new columns and tables); the schema itself is rolled back only through the D1 Time Travel bookmark recorded before migrating.
 - **Migration.** Apply `0061_monitoring.sql` to the remote D1 before deploying. See `docs/superpowers/notes/2026-11-plan-11-open-items.md` for the checks only you can run and the decisions waiting for you.
 
 ## Known limitations
+- `/care` and the client Care panel have never been viewed in a browser (see the Plan 11 open-items note).
 - The PageSpeed test fixture is hand-written, not a live capture. Capture one real PageSpeed response, then verify the Lighthouse audit ids in `src/worker/scoring/labels.ts` and the `viewport` / `font-size` / `tap-targets` audits used for mobile-friendliness (a missing audit counts as passing).
 - No email notification for Radar.
 - The booking page, Pipeline board, Deal page, deck layout and PDF have not yet been checked in a browser (see the Plan 4 open-items note). The same holds for the Proposal tab, Settings → Documents, the client proposal page and the signed PDF, and Stripe has only been exercised through a fake (see the Plan 5 note).
