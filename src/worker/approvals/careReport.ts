@@ -118,7 +118,7 @@ export async function proposeReportApproval(env: Env, report: CareReport): Promi
   if (!id) {
     const d = await describe(env, report);
     const made = await createApprovalOnce(db, {
-      kind: KIND, title: d.title, preview: d.preview, payload: { reportId: report.id } satisfies CareReportApprovalPayload, record_type: "business", record_id: report.businessId, drafted_by: "logan",
+      kind: KIND, title: d.title, preview: d.preview, payload: { reportId: report.id } satisfies CareReportApprovalPayload, record_type: "business", record_id: report.businessId, drafted_by: "job",
     }, "reportId", report.id);
     id = made?.id ?? (await existingApproval(db, report.id)); // two callers at once: the earliest approval stands
   }

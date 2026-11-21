@@ -117,7 +117,7 @@ describe("proposeReportApproval", () => {
     expect(await Promise.all([proposeReportApproval(e, report), proposeReportApproval(e, report)])).toEqual([first, first]);
     expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM approvals WHERE kind = 'care.report'`).first<{ n: number }>())!.n).toBe(1);
     expect((await getReport(env.DB, report.id))!.approvalId).toBe(first);
-    expect(await approvalRow(first!)).toMatchObject({ kind: "care.report", status: "pending", record_type: "business", record_id: s.businessId, drafted_by: "logan" });
+    expect(await approvalRow(first!)).toMatchObject({ kind: "care.report", status: "pending", record_type: "business", record_id: s.businessId, drafted_by: "job" });
     expect(getHandler("care.report")!.parse({ reportId: "r" })).toEqual({ reportId: "r" });
     expect(getHandler("care.report")!.label).toBe("Send monthly report");
   });
