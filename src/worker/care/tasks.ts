@@ -82,7 +82,7 @@ export async function tickApproved(env: Env, batchId: string, siteIds: string[],
 }
 
 /**
- * Brings each client's task in line with the batch's runs: 1.3 once a canary (wave 1) run has ended; when every run of the client is final (and no approval of the batch still waits on one of its
+ * Brings each client's task in line with the batch's runs: 1.3 once a canary (wave 1) run of the batch has ended (for every client with a run); when every run of the client is final (and no approval of the batch still waits on one of its
  * sites, and the batch is settled) 1.5, and with no failed or rolled-back run 1.6 too and the task is completed once every item is ticked. A failed client keeps 1.6 for Logan.
  */
 export async function tickRuns(env: Env, batchId: string, now: Date = new Date()): Promise<void> {
@@ -98,9 +98,11 @@ export async function tickRuns(env: Env, batchId: string, now: Date = new Date()
     }
     const byClient = new Map<string, typeof runs>();
     for (const r of runs) { const b = owner.get(r.siteId); if (b) byClient.set(b, [...(byClient.get(b) ?? []), r]); }
+    // 1.3 is the canary step of the whole batch: once a canary run has ended, it is done for every client that has a run, not only for the canaries (a wave-2 client's checklist would never finish).
+    const canaryRan = runs.some((r) => r.wave === 1 && FINAL_RAN.includes(r.status));
     for (const [businessId, mine] of byClient) {
       await guarded("tick one client's run steps", async () => {
-        if (mine.some((r) => r.wave === 1 && FINAL_RAN.includes(r.status))) await tickCare1(env, businessId, batch.period, ["1.3"], now);
+        if (canaryRan) await tickCare1(env, businessId, batch.period, ["1.3"], now);
         if (batch.status !== "done" && batch.status !== "cancelled") return; // a client's later wave may not be planned yet: only a settled batch finishes the week
         if (waiting.has(businessId) || mine.some((r) => r.status === "queued" || r.status === "running")) return;
         const bad = mine.some((r) => r.status === "failed" || r.status === "rolled_back");

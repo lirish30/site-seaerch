@@ -82,6 +82,22 @@ describe("the batch ticks the CARE-1 task", () => {
     expect((await care1(a.project!.id)).status).toBe("done");
   });
 
+  it("a wave 2 client's checklist is ticked and finished too, not only the canary's", async () => {
+    const a = await mk("a.com", { cents: 5000 });
+    const b = await mk("b.com", { cents: 7000 });
+    const batch = await inventoried();
+    await approveAll(); // wave 1: a.com, the cheapest, is the canary
+    expect(await ticks(b.project!.id)).toEqual([true, true, false, false, false, false]);
+    await finishRun((await runsFor(env.DB, batch.id))[0].id, "ok");
+    await approveAll(); // wave 2: b.com
+    expect(await ticks(b.project!.id)).toEqual([true, true, true, true, false, false]);
+    const second = (await runsFor(env.DB, batch.id)).find((r) => r.siteId === b.siteId)!;
+    await finishRun(second.id, "ok");
+    expect(await ticks(b.project!.id)).toEqual([true, true, true, true, true, true]);
+    expect((await care1(b.project!.id)).status).toBe("done");
+    expect((await care1(a.project!.id)).status).toBe("done");
+  });
+
   it("a site that rolled back leaves 1.6 open and the task not done", async () => {
     const a = await mk("a.com");
     const batch = await inventoried();
