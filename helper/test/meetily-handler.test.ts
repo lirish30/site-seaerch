@@ -102,6 +102,44 @@ describe("meetilySyncHandler", () => {
     expect(sent[0].transcript[0].text).toHaveLength(5000);
   });
 
+  const sentOf = (body: string) => JSON.parse(body).meetings as { meetilyId: string; transcript: { text: string }[] }[];
+  const manyLines = (n: number, text: string) => Array.from({ length: n }, (_, i) => ({ text: `${i}:${text}`, startSec: i, endSec: i + 1 }));
+
+  it("stops adding meetings, oldest first, once the file would pass 10 MB, and the rest wait for the next sync", async () => {
+    // Each meeting is about 1.9 MB: 400 lines of 4,800 characters.
+    const heavy: FixtureMeeting[] = Array.from({ length: 8 }, (_, i) => ({
+      id: `h${i}`, title: "Heavy", createdAt: new Date(Date.parse("2026-11-17T10:00:00Z") + i * 1000).toISOString(), updatedAt: "2026-11-17T10:50:00Z", lines: manyLines(400, "y".repeat(4_800)),
+    }));
+    const { result, uploads } = await run(job(goodPayload()), heavy);
+    expect(Buffer.byteLength(uploads[0].body)).toBeLessThanOrEqual(10 * 1024 * 1024);
+    expect(sentOf(uploads[0].body).map((m) => m.meetilyId)).toEqual(["h0", "h1", "h2", "h3", "h4"]);
+    expect(result).toEqual({ scanned: 8, matched: 5, key: OUT });
+  });
+
+  it("cuts a single meeting that is over 10 MB by dropping its last lines until it fits, and changes nothing else", async () => {
+    const huge: FixtureMeeting[] = [{ id: "huge", title: "Huge", createdAt: "2026-11-17T10:05:00Z", updatedAt: "2026-11-17T10:55:00Z", summary: "notes stay", lines: manyLines(3_000, "z".repeat(4_900)) }];
+    const { result, uploads } = await run(job(goodPayload()), huge);
+    expect(Buffer.byteLength(uploads[0].body)).toBeLessThanOrEqual(10 * 1024 * 1024);
+    const [m] = JSON.parse(uploads[0].body).meetings as { title: string; notes: string; transcript: { text: string }[] }[];
+    expect(m.title).toBe("Huge");
+    expect(m.notes).toBe("notes stay");
+    expect(m.transcript.length).toBeGreaterThan(1_500);
+    expect(m.transcript.length).toBeLessThan(3_000);
+    expect(m.transcript[0].text.startsWith("0:")).toBe(true); // the start is kept, the end is cut
+    expect(m.transcript.at(-1)!.text.startsWith(`${m.transcript.length - 1}:`)).toBe(true);
+    expect(result).toEqual({ scanned: 1, matched: 1, key: OUT });
+  });
+
+  it("stops adding meetings once the file would hold more than 50,000 lines in all", async () => {
+    const lined: FixtureMeeting[] = Array.from({ length: 4 }, (_, i) => ({
+      id: `l${i}`, title: "Lines", createdAt: new Date(Date.parse("2026-11-17T10:00:00Z") + i * 1000).toISOString(), updatedAt: "2026-11-17T10:50:00Z", lines: manyLines(17_000, "a"),
+    }));
+    const { result, uploads } = await run(job(goodPayload()), lined);
+    expect(sentOf(uploads[0].body).map((m) => m.meetilyId)).toEqual(["l0", "l1"]); // a third would make 51,000
+    expect(sentOf(uploads[0].body).reduce((n, m) => n + m.transcript.length, 0)).toBeLessThanOrEqual(50_000);
+    expect(result).toMatchObject({ scanned: 4, matched: 2 });
+  }, 90_000);
+
   it("names the field when the payload has no windows", async () => {
     const { windows: _w, ...rest } = goodPayload();
     await expect(run(job(rest))).rejects.toThrow(/windows/);

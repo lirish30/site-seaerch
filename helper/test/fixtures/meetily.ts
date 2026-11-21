@@ -59,6 +59,7 @@ export function makeMeetilyDb(dir: string, opts: { meetings: FixtureMeeting[]; n
     const addMeeting = db.prepare("INSERT INTO meetings VALUES (?, ?, ?, ?, ?)");
     const addLine = db.prepare("INSERT INTO transcripts VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?)");
     const addSummary = db.prepare("INSERT INTO summary_processes (meeting_id, status, created_at, updated_at, result) VALUES (?, ?, ?, ?, ?)");
+    db.exec("BEGIN"); // one transaction: a test with tens of thousands of lines is otherwise a commit per line
     for (const m of opts.meetings) {
       const created = meetilyTs(m.createdAt);
       const updated = m.rawUpdatedAt ?? meetilyTs(m.updatedAt ?? m.createdAt);
@@ -73,6 +74,7 @@ export function makeMeetilyDb(dir: string, opts: { meetings: FixtureMeeting[]; n
         addSummary.run(m.id, m.summaryStatus ?? "completed", created, m.summaryUpdatedAt ? meetilyTs(m.summaryUpdatedAt) : updated, result);
       }
     }
+    db.exec("COMMIT");
   } finally { db.close(); }
   return path;
 }

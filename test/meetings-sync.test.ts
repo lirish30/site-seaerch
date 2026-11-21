@@ -8,7 +8,7 @@ import { createDevice } from "../src/worker/helper/auth";
 import { claimHelperJob, completeHelperJob, getHelperJob, type HelperJob } from "../src/worker/helper/jobs";
 import { HelperRefused, getHelperKind, registeredHelperKinds } from "../src/worker/helper/kinds";
 import {
-  MEETILY_SYNC_KIND, MatchedMeetingsFile, requestMeetilySync, syncFileKey, transcriptKey, type MeetilySyncPayload,
+  MAX_SYNC_FILE_BYTES, MAX_TOTAL_LINES, MEETILY_SYNC_KIND, MatchedMeetingsFile, requestMeetilySync, syncFileKey, transcriptKey, type MeetilySyncPayload,
 } from "../src/worker/meetings/syncKind";
 import { MEETING_SUMMARIZE_KIND } from "../src/worker/queue/meetingSummary";
 import { MAIL_SYNC_CRON, runScheduled } from "../src/worker/schedule";
@@ -308,6 +308,41 @@ describe("refusing a result", () => {
     expect((r as { error: string }).error).toContain("meetings.1.title");
     expect(await meetings()).toHaveLength(0);
     expect(await summaryTasks()).toHaveLength(0);
+    expect((await getHelperJob(env.DB, job.id))!.status).toBe("claimed");
+  });
+
+  it("refuses a file over the size cap without reading it, and keeps the job claimed", async () => {
+    const { job, payload, file } = await claimed();
+    await env.RAW.put(file, new Uint8Array(MAX_SYNC_FILE_BYTES + 1)); // not JSON: if it were parsed, the reason would be "not valid JSON"
+    const r = await done(job, file);
+    expect(r).toEqual({ ok: false, error: expect.stringMatching(/too big.*at most 12 MB/) });
+    await expect(apply(payload, file)).rejects.toBeInstanceOf(HelperRefused);
+    expect(await meetings()).toHaveLength(0);
+    expect(await summaryTasks()).toHaveLength(0);
+    expect((await getHelperJob(env.DB, job.id))!.status).toBe("claimed");
+  });
+
+  it("accepts a valid file just under the size cap", async () => {
+    const { job, key, file } = await claimed();
+    const text = "x".repeat(5_000);
+    const body = JSON.stringify({ meetings: [entry({ windowKey: key, transcript: Array.from({ length: 2_300 }, () => ({ speaker: "Pat", atSec: 1, text })) })] });
+    expect(body.length).toBeLessThan(MAX_SYNC_FILE_BYTES);
+    expect(body.length).toBeGreaterThan(MAX_SYNC_FILE_BYTES - 1_500_000);
+    await upload(file, body);
+    expect(await done(job, file)).toEqual({ ok: true });
+    expect(await meetings()).toHaveLength(1);
+  });
+
+  it("refuses a file whose transcripts together have too many lines, though each meeting is within its own cap", async () => {
+    const { job, key, file } = await claimed();
+    const lines = (n: number) => Array.from({ length: n }, () => ({ speaker: null, atSec: null, text: "a" }));
+    const meetingsOf = (counts: number[]) => ({ meetings: counts.map((n, i) => entry({ meetilyId: `m-${i}`, windowKey: key, transcript: lines(n) })) });
+    expect(MatchedMeetingsFile.safeParse(meetingsOf([20_000, 20_000, MAX_TOTAL_LINES - 40_000])).success).toBe(true);
+    expect(MatchedMeetingsFile.safeParse(meetingsOf([20_000, 20_000, MAX_TOTAL_LINES - 40_000 + 1])).success).toBe(false);
+    await upload(file, meetingsOf([20_000, 20_000, 10_001]));
+    const r = await done(job, file);
+    expect(r).toEqual({ ok: false, error: expect.stringContaining("more than 50,000 lines") });
+    expect(await meetings()).toHaveLength(0);
     expect((await getHelperJob(env.DB, job.id))!.status).toBe("claimed");
   });
 

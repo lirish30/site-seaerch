@@ -20,6 +20,10 @@ const SLACK_MS = 15 * 60_000;
 export const MAX_WINDOWS = 100;
 export const MAX_KNOWN_IDS = 2000;
 const MAX_MEETINGS = 50;
+/** The most transcript lines the whole file may hold, across all its meetings. */
+export const MAX_TOTAL_LINES = 50_000;
+/** The biggest sync file the worker will read. The helper keeps its upload under 10 MB, so this is room to spare; a bigger one is refused before it is read into memory. */
+export const MAX_SYNC_FILE_BYTES = 12 * 1024 * 1024;
 
 const WindowSchema = z.object({
   key: z.string().min(1), businessId: z.string().min(1), startAt: z.string().min(1), endAt: z.string().min(1),
@@ -49,7 +53,7 @@ export const MatchedMeetingsFile = z.object({
     notes: z.string().max(50_000).nullable(),
     transcript: z.array(z.object({ speaker: z.string().nullable(), atSec: z.number().nullable(), text: z.string().max(5_000) })).max(20_000),
   })).max(MAX_MEETINGS),
-});
+}).refine((f) => f.meetings.reduce((n, m) => n + m.transcript.length, 0) <= MAX_TOTAL_LINES, { message: `the transcripts together have more than ${MAX_TOTAL_LINES.toLocaleString("en-US")} lines` });
 export type MatchedMeetingsFile = z.infer<typeof MatchedMeetingsFile>;
 
 /** Where the helper puts the matches of one sync. */
@@ -139,6 +143,8 @@ const meetilySync: HelperKindDef<MeetilySyncPayload, MeetilySyncResult> = {
     if (r.key !== expected) throw new HelperRefused(`that is not this job's output: the matches go to ${expected}`);
     const obj = await env.RAW.get(expected);
     if (!obj) throw new HelperRefused(`the matched meetings file was never uploaded to ${expected}`);
+    // The size is on the object, so a file too big for the Worker's memory is turned away before its body is read.
+    if (obj.size > MAX_SYNC_FILE_BYTES) throw new HelperRefused(`the matched meetings file is too big (${Math.ceil(obj.size / 1024 / 1024)} MB): it may be at most ${MAX_SYNC_FILE_BYTES / 1024 / 1024} MB`);
     let json: unknown;
     try { json = await obj.json(); } catch { throw new HelperRefused("the matched meetings file is not valid JSON"); }
     const file = MatchedMeetingsFile.safeParse(json);
