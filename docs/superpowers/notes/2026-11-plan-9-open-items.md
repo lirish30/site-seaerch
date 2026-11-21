@@ -30,6 +30,10 @@ One end-to-end test (`test/clients-flow.test.ts`) drives the real entry points (
 
 ## Known gaps (decided, not fixed)
 
+Site addresses
+- The address normaliser (https added; login, query and fragment dropped) runs only when a site is seeded from a lead's website. An address typed by hand or sent to the site routes still keeps `?token=` and `#fragment` parts, although a login in it is refused. Making the routes use the same normaliser is a small follow-up.
+- The normaliser has no length cap on a seeded address (the routes cap at 300 characters).
+
 Client page and its data layer
 - `workError()` in `src/client/workData.ts` can still show "invalid body" or "HTTP 500" on the timeline note error path.
 - The `failed` banner on the client page is not reset on the same render as an id change.
