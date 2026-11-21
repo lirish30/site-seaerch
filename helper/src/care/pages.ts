@@ -94,7 +94,7 @@ export function verdictOf(before: PageShot, after: PageShot, ssim: number | null
 
 /** The site's origin plus a checked path, never another host. */
 export function pageUrl(siteUrl: string, path: string): string {
-  if (!WP_ARG.checkPath.test(path) || path.startsWith("//")) throw new Error("this page path is not valid");
+  if (!WP_ARG.checkPath.test(path)) throw new Error("this page path is not valid");
   const origin = new URL(siteUrl).origin;
   const url = new URL(path, origin);
   if (url.origin !== origin) throw new Error("this page path is not valid");

@@ -201,6 +201,7 @@ describe("site care fields", () => {
     expect(WP_ARG.version.test("5.1.2-beta+1")).toBe(true);
     expect(WP_ARG.version.test("5 1")).toBe(false);
     expect(WP_ARG.checkPath.test("/")).toBe(true);
+    expect(WP_ARG.checkPath.test("//evil.com")).toBe(false);
   });
 });
 

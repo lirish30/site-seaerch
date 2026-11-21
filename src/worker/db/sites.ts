@@ -140,7 +140,7 @@ export async function updateSite(db: D1Database, id: string, patch: Partial<Site
   // These reach a remote shell later, so they are checked against fixed patterns before anything is saved.
   if (p.wpSshAlias != null && !WP_ARG.alias.test(p.wpSshAlias)) throw new SiteInputError("The SSH alias can only use letters, numbers, dots, dashes and underscores, and must start with a letter or number.");
   if (p.wpPath != null && !WP_ARG.path.test(p.wpPath)) throw new SiteInputError("The WordPress folder must be a plain path starting with / (letters, numbers, dots, dashes, underscores and slashes only, no ..).");
-  if (p.carePaths !== undefined && (!Array.isArray(p.carePaths) || p.carePaths.length < 1 || p.carePaths.length > 5 || !p.carePaths.every((x) => typeof x === "string" && WP_ARG.checkPath.test(x) && !x.startsWith("//")))) {
+  if (p.carePaths !== undefined && (!Array.isArray(p.carePaths) || p.carePaths.length < 1 || p.carePaths.length > 5 || !p.carePaths.every((x) => typeof x === "string" && WP_ARG.checkPath.test(x)))) {
     throw new SiteInputError("Pick one to five pages to check, each a plain path starting with / (no spaces or ..).");
   }
   const sets: string[] = [], binds: unknown[] = [];

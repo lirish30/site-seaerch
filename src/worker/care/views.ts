@@ -5,6 +5,7 @@ import type { Site } from "../db/sites";
 import { chunks } from "../db/chunks";
 import { incidentViews, type IncidentView } from "../monitoring/fleet";
 import { periodKey, zoneOf } from "../sop/cadence";
+import { heldBusinessIds } from "../db/holds";
 import { isDue, needsTick } from "./versions";
 
 // What the owner's Care updates board and the MCP tool show (Plan 12). Built field by field: a site's SSH alias and folder, a picture's storage key and the backup directory never leave here.
@@ -70,9 +71,11 @@ export async function careUpdatesBoard(db: D1Database, now: Date): Promise<CareU
     const open = (await openIncidentsFor(db, part)).filter((i) => i.kind === "update_failed");
     for (const v of await incidentViews(db, open, now)) if (!failed.has(v.siteId)) failed.set(v.siteId, v);
   }
+  const held = new Set<string>();
+  for (const part of chunks([...new Set(sites.map((s) => s.businessId))], 50)) for (const id of await heldBusinessIds(db, part)) held.add(id);
   const out: CareSiteView[] = [];
   for (const s of sites) {
-    const why = whyNotUpdatable(s);
+    const why = whyNotUpdatable(s) ?? (held.has(s.businessId) ? "on billing hold" : null);
     const run = runs.get(s.id);
     out.push({
       siteId: s.id, domain: s.domain, group: (await getInventory(db, s.id))?.groupKey ?? null, canUpdate: why === null, why,

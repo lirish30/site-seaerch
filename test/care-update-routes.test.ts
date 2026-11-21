@@ -4,6 +4,7 @@ import worker from "../src/worker/index";
 import "../src/worker/approvals/careUpdates";
 import { onInventoryDone } from "../src/worker/care/batch";
 import { getBatch, insertPageChecks, insertRun, createSingleBatch, saveInventory, setRunStatus, upsertSeen, availableFor } from "../src/worker/db/careUpdates";
+import { placeHold } from "../src/worker/db/holds";
 import { openIncident } from "../src/worker/db/monitoring";
 import { archiveSite, getSite } from "../src/worker/db/sites";
 import { ensureSeedSops } from "../src/worker/db/sops";
@@ -65,6 +66,16 @@ describe("GET /care/updates", () => {
     expect(b.sites.find((s) => s.siteId === m.site!.id)).toMatchObject({ domain: "mainwp.com", canUpdate: false, why: "no SSH access", updates: [], lastRun: null });
     expect(b.sites.find((s) => s.siteId === a.siteId)).toMatchObject({ domain: "alpha.com", group: "brochure", canUpdate: true, why: null, updates: [expect.objectContaining({ slug: "akismet", held: false, due: true })] });
     for (const bad of [ALIAS, WPPATH, "wp_ssh_alias", "wpSshAlias", "wpPath", "wp_path"]) expect(text).not.toContain(bad);
+  });
+
+  it("says a client on billing hold cannot update", async () => {
+    const a = await wp("alpha.com");
+    const s = await seedClient({ subs: [{ key: "care", monthlyCents: 12_900 }], invoice: { cents: 50_000 } });
+    await env.DB.prepare(`UPDATE sites SET cms = 'wordpress', access_method = 'ssh_wpcli', wp_ssh_alias = 'h', wp_path = '/w' WHERE id = ?`).bind(s.site!.id).run();
+    expect(await placeHold(env.DB, { businessId: s.businessId, invoiceId: s.invoice!.id, now: new Date().toISOString() })).toBe(true);
+    const b = await json<Board>("GET", "/care/updates");
+    expect(b.sites.find((x) => x.siteId === s.site!.id)).toMatchObject({ canUpdate: false, why: "on billing hold" });
+    expect(b.sites.find((x) => x.siteId === a.siteId)).toMatchObject({ canUpdate: true });
   });
 
   it("gives the other plain reasons: not WordPress, and a missing alias or folder", async () => {
@@ -139,10 +150,10 @@ describe("POST /sites/:id/care-run", () => {
     const r = await json<{ batch: { id: string; kind: string; siteId: string } }>("POST", `/sites/${t.siteId}/care-run`, undefined, 201);
     expect(r.batch).toMatchObject({ kind: "single", siteId: t.siteId });
     expect((await getBatch(env.DB, r.batch.id))!.status).toBe("inventory");
-    // the run it made is open now: a second press is a plain 409
-    const open = await insertRun(env.DB, { batchId: r.batch.id, siteId: t.siteId, wave: 0, now: new Date().toISOString() });
-    expect((await json<{ error: string }>("POST", `/sites/${t.siteId}/care-run`, undefined, 409)).error).toMatch(/waiting or running/);
-    await setRunStatus(env.DB, open.id, ["queued"], "dropped", {}, new Date().toISOString());
+    // a second press while the first is still being read is a plain 409 and makes nothing
+    expect((await json<{ error: string }>("POST", `/sites/${t.siteId}/care-run`, undefined, 409)).error).toBe("This site's updates are already being read.");
+    expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM care_batches WHERE kind = 'single' AND site_id = ?`).bind(t.siteId).first<{ n: number }>())!.n).toBe(1);
+    expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM helper_jobs WHERE kind = 'care.inventory'`).first<{ n: number }>())!.n).toBe(1);
     const a = await wp("alpha.com");
     await archiveSite(env.DB, a.siteId, new Date().toISOString());
     expect((await json<{ error: string }>("POST", `/sites/${a.siteId}/care-run`, undefined, 409)).error).toMatch(/cannot take updates/);
@@ -211,6 +222,7 @@ describe("PATCH /sites/:id with the Care updates access", () => {
     await json("PATCH", `/sites/${id}`, { wpPath: "relative" }, 400);
     expect((await json<{ error: string }>("PATCH", `/sites/${id}`, { carePaths: ["/a", "/b", "/c", "/d", "/e", "/f"] }, 400)).error).toMatch(/one to five pages/);
     await json("PATCH", `/sites/${id}`, { carePaths: ["//evil.com"] }, 400);
+    await json("PATCH", `/sites/${id}`, { carePaths: ["/ok", "//evil.com"] }, 400);
     await json("PATCH", `/sites/${id}`, { carePaths: [] }, 400);
     expect((await getSite(env.DB, id))!.carePaths).toEqual(["/", "/contact"]);
     const cleared = await json<{ site: { wpSshAlias: string | null } }>("PATCH", `/sites/${id}`, { wpSshAlias: null });

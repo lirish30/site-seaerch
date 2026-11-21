@@ -20,6 +20,7 @@ describe("the patterns", () => {
     expect(WP_ARG.version.test("5.1.2")).toBe(true);
     expect(WP_ARG.version.test("6.4.2-beta1+3")).toBe(true);
     expect(WP_ARG.checkPath.test("/shop/?a")).toBe(false);
+    expect(WP_ARG.checkPath.test("//evil.com")).toBe(false);
     expect(WP_ARG.checkPath.test("/about-us/")).toBe(true);
     expect(WP_ARG.checkPath.test("/")).toBe(true);
   });

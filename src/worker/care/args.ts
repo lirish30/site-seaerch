@@ -9,7 +9,7 @@ export const WP_ARG = {
   path: /^\/(?!.*\.\.)[A-Za-z0-9._/-]{1,200}$/,
   slug: /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/,
   version: /^[0-9][0-9A-Za-z.+-]{0,30}$/,
-  checkPath: /^\/(?!.*\.\.)[A-Za-z0-9._~/%-]{0,200}$/,
+  checkPath: /^\/(?!\/)(?!.*\.\.)[A-Za-z0-9._~/%-]{0,200}$/,
 } as const;
 
 /** Where a site's WordPress lives: a host alias name from the Mac's ssh config (never a key or password) and the install's folder. */

@@ -104,6 +104,11 @@ export async function startSingleRun(env: Env, siteId: string, now: Date): Promi
      UNION ALL SELECT 1 FROM helper_jobs WHERE kind = 'care.update' AND dedupe_key = ? AND status IN ('pending', 'claimed') LIMIT 1`,
   ).bind(siteId, `care.update:${siteId}`).first();
   if (open) throw new CareRunRefused("This site already has an update waiting or running. Let it finish first.");
+  const reading = await db.prepare(
+    `SELECT 1 AS x FROM care_batches WHERE kind = 'single' AND site_id = ? AND status IN ('inventory', 'wave1', 'wave2')
+     UNION ALL SELECT 1 FROM helper_jobs WHERE kind = ? AND status IN ('pending', 'claimed') AND json_extract(payload, '$.siteId') = ? LIMIT 1`,
+  ).bind(siteId, CARE_INVENTORY, siteId).first();
+  if (reading) throw new CareRunRefused("This site's updates are already being read.");
   const tz = zoneOf(await getSettings(db));
   const batch = await createSingleBatch(db, siteId, periodKey("weekly", now, tz), now.toISOString());
   try {
