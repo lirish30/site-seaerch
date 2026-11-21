@@ -58,7 +58,8 @@ describe("starting onboarding at payment", () => {
     const o = (await getOnboardingForDeal(env.DB, s.dealId))!;
     expect(o).toMatchObject({ businessId: s.businessId, dealId: s.dealId, documentId: s.doc.id, kind: "build", test: false, welcomeSentAt: null });
     expect((await listItems(env.DB, o.id)).map((i) => i.key)).toEqual([
-      "logo_files", "brand_text", "homepage_text", "homepage_photos", "service_page_text", "service_photos", "about_text", "team_photos", "reviews_text", "extra_pages_text", "faq_text", "social_links_text"]);
+      "logo_files", "brand_text", "homepage_text", "homepage_photos", "service_page_text", "service_photos",
+      "access_hosting", "access_dns", "access_registrar", "access_admin", "access_gbp", "access_analytics", "about_text", "team_photos", "reviews_text", "extra_pages_text", "faq_text", "social_links_text"]);
 
     const a = await welcomes(s.dealId);
     expect(a).toHaveLength(1);
@@ -82,7 +83,7 @@ describe("starting onboarding at payment", () => {
     await pay(s);
     expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM onboardings WHERE deal_id = ?`).bind(s.dealId).first<{ n: number }>())!.n).toBe(1);
     const o = (await getOnboardingForDeal(env.DB, s.dealId))!;
-    expect((await listItems(env.DB, o.id))).toHaveLength(12);
+    expect((await listItems(env.DB, o.id))).toHaveLength(18);
     expect(await welcomes(s.dealId)).toHaveLength(1);
     expect(await activity(s.businessId, "onboarding_started")).toHaveLength(1);
 
@@ -137,13 +138,13 @@ describe("starting onboarding at payment", () => {
     expect((await getOnboarding(env.DB, o.id))!.welcomeSentAt).toBe(SENT_AT);
   });
 
-  it("a light package set makes no items", async () => {
+  it("a light package set makes only the six access items", async () => {
     await readyToSend();
     const s = await seed({ packages: LIGHT });
     await pay(s);
     const o = (await getOnboardingForDeal(env.DB, s.dealId))!;
     expect(o.kind).toBe("light");
-    expect(await listItems(env.DB, o.id)).toEqual([]);
+    expect((await listItems(env.DB, o.id)).map((i) => i.key)).toEqual(["access_hosting", "access_dns", "access_registrar", "access_admin", "access_gbp", "access_analytics"]);
     expect(await welcomes(s.dealId)).toHaveLength(1);
     expect(await activity(s.businessId, "onboarding_started")).toEqual(["SL-ABCDEF v1: light onboarding started"]);
   });

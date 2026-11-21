@@ -48,6 +48,8 @@ import BillingSettings from "./pages/settings/Billing";
 import Billing from "./pages/Billing";
 import Sops from "./pages/settings/Sops";
 import Work from "./pages/settings/Work";
+import Clients from "./pages/Clients";
+import ClientPage from "./pages/Client";
 import Shell from "./components/Shell";
 
 // Every page draws its own header and `.page-body` inside the panel.
@@ -81,6 +83,8 @@ export default function App() {
             <Route path="/projects/:id" element={<ProjectPage />} />
             <Route path="/timesheet" element={<Timesheet />} />
             <Route path="/billing" element={<Billing />} />
+            <Route path="/clients" element={<Clients />} />
+            <Route path="/clients/:id" element={<ClientPage />} />
             <Route path="/tasks/:id" element={<TaskRedirect />} />
             <Route path="/radar" element={<Radar />} />
             <Route path="/niche-test" element={<NicheTest />} />

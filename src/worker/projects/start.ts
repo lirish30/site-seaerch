@@ -9,6 +9,7 @@ import { listTasks } from "../db/tasks";
 import { BUILD_KEYS } from "../documents/schedule";
 import type { Env } from "../env";
 import { cleanText } from "../onboarding/templates";
+import { ensureSite } from "../sites/seed";
 import { instantiateSop } from "../sop/instantiate";
 import type { SopTemplate } from "../sop/model";
 import { onProjectDone, runTasksChanged } from "./hooks";
@@ -43,6 +44,8 @@ async function begin(env: Env, doc: Document, template: SopTemplate, o: { kind: 
     businessId: doc.businessId, dealId: doc.dealId, documentId: doc.id, onboardingId: onboarding?.id ?? null, kind: o.kind, name: projectName(doc, template), test: doc.test,
     templateKey: template.key, templateVersion: template.version, careDeferred: o.careDeferred, startedAt: o.now.toISOString(),
   });
+  // The site record for this sale, if onboarding did not already make it. It never throws.
+  await ensureSite(db, { businessId: doc.businessId, packageKeys: doc.content.packages.map((p) => p.key), test: doc.test });
   if (!(await listTasks(db, project.id)).length) {
     try { await instantiateSop(db, { project, template }); }
     catch (e) {

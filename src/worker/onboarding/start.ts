@@ -4,6 +4,7 @@ import type { Env } from "../env";
 import { createOnboarding, type Onboarding } from "../db/onboardings";
 import { createWelcomeApproval, hasWelcomeApproval } from "../approvals/onboardingWelcome";
 import { clientBase } from "../documents/mail";
+import { ensureSite } from "../sites/seed";
 import { itemsFor, onboardingKindOf } from "./templates";
 
 const oneLine = (s: string) => s.replace(/\s+/g, " ").trim().slice(0, 200);
@@ -34,6 +35,8 @@ export async function startOnboarding(env: Env, doc: Document, o: { test?: boole
     const { onboarding } = await createOnboarding(env.DB, {
       businessId: doc.businessId, dealId: doc.dealId, documentId: doc.id, kind, test, items: itemsFor(keys),
     });
+    // The site record for this sale. It never throws and its result is not part of what this returns: a failed seed is logged and the next start tries again.
+    await ensureSite(env.DB, { businessId: doc.businessId, packageKeys: keys, test });
     // A deal has one onboarding. If a test one got there first, a real start has not happened: say so rather than report the test row as the client's.
     if (!test && onboarding.test) return await note(env, doc, "a test onboarding already exists on this deal; the real one was not started");
     await logActivityOnce(env.DB, doc.businessId, "onboarding_started", `${doc.content.header.reference} v${doc.version}: ${onboarding.kind} onboarding started${onboarding.test ? " (test)" : ""}`);

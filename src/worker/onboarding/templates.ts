@@ -28,12 +28,18 @@ export const QUESTIONS: Question[] = [
   { id: "domain_owner", label: "Who registered your domain name?", help: "A name only, such as the company or person you paid. Do not type any login or password.", type: "short", required: false, kinds: BUILD },
 ];
 
+/** The six access items are keyed `access_<site access key>`: hosting, dns, registrar, admin, gbp, analytics. */
+export const ACCESS_ITEM_PREFIX = "access_";
+
 export interface ItemTemplate {
   key: string; label: string; instructions: string; kind: ItemKind; phase: 1 | 2; appliesTo: (keys: PackageKey[]) => boolean;
 }
 
 const isBuild = (keys: PackageKey[]) => keys.some((k) => BUILD_KEYS.includes(k));
 const has = (k: PackageKey) => (keys: PackageKey[]) => keys.includes(k);
+/** Every package that is a job (a build, Care, a quick fix, SEO, reviews). Hourly work and the client-hosted surcharge alone are not: they come with no site of ours to get into. */
+const JOB_KEYS: PackageKey[] = [...BUILD_KEYS, "care", "care_plus", "care_fallback", "quick_fix", "local_seo", "local_seo_growth", "reviews_addon"];
+const isJob = (keys: PackageKey[]) => keys.some((k) => JOB_KEYS.includes(k));
 
 /** In the order they are asked. Phase 1 is what the design starts from; phase 2 is what fills it in. */
 export const ITEM_TEMPLATES: ItemTemplate[] = [
@@ -49,6 +55,18 @@ export const ITEM_TEMPLATES: ItemTemplate[] = [
     instructions: "Pick your best-selling service. Describe what it is, who it is for, how it works, what it costs or how you price it, and what a customer should do to get started." },
   { key: "service_photos", label: "Photos for that service", kind: "files", phase: 1, appliesTo: isBuild,
     instructions: "Upload photos that show that service being done or finished, ideally with a before and after." },
+  { key: "access_hosting", label: "Who hosts your website?", kind: "text", phase: 1, appliesTo: isJob,
+    instructions: "Tell me the company that hosts your website, for example GoDaddy, Bluehost, WP Engine or Squarespace. If you are not sure, say so and I will help you find out. Can you add Logan as a user on that account? If so, say yes and tell me which email to invite. Do not send any password." },
+  { key: "access_dns", label: "Where are your domain's settings managed?", kind: "text", phase: 1, appliesTo: isJob,
+    instructions: "This is the company you sign in to when you want your web address to point at your website. It is often the same company as your host or where you bought your domain. Name the company if you know it, or write \"not sure\". Can you add Logan as a user there? Do not send any password." },
+  { key: "access_registrar", label: "Where did you buy your domain name?", kind: "text", phase: 1, appliesTo: isJob,
+    instructions: "Your domain name is your web address, such as yourbusiness.com. Name the company you bought it from (GoDaddy, Namecheap, Google Domains, Squarespace and so on) and whose name it is registered in. Can you add Logan as a user on that account? Do not send any password." },
+  { key: "access_admin", label: "How do you sign in to edit your website?", kind: "text", phase: 1, appliesTo: isJob,
+    instructions: "Tell me the name of the website builder or system you use (WordPress, Wix, Squarespace, Shopify and so on) and the web address of its sign-in page. Can you add Logan as an administrator user? If so, say yes and tell me which email to invite. Do not send any password." },
+  { key: "access_gbp", label: "Do you have a Google Business Profile?", kind: "text", phase: 1, appliesTo: isJob,
+    instructions: "This is the listing that shows up on Google Maps. Tell me whether you have one, and which Google account owns it. Can you add Logan as a manager on that profile? If so, say yes. Do not send any password." },
+  { key: "access_analytics", label: "Do you use Google Analytics or Search Console?", kind: "text", phase: 1, appliesTo: isJob,
+    instructions: "These show how many people visit your site and what they search for. Tell me which of them you use, and which Google account they belong to. Can you add Logan as a user on them? If you do not use either, write \"none\". Do not send any password." },
   { key: "about_text", label: "About text", kind: "text", phase: 2, appliesTo: isBuild,
     instructions: "Tell your story: how you started, how long you have been at it, and what you care about. Add licenses, certifications or awards you hold." },
   { key: "team_photos", label: "Team photos", kind: "files", phase: 2, appliesTo: isBuild,
@@ -65,12 +83,12 @@ export const ITEM_TEMPLATES: ItemTemplate[] = [
     instructions: "Paste the web address of each business page you want linked from the site (Facebook, Instagram, Google Business Profile and so on). Skip any you do not use." },
 ];
 
-/** A site build when any of its keys is a build package; everything else (a quick fix, care alone) is a light onboarding. Unknown keys count for nothing. */
+/** A site build when any of its keys is a build package; everything else (a quick fix, care alone) is a light onboarding, which still gets the six access items. Unknown keys count for nothing. */
 export const onboardingKindOf = (keys: PackageKey[]): OnboardingKind => (isBuild(keys) ? "build" : "light");
 
 export const questionsFor = (kind: OnboardingKind): Question[] => QUESTIONS.filter((q) => q.kinds.includes(kind));
 
-/** The checklist for these packages: none for a light onboarding, else every template that applies, in order. */
+/** The checklist for these packages: every template that applies, in order. Any job brings the six access items; only a build brings the content items. */
 export function itemsFor(keys: PackageKey[]): NewItem[] {
   return ITEM_TEMPLATES.filter((t) => t.appliesTo(keys)).map(({ key, label, instructions, kind, phase }) => ({ key, label, instructions, kind, phase }));
 }

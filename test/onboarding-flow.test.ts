@@ -116,8 +116,8 @@ describe("onboarding, end to end", () => {
     expect(opened.status).toBe(200);
     const view = await opened.json() as { stage: string; businessName: string; items: { id: string; key: string; phase: number; status: string; files: unknown[] }[]; questionnaire: { questions: { id: string; required: boolean }[]; submittedAt: string | null } };
     expect(view).toMatchObject({ stage: "questionnaire", businessName: "Ace Plumbing" });
-    expect(view.items.map((i) => i.key)).toEqual(["logo_files", "brand_text", "homepage_text", "homepage_photos", "service_page_text", "service_photos", "about_text", "team_photos", "reviews_text", "extra_pages_text", "faq_text", "social_links_text"]);
-    expect(view.items.filter((i) => i.phase === 1)).toHaveLength(6);
+    expect(view.items.map((i) => i.key)).toEqual(["logo_files", "brand_text", "homepage_text", "homepage_photos", "service_page_text", "service_photos", "access_hosting", "access_dns", "access_registrar", "access_admin", "access_gbp", "access_analytics", "about_text", "team_photos", "reviews_text", "extra_pages_text", "faq_text", "social_links_text"]);
+    expect(view.items.filter((i) => i.phase === 1)).toHaveLength(12);
     const itemId = (key: string) => view.items.find((i) => i.key === key)!.id;
 
     expect((await client(o.token, "PUT", "/answers", { answers: FIRST })).status).toBe(200);
@@ -142,7 +142,7 @@ describe("onboarding, end to end", () => {
     expect(after.stage).toBe("collecting");
     expect(after.items.find((i) => i.key === "homepage_text")).toMatchObject({ status: "received", textValue: "Fast, honest plumbing since 1998." });
     expect(after.items.find((i) => i.key === "logo_files")).toMatchObject({ status: "received", files: [{ id: file.id }] });
-    expect(after.progress).toEqual({ done: 3, total: 13 });
+    expect(after.progress).toEqual({ done: 3, total: 19 });
     expect(await activity(a.businessId, "onboarding_received")).toHaveLength(2);
 
     // ---- The file is in R2 and downloads for the owner only as an attachment that no browser will run.

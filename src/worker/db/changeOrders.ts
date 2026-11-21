@@ -116,6 +116,11 @@ export async function listChangeOrders(db: D1Database, projectId: string): Promi
   return (await db.prepare(`SELECT * FROM change_orders WHERE project_id = ? ORDER BY seq`).bind(projectId).all<Row>()).results.map(toChangeOrder);
 }
 
+/** Every change order of a business, whatever state its project is in (a finished build's change order is still the client's), in the order they were made. */
+export async function listChangeOrdersForBusiness(db: D1Database, businessId: string): Promise<ChangeOrder[]> {
+  return (await db.prepare(`SELECT * FROM change_orders WHERE business_id = ? ORDER BY created_at, rowid`).bind(businessId).all<Row>()).results.map(toChangeOrder);
+}
+
 const isSeqConflict = (e: unknown) => e instanceof Error && /UNIQUE constraint failed: change_orders\.project_id, change_orders\.seq/i.test(e.message);
 
 /**

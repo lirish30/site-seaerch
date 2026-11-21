@@ -3,7 +3,7 @@ import type { IconName } from "./components/iconMarkup";
 import type { TodayItem, TodayKind } from "./types";
 
 export const TODAY_KIND_LABEL: Record<TodayKind, string> = {
-  follow_up_due: "Follow-up", draft_unsent: "Unsent draft", stalled_deal: "Stalled deal", starred_idle: "Saved", promising_quick_scan: "Promising", proposal_follow_up: "Proposal", onboarding_attention: "Onboarding", project_attention: "Project", billing_attention: "Billing",
+  follow_up_due: "Follow-up", draft_unsent: "Unsent draft", stalled_deal: "Stalled deal", starred_idle: "Saved", promising_quick_scan: "Promising", proposal_follow_up: "Proposal", onboarding_attention: "Onboarding", project_attention: "Project", billing_attention: "Billing", access_missing: "Access",
 };
 
 /** The Snooze buttons, in days. The API accepts 1 to 30. */
@@ -49,10 +49,11 @@ export const KIND_VIEW: Record<TodayKind, { label: string; icon: IconName; tone:
   onboarding_attention: { label: "Onboarding", icon: "list", tone: "warning", pill: "Onboarding", action: "Open" },
   project_attention: { label: "Project", icon: "briefcase", tone: "warning", pill: "Projects", action: "Open" },
   billing_attention: { label: "Billing", icon: "card", tone: "warning", pill: "Billing", action: "Open billing" },
+  access_missing: { label: "Access missing", icon: "key", tone: "warning", pill: "Access", action: "Open client" },
 };
 /** The filter pills in display order. "Saved", "Proposals", "Onboarding", "Projects" and "Billing" only show when there is something under them, so the row matches the design for everyone else. */
-export const FILTER_ORDER: TodayKind[] = ["follow_up_due", "draft_unsent", "stalled_deal", "proposal_follow_up", "onboarding_attention", "project_attention", "billing_attention", "promising_quick_scan", "starred_idle"];
-const SHOWN_WHEN_USED: readonly TodayKind[] = ["starred_idle", "proposal_follow_up", "onboarding_attention", "project_attention", "billing_attention"];
+export const FILTER_ORDER: TodayKind[] = ["follow_up_due", "draft_unsent", "stalled_deal", "proposal_follow_up", "onboarding_attention", "project_attention", "billing_attention", "access_missing", "promising_quick_scan", "starred_idle"];
+const SHOWN_WHEN_USED: readonly TodayKind[] = ["starred_idle", "proposal_follow_up", "onboarding_attention", "project_attention", "billing_attention", "access_missing"];
 
 export function filterPills(items: readonly TodayItem[]): { key: KindFilter; label: string; count: number }[] {
   const count = (k: TodayKind) => items.filter((i) => i.kind === k).length;
@@ -83,12 +84,13 @@ export function itemReason(item: Pick<TodayItem, "kind" | "reason">, ctx: { cont
 
 /**
  * Where a row's main button goes: the lead, or the lead's email tab for an unsent draft, or the client's projects for a project row (one lead can have several projects, so it
- * is the list for that lead, not one project), or the Billing page filtered to that client for a billing row. Null for "Run full scan", which is a request, not a link.
+ * is the list for that lead, not one project), or the Billing page filtered to that client for a billing row, or the client record for a missing-access row. Null for "Run full scan", which is a request, not a link.
  */
 export const itemLink = (item: Pick<TodayItem, "kind" | "businessId">): string | null =>
   item.kind === "promising_quick_scan" ? null
     : item.kind === "project_attention" ? `/projects?businessId=${encodeURIComponent(item.businessId)}`
     : item.kind === "billing_attention" ? `/billing?businessId=${encodeURIComponent(item.businessId)}`
+    : item.kind === "access_missing" ? `/clients/${encodeURIComponent(item.businessId)}`
     : `/leads/${item.businessId}${item.kind === "draft_unsent" ? "?tab=email" : ""}`;
 
 export const filterEmpty = (f: KindFilter) => (f === "all" ? "" : `Nothing under ${KIND_VIEW[f].pill} right now.`);

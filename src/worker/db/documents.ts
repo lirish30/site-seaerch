@@ -60,6 +60,11 @@ export async function listForDeal(db: D1Database, dealId: string): Promise<Docum
   return (await db.prepare(`SELECT * FROM documents WHERE deal_id = ? ORDER BY version DESC`).bind(dealId).all<Row>()).results.map(toDocument);
 }
 
+/** Every version of every document the business has, newest first (a client's documents, whichever deal they hang off). */
+export async function listForBusiness(db: D1Database, businessId: string): Promise<Document[]> {
+  return (await db.prepare(`SELECT * FROM documents WHERE business_id = ? ORDER BY created_at DESC, rowid DESC`).bind(businessId).all<Row>()).results.map(toDocument);
+}
+
 export async function signaturesFor(db: D1Database, id: string): Promise<SignatureRecord[]> {
   return (await db.prepare(`SELECT * FROM document_signatures WHERE document_id = ? ORDER BY signed_at, role`).bind(id).all<SigRow>()).results.map(toSignature);
 }

@@ -1,4 +1,6 @@
 import type { PublicSubscription } from "../worker/billing/checkout";
+import type { ClientRecord, ClientRow } from "../worker/clients/record";
+import type { AccessItem, AccessKey, AccessStatus, Site, SiteFields } from "../worker/db/sites";
 export class ApiError extends Error { constructor(public status: number, message: string, public fields: string[] = [], public code = "", public body: unknown = undefined) { super(message); } }
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -29,6 +31,22 @@ export const api = {
   patch: <T,>(p: string, b: unknown) => req<T>("PATCH", p, b),
   put: <T,>(p: string, b: unknown) => req<T>("PUT", p, b),
   del: <T,>(p: string) => req<T>("DELETE", p),
+};
+
+/** The owner's client routes (Plan 9): the list, one client's whole record, and the site and access-checklist edits. Types only come from the worker. */
+export const clientsApi = {
+  /** Every client by name; `includeTest` adds the rehearsal ones (`?test=1`). */
+  list: (includeTest = false) => api.get<{ clients: ClientRow[] }>(`/clients${includeTest ? "?test=1" : ""}`).then((r) => r.clients),
+  get: (id: string) => api.get<{ client: ClientRecord }>(`/clients/${encodeURIComponent(id)}`).then((r) => r.client),
+  /** A site added by hand (six `needed` access items come with it). A domain the client already has on a live site is a 409. */
+  addSite: (id: string, fields: Partial<SiteFields> = {}) => api.post<{ site: Site; access: AccessItem[] }>(`/clients/${encodeURIComponent(id)}/sites`, fields),
+  /** Only the fields given change. */
+  patchSite: (id: string, siteId: string, fields: Partial<SiteFields>) => api.patch<{ site: Site }>(`/clients/${encodeURIComponent(id)}/sites/${encodeURIComponent(siteId)}`, fields),
+  /** Archives the site (the server answers 204). */
+  archiveSite: (id: string, siteId: string) => api.del<unknown>(`/clients/${encodeURIComponent(id)}/sites/${encodeURIComponent(siteId)}`),
+  /** One checklist line: a new status, the NAME of a password manager item, or the owner note. Only the keys given change; null clears. */
+  setAccess: (id: string, siteId: string, key: AccessKey, patch: { status?: AccessStatus; vaultItem?: string | null; note?: string | null }) =>
+    api.put<{ item: AccessItem }>(`/clients/${encodeURIComponent(id)}/sites/${encodeURIComponent(siteId)}/access/${key}`, patch).then((r) => r.item),
 };
 
 // The client's subscription page (`/s/<token>`). Public: it deliberately bypasses `req`, whose 401 handling sends the visitor to the owner's login. No cookie is sent.
