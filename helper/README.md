@@ -119,7 +119,9 @@ The same database file holds Meetily's API keys and licence; the helper only eve
 those never leave the Mac.
 
 - A meeting matches the booking or calendar window it overlaps most, after widening each window by 15 minutes. No overlap, or a tie, means no match.
-- A meeting updated less than 5 minutes ago is skipped (it is probably still recording) and picked up by the next sync.
+- A meeting is held back, and picked up by a later sync, when it might not be finished: its record or summary changed, or its audio ended, in the last 5 minutes
+  (still recording); a date in its record cannot be read; its summary is still pending or processing (for up to 24 hours after it ended); or it has no summary
+  yet and ended under 30 minutes ago. All of it is read inside one read transaction, so a meeting and its transcript come from the same moment.
 - A meeting that matches nothing is never uploaded, named in a result, or written to a log.
 - It needs Node's built-in `node:sqlite` (Node 22.18 or newer, no install). If your Node prints an "ExperimentalWarning: SQLite is an experimental feature"
   line, it is harmless; run with `NODE_NO_WARNINGS=1` to hide it. Do not switch to a different SQLite tool: this one opens the file read-only.

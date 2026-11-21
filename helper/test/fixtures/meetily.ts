@@ -21,16 +21,23 @@ export interface FixtureMeeting {
   lines?: FixtureLine[];
   /** The text stored in `summary_processes.result`; leave out for a meeting that was never summarised. */
   summary?: string | null;
+  /** The `summary_processes.status` (default `completed`). Giving one makes a row even when there is no `summary` text. */
+  summaryStatus?: string;
+  /** When the summary row was last touched; defaults to `updatedAt`. */
+  summaryUpdatedAt?: string;
+  /** Written to `meetings.updated_at` as-is, to model a record Meetily left unreadable. */
+  rawUpdatedAt?: string;
   /** Store the result the way newer Meetily versions do, as JSON with a `markdown` field. */
   summaryAsJson?: boolean;
 }
 
 /** Creates a SQLite file with the real Meetily table shapes (plus the three tables that hold keys and a licence), fills it and returns its path. */
-export function makeMeetilyDb(dir: string, opts: { meetings: FixtureMeeting[]; name?: string } = { meetings: [] }): string {
+export function makeMeetilyDb(dir: string, opts: { meetings: FixtureMeeting[]; name?: string; /** Put the file in WAL mode, as Meetily does. */ wal?: boolean } = { meetings: [] }): string {
   mkdirSync(dir, { recursive: true });
   const path = join(dir, opts.name ?? "meeting_minutes.sqlite");
   const db = new DatabaseSync(path);
   try {
+    if (opts.wal) db.exec("PRAGMA journal_mode = WAL");
     db.exec(`
       CREATE TABLE meetings (id TEXT PRIMARY KEY, title TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, folder_path TEXT);
       CREATE TABLE transcripts (
@@ -51,17 +58,20 @@ export function makeMeetilyDb(dir: string, opts: { meetings: FixtureMeeting[]; n
 
     const addMeeting = db.prepare("INSERT INTO meetings VALUES (?, ?, ?, ?, ?)");
     const addLine = db.prepare("INSERT INTO transcripts VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?)");
-    const addSummary = db.prepare("INSERT INTO summary_processes (meeting_id, status, created_at, updated_at, result) VALUES (?, 'completed', ?, ?, ?)");
+    const addSummary = db.prepare("INSERT INTO summary_processes (meeting_id, status, created_at, updated_at, result) VALUES (?, ?, ?, ?, ?)");
     for (const m of opts.meetings) {
       const created = meetilyTs(m.createdAt);
-      const updated = meetilyTs(m.updatedAt ?? m.createdAt);
+      const updated = m.rawUpdatedAt ?? meetilyTs(m.updatedAt ?? m.createdAt);
       addMeeting.run(m.id, m.title, created, updated, `/Users/someone/Meetily/${m.id}`);
       (m.lines ?? []).forEach((l, i) => {
         const start = l.startSec ?? null;
         const end = l.endSec ?? null;
         addLine.run(`${m.id}-t${i}`, m.id, l.text, created, start, end, start !== null && end !== null ? end - start : null, l.speaker ?? null);
       });
-      if (m.summary != null) addSummary.run(m.id, created, updated, m.summaryAsJson ? JSON.stringify({ markdown: m.summary }) : m.summary);
+      if (m.summary != null || m.summaryStatus) {
+        const result = m.summary == null ? null : m.summaryAsJson ? JSON.stringify({ markdown: m.summary }) : m.summary;
+        addSummary.run(m.id, m.summaryStatus ?? "completed", created, m.summaryUpdatedAt ? meetilyTs(m.summaryUpdatedAt) : updated, result);
+      }
     }
   } finally { db.close(); }
   return path;
