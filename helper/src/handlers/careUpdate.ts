@@ -9,6 +9,8 @@ import { payloadOf } from "./clone.ts";
 
 /** Each wp-cli call (and each remote command) may take this long. */
 const TIMEOUT_MS = 300_000;
+/** No new update is started when the last successful touch is older than this. */
+const CONTACT_MS = 10 * 60_000;
 const MAX_UPDATES = 40;
 const MAX_PATHS = 5;
 const BACKUP_DIR = "siteline-backups";
@@ -32,6 +34,9 @@ const SAY = {
   notStarted: "not started: an earlier update failed",
   noPutBack: "the old version could not be put back",
   noRead: "could not read the current version",
+  earlier: "applied by an earlier attempt",
+  interrupted: "not started: the job was interrupted",
+  lostContact: "stopped: lost contact with Agency OS",
 } as const;
 
 const word = (v: unknown, max: number): string => (typeof v === "string" && /^[A-Za-z0-9._-]{1,100}$/.test(v) && v.length <= max ? v : "");
@@ -44,7 +49,7 @@ const badVersion = (v: unknown): boolean => typeof v !== "string" || !WP_ARG.ver
 function parsePayload(job: Parameters<typeof payloadOf>[0]): Payload {
   const p = payloadOf(job);
   const bad = (what: string): never => { throw new Error(`the care.update job's ${what} is not valid`); };
-  const runId = typeof p.runId === "string" && /^[0-9a-f-]{36}$/i.test(p.runId) ? p.runId : bad("run id");
+  const runId = typeof p.runId === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(p.runId) ? p.runId : bad("run id");
   const siteId = word(p.siteId, 100) || bad("site id");
   let domain = "";
   let siteUrl = "";
@@ -92,7 +97,7 @@ const fileExists = async (p: string): Promise<boolean> => { try { const s = awai
  * Safe to run again after the Mac slept: it reads each component's version first, skips what is already at the new version, and keeps the first backup.
  * It runs `wp` (plugin get/update/install, theme get/update/install, core version/update/update-db, db export) and `mkdir`, `test`, `gzip`, `find`, nothing else.
  */
-export function careUpdateHandler(exec: Exec = runProcess, fetchFn: typeof fetch = fetch): JobHandler {
+export function careUpdateHandler(exec: Exec = runProcess, fetchFn: typeof fetch = fetch, now: () => number = Date.now): JobHandler {
   return {
     kind: "care.update",
     async run({ job, api, cfg, workDir }) {
@@ -103,43 +108,107 @@ export function careUpdateHandler(exec: Exec = runProcess, fetchFn: typeof fetch
       const gz = `${sql}.gz`;
 
       /** After every step: keeps the claim alive. Only "this job is no longer yours" stops the job; a hiccup in the keep-alive does not. */
-      const tick = async (): Promise<void> => { try { await api.touch(job.id); } catch (e) { if (isStop(e)) throw e; } };
+      let lastContact = now();
+      const tick = async (): Promise<void> => { try { await api.touch(job.id); lastContact = now(); } catch (e) { if (isStop(e)) throw e; } };
       const rem = (words: string[]) => remote(exec, p.alias, words, o);
 
       const steps: Step[] = p.updates.map((u) => ({ id: u.id, outcome: "skipped", note: "" }));
       const pending = new Set<number>();
-      const changed = new Set<number>(); // updates whose command succeeded in THIS run: the only ones that can be put back
+      const changed = new Set<number>(); // updates this run touched (in the order applied): the only ones that can be put back
       const stepOf = (i: number, outcome: Outcome, note: string) => { steps[i] = { id: p.updates[i].id, outcome, note }; };
 
-      // (1) Where is each component now?
-      const readErrors: unknown[] = [];
-      for (const [i, u] of p.updates.entries()) {
+      /** The version now, or null when it cannot be read. */
+      const versionOf = async (u: Update): Promise<string | null> => {
         try {
-          const now = u.type === "core" ? await wpText(exec, t, ["core", "version"], o) : await wpText(exec, t, [u.type, "get", u.slug, "--field=version"], o);
-          if (!WP_ARG.version.test(now)) throw new WpError("wp-cli gave no readable answer");
-          if (now === u.to) stepOf(i, "skipped", SAY.already);
-          else if (now === u.from) pending.add(i);
-          else stepOf(i, "skipped", SAY.byHand);
-        } catch (e) {
-          readErrors.push(e);
-          stepOf(i, "skipped", withWhy(SAY.noRead, e));
-        }
-        await tick();
-      }
-      // Not one version could be read: the site cannot be reached, which is a failed job (it may be tried again), not a list of skipped updates.
-      if (readErrors.length === p.updates.length) throw readErrors[0] instanceof Error ? readErrors[0] : new WpError(SAY.noRead);
-
+          const v = u.type === "core" ? await wpText(exec, t, ["core", "version"], o) : await wpText(exec, t, [u.type, "get", u.slug, "--field=version"], o);
+          return WP_ARG.version.test(v) ? v : null;
+        } catch { return null; }
+      };
+      const urls = p.paths.map((x) => pageUrl(p.siteUrl, x));
       const backupExists = async (): Promise<boolean> => {
         try { await rem(["test", "-e", gz]); await rem(["gzip", "-t", gz]); return true; } catch { return false; }
       };
+      /** Puts the old code back, in the reverse of the order it was changed. The database is never imported. True when at least one put-back command ran. */
+      const putBack = async (order: number[], why: string): Promise<boolean> => {
+        let ran = false;
+        for (const i of [...order].reverse()) {
+          const u = p.updates[i];
+          if (!u.rollbackable) { stepOf(i, "rollback_failed", SAY.noPutBack); await tick(); continue; }
+          ran = true;
+          try {
+            if (u.type === "core") {
+              await wpRaw(exec, t, ["core", "update", `--version=${u.from}`, "--force"], o);
+              await wpRaw(exec, t, ["core", "update-db"], o);
+            } else await wpRaw(exec, t, [u.type, "install", u.slug, `--version=${u.from}`, "--force"], o);
+            stepOf(i, "rolled_back", why);
+          } catch (e) {
+            stepOf(i, "rollback_failed", withWhy(SAY.noPutBack, e));
+          }
+          await tick();
+        }
+        return ran;
+      };
+      /** Only the status, no screenshot: is the site back? */
+      const recheck = async (pages: PageResult[]): Promise<void> => {
+        for (let i = 0; i < p.paths.length; i++) {
+          const r = await readPage(fetchFn, urls[i]);
+          pages[i].after = { status: r.status, fatal: r.fatal, forms: r.forms };
+          await tick();
+        }
+      };
+      const empty: Read = { status: null, fatal: false, forms: 0 };
+
+      // (1) Where is each component now?
+      const readErrors: unknown[] = [];
+      const nowVer: (string | null)[] = [];
+      for (const [i, u] of p.updates.entries()) {
+        const v = await versionOf(u);
+        nowVer.push(v);
+        if (v === null) { readErrors.push(1); stepOf(i, "skipped", SAY.noRead); }
+        await tick();
+      }
+      // Not one version could be read: the site cannot be reached, which is a failed job (it may be tried again), not a list of skipped updates.
+      if (readErrors.length === p.updates.length) throw new WpError(SAY.noRead);
+
+      // A retried job (the Mac slept or the helper died) never applies an update: it reports what is there, checks the pages and puts back what broke the site.
+      if (job.attempts > 1) {
+        const set: number[] = [];
+        for (const [i, u] of p.updates.entries()) {
+          const v = nowVer[i];
+          if (v === null) continue;
+          if (v === u.to) { stepOf(i, "applied", SAY.earlier); set.push(i); }
+          else if (v === u.from) stepOf(i, "skipped", SAY.interrupted);
+          else { stepOf(i, "skipped", SAY.byHand); if (u.rollbackable) set.push(i); }
+        }
+        const pages: PageResult[] = [];
+        for (let i = 0; i < p.paths.length; i++) {
+          const r = await readPage(fetchFn, urls[i]);
+          const broken = r.status === null || r.status === 404 || r.status === 410 || r.status >= 500 || r.fatal;
+          pages.push({ path: p.paths[i], before: empty, after: { status: r.status, fatal: r.fatal, forms: r.forms }, ssim: null, verdict: broken ? "broken" : "ok", uploaded: { before: false, after: false, diff: false } });
+          await tick();
+        }
+        let rolledBack = false;
+        if (pages.some((x) => x.verdict === "broken") && set.length > 0) {
+          rolledBack = await putBack(set, SAY.broke);
+          if (rolledBack) await recheck(pages);
+        }
+        return { backupFile: (await backupExists()) ? gz : null, steps, pages, rolledBack, retry: true };
+      }
+
+      for (const [i, u] of p.updates.entries()) {
+        const v = nowVer[i];
+        if (v === null) continue;
+        if (v === u.to) stepOf(i, "skipped", SAY.already);
+        else if (v === u.from) pending.add(i);
+        else stepOf(i, "skipped", SAY.byHand);
+      }
 
       if (pending.size === 0) {
-        // Nothing left to do (a rerun finding it all done): no pages, no backup. Name the first run's backup if it is there.
-        return { backupFile: (await backupExists()) ? gz : null, steps, pages: [], rolledBack: false };
+        // Nothing left to do: no pages, no backup. Name the first run's backup if it is there.
+        return { backupFile: (await backupExists()) ? gz : null, steps, pages: [], rolledBack: false, retry: false };
       }
 
       // (2) The pages as they are now.
-      const urls = p.paths.map((x) => pageUrl(p.siteUrl, x));
       const shoot = async (i: number, kind: "before" | "after"): Promise<PageShot> => {
         const png = join(workDir, `${i}-${kind}.png`);
         const read = await readPage(fetchFn, urls[i]);
@@ -171,24 +240,31 @@ export function careUpdateHandler(exec: Exec = runProcess, fetchFn: typeof fetch
       }
       if (!backupOk) {
         for (const i of pending) stepOf(i, "skipped", SAY.noBackup);
-        return { backupFile: null, steps, pages: [], rolledBack: false };
+        return { backupFile: null, steps, pages: [], rolledBack: false, retry: false };
       }
 
-      // (4) The updates, in the plan's order. One failure stops the rest.
+      // (4) The updates, in the plan's order. One failure stops the rest; so does losing contact with the server for 10 minutes.
       let anyFailed = false;
       for (const i of [...pending]) {
         const u = p.updates[i];
         if (anyFailed) { stepOf(i, "skipped", SAY.notStarted); continue; }
+        if (now() - lastContact > CONTACT_MS) { stepOf(i, "skipped", SAY.lostContact); continue; }
+        let why: unknown;
         try {
           if (u.type === "core") await wpRaw(exec, t, ["core", "update", `--version=${u.to}`], o);
           else await wpRaw(exec, t, [u.type, "update", u.slug, `--version=${u.to}`], o);
-          changed.add(i);
           if (u.type === "core") await wpRaw(exec, t, ["core", "update-db"], o);
-          stepOf(i, "applied", "");
-        } catch (e) {
+        } catch (e) { why = e; }
+        // wp-cli's exit code is not trusted: the step is applied only when the version now reads `to`.
+        const v = await versionOf(u);
+        if (v === u.to && why === undefined) stepOf(i, "applied", "");
+        else {
           anyFailed = true;
-          stepOf(i, "failed", withWhy(SAY.refused, e));
+          stepOf(i, "failed", withWhy(SAY.refused, why ?? new Error(v === u.to ? "" : `the version reads ${v ?? "unknown"}`)));
+          // It may be half installed: whatever does not read `from` any more is put back too.
+          if (v !== u.from) changed.add(i);
         }
+        if (v === u.to) changed.add(i);
         await tick();
       }
 
@@ -213,34 +289,12 @@ export function careUpdateHandler(exec: Exec = runProcess, fetchFn: typeof fetch
         });
       }
 
-      // (6) Put the old code back when a page broke or an update failed. The database is never imported.
+      // (6) Put the old code back when a page broke or an update failed.
       const pageBroke = pages.some((x) => x.verdict === "broken");
       let rolledBack = false;
       if ((pageBroke || anyFailed) && changed.size > 0) {
-        const why = pageBroke ? SAY.broke : SAY.otherFailed;
-        for (const i of changed) {
-          const u = p.updates[i];
-          if (!u.rollbackable) { stepOf(i, "rollback_failed", SAY.noPutBack); await tick(); continue; }
-          rolledBack = true;
-          try {
-            if (u.type === "core") {
-              await wpRaw(exec, t, ["core", "update", `--version=${u.from}`, "--force"], o);
-              await wpRaw(exec, t, ["core", "update-db"], o);
-            } else await wpRaw(exec, t, [u.type, "install", u.slug, `--version=${u.from}`, "--force"], o);
-            stepOf(i, "rolled_back", why);
-          } catch (e) {
-            stepOf(i, "rollback_failed", withWhy(SAY.noPutBack, e));
-          }
-          await tick();
-        }
-        if (rolledBack) {
-          // Only the status, no screenshot: is the site back?
-          for (let i = 0; i < p.paths.length; i++) {
-            const r = await readPage(fetchFn, urls[i]);
-            pages[i].after = { status: r.status, fatal: r.fatal, forms: r.forms };
-            await tick();
-          }
-        }
+        rolledBack = await putBack([...changed], pageBroke ? SAY.broke : SAY.otherFailed);
+        if (rolledBack) await recheck(pages);
       }
 
       // (7) The JPEGs that exist, and only the keys the server listed for this job.
@@ -258,7 +312,7 @@ export function careUpdateHandler(exec: Exec = runProcess, fetchFn: typeof fetch
         await tick();
       }
 
-      return { backupFile: gz, steps, pages, rolledBack };
+      return { backupFile: gz, steps, pages, rolledBack, retry: false };
     },
   };
 }

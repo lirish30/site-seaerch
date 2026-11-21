@@ -8,6 +8,7 @@ import type { Exec } from "../src/exec.ts";
 import type { JobContext } from "../src/loop.ts";
 
 const RUN = "123e4567-e89b-12d3-a456-426614174000";
+const clock = { t: 0 };
 const BASE = `siteline-backups/acme.com-${RUN}.sql`;
 const GZ = `${BASE}.gz`;
 const upd = (slug: string, from: string, to: string, o: Record<string, unknown> = {}) => ({ id: `u-${slug}`, type: "plugin", slug, from, to, rollbackable: true, ...o });
@@ -34,15 +35,25 @@ interface World {
   /** Per path, the status each successive read of it gets. */
   pages?: Record<string, number[]>;
   stopTouchAt?: number;
+  /** Every touch fails with a network error (not a stop). */
+  touchFails?: boolean;
+  /** `plugin update` fails but leaves the plugin at a third version (half installed). */
+  halfInstall?: string[];
+  /** `plugin update` exits 0 and changes nothing. */
+  noopUpdate?: string[];
+  /** Each `plugin update` takes this long on the injected clock. */
+  updateTakesMs?: number;
 }
 
 /** A fake server, Chrome and ffmpeg behind one exec, a fake fetch and a fake api, all writing to one ordered log. */
-function setup(w: World, payload: unknown = PAYLOAD(), outputs?: string[]) {
+function setup(w: World, payload: unknown = PAYLOAD(), outputs?: string[], attempts = 1) {
+  clock.t = 0;
   const log: string[] = [];
   const argvs: string[][] = [];
   const uploads: { key: string; contentType: string }[] = [];
   const versions = { ...w.versions };
   let touches = 0;
+  let updateDbFailed = false;
   const timeouts: number[] = [];
   const reads: Record<string, number> = {};
   const exec: Exec = async (file, args, opts) => {
@@ -79,6 +90,9 @@ function setup(w: World, payload: unknown = PAYLOAD(), outputs?: string[]) {
     }
     if (a === "db" && b === "export") { if (w.failExport) throw new Error("mysqldump missing"); return { stdout: "Success\n" }; }
     if ((a === "plugin" || a === "theme") && b === "update") {
+      clock.t += w.updateTakesMs ?? 0;
+      if (w.halfInstall?.includes(c)) { versions[`${a}:${c}`] = "0.9"; throw new Error("Error: timed out"); }
+      if (w.noopUpdate?.includes(c)) return { stdout: "Success\n" };
       if (w.failUpdate?.includes(c)) throw new Error("Error: could not update the plugin");
       versions[`${a}:${c}`] = words.find((x) => x.startsWith("--version="))!.slice(10);
       return { stdout: "Success\n" };
@@ -89,7 +103,7 @@ function setup(w: World, payload: unknown = PAYLOAD(), outputs?: string[]) {
       return { stdout: "Success\n" };
     }
     if (a === "core" && b === "update") { versions.core = words.find((x) => x.startsWith("--version="))!.slice(10); return { stdout: "Success\n" }; }
-    if (a === "core" && b === "update-db") { if (w.failUpdateDb) throw new Error("Error: db"); return { stdout: "Success\n" }; }
+    if (a === "core" && b === "update-db") { if (w.failUpdateDb && !updateDbFailed) { updateDbFailed = true; throw new Error("Error: db"); } return { stdout: "Success\n" }; }
     throw new Error(`unexpected wp command: ${cmd}`);
   };
   const fetchFn = (async (url: string) => {
@@ -104,12 +118,12 @@ function setup(w: World, payload: unknown = PAYLOAD(), outputs?: string[]) {
     async claim() { return null; },
     async download() {},
     async upload(_id, key, from, contentType) { statSync(from); log.push(`upload ${key}`); uploads.push({ key, contentType }); },
-    async touch() { touches++; log.push("touch"); if (w.stopTouchAt !== undefined && touches >= w.stopTouchAt) throw new ApiError(409, "this job is not claimed by this device"); },
+    async touch() { touches++; log.push("touch"); if (w.touchFails) throw new Error("network down"); if (w.stopTouchAt !== undefined && touches >= w.stopTouchAt) throw new ApiError(409, "this job is not claimed by this device"); },
     async complete() {}, async fail() {},
   };
-  const job: ClaimedJob = { id: "j1", kind: "care.update", attempts: 1, payload, inputs: [], outputs: outputs ?? keysFor(2) };
+  const job: ClaimedJob = { id: "j1", kind: "care.update", attempts, payload, inputs: [], outputs: outputs ?? keysFor(2) };
   const ctx: JobContext = { job, api, cfg: { chrome: "chrome", ffmpeg: "ffmpeg" } as never, workDir: dir };
-  return { run: () => careUpdateHandler(exec, fetchFn).run(ctx) as Promise<any>, log, argvs, uploads, versions, timeouts, touches: () => touches };
+  return { run: () => careUpdateHandler(exec, fetchFn, () => clock.t).run(ctx) as Promise<any>, log, argvs, uploads, versions, timeouts, touches: () => touches };
 }
 
 const BASIC: World = { versions: { "plugin:akismet": "5.0", "plugin:hello": "1.0" } };
@@ -125,7 +139,7 @@ describe("care.update", () => {
       `remote test -e ${GZ}`,
     ].concat([
       "remote mkdir -p siteline-backups", `wp db export ${BASE}`, `remote gzip -f ${BASE}`, "remote find siteline-backups -name *.sql.gz -mtime +28 -delete",
-      "wp plugin update akismet --version=5.1", "wp plugin update hello --version=1.1",
+      "wp plugin update akismet --version=5.1", "wp plugin get akismet --field=version", "wp plugin update hello --version=1.1", "wp plugin get hello --field=version",
       "fetch /", "chrome https://acme.com/", "fetch /contact/", "chrome https://acme.com/contact/",
       "ffmpeg ssim", "ffmpeg jpg", "ffmpeg jpg", "ffmpeg jpg",
       "ffmpeg ssim", "ffmpeg jpg", "ffmpeg jpg", "ffmpeg jpg",
@@ -280,7 +294,7 @@ describe("care.update", () => {
     const s = setup({ versions: { core: "6.4.1" }, failUpdateDb: true }, p);
     const r = await s.run();
     expect(s.log).toContain("wp core update --version=6.4.1 --force");
-    expect(["rolled_back", "rollback_failed"]).toContain(r.steps[0].outcome);
+    expect(r.steps[0].outcome).toBe("rolled_back");
     expect(r.rolledBack).toBe(true);
   });
 
@@ -313,7 +327,7 @@ describe("care.update", () => {
       expect(next.every((x) => x === "touch" || /^fetch|^chrome|^wp |^remote/.test(x!)), String(re)).toBe(true);
     }
     // each mutating command is followed at once by a touch
-    for (const re of [/^wp plugin update/, /^wp db export/, /^remote gzip/, /^remote mkdir/]) expect(touchAfter(re).every((x) => x === "touch"), String(re)).toBe(true);
+    for (const re of [/^wp db export/, /^remote gzip/, /^remote mkdir/]) expect(touchAfter(re).every((x) => x === "touch"), String(re)).toBe(true);
     expect(s.touches()).toBeGreaterThanOrEqual(8);
   });
 
@@ -339,6 +353,94 @@ describe("care.update", () => {
   });
 });
 
+describe("care.update re-reads versions and keeps contact", () => {
+  it("puts back an update that failed partway and left a third version, and counts it as failed", async () => {
+    const s = setup({ ...BASIC, halfInstall: ["hello"] });
+    const r = await s.run();
+    expect(s.log).toContain("wp plugin install hello --version=1.0 --force");
+    expect(s.versions["plugin:hello"]).toBe("1.0");
+    expect(r.steps[1].outcome).toBe("rolled_back");
+    expect(r.steps[0].outcome).toBe("rolled_back");
+    expect(r.rolledBack).toBe(true);
+  });
+  it("is applied only when the version reads the new one: an exit 0 that changed nothing is failed and not put back", async () => {
+    const s = setup({ ...BASIC, noopUpdate: ["akismet"] });
+    const r = await s.run();
+    expect(r.steps[0].outcome).toBe("failed");
+    expect(r.steps[0].note).toMatch(/^wp-cli refused the update: the version reads 5.0/);
+    expect(s.log.some((l) => l.includes(" install "))).toBe(false);
+    expect(r.steps[1].outcome).toBe("skipped");
+  });
+  it("puts back in the reverse of the order applied", async () => {
+    const s = setup({ ...BASIC, pages: { "/": [200, 500, 200] } });
+    await s.run();
+    const installs = s.log.filter((l) => l.includes(" install "));
+    expect(installs).toEqual(["wp plugin install hello --version=1.0 --force", "wp plugin install akismet --version=5.0 --force"]);
+  });
+  it("starts no new update once the last successful touch is over 10 minutes old, but still checks the pages", async () => {
+    const s = setup({ ...BASIC, touchFails: true, updateTakesMs: 11 * 60_000 });
+    const r = await s.run();
+    expect(r.steps[0].outcome).toBe("applied");
+    expect(r.steps[1]).toEqual({ id: "u-hello", outcome: "skipped", note: "stopped: lost contact with Agency OS" });
+    expect(s.log.some((l) => l.startsWith("wp plugin update hello"))).toBe(false);
+    expect(s.log.filter((l) => l === "chrome https://acme.com/")).toHaveLength(2);
+  });
+  it("still updates when touches fail briefly (under 10 minutes)", async () => {
+    const s = setup({ ...BASIC, touchFails: true, updateTakesMs: 60_000 });
+    const r = await s.run();
+    expect(r.steps.map((x: any) => x.outcome)).toEqual(["applied", "applied"]);
+  });
+  it("still puts back after contact was lost", async () => {
+    const s = setup({ ...BASIC, touchFails: true, updateTakesMs: 11 * 60_000, pages: { "/": [200, 500, 200] } });
+    const r = await s.run();
+    expect(r.steps[0].outcome).toBe("rolled_back");
+  });
+});
+
+describe("care.update on a retried job", () => {
+  const noUpdates = (log: string[]) => log.filter((l) => /^wp (plugin|theme) update|^wp core update(?! --version=\S+ --force)|db export|^remote (mkdir|gzip -f)/.test(l));
+  it("applies nothing, reports what an earlier attempt did, checks the pages and does not roll back a healthy site", async () => {
+    const s = setup({ versions: { "plugin:akismet": "5.1", "plugin:hello": "1.1" }, backupExists: true }, PAYLOAD(), undefined, 2);
+    const r = await s.run();
+    expect(r.retry).toBe(true);
+    expect(noUpdates(s.log)).toEqual([]);
+    expect(s.log.some((l) => l.startsWith("chrome") || l.startsWith("ffmpeg"))).toBe(false);
+    expect(s.log.filter((l) => l.startsWith("fetch"))).toEqual(["fetch /", "fetch /contact/"]);
+    expect(r.steps).toEqual([{ id: "u-akismet", outcome: "applied", note: "applied by an earlier attempt" }, { id: "u-hello", outcome: "applied", note: "applied by an earlier attempt" }]);
+    expect(r.pages.map((x: any) => x.verdict)).toEqual(["ok", "ok"]);
+    expect(r.rolledBack).toBe(false);
+    expect(r.backupFile).toBe(GZ);
+    expect(s.log.some((l) => l.includes(" install "))).toBe(false);
+  });
+  it("rolls back every component at the new version when a page is broken, in reverse order, and rechecks", async () => {
+    const s = setup({ versions: { "plugin:akismet": "5.1", "plugin:hello": "1.1" }, backupExists: true, pages: { "/": [500, 200] } }, PAYLOAD(), undefined, 2);
+    const r = await s.run();
+    expect(s.log.filter((l) => l.includes(" install "))).toEqual(["wp plugin install hello --version=1.0 --force", "wp plugin install akismet --version=5.0 --force"]);
+    expect(r.steps.map((x: any) => x.outcome)).toEqual(["rolled_back", "rolled_back"]);
+    expect(r.rolledBack).toBe(true);
+    expect(r.pages[0].after.status).toBe(200);
+    expect(r.pages[0].verdict).toBe("broken");
+    expect(noUpdates(s.log)).toEqual([]);
+  });
+  it("after a crash mid-rollback (one back at from, one still at to) never applies again and puts back only the one at to", async () => {
+    const s = setup({ versions: { "plugin:akismet": "5.0", "plugin:hello": "1.1" }, backupExists: true, pages: { "/": [503, 200] } }, PAYLOAD(), undefined, 3);
+    const r = await s.run();
+    expect(noUpdates(s.log)).toEqual([]);
+    expect(s.log.filter((l) => l.includes(" install "))).toEqual(["wp plugin install hello --version=1.0 --force"]);
+    expect(r.steps[0]).toEqual({ id: "u-akismet", outcome: "skipped", note: "not started: the job was interrupted" });
+    expect(r.steps[1].outcome).toBe("rolled_back");
+  });
+  it("uses absolute rules: a form count is not compared, a fatal page or a null status is broken", async () => {
+    const fatalFetch = setup({ versions: { "plugin:akismet": "5.1", "plugin:hello": "1.1" }, backupExists: true, pages: { "/": [404, 200] } }, PAYLOAD(), undefined, 2);
+    expect((await fatalFetch.run()).pages[0].verdict).toBe("broken");
+    const fine = setup({ versions: { "plugin:akismet": "5.1", "plugin:hello": "1.1" }, backupExists: true }, PAYLOAD(), undefined, 2);
+    expect((await fine.run()).pages.every((x: any) => x.before.forms === 0 && x.verdict === "ok")).toBe(true);
+  });
+  it("a first attempt reports retry false", async () => {
+    expect((await setup(BASIC).run()).retry).toBe(false);
+  });
+});
+
 describe("care.update refuses a bad payload before any ssh", () => {
   const bad: [string, (p: any) => void][] = [
     ["hostile slug", (p) => { p.updates[0].slug = "x; rm -rf ~"; }],
@@ -359,6 +461,7 @@ describe("care.update refuses a bad payload before any ssh", () => {
     ["page path not a string", (p) => { p.paths = [3]; }],
     ["bad run id", (p) => { p.runId = "x; id"; }],
     ["short run id", (p) => { p.runId = "abc"; }],
+    ["run id of the right length but wrong shape", (p) => { p.runId = "1234567-e89b-12d3-a456-4266141740000"; }],
     ["bad site url", (p) => { p.siteUrl = "not a url"; }],
     ["ftp site url", (p) => { p.siteUrl = "ftp://acme.com"; }],
     ["underscore host", (p) => { p.siteUrl = "https://a_b.com"; }],
