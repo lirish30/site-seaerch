@@ -9,13 +9,13 @@ import { getTask, TaskInputError } from "../../db/tasks";
 import { TimeStateError } from "../../db/time";
 import { cleanText, looksLikeCredential } from "../../onboarding/templates";
 import { addAdhocTask, postComment, TaskStateError } from "../../projects/service";
-import { OWNER_TAGS } from "../../sop/model";
 import { zoneOf } from "../../sop/cadence";
 import { addManualEntry } from "../../time/service";
 import type { ToolCtx } from "./context";
 
 const id = z.string().min(1).max(100);
 const NOTE_MAX = 500;
+const CLAUDE_WORK_REFUSED = "add_task only adds to-dos for Logan. Logan assigns Claude work in the app.";
 const NOTE_CREDENTIAL_REFUSED = "This looks like a login or password. Never put those in a note; note where they are stored instead.";
 /** The errors the app raises for a request it cannot do: each message is a plain sentence that never repeats what was sent. */
 const isRefusal = (e: unknown) => e instanceof TaskInputError || e instanceof TimeStateError || e instanceof TaskStateError;
@@ -62,11 +62,13 @@ export function registerActTools(server: McpServer, ctx: ToolCtx): void {
   });
 
   server.registerTool("add_task", {
-    description: "Add an extra task to a project (not one of the SOP's steps, so it never finishes the project). Owner is logan, claude or claude_drafts. Estimate is whole minutes up to 600; due date is a calendar date. A cancelled project cannot take tasks, and a title that reads like a login is refused.",
-    inputSchema: { project_id: id, title: z.string().min(1).max(300), owner: z.enum(OWNER_TAGS), est_minutes: z.number().optional(), due_on: z.string().max(10).optional() },
+    description: "Adds a to-do for Logan; Claude work is assigned by Logan in the app. An extra task on a project (not one of the SOP's steps, so it never finishes the project). Owner is logan, which is also the default. Estimate is whole minutes up to 600; due date is a calendar date. A cancelled project cannot take tasks, and a title that reads like a login is refused.",
+    inputSchema: { project_id: id, title: z.string().min(1).max(300), owner: z.string().max(40).optional(), est_minutes: z.number().optional(), due_on: z.string().max(10).optional() },
   }, async ({ project_id, title, owner, est_minutes, due_on }) => {
     const record = { type: "project", id: project_id };
-    const r = await attempt("add_task", record, () => addAdhocTask(env, { projectId: project_id, title, owner, estMinutes: est_minutes, dueOn: due_on }, new Date()));
+    // Anything the MCP adds must stay out of the Claude queue: a job reading untrusted text could otherwise start a chain of unreviewed Claude work.
+    if (owner !== undefined && owner !== "logan") return refuse("add_task", CLAUDE_WORK_REFUSED, record);
+    const r = await attempt("add_task", record, () => addAdhocTask(env, { projectId: project_id, title, owner: "logan", estMinutes: est_minutes, dueOn: due_on }, new Date()));
     if ("refused" in r) return r.refused;
     const t = (await getTask(db, r.value.id)) ?? r.value; // the queue may have picked the task up since it was added
     await log("add_task", `add_task ${t.title.slice(0, 100)} (${t.owner})`, { type: "task", id: t.id });

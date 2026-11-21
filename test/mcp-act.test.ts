@@ -165,19 +165,35 @@ describe("log_time", () => {
 });
 
 describe("add_task", () => {
-  it("adds an ad hoc task that is not a step", async () => {
+  it("adds an ad hoc to-do for Logan that is not a step and never reaches the Claude queue", async () => {
     const s = await seedProject();
-    const r = await oneAction("add_task", { project_id: s.project.id, title: "Check the contact form", owner: "claude", est_minutes: 20, due_on: "2026-12-24" });
+    const queued = async () => (await env.DB.prepare(`SELECT COUNT(*) AS n FROM claude_tasks`).first<{ n: number }>())!.n;
+    const before = await queued();
+    const r = await oneAction("add_task", { project_id: s.project.id, title: "Check the contact form", owner: "logan", est_minutes: 20, due_on: "2026-12-24" });
     expect(r.isError).toBe(false);
-    const [task] = await listTasks(env.DB, s.project.id).then((ts) => ts.filter((t) => t.title === "Check the contact form"));
-    expect(task).toMatchObject({ isStep: false, owner: "claude", estMinutes: 20, dueOn: "2026-12-24" }); // a claude task is picked up by the queue, so its status is the queue's to set
-    expect(JSON.parse(r.text)).toMatchObject({ id: task.id, title: "Check the contact form", owner: "claude", status: task.status });
+    const [task] = (await listTasks(env.DB, s.project.id)).filter((t) => t.title === "Check the contact form");
+    expect(task).toMatchObject({ isStep: false, owner: "logan", estMinutes: 20, dueOn: "2026-12-24", status: "todo", claudeTaskId: null });
+    expect(JSON.parse(r.text)).toMatchObject({ id: task.id, title: "Check the contact form", owner: "logan", status: "todo" });
+    expect(await queued()).toBe(before);
   });
 
-  it("takes the owner tags the app has, and refuses one it does not", async () => {
+  it("owner is optional and defaults to logan", async () => {
     const s = await seedProject();
-    expect((await tool("add_task", { project_id: s.project.id, title: "Drafted by Claude", owner: "claude_drafts" })).isError).toBe(false);
-    expect((await tool("add_task", { project_id: s.project.id, title: "Nobody's", owner: "nobody" })).isError).toBe(true);
+    await ok("add_task", { project_id: s.project.id, title: "No owner given" });
+    expect((await listTasks(env.DB, s.project.id)).find((t) => t.title === "No owner given")).toMatchObject({ owner: "logan", claudeTaskId: null });
+  });
+
+  it("refuses owner claude and claude_drafts, and anything else, creating no task and queueing nothing", async () => {
+    const s = await seedProject();
+    const before = (await listTasks(env.DB, s.project.id)).length;
+    const queued = async () => (await env.DB.prepare(`SELECT COUNT(*) AS n FROM claude_tasks`).first<{ n: number }>())!.n;
+    const queuedBefore = await queued();
+    for (const owner of ["claude", "claude_drafts", "client", "nobody"]) {
+      const r = await oneAction("add_task", { project_id: s.project.id, title: "Injected work", owner });
+      expect(r).toEqual({ isError: true, text: "add_task only adds to-dos for Logan. Logan assigns Claude work in the app." });
+    }
+    expect((await listTasks(env.DB, s.project.id)).length).toBe(before);
+    expect(await queued()).toBe(queuedBefore);
   });
 
   it("refuses a cancelled project", async () => {
