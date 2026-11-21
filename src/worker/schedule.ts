@@ -53,7 +53,7 @@ async function expireProposals(env: Env, now: Date): Promise<number> {
  * and notes 14 days of silence), and sweeps the projects (makes this period's recurring tasks, starts the projects a paid proposal never got, sends the Claude steps that are
  * ready, expires change orders past their date, and saves a timer left running past its cap), and last sweeps the billing (drafts the milestone invoices a hook never made, plans and
  * proposes subscriptions, drafts the reminders and pause notices that are due and places the holds, notices or converts the terms that end, and settles the open invoices whose webhook never
- * came), then looks up the expiry of the monitored sites' domains, rolls the uptime up and deletes old uptime checks, starts the monthly Care report of each live Care client (queues Claude's summary; nothing is sent), starts the weekly Care update batch on its weekday (read-only inventories; the update waves are approvals) and runs the Care batch backstop. This is unattended work: it can only start searches, create approvals and holds, queue Claude steps and close queue tasks, never send, and it never throws.
+ * came), then looks up the expiry of the monitored sites' domains, rolls the uptime up and deletes old uptime checks, starts the weekly Care update batch on its weekday (read-only inventories; the update waves are approvals), runs the Care batch backstop, queues the certificate checks and, last, starts the monthly Care report of each live Care client (queues Claude's summary; nothing is sent). This is unattended work: it can only start searches, create approvals and holds, queue Claude steps and close queue tasks, never send, and it never throws.
  */
 export async function runScheduled(env: Env, cron: string, now: Date): Promise<void> {
   if (cron === MAIL_SYNC_CRON) {
@@ -79,9 +79,10 @@ export async function runScheduled(env: Env, cron: string, now: Date): Promise<v
   await part("project sweep", () => sweepProjects(env, now));
   await part("billing sweep", () => sweepBilling(env, now));
   await part("domain expiry", () => sweepDomains(env, now));
-  // After the project sweep (it makes the month's CARE-4 task) and the domain sweep (its uptime rollup settles the month's last day): the report of last month is built from both.
-  await part("care reports", () => sweepReports(env, now));
   await part("care updates", () => startWeeklyBatch(env, now));
   await part("care backstop", () => careBackstop(env, now));
   await part("certificates", () => queueCertCheck(env, now));
+  // Last: it must follow the project sweep (it makes the month's CARE-4 task) and the domain sweep (its uptime rollup settles the month's last day), and it is the one part that can run long on the 1st (a PageSpeed
+  // call per site, client after client), so it must not starve the parts above of their time.
+  await part("care reports", () => sweepReports(env, now));
 }

@@ -180,9 +180,14 @@ describe("sweepReports", () => {
     vi.spyOn(factsMod, "buildFacts").mockImplementation(async (_en, businessId, period, now) => factsMod.ReportFacts.parse({
       version: 1, period, label: "November 2026", from: "2026-11-01T08:00:00.000Z", to: "2026-12-01T08:00:00.000Z", clientName: businessId.slice(0, 8), sites: [], edits: null, renewals: [], generatedAt: now.toISOString(),
     }));
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
     expect(await sweepReports(e, NOW)).toEqual({ started: 50, skipped: 0 });
     expect(await reports()).toHaveLength(50);
+    // The cap was hit: a fixed short line says the rest wait for the next run (no client name or count of anything but the cap).
+    expect(log).toHaveBeenCalledWith("care reports: 50 clients started, the rest wait for the next run");
+    log.mockClear();
     expect(await sweepReports(e, new Date(NOW.getTime() + 86_400_000))).toEqual({ started: 2, skipped: 0 });
+    expect(log).not.toHaveBeenCalled();
     expect(await reports()).toHaveLength(52);
     expect(await jobs()).toHaveLength(52);
   }, 60_000);
@@ -209,7 +214,7 @@ describe("sweepReports", () => {
 });
 
 describe("the daily run", () => {
-  it("starts the reports after the project sweep and the uptime rollup, so the last day of the month is in the report", async () => {
+  it("starts the reports after the project sweep and the uptime rollup, so the last day of the month is in the report, and last of all, so a long run cannot starve the other parts", async () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const s = await careClient({ task: false, uptimeFrom: null });
     // 30 November (Los Angeles) is 08:00 UTC that day to 08:00 UTC the next. Only raw checks exist: nothing has rolled them up yet, and there is no CARE-4 task for December yet either.
@@ -224,6 +229,8 @@ describe("the daily run", () => {
     expect(names.indexOf("care reports")).toBeGreaterThan(names.indexOf("project sweep"));
     expect(names.indexOf("care reports")).toBeGreaterThan(names.indexOf("domain expiry"));
     expect(names.indexOf("project sweep")).toBeGreaterThanOrEqual(0);
+    for (const part of ["care updates", "care backstop", "certificates"]) expect(names.indexOf("care reports"), part).toBeGreaterThan(names.indexOf(part));
+    expect(names.indexOf("certificates")).toBeGreaterThanOrEqual(0);
     const r = (await getReportFor(env.DB, s.businessId, "2026-11"))!;
     expect(r).toBeTruthy();
     expect((r.facts as factsMod.ReportFacts).sites).toMatchObject([{ coveredDays: 1, uptimePercent: 100, monitoredSince: "2026-11-30" }]);

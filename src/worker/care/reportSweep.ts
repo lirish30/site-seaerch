@@ -76,7 +76,9 @@ export async function sweepReports(env: Env, now: Date): Promise<{ started: numb
   const period = previousMonth(now, tz);
   let started = 0;
   let skipped = 0;
-  for (const businessId of await candidates(env, periodKey("monthly", now, tz), period, monthRange(period, tz))) {
+  const ids = await candidates(env, periodKey("monthly", now, tz), period, monthRange(period, tz));
+  if (ids.length >= MAX_PER_RUN) console.log(`care reports: ${MAX_PER_RUN} clients started, the rest wait for the next run`);
+  for (const businessId of ids) {
     try {
       if ((await begin(env, businessId, period, false, now, tz)).created) started++;
       else skipped++;
