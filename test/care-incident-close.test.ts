@@ -206,3 +206,35 @@ describe("what must stay open", () => {
     expect(await isOpen(s.site!.id)).toBe(true);
   });
 });
+
+describe("changing a site's domain", () => {
+  const seedExpiry = async (siteId: string) =>
+    env.DB.prepare(`UPDATE sites SET domain_expires_on = '2027-02-10', domain_checked_at = ? WHERE id = ?`).bind(ago(DAY), siteId).run();
+  const expiry = (siteId: string) => env.DB.prepare(`SELECT domain, domain_expires_on AS e, domain_checked_at AS c FROM sites WHERE id = ?`).bind(siteId).first<{ domain: string; e: string | null; c: string | null }>();
+
+  it("forgets the old domain's expiry and lookup time and closes its domain_expiring incident, leaving a down incident open", async () => {
+    const s = await client();
+    await seedExpiry(s.site!.id);
+    await openDown(s, "domain_expiring"); await openDown(s);
+    await updateSite(env.DB, s.site!.id, { url: "https://new-ace.com" }, NOW.toISOString());
+    expect(await expiry(s.site!.id)).toEqual({ domain: "new-ace.com", e: null, c: null });
+    expect(await isOpen(s.site!.id, "domain_expiring")).toBe(false);
+    expect(await isOpen(s.site!.id, "down")).toBe(true);
+  });
+
+  it("the same domain at another address keeps everything", async () => {
+    const s = await client();
+    await seedExpiry(s.site!.id);
+    await openDown(s, "domain_expiring");
+    await updateSite(env.DB, s.site!.id, { url: "https://ace.com/contact" }, NOW.toISOString());
+    expect(await expiry(s.site!.id)).toMatchObject({ domain: "ace.com", e: "2027-02-10" });
+    expect(await isOpen(s.site!.id, "domain_expiring")).toBe(true);
+  });
+
+  it("an explicit new domain does the same", async () => {
+    const s = await client();
+    await seedExpiry(s.site!.id);
+    await updateSite(env.DB, s.site!.id, { domain: "other-ace.com" }, NOW.toISOString());
+    expect(await expiry(s.site!.id)).toEqual({ domain: "other-ace.com", e: null, c: null });
+  });
+});
