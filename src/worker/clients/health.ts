@@ -52,8 +52,8 @@ export function computeHealth(i: HealthInput): Health {
   if (i.domainDaysLeft !== null && i.domainDaysLeft <= 7) take(20, domainReason(i.domainDaysLeft));
   else if (i.domainDaysLeft !== null && i.domainDaysLeft <= 30) take(10, domainReason(i.domainDaysLeft));
   if (i.uptime30 !== null && i.checks30 >= MIN_UPTIME_CHECKS) {
-    if (i.uptime30 < 99.0) take(20, `Uptime ${i.uptime30}% in 30 days`);
-    else if (i.uptime30 < 99.5) take(10, `Uptime ${i.uptime30}% in 30 days`);
+    if (i.uptime30 < 99.0) take(20, `Uptime ${i.uptime30.toFixed(1)}% in 30 days`);
+    else if (i.uptime30 < 99.5) take(10, `Uptime ${i.uptime30.toFixed(1)}% in 30 days`);
   }
   if (i.overdueInvoices > 0) take(15, "An invoice is overdue");
   if (i.held) take(25, "Billing is on hold");

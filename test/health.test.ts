@@ -28,7 +28,7 @@ describe("computeHealth", () => {
     expect(h.band).toBe("at_risk");
     expect(h.hasData).toBe(true);
     expect(h.reasons).toEqual([
-      "Site is down", "Domain expires in 3 days", "Uptime 90% in 30 days", "An invoice is overdue", "Billing is on hold", "A subscription payment failed",
+      "Site is down", "Domain expires in 3 days", "Uptime 90.0% in 30 days", "An invoice is overdue", "Billing is on hold", "A subscription payment failed",
       "Site access is still missing", "Waiting on the client",
     ]);
   });
@@ -37,7 +37,7 @@ describe("computeHealth", () => {
     expect(computeHealth(with_({ uptime30: 98.7, checks30: 5 }))).toMatchObject({ score: 100, reasons: [], hasData: true });
     expect(computeHealth(with_({ uptime30: 98.7, checks30: 19 })).score).toBe(100);
     expect(computeHealth(with_({ uptime30: 98.7, checks30: 20 }))).toMatchObject({ score: 80, reasons: ["Uptime 98.7% in 30 days"] });
-    expect(computeHealth(with_({ uptime30: 99.0, checks30: 20 }))).toMatchObject({ score: 90, reasons: ["Uptime 99% in 30 days"] });
+    expect(computeHealth(with_({ uptime30: 99.0, checks30: 20 }))).toMatchObject({ score: 90, reasons: ["Uptime 99.0% in 30 days"] });
     expect(computeHealth(with_({ uptime30: 99.4, checks30: 20 })).score).toBe(90);
     expect(computeHealth(with_({ uptime30: 99.5, checks30: 20 }))).toMatchObject({ score: 100, reasons: [] });
     expect(computeHealth(with_({ uptime30: 100, checks30: 500 })).score).toBe(100);
