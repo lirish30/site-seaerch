@@ -13,6 +13,7 @@ import { createProject } from "../src/worker/db/projects";
 import { seedBusiness } from "./fixtures/cro";
 import { seedDoc as seedBillingDoc, seedDraft } from "./fixtures/billing";
 import { T0, newTask, resetProjectWork, seedProject, seedSteps } from "./fixtures/projects";
+import { moneyDashboard } from "../src/worker/money/dashboard";
 import { actionCount, mcp, ok, tool } from "./fixtures/mcp";
 
 const rename = (id: string, name: string) => env.DB.prepare(`UPDATE businesses SET name = ? WHERE id = ?`).bind(name, id).run();
@@ -290,5 +291,18 @@ describe("list_meetings and get_meeting", () => {
   it("says meeting not found", async () => {
     expect(await tool("get_meeting", { id: "nope" })).toEqual({ isError: true, text: "meeting not found: nope" });
     await oneAction("get_meeting", { id: "nope" });
+  });
+});
+
+describe("get_money_summary", () => {
+  it("returns the money dashboard (test clients left out) and writes one agent action", async () => {
+    await seedClient({ subs: [{ key: "care", monthlyCents: 12_900 }], invoice: { cents: 100_000, dueOn: "2020-01-01" } });
+    await seedClient({ test: true, subs: [{ key: "care", monthlyCents: 55_500 }], invoice: { cents: 777_000, dueOn: "2020-01-01" } });
+    const before = await actionCount("get_money_summary");
+    const got = await ok<any>("get_money_summary", {});
+    expect(await actionCount("get_money_summary")).toBe(before + 1);
+    expect(got.mrr).toMatchObject({ cents: 12_900, subscriptions: 1 });
+    expect(got.ar.openCents).toBe(100_000);
+    expect({ ...got, asOf: "" }).toEqual({ ...JSON.parse(JSON.stringify(await moneyDashboard(env, new Date()))), asOf: "" });
   });
 });

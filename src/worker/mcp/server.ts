@@ -17,6 +17,7 @@ const APP_PROPOSED = ["video.publish", "proposal.send", "onboarding.welcome", "o
 const proposableKinds = () => registeredKinds().filter((k) => !APP_PROPOSED.includes(k));
 import { makeCtx } from "./tools/context";
 import { registerActTools } from "./tools/act";
+import { registerMoneyTools } from "./tools/money";
 import { registerReadTools } from "./tools/read";
 import { approvalView } from "./tools/views";
 import { getBusiness } from "../db/businesses";
@@ -217,5 +218,6 @@ export function buildMcpServer(env: Env): McpServer {
 
   registerReadTools(server, ctx);
   registerActTools(server, ctx);
+  registerMoneyTools(server, ctx);
   return server;
 }

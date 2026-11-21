@@ -46,13 +46,14 @@ describe("the tool registry", () => {
     "search_clients", "get_client", "get_site", "list_projects", "get_project", "list_open_tasks", "get_deal", "get_timeline", "list_invoices", "list_meetings", "get_meeting",
     // the five act tools
     "run_audit", "log_time", "add_task", "add_task_comment", "add_note",
+    // the money summary
+    "get_money_summary",
   ];
-  const ALLOWED_NOT_REQUIRED = ["get_money_summary"]; // Task 12 adds it
   const registered = async (): Promise<string[]> => (await mcp("tools/list", {})).result.tools.map((t: { name: string }) => t.name);
 
   it("registers only the tools on the allow-list, and every required one", async () => {
     const names = await registered();
-    for (const n of names) expect([...ALLOWED, ...ALLOWED_NOT_REQUIRED], `unexpected tool ${n}`).toContain(n);
+    for (const n of names) expect(ALLOWED, `unexpected tool ${n}`).toContain(n);
     for (const n of ALLOWED) expect(names, `missing tool ${n}`).toContain(n);
     expect(new Set(names).size).toBe(names.length);
   });
