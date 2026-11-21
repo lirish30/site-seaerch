@@ -77,6 +77,37 @@ describe("sweepUptime", () => {
     expect(await checkCount(internal.site!.id)).toBe(0);
   });
 
+  /** One Care client with `invalid` sites at private addresses (created first, so never-checked and first in line) and `valid` sites at public ones. */
+  async function crowd(invalid: number, valid: number) {
+    const s = await seedClient({ subs: [{ key: "care", monthlyCents: 12900 }] });
+    const make = async (url: string, n: number, createdAt: string) => {
+      const { site } = await createSite(env.DB, { businessId: s.businessId, url });
+      await env.DB.prepare(`UPDATE sites SET created_at = ? WHERE id = ?`).bind(createdAt, site.id).run();
+      return site;
+    };
+    for (let n = 0; n < invalid; n++) await make(`http://10.0.${Math.floor(n / 200)}.${n % 200 + 1}`, n, `2026-01-01T00:00:${String(n % 60).padStart(2, "0")}.${String(n).padStart(3, "0")}Z`);
+    for (let n = 0; n < valid; n++) await make(`https://valid-${n}.example.com/`, n, `2026-06-01T00:00:00.${String(n).padStart(3, "0")}Z`);
+    return s;
+  }
+
+  it("41 unusable addresses in front do not starve the 4 valid ones: all 4 are probed in one tick", async () => {
+    const s = await crowd(41, 4);
+    await env.DB.prepare(`UPDATE sites SET test = 1 WHERE id = ?`).bind(s.site!.id).run();
+    const r = await sweepUptime(env, NOW);
+    expect(calls.length).toBe(4);
+    expect(r).toMatchObject({ probed: 4, skipped: 41 });
+    expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM site_checks`).first<{ n: number }>())!.n).toBe(4);
+  });
+
+  it("10 unusable and 45 valid probe exactly the first 40 valid ones", async () => {
+    const s = await crowd(10, 45);
+    await env.DB.prepare(`UPDATE sites SET test = 1 WHERE id = ?`).bind(s.site!.id).run();
+    const r = await sweepUptime(env, NOW);
+    expect(calls.length).toBe(MAX_PER_TICK);
+    expect(r).toMatchObject({ probed: 40, skipped: 10 });
+    expect(new Set(calls).size).toBe(40);
+  });
+
   it("fetches a non-Care client's site once monitoring is switched on", async () => {
     const s = await seedClient({ subs: [{ monthlyCents: 4970 }] });
     await updateSite(env.DB, s.site!.id, { url: "https://by-hand.example.com/", domain: "by-hand.example.com" }, NOW.toISOString());

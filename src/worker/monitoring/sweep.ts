@@ -9,6 +9,8 @@ import { fetchDomainExpiry } from "./rdap";
 // They send nothing to anyone and create no task, approval or mail; the incidents and the activity line are the whole output (see incidents.ts).
 // Neither sweep throws: one site's failure never stops the others, and a database failure ends the sweep with what it had done.
 
+/** How many candidates a tick reads per site it may probe, so a run of sites with unusable addresses (never checked, so first in line every tick) cannot starve the valid ones behind them. */
+const SCAN_FACTOR = 5;
 /** The most sites one five-minute tick probes. The ones checked longest ago come first (monitoredSites), so every site gets its turn. */
 export const MAX_PER_TICK = 40;
 /** Sites probed at once. A chunk takes as long as its slowest site (10 s at most), so a tick of 40 stays under a minute. */
@@ -54,7 +56,7 @@ async function inChunks<T>(items: T[], fn: (item: T) => Promise<void>): Promise<
   for (let i = 0; i < items.length; i += CONCURRENCY) await Promise.all(items.slice(i, i + CONCURRENCY).map(fn));
 }
 
-/** Probes up to MAX_PER_TICK monitored sites and records each result. A site whose address is not monitorable (monitorableUrl) is counted in `skipped` and never fetched. */
+/** Probes up to MAX_PER_TICK monitored sites and records each result. A site whose address is not monitorable (monitorableUrl) is counted in `skipped` and never fetched, and does not use up a place in the tick. */
 export async function sweepUptime(env: Env, now: Date): Promise<UptimeSweepResult> {
   const out: UptimeSweepResult = { probed: 0, failed: 0, skipped: 0, opened: 0, closed: 0 };
   // An incident of a site that is no longer watched (Care ended, switch off, address cleared, archived, marked test) would otherwise stay open for ever. Closed silently, in one statement.
@@ -64,9 +66,11 @@ export async function sweepUptime(env: Env, now: Date): Promise<UptimeSweepResul
     console.error("uptime: could not close the incidents of unmonitored sites", e);
   }
   try {
-    const sites = await monitoredSites(env.DB, MAX_PER_TICK);
+    // Read more than a tick can probe and keep the first MAX_PER_TICK valid ones. A site whose address is not monitorable gets no check row (a failed check could open an incident).
+    const sites = await monitoredSites(env.DB, MAX_PER_TICK * SCAN_FACTOR);
     const todo: { site: Site; url: string }[] = [];
     for (const site of sites) {
+      if (todo.length >= MAX_PER_TICK) break;
       const u = monitorableUrl(site.url);
       if (u.ok) todo.push({ site, url: u.url });
       else out.skipped++;
