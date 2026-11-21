@@ -1,4 +1,5 @@
 import { newClientToken } from "../documents/token";
+import { ACCESS_ITEM_PREFIX } from "../onboarding/templates";
 
 export type OnboardingKind = "build" | "light";
 export type ItemKind = "text" | "files";
@@ -210,6 +211,22 @@ export async function removeFile(db: D1Database, fileId: string): Promise<Onboar
 
 export async function setItemStatus(db: D1Database, itemId: string, s: ItemStatus): Promise<void> {
   await db.prepare(`UPDATE onboarding_items SET status = ?, updated_at = ? WHERE id = ?`).bind(s, nowIso(), itemId).run();
+}
+
+/**
+ * The owner has the access to a site, so the client's matching question (`access_<key>`) is answered in effect: on the business's real, open onboardings, a question still `waiting`
+ * moves to `to` (`accepted` when the access is in, `not_applicable` when it does not apply). One guarded statement: an item the client answered, or the owner already settled, is never
+ * overridden, and a rehearsal or closed onboarding is never touched. It is not the client writing, so `last_client_activity_at` stays. Returns how many items changed.
+ */
+export async function settleAccessItem(
+  db: D1Database, businessId: string, key: string, to: "accepted" | "not_applicable", now: string,
+): Promise<number> {
+  const res = await db.prepare(
+    `UPDATE onboarding_items SET status = ?1, updated_at = ?2
+     WHERE key = ?3 AND status = 'waiting'
+       AND onboarding_id IN (SELECT id FROM onboardings WHERE business_id = ?4 AND test = 0 AND closed_at IS NULL)`,
+  ).bind(to, now, `${ACCESS_ITEM_PREFIX}${key}`, businessId).run();
+  return res.meta.changes ?? 0;
 }
 
 /** An item the owner adds by hand, last in the list. The key must be new for this onboarding. */

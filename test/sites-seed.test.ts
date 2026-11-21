@@ -73,8 +73,40 @@ describe("ensureSite", () => {
   it("a website address with a login in it is stored without the login", async () => {
     const b = await seedBusiness({ websiteUrl: "https://u:hunter2@ace.com/" });
     const r = (await seed(b.id, ["starter_site"]))!;
-    expect(r.site).toMatchObject({ domain: "ace.com", url: "https://ace.com/" });
+    expect(r.site).toMatchObject({ domain: "ace.com", url: "https://ace.com" });
     expect(JSON.stringify(await listSites(env.DB, { businessId: b.id }))).not.toContain("hunter2");
+  });
+
+  it("a website with no scheme is stored as an https address, with its domain", async () => {
+    const b = await seedBusiness({ websiteUrl: "ace.com" });
+    const r = (await seed(b.id, ["starter_site"]))!;
+    expect(r.site).toMatchObject({ url: "https://ace.com", domain: "ace.com" });
+  });
+
+  it("a login in a website with no scheme (user:pw@host) is dropped, and the password is nowhere in the row", async () => {
+    const b = await seedBusiness({ websiteUrl: "admin:pw@bee.com" });
+    const r = (await seed(b.id, ["starter_site"]))!;
+    expect(r.site).toMatchObject({ url: "https://bee.com", domain: "bee.com" });
+    expect(JSON.stringify(await env.DB.prepare(`SELECT * FROM sites WHERE business_id = ?`).bind(b.id).all())).not.toContain("pw");
+    expect(JSON.stringify(await listActivity(env.DB, b.id))).not.toContain("admin");
+  });
+
+  it("a query string or fragment is never stored", async () => {
+    const b = await seedBusiness({ websiteUrl: "https://ace.com/about?token=abc#x" });
+    const r = (await seed(b.id, ["starter_site"]))!;
+    expect(r.site).toMatchObject({ url: "https://ace.com/about", domain: "ace.com" });
+    const row = JSON.stringify(await env.DB.prepare(`SELECT * FROM sites WHERE business_id = ?`).bind(b.id).all());
+    expect(row).not.toContain("token");
+    expect(row).not.toContain("abc");
+  });
+
+  it("an address that is not http or https, or cannot be read, is stored as no address", async () => {
+    for (const bad of ["javascript:alert(1)", "ftp://files.ace.com/x", "not a url at all", "mailto:pat@ace.com", "http://", "localhost"]) {
+      const b = await seedBusiness({ websiteUrl: bad });
+      const r = (await seed(b.id, ["starter_site"]))!;
+      expect(r.site.url, bad).toBeNull();
+      expect(r.site.seedKey).toBe("primary");
+    }
   });
 
   it("calling ensureSite twice leaves one site and one site_added line", async () => {
@@ -135,6 +167,50 @@ describe("ensureSite", () => {
     expect(await listSites(env.DB, { businessId: b.id, includeArchived: true })).toHaveLength(1);
     expect(await lines(b.id, "site_added")).toEqual([]);
     expect((await seed(b.id, ["starter_site"]))!.site.id).toBe(hand.id);
+  });
+
+  it("a client with a hand-added site and no website on the lead gets that site as the primary, not a second one", async () => {
+    const b = await seedBusiness({ websiteUrl: null });
+    const hand = (await createSite(env.DB, { businessId: b.id, url: "https://newbiz.com", notes: "added by hand" })).site;
+    const r = (await seed(b.id, ["starter_site", "care"]))!;
+    expect(r.created).toBe(false);
+    expect(r.site).toMatchObject({ id: hand.id, seedKey: "primary", domain: "newbiz.com", notes: "added by hand", hostingTier: "logan_hosted" });
+    expect(await listSites(env.DB, { businessId: b.id, includeArchived: true })).toHaveLength(1);
+    expect(await listAccess(env.DB, hand.id)).toHaveLength(6);
+    expect(await env.DB.prepare(`SELECT COUNT(*) AS n FROM site_access_items i JOIN sites s ON s.id = i.site_id WHERE s.business_id = ?`).bind(b.id).first()).toEqual({ n: 6 });
+    expect(await lines(b.id, "site_added")).toEqual([]);
+    expect((await seed(b.id, ["starter_site"]))!.site.id).toBe(hand.id);
+  });
+
+  it("with no website and two hand-added sites, only the oldest is adopted", async () => {
+    const b = await seedBusiness({ websiteUrl: null });
+    const oldest = (await createSite(env.DB, { businessId: b.id, url: "https://one.com" })).site;
+    const newer = (await createSite(env.DB, { businessId: b.id, url: "https://two.com" })).site;
+    const r = (await seed(b.id, ["starter_site"]))!;
+    expect(r.site.id).toBe(oldest.id);
+    expect((await getSite(env.DB, oldest.id))!.seedKey).toBe("primary");
+    expect((await getSite(env.DB, newer.id))!.seedKey).toBeNull();
+    expect(await listSites(env.DB, { businessId: b.id, includeArchived: true })).toHaveLength(2);
+  });
+
+  it("with no website, an archived hand-added site is not adopted: a new empty primary is made", async () => {
+    const b = await seedBusiness({ websiteUrl: null });
+    const gone = (await createSite(env.DB, { businessId: b.id, url: "https://old.com" })).site;
+    await archiveSite(env.DB, gone.id, "2026-12-03T10:00:00.000Z");
+    const r = (await seed(b.id, ["starter_site"]))!;
+    expect(r.created).toBe(true);
+    expect(r.site.id).not.toBe(gone.id);
+    expect(r.site).toMatchObject({ seedKey: "primary", url: null, domain: null });
+    expect((await getSite(env.DB, gone.id))!.seedKey).toBeNull();
+    expect(await lines(b.id, "site_added")).toEqual(["Site record made for a new site"]);
+  });
+
+  it("with no website, a live hand-added site wins over an archived older one", async () => {
+    const b = await seedBusiness({ websiteUrl: null });
+    const gone = (await createSite(env.DB, { businessId: b.id, url: "https://old.com" })).site;
+    const live = (await createSite(env.DB, { businessId: b.id, url: "https://live.com" })).site;
+    await archiveSite(env.DB, gone.id, "2026-12-03T10:00:00.000Z");
+    expect((await seed(b.id, ["starter_site"]))!.site.id).toBe(live.id);
   });
 
   it("an archived primary is left alone and no new site is made", async () => {

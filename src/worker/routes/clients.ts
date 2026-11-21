@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { getClientRecord, isClient, isTestClient, listClients } from "../clients/record";
 import { logActivity } from "../db/activity";
+import { settleAccessItem } from "../db/onboardings";
 import {
   ACCESS_KEYS, SiteConflictError, archiveSite, createSite, getSite, listAccess, setAccess, updateSite,
   type AccessKey, type AccessStatus, type Site, type SiteFields,
@@ -106,8 +107,9 @@ async function patchSite(c: Ctx, clientId?: string): Promise<Response> {
   const site = await liveSite(c, c.req.param("siteId") ?? c.req.param("id")!, clientId);
   if (!site) return c.json(NOT_FOUND, 404);
   const patch = given(body);
-  const changed = (Object.keys(FIELD_WORDS) as (keyof SiteFields)[]).filter((k) => patch[k] !== undefined && patch[k] !== site[k]);
   const updated = await updateSite(c.env.DB, site.id, patch, new Date().toISOString());
+  // What changed is read off the saved site: a new address that works out a new domain names "domain" too, and a value saved as it already was names nothing.
+  const changed = (Object.keys(FIELD_WORDS) as (keyof SiteFields)[]).filter((k) => (patch[k] !== undefined || (k === "domain" && patch.url !== undefined)) && (updated ?? site)[k] !== site[k]);
   if (changed.length) await logActivity(c.env.DB, site.businessId, "site_changed", `Site updated: ${changed.map((k) => FIELD_WORDS[k]).join(", ")}`);
   return c.json({ site: updated });
 }
@@ -127,6 +129,14 @@ async function putAccess(c: Ctx, clientId?: string): Promise<Response> {
   if (!site || !ACCESS_KEYS.includes(key)) return c.json(NOT_FOUND, 404);
   const item = await setAccess(c.env.DB, site.id, key, body, new Date().toISOString());
   if (!item) return c.json(NOT_FOUND, 404);
+  // The access is in (or does not apply), so the client's matching question is settled too: it must not keep the onboarding open and pause the work. It never fails the request.
+  if (body.status === "received" || body.status === "verified" || body.status === "not_applicable") {
+    try {
+      await settleAccessItem(c.env.DB, site.businessId, key, body.status === "not_applicable" ? "not_applicable" : "accepted", new Date().toISOString());
+    } catch (e) {
+      console.error("clients: access question not settled", (e instanceof Error ? e.message : "unknown error").replace(/\s+/g, " ").trim().slice(0, 200));
+    }
+  }
   // The line says what happened to the status and nothing else: the item name and the note stay on the record.
   await logActivity(c.env.DB, site.businessId, "access_changed", `${ACCESS_LABELS[key].label}: ${body.status ? STATUS_WORDS[body.status] : "details updated"}`);
   return c.json({ item });

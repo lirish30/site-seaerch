@@ -271,7 +271,19 @@ describe("add, archive and ownership", () => {
     expect((await lines(s.businessId, "site_changed")).at(-1) ?? "").not.toBe("");
     const all = JSON.stringify(await listActivity(env.DB, s.businessId, 200));
     for (const value of [NOTE, "WP Engine", "Bluehost", "secret-name", "client_hosted"]) expect(all).not.toContain(value);
-    expect((await lines(s.businessId, "site_changed")).sort()).toEqual(["Site updated: address, admin address", "Site updated: host, hosting tier, notes"]);
+    expect((await lines(s.businessId, "site_changed")).sort()).toEqual(["Site updated: address, domain, admin address", "Site updated: host, hosting tier, notes"]);
+  });
+
+  it("PATCH names the domain when a new address re-derives it, and not when the domain stays the same", async () => {
+    const s = await seedClient();
+    await call("PATCH", `/api/sites/${s.site!.id}`, { url: "https://www.ace.com/services" });
+    expect(await lines(s.businessId, "site_changed")).toEqual(["Site updated: address"]);
+    await call("PATCH", `/api/sites/${s.site!.id}`, { url: "https://newname.com/" });
+    expect((await lines(s.businessId, "site_changed"))[0]).toBe("Site updated: address, domain"); // newest first
+    expect((await getSite(env.DB, s.site!.id))!.domain).toBe("newname.com");
+    await call("PATCH", `/api/sites/${s.site!.id}`, { domain: "newname.com" });
+    expect(await lines(s.businessId, "site_changed")).toHaveLength(2);
+    expect(JSON.stringify(await listActivity(env.DB, s.businessId, 200))).not.toContain("newname");
   });
 
   it("DELETE logs one site_changed line, Site archived, and a second DELETE adds none", async () => {

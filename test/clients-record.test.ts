@@ -1,8 +1,10 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { careLabel, clientMrrCents, getClientRecord, isClient, listClients } from "../src/worker/clients/record";
+import { createOnboarding } from "../src/worker/db/onboardings";
 import { archiveSite, createSite, setAccess } from "../src/worker/db/sites";
-import { listSubscriptions } from "../src/worker/db/subscriptions";
+import { itemsFor } from "../src/worker/onboarding/templates";
+import { listSubscriptions, type Subscription } from "../src/worker/db/subscriptions";
 import { setProjectStatus } from "../src/worker/db/projects";
 import { seedDeal } from "./fixtures/documents";
 import { addChangeOrder, addSub, seedClient } from "./fixtures/clients";
@@ -79,6 +81,16 @@ describe("Care", () => {
     expect(rec.careLabel).toBe("Care Plus $229/mo");
     expect(rec.mrrCents).toBe(12900 + 22900);
     expect((await row(s.businessId))!).toMatchObject({ careLabel: "Care Plus $229/mo", mrrCents: 35800 });
+  });
+
+  it("careLabel picks the newest live Care row by createdAt whatever order the rows come in", () => {
+    const row = (packageKey: string, monthlyCents: number, createdAt: string) =>
+      ({ packageKey, monthlyCents, createdAt, status: "active", test: false }) as unknown as Subscription;
+    const old = row("care", 12900, "2027-01-01T00:00:00.000Z");
+    const newer = row("care_plus", 22900, "2027-01-05T00:00:00.000Z");
+    expect(careLabel([old, newer])).toBe("Care Plus $229/mo");
+    expect(careLabel([newer, old])).toBe("Care Plus $229/mo");
+    expect(careLabel([row("care", 12900, "2027-01-09T00:00:00.000Z"), newer])).toBe("Care $129/mo");
   });
 
   it("a client-hosted site on Care with no access method is flagged; a Logan-hosted one is not", async () => {
@@ -217,5 +229,31 @@ describe("the record never carries a client token", () => {
     await addChangeOrder(s, s.project!.id);
     await addSub(s, { monthlyCents: 5, status: "planned" });
     expect(JSON.stringify(await getClientRecord(env.DB, s.businessId, NOW))).not.toContain("tok-secret-123");
+  });
+});
+
+describe("the client's own answers", () => {
+  it("show on the primary site only, so a second site does not show what the client wrote about the first", async () => {
+    const s = await seedClient({ site: false });
+    const second = (await createSite(env.DB, { businessId: s.businessId, url: "https://second.com" })).site;
+    const first = (await createSite(env.DB, { businessId: s.businessId, url: "https://first.com", seedKey: "primary" })).site;
+    const { onboarding } = await createOnboarding(env.DB, { businessId: s.businessId, dealId: s.dealId, documentId: s.documentId, kind: "build", test: false, items: itemsFor(["starter_site"]) });
+    await env.DB.prepare(`UPDATE onboarding_items SET text_value = 'Bluehost' WHERE onboarding_id = ? AND key = 'access_hosting'`).bind(onboarding.id).run();
+    const rec = (await getClientRecord(env.DB, s.businessId, NOW))!;
+    const by = Object.fromEntries(rec.sites.map((x) => [x.site.id, x.access.find((a) => a.key === "hosting")!.clientAnswer]));
+    expect(by).toEqual({ [first.id]: "Bluehost", [second.id]: null });
+  });
+
+  it("with no primary they show on the oldest live site, and not on an archived one", async () => {
+    const s = await seedClient({ site: false });
+    const gone = (await createSite(env.DB, { businessId: s.businessId, url: "https://gone.com" })).site;
+    const oldest = (await createSite(env.DB, { businessId: s.businessId, url: "https://oldest.com" })).site;
+    const newest = (await createSite(env.DB, { businessId: s.businessId, url: "https://newest.com" })).site;
+    await archiveSite(env.DB, gone.id, "2027-01-01T00:00:00.000Z");
+    const { onboarding } = await createOnboarding(env.DB, { businessId: s.businessId, dealId: s.dealId, documentId: s.documentId, kind: "build", test: false, items: itemsFor(["starter_site"]) });
+    await env.DB.prepare(`UPDATE onboarding_items SET text_value = 'Bluehost' WHERE onboarding_id = ? AND key = 'access_hosting'`).bind(onboarding.id).run();
+    const rec = (await getClientRecord(env.DB, s.businessId, NOW))!;
+    const by = Object.fromEntries(rec.sites.map((x) => [x.site.id, x.access.find((a) => a.key === "hosting")!.clientAnswer]));
+    expect(by).toEqual({ [oldest.id]: "Bluehost", [newest.id]: null });
   });
 });

@@ -58,7 +58,9 @@ const money = (cents: number): string => {
 
 /** `"Care $129/mo"` for the client's Care row that is billing or late on a bill (the newest when it has more than one), or null. The name follows the package: Care, Care Plus. */
 export function careLabel(subs: Subscription[]): string | null {
-  const row = subs.find((s) => !s.test && (LIVE as readonly string[]).includes(s.status) && (CARE_KEYS as readonly string[]).includes(s.packageKey));
+  const row = subs
+    .filter((s) => !s.test && (LIVE as readonly string[]).includes(s.status) && (CARE_KEYS as readonly string[]).includes(s.packageKey))
+    .reduce<Subscription | null>((newest, s) => (!newest || s.createdAt > newest.createdAt ? s : newest), null); // a tie keeps the first, which `listSubscriptions` puts newest first
   return row ? `${CARE_NAMES[row.packageKey as (typeof CARE_KEYS)[number]]} ${money(row.monthlyCents)}/mo` : null;
 }
 
@@ -175,9 +177,11 @@ export async function getClientRecord(db: D1Database, businessId: string, now: D
   ]);
   const care = careLabel(subs);
   const answers = sites.length > 0 ? await clientAnswers(db, businessId) : new Map<string, string>();
+  // The client's answers are about their website as a whole, so they sit on the primary site only (the oldest live one when there is no primary), never repeated on a second site.
+  const answerSiteId = (sites.find((s) => s.seedKey === "primary") ?? sites[0])?.id;
   const withAccess = await Promise.all(sites.map(async (site) => {
     const items = await listAccess(db, site.id);
-    const access = items.map((i) => ({ ...i, clientAnswer: answers.get(`${ACCESS_ITEM_PREFIX}${i.key}`) ?? null }));
+    const access = items.map((i) => ({ ...i, clientAnswer: site.id === answerSiteId ? (answers.get(`${ACCESS_ITEM_PREFIX}${i.key}`) ?? null) : null }));
     return { site, access, flags: siteFlags({ site, items, careActive: care !== null }) };
   }));
   const owed = invoices.filter((i) => !i.test && (i.status === "open" || i.status === "failed"));
