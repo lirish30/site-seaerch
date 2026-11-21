@@ -128,8 +128,10 @@ app.route("/api", voiceTestRoutes);
 export default {
   fetch: app.fetch,
   // Cron Trigger: unattended, so a crash here must be logged, never thrown into a retry loop (runScheduled contains every part's failure).
+  // The run's time is the trigger's own `scheduledTime`, not the wall clock: a cron that Cloudflare fires twice carries the same time both times, so the monitoring
+  // "two failed checks in a row" rule counts the duplicate as one moment (test/scheduled-entry.test.ts).
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(runScheduled(env, controller.cron, new Date()));
+    ctx.waitUntil(runScheduled(env, controller.cron, new Date(controller.scheduledTime)));
   },
 } satisfies ExportedHandler<Env>;
 export { LeadWorkflow, SearchWorkflow, CroAuditWorkflow, VideoAuditWorkflow } from "./workflows";
