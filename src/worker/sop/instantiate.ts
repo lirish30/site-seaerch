@@ -10,7 +10,7 @@ export async function instantiateSop(db: D1Database, o: { project: Project; temp
   const rows: NewTask[] = o.template.steps.map((s) => ({
     projectId: o.project.id, businessId: o.project.businessId, isStep: true, stepKey: s.key, phaseKey: s.phaseKey, phaseTitle: s.phaseTitle, position: s.position, title: s.title,
     description: "", owner: s.owner, status: "todo", doneWhen: s.doneWhen, estMinutes: s.estMinutes, dueOn: null, billable: false, skippable: s.skippable, requires: [...s.requires],
-    milestone: s.milestone, clientSummary: s.clientSummary, docTemplate: s.docTemplate, emailTemplate: s.emailTemplate, checklist: [], changeOrderId: null, cadenceKey: null, periodKey: null,
+    milestone: s.milestone, clientSummary: s.clientSummary, docTemplate: s.docTemplate, emailTemplate: s.emailTemplate, checklist: [], changeOrderId: null, cadenceKey: null, periodKey: null, editRequest: false,
   }));
   return insertTasks(db, rows);
 }

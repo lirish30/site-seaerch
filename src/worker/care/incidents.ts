@@ -91,7 +91,7 @@ export async function openUpdateIncident(env: Env, run: CareRun, site: Site, why
     title: cleanText(`Fix: ${domain} after updates`, 120), description: cleanText(`${detail}\nRun ${run.id.slice(0, 8)}.`, 2000), owner: "logan", status: "todo", doneWhen: "",
     estMinutes: steps.reduce((n, s) => n + s.estMinutes, 0), dueOn: dateIn(zoneOf(await getSettings(db)), now), billable: false, skippable: false, requires: [], milestone: null,
     clientSummary: null, docTemplate: null, emailTemplate: null, checklist: steps.map((s) => ({ text: `${s.title} (${OWNER_LABEL[s.owner]})`, done: false })),
-    changeOrderId: null, cadenceKey: CARE_5_KEY, periodKey: incident.id,
+    changeOrderId: null, cadenceKey: CARE_5_KEY, periodKey: incident.id, editRequest: false,
   };
   await insertTasks(db, [task], { ignoreDuplicates: true });
 }

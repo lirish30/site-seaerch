@@ -240,7 +240,7 @@ export async function addAdhocTask(
   const [task] = await insertTasks(env.DB, [{
     projectId: o.projectId, businessId: project.businessId, isStep: false, stepKey: null, phaseKey: "extra", phaseTitle: "Extra tasks", position: tasks.reduce((m, t) => Math.max(m, t.position), -1) + 1,
     title: v.title!, description: "", owner: v.owner!, status: "todo", doneWhen: "", estMinutes: v.estMinutes!, dueOn: v.dueOn!, billable: v.billable!, skippable: false, requires: v.requires!,
-    milestone: null, clientSummary: null, docTemplate: null, emailTemplate: null, checklist: [], changeOrderId: null, cadenceKey: null, periodKey: null,
+    milestone: null, clientSummary: null, docTemplate: null, emailTemplate: null, checklist: [], changeOrderId: null, cadenceKey: null, periodKey: null, editRequest: false,
   }]);
   await runTasksChanged(env, o.projectId);
   return task;

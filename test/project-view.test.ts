@@ -8,7 +8,7 @@ let n = 0;
 const task = (o: Partial<Task> = {}): Task => ({
   id: `t${++n}`, projectId: "p1", businessId: "b1", isStep: true, stepKey: null, phaseKey: "1", phaseTitle: "Kickoff", position: n, title: `Step ${n}`, description: "",
   owner: "logan", status: "todo", doneWhen: "", estMinutes: 30, dueOn: null, billable: true, skippable: false, requires: [], milestone: null, clientSummary: null,
-  docTemplate: null, emailTemplate: null, checklist: [], changeOrderId: null, cadenceKey: null, periodKey: null, claudeTaskId: null, reviewApprovalId: null,
+  docTemplate: null, emailTemplate: null, checklist: [], changeOrderId: null, cadenceKey: null, periodKey: null, claudeTaskId: null, reviewApprovalId: null, editRequest: false,
   startedAt: null, doneAt: null, createdAt: "2026-11-01T00:00:00.000Z", updatedAt: "2026-11-01T00:00:00.000Z", ...o,
 });
 

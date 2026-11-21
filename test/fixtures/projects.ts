@@ -32,7 +32,7 @@ export async function seedProject(o: { bare?: boolean; test?: boolean; templateK
 export const newTask = (projectId: string, businessId: string, o: Partial<NewTask> = {}): NewTask => ({
   projectId, businessId, isStep: true, stepKey: null, phaseKey: "p1", phaseTitle: "Phase one", position: 0, title: "A task", description: "", owner: "logan", status: "todo",
   doneWhen: "", estMinutes: 15, dueOn: null, billable: false, skippable: false, requires: [], milestone: null, clientSummary: null, docTemplate: null, emailTemplate: null,
-  checklist: [], changeOrderId: null, cadenceKey: null, periodKey: null, ...o,
+  checklist: [], changeOrderId: null, cadenceKey: null, periodKey: null, editRequest: false, ...o,
 });
 
 /** Inserts tasks keyed by their step key, positions 0, 1, 2... */

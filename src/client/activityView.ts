@@ -92,6 +92,7 @@ export function describeActivity(a: Pick<Activity, "kind" | "detail">): Activity
     case "domain_expiring": return { icon: "clock", tone: "warning", title: "Domain expiring", detail: d, bubble: false };
     case "care_updated": return { icon: "check", tone: "positive", title: "Site updated", detail: d, bubble: false };
     case "care_rolled_back": return { icon: "ban", tone: "warning", title: "Update rolled back", detail: d, bubble: false };
+    case "care_report_sent": return { icon: "mail", tone: "positive", title: "Care report sent", detail: d, bubble: false };
     case "access_changed": return { icon: "key", tone: "info", title: "Access changed", detail: d, bubble: false };
     case "snoozed": return { icon: "clock", tone: "neutral", title: "Snoozed", detail: d, bubble: false };
     default: return { icon: "info", tone: "neutral", title: upperFirst(a.kind.replace(/_/g, " ")), detail: d, bubble: false };

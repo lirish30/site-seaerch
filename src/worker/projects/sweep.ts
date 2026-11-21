@@ -33,7 +33,7 @@ function recurringTask(o: { projectId: string; businessId: string; template: Sop
     projectId: o.projectId, businessId: o.businessId, isStep: false, stepKey: null, phaseKey: "recurring", phaseTitle: "Recurring", position: o.position,
     title: cleanText(`${template.name}: ${o.label}`, 120), description: descriptionOf(template), owner: ownerOf(template), status: "todo", doneWhen: "", estMinutes: template.steps.reduce((n, s) => n + s.estMinutes, 0),
     dueOn: o.dueOn, billable: false, skippable: false, requires: [], milestone: null, clientSummary: null, docTemplate: null, emailTemplate: null,
-    checklist: template.steps.map((s) => ({ text: `${s.title} (${OWNER_LABEL[s.owner]})`, done: false })), changeOrderId: null, cadenceKey: template.key, periodKey: o.period,
+    checklist: template.steps.map((s) => ({ text: `${s.title} (${OWNER_LABEL[s.owner]})`, done: false })), changeOrderId: null, cadenceKey: template.key, periodKey: o.period, editRequest: false,
   };
 }
 

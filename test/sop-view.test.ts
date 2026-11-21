@@ -127,7 +127,7 @@ describe("editor helpers", () => {
 
 describe("stepsFromTaskRows", () => {
   it("builds the same steps the worker's push does (parity)", () => {
-    const base = { projectId: "p", businessId: "b", description: "", status: "todo", dueOn: null, billable: false, changeOrderId: null, cadenceKey: null, periodKey: null, claudeTaskId: null, reviewApprovalId: null, startedAt: null, doneAt: null, createdAt: "", updatedAt: "", checklist: [] };
+    const base = { projectId: "p", businessId: "b", description: "", status: "todo", dueOn: null, billable: false, changeOrderId: null, cadenceKey: null, periodKey: null, claudeTaskId: null, reviewApprovalId: null, editRequest: false, startedAt: null, doneAt: null, createdAt: "", updatedAt: "", checklist: [] };
     const tasks = [
       { ...base, id: "a", isStep: true, stepKey: "1.2", phaseKey: "1", phaseTitle: "Kickoff", position: 2, title: "B", owner: "claude", doneWhen: "x", estMinutes: 20, skippable: true, requires: ["1.1"], milestone: null, clientSummary: "hi", docTemplate: "d", emailTemplate: null },
       { ...base, id: "x", isStep: false, stepKey: null, phaseKey: "extra", phaseTitle: "Extra tasks", position: 9, title: "adhoc", owner: "logan", doneWhen: "", estMinutes: 5, skippable: false, requires: [], milestone: null, clientSummary: null, docTemplate: null, emailTemplate: null },

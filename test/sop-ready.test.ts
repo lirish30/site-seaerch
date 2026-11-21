@@ -9,7 +9,7 @@ function mk(key: string, o: Partial<Task> = {}): Task {
   return {
     id: `id-${key}`, projectId: "p", businessId: "b", isStep: true, stepKey: key, phaseKey: "p1", phaseTitle: "Phase one", position: 0, title: `Step ${key}`, description: "", owner: "claude",
     status: "todo", doneWhen: "", estMinutes: 15, dueOn: null, billable: false, skippable: false, requires: [], milestone: null, clientSummary: null, docTemplate: null, emailTemplate: null,
-    checklist: [], changeOrderId: null, cadenceKey: null, periodKey: null, claudeTaskId: null, reviewApprovalId: null, startedAt: null, doneAt: null, createdAt: "", updatedAt: "", ...o,
+    checklist: [], changeOrderId: null, cadenceKey: null, periodKey: null, claudeTaskId: null, reviewApprovalId: null, editRequest: false, startedAt: null, doneAt: null, createdAt: "", updatedAt: "", ...o,
   };
 }
 const keys = (ts: Task[]) => ts.map((t) => t.stepKey);

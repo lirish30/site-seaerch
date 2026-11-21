@@ -9,7 +9,9 @@ export interface Task {
   id: string; projectId: string; businessId: string; isStep: boolean; stepKey: string | null; phaseKey: string; phaseTitle: string; position: number; title: string; description: string;
   owner: OwnerTag; status: TaskStatus; doneWhen: string; estMinutes: number; dueOn: string | null; billable: boolean; skippable: boolean; requires: string[]; milestone: MilestoneKey | null;
   clientSummary: string | null; docTemplate: string | null; emailTemplate: string | null; checklist: ChecklistItem[]; changeOrderId: string | null; cadenceKey: string | null;
-  periodKey: string | null; claudeTaskId: string | null; reviewApprovalId: string | null; startedAt: string | null; doneAt: string | null; createdAt: string; updatedAt: string;
+  periodKey: string | null; claudeTaskId: string | null; reviewApprovalId: string | null;
+  /** A change the client asked for; the monthly Care report counts these. */
+  editRequest: boolean; startedAt: string | null; doneAt: string | null; createdAt: string; updatedAt: string;
 }
 /** A task about to be inserted: the id, timestamps and the links a Claude job fills in later are made here. */
 export type NewTask = Omit<Task, "id" | "createdAt" | "updatedAt" | "startedAt" | "doneAt" | "claudeTaskId" | "reviewApprovalId">;
@@ -26,7 +28,7 @@ interface Row {
   id: string; project_id: string; business_id: string; is_step: number; step_key: string | null; phase_key: string; phase_title: string; position: number; title: string; description: string;
   owner: OwnerTag; status: TaskStatus; done_when: string; est_minutes: number; due_on: string | null; billable: number; skippable: number; requires: string; milestone: MilestoneKey | null;
   client_summary: string | null; doc_template: string | null; email_template: string | null; checklist: string; change_order_id: string | null; cadence_key: string | null;
-  period_key: string | null; claude_task_id: string | null; review_approval_id: string | null; started_at: string | null; done_at: string | null; created_at: string; updated_at: string;
+  period_key: string | null; claude_task_id: string | null; review_approval_id: string | null; edit_request: number; started_at: string | null; done_at: string | null; created_at: string; updated_at: string;
 }
 
 const parse = (s: string): unknown => { try { return JSON.parse(s); } catch { return null; } };
@@ -42,7 +44,7 @@ const toTask = (r: Row): Task => ({
   title: r.title, description: r.description, owner: r.owner, status: r.status, doneWhen: r.done_when, estMinutes: r.est_minutes, dueOn: r.due_on, billable: !!r.billable,
   skippable: !!r.skippable, requires: stringList(r.requires), milestone: r.milestone, clientSummary: r.client_summary, docTemplate: r.doc_template, emailTemplate: r.email_template,
   checklist: checklistOf(r.checklist), changeOrderId: r.change_order_id, cadenceKey: r.cadence_key, periodKey: r.period_key, claudeTaskId: r.claude_task_id,
-  reviewApprovalId: r.review_approval_id, startedAt: r.started_at, doneAt: r.done_at, createdAt: r.created_at, updatedAt: r.updated_at,
+  reviewApprovalId: r.review_approval_id, editRequest: !!r.edit_request, startedAt: r.started_at, doneAt: r.done_at, createdAt: r.created_at, updatedAt: r.updated_at,
 });
 
 const nowIso = () => new Date().toISOString();
@@ -68,12 +70,12 @@ export async function insertTasks(db: D1Database, rows: NewTask[], o: { ignoreDu
   const out: Task[] = rows.map((n) => ({ ...n, id: crypto.randomUUID(), claudeTaskId: null, reviewApprovalId: null, startedAt: null, doneAt: null, createdAt: now, updatedAt: now }));
   const results = await db.batch(out.map((t) => db.prepare(
     `INSERT${o.ignoreDuplicates ? " OR IGNORE" : ""} INTO tasks (id, project_id, business_id, is_step, step_key, phase_key, phase_title, position, title, description, owner, status, done_when, est_minutes, due_on, billable, skippable,
-       requires, milestone, client_summary, doc_template, email_template, checklist, change_order_id, cadence_key, period_key, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       requires, milestone, client_summary, doc_template, email_template, checklist, change_order_id, cadence_key, period_key, edit_request, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(
     t.id, t.projectId, t.businessId, t.isStep ? 1 : 0, t.stepKey, t.phaseKey, t.phaseTitle, t.position, t.title, t.description, t.owner, t.status, t.doneWhen, t.estMinutes, t.dueOn,
     t.billable ? 1 : 0, t.skippable ? 1 : 0, JSON.stringify(t.requires), t.milestone, t.clientSummary, t.docTemplate, t.emailTemplate, JSON.stringify(t.checklist), t.changeOrderId,
-    t.cadenceKey, t.periodKey, now, now,
+    t.cadenceKey, t.periodKey, t.editRequest ? 1 : 0, now, now,
   )));
   return o.ignoreDuplicates ? out.filter((_, i) => (results[i].meta.changes ?? 0) === 1) : out;
 }
