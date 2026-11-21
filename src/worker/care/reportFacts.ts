@@ -127,12 +127,13 @@ async function siteFacts(env: Env, site: Site, r: ReturnType<typeof monthRange>,
   // The start date is the first covered day ever, not the first of the month, so a site watched since October does not read as watched since 1 November.
   const since = await db.prepare(`SELECT MIN(day) AS day FROM site_uptime_days WHERE site_id = ? AND checks >= ? AND day <= ?`).bind(site.id, MIN_CHECKS_FOR_A_DAY, r.toDay).first<{ day: string | null }>();
 
-  // The incident's own words (`detail`) are never read.
-  const down = (await db.prepare(`SELECT opened_at, closed_at FROM site_incidents WHERE site_id = ? AND kind = 'down' AND opened_at >= ? AND opened_at < ?`)
-    .bind(site.id, r.from, r.to).all<{ opened_at: string; closed_at: string | null }>()).results;
-  // An outage counts only the time inside the month and up to now: one that closed after the month end, or is still open, is cut there.
+  // The incident's own words (`detail`) are never read. An outage belongs to every month it overlaps: one that began before the month and ended inside it counts, as does one still open.
+  const down = (await db.prepare(`SELECT opened_at, closed_at FROM site_incidents WHERE site_id = ? AND kind = 'down' AND opened_at < ? AND (closed_at IS NULL OR closed_at > ?)`)
+    .bind(site.id, r.to, r.from).all<{ opened_at: string; closed_at: string | null }>()).results;
+  // An outage counts only the time inside the month and up to now: its start is cut at the month's first instant, and one that closed after the month end, or is still open, is cut at the month's end or now.
+  const start = Date.parse(r.from);
   const stop = Math.min(Date.parse(r.to), now.getTime());
-  const outages = down.map((i) => Math.max(0, Math.min(Date.parse(i.closed_at ?? "") || stop, stop) - Date.parse(i.opened_at))).filter((ms) => Number.isFinite(ms));
+  const outages = down.map((i) => Math.max(0, Math.min(Date.parse(i.closed_at ?? "") || stop, stop) - Math.max(Date.parse(i.opened_at), start))).filter((ms) => Number.isFinite(ms));
   const longest = outages.length ? Math.max(1, Math.round(Math.max(...outages) / 60_000)) : null;
 
   // The runs of the month are those that FINISHED in it. What happened to each update is what the run recorded: the helper's per-update `steps` stored in the job's result, not the update's

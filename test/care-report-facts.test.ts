@@ -190,6 +190,29 @@ describe("buildFacts: incidents", () => {
     expect((await facts(s, { now: new Date("2026-11-10T22:00:00.000Z") })).sites[0]).toMatchObject({ incidents: 1, longestOutageMinutes: 120 });
   });
 
+  it("an outage that began before the month and ended inside it counts, from the month's first instant; one that ended before it does not; one that spans the whole month runs the whole month", async () => {
+    const s = await careClient();
+    const id = s.site!.id;
+    // November in Los Angeles starts at 07:00Z on the 1st.
+    await openIncident(env.DB, { siteId: id, businessId: s.businessId, kind: "down", detail: "d", now: "2026-10-31T23:00:00.000Z" });
+    await closeIncident(env.DB, id, "down", "2026-10-31T23:30:00.000Z"); // over before the month
+    await openIncident(env.DB, { siteId: id, businessId: s.businessId, kind: "down", detail: "d", now: "2026-11-01T05:00:00.000Z" });
+    await closeIncident(env.DB, id, "down", "2026-11-01T09:00:00.000Z"); // two hours of November (07:00Z to 09:00Z), the first two of the outage's four
+    expect((await facts(s)).sites[0]).toMatchObject({ incidents: 1, longestOutageMinutes: 120 });
+    // The same outage is also October's: its hours before the month end count there.
+    expect((await facts(s, { period: "2026-10", now: new Date("2026-11-01T17:00:00.000Z") })).sites[0]).toMatchObject({ incidents: 2, longestOutageMinutes: 120 });
+    await env.DB.prepare(`DELETE FROM site_incidents`).run();
+    await openIncident(env.DB, { siteId: id, businessId: s.businessId, kind: "down", detail: "d", now: "2026-10-30T00:00:00.000Z" });
+    await closeIncident(env.DB, id, "down", "2026-12-05T00:00:00.000Z");
+    expect((await facts(s)).sites[0]).toMatchObject({ incidents: 1, longestOutageMinutes: 43_260 }); // 30 days and the hour the month is long in the fall-back zone
+    await env.DB.prepare(`DELETE FROM site_incidents`).run();
+    // Still open from October when the report is made inside November: it has run from the month's start to now, and one that closed exactly at the start is not in it.
+    await openIncident(env.DB, { siteId: id, businessId: s.businessId, kind: "down", detail: "d", now: "2026-10-31T10:00:00.000Z" });
+    expect((await facts(s, { now: new Date("2026-11-01T10:00:00.000Z") })).sites[0]).toMatchObject({ incidents: 1, longestOutageMinutes: 180 });
+    await closeIncident(env.DB, id, "down", "2026-11-01T07:00:00.000Z");
+    expect((await facts(s)).sites[0]).toMatchObject({ incidents: 0, longestOutageMinutes: null });
+  });
+
   it("an incident opened at 23:30 local on the 30th is November's, one at 00:10 local on 1 December is December's", async () => {
     const s = await careClient();
     const id = s.site!.id;
