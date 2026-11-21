@@ -48,8 +48,8 @@ describe("the tool registry", () => {
     "run_audit", "log_time", "add_task", "add_task_comment", "add_note",
     // the money summary
     "get_money_summary",
-    // the two care tools
-    "get_care_overview", "list_incidents",
+    // the three care tools
+    "get_care_overview", "get_care_updates", "list_incidents",
   ];
   const registered = async (): Promise<string[]> => (await mcp("tools/list", {})).result.tools.map((t: { name: string }) => t.name);
 

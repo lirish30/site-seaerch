@@ -15,6 +15,7 @@ import { liveProjectSql } from "./db/projects";
 import { clientSql, testClientSql } from "./clients/record";
 import { ACCESS_LABELS, unresolved } from "./sites/access";
 import { listIncidents, type Incident } from "./db/monitoring";
+import { lastRunsFor } from "./db/careUpdates";
 import { domainDaysLeft } from "./monitoring/incidents";
 
 export const TODAY_KINDS = ["follow_up_due", "draft_unsent", "stalled_deal", "starred_idle", "promising_quick_scan", "proposal_follow_up", "onboarding_attention", "project_attention", "billing_attention", "access_missing", "site_incident"] as const;
@@ -123,39 +124,79 @@ export function outageLength(ms: number): string {
 async function incidentAttention(db: D1Database, now: Date): Promise<Map<string, { reason: string; priority: number; openedAt: number }>> {
   const incidents = await listIncidents(db, { open: true, limit: 1000 });
   const out = new Map<string, { reason: string; priority: number; openedAt: number }>();
-  if (!incidents.length) return out;
-  const sites = new Map<string, { domain: string | null; expiresOn: string | null }>();
+  const looks = await pendingLooks(db, now);
+  if (!incidents.length && !looks.size) return out;
+  const sites = new Map<string, { domain: string | null; expiresOn: string | null; certExpiresOn: string | null }>();
   for (const part of chunks([...new Set(incidents.map((i) => i.siteId))])) {
-    const rows = (await db.prepare(`SELECT id, domain, domain_expires_on FROM sites WHERE archived_at IS NULL AND id IN (${part.map(() => "?").join(",")})`).bind(...part)
-      .all<{ id: string; domain: string | null; domain_expires_on: string | null }>()).results;
-    for (const r of rows) sites.set(r.id, { domain: r.domain, expiresOn: r.domain_expires_on });
+    const rows = (await db.prepare(`SELECT id, domain, domain_expires_on, cert_expires_on FROM sites WHERE archived_at IS NULL AND id IN (${part.map(() => "?").join(",")})`).bind(...part)
+      .all<{ id: string; domain: string | null; domain_expires_on: string | null; cert_expires_on: string | null }>()).results;
+    for (const r of rows) sites.set(r.id, { domain: r.domain, expiresOn: r.domain_expires_on, certExpiresOn: r.cert_expires_on });
   }
   const zone = zoneOf(await getSettings(db));
   const byClient = new Map<string, Incident[]>();
   for (const i of incidents) if (sites.has(i.siteId)) (byClient.get(i.businessId) ?? byClient.set(i.businessId, []).get(i.businessId)!).push(i);
-  for (const [businessId, list] of byClient) {
+  // The newest run of a site whose update failed: did it roll back?
+  const failedSites = [...new Set(incidents.filter((i) => i.kind === "update_failed" && sites.has(i.siteId)).map((i) => i.siteId))];
+  const lastRuns = await lastRunsFor(db, failedSites);
+  for (const businessId of new Set([...byClient.keys(), ...looks.keys()])) {
+    const list = byClient.get(businessId) ?? [];
     // Done and snooze answer the incidents that were open when they were pressed, so the row also carries when the newest open one opened (see `hidden`).
-    const openedAt = Math.max(...list.map((i) => ms(i.openedAt)));
+    const openedAt = Math.max(...list.map((i) => ms(i.openedAt)), looks.get(businessId) ?? -Infinity);
     const name = (i: Incident) => sites.get(i.siteId)!.domain ?? "A site"; // never an address: a URL can carry a login
+    // The highest priority speaks; on a tie the one listed first.
+    const found: { reason: string; priority: number }[] = [];
     const downs = list.filter((i) => i.kind === "down").sort((a, c) => ms(a.openedAt) - ms(c.openedAt));
     if (downs.length) {
       const others = downs.length - 1;
       const tail = others === 0 ? "" : `, and ${others} other ${others === 1 ? "site is" : "sites are"} down too`;
-      out.set(businessId, { reason: `${name(downs[0])} has been down for ${outageLength(now.getTime() - ms(downs[0].openedAt))}${tail}`, priority: 90, openedAt });
-      continue;
+      found.push({ reason: `${name(downs[0])} has been down for ${outageLength(now.getTime() - ms(downs[0].openedAt))}${tail}`, priority: 90 });
     }
+    const fails = list.filter((i) => i.kind === "update_failed").sort((a, c) => ms(a.openedAt) - ms(c.openedAt));
+    if (fails.length) {
+      const f = fails[0];
+      found.push({ reason: lastRuns.get(f.siteId)?.status === "rolled_back" ? `updates broke ${name(f)}: rolled back` : `updates need a look on ${name(f)}`, priority: 85 });
+    }
+    if (looks.has(businessId)) found.push({ reason: "a page changed after updates and is waiting for a look", priority: 70 });
     // The nearest expiry speaks.
     const withDays = list.filter((i) => i.kind === "domain_expiring").map((i) => ({ i, days: sites.get(i.siteId)!.expiresOn ? domainDaysLeft(sites.get(i.siteId)!.expiresOn!, now, zone) : null }));
-    if (!withDays.length) continue;
-    withDays.sort((a, c) => (a.days ?? Infinity) - (c.days ?? Infinity));
-    const { i, days } = withDays[0];
-    const reason = days === null ? `${name(i)} domain is close to expiring`
-      : days < 0 ? `${name(i)} expired ${plural(-days, "day")} ago`
-      : days === 0 ? `${name(i)} expires today`
-      : `${name(i)} expires in ${plural(days, "day")}`;
-    out.set(businessId, { reason, priority: 66, openedAt });
+    if (withDays.length) {
+      withDays.sort((a, c) => (a.days ?? Infinity) - (c.days ?? Infinity));
+      const { i, days } = withDays[0];
+      found.push({
+        reason: days === null ? `${name(i)} domain is close to expiring`
+          : days < 0 ? `${name(i)} expired ${plural(-days, "day")} ago`
+          : days === 0 ? `${name(i)} expires today`
+          : `${name(i)} expires in ${plural(days, "day")}`,
+        priority: 66,
+      });
+    }
+    const certs = list.filter((i) => i.kind === "cert_expiring").map((i) => ({ i, days: sites.get(i.siteId)!.certExpiresOn ? domainDaysLeft(sites.get(i.siteId)!.certExpiresOn!, now, zone) : null }));
+    if (certs.length) {
+      certs.sort((a, c) => (a.days ?? Infinity) - (c.days ?? Infinity));
+      const { i, days } = certs[0];
+      found.push({
+        reason: days === null ? `${name(i)}'s certificate is close to expiring`
+          : days < 0 ? `${name(i)}'s certificate expired ${plural(-days, "day")} ago`
+          : days === 0 ? `${name(i)}'s certificate expires today`
+          : `${name(i)}'s certificate expires in ${plural(days, "day")}`,
+        priority: 66,
+      });
+    }
+    if (!found.length) continue;
+    const top = found.reduce((best, f) => (f.priority > best.priority ? f : best));
+    out.set(businessId, { reason: top.reason, priority: top.priority, openedAt });
   }
   return out;
+}
+
+/** Real clients' pages that changed after updates and have waited on a look for more than a day: client id to when the newest of them finished its run. Test clients, test sites and archived sites never count. */
+async function pendingLooks(db: D1Database, now: Date): Promise<Map<string, number>> {
+  const rows = (await db.prepare(
+    `SELECT s.business_id AS business_id, MAX(COALESCE(r.finished_at, r.created_at)) AS at
+     FROM care_page_checks c JOIN care_runs r ON r.id = c.run_id JOIN sites s ON s.id = r.site_id JOIN businesses b ON b.id = s.business_id
+     WHERE c.review = 'pending' AND COALESCE(r.finished_at, r.created_at) < ? AND s.archived_at IS NULL AND s.test = 0 AND NOT ${testClientSql("b")} GROUP BY s.business_id`,
+  ).bind(new Date(now.getTime() - DAY).toISOString()).all<{ business_id: string; at: string }>()).results;
+  return new Map(rows.map((r) => [r.business_id, ms(r.at)]));
 }
 
 interface ActivityRow { business_id: string; kind: string; detail: string | null; created_at: string; }

@@ -27,7 +27,7 @@ describe("healthInputs", () => {
   it("a client with nothing gives no checks, no uptime and a score of 100", async () => {
     const s = await seedClient({ site: false });
     const i = await inputsOf(s.businessId);
-    expect(i).toEqual({ openDown: false, domainDaysLeft: null, uptime30: null, checks30: 0, overdueInvoices: 0, held: false, pastDueSubscription: false, accessUnresolved: 0, waitingOnClient: false });
+    expect(i).toEqual({ openDown: false, updateFailed: false, certExpiring: false, domainDaysLeft: null, uptime30: null, checks30: 0, overdueInvoices: 0, held: false, pastDueSubscription: false, accessUnresolved: 0, waitingOnClient: false });
     expect(computeHealth(i)).toEqual({ score: 100, band: "good", reasons: [], hasData: false });
   });
 
@@ -87,6 +87,20 @@ describe("healthInputs", () => {
     // a domain incident is not a down incident
     await openIncident(env.DB, { siteId: s.site!.id, businessId: s.businessId, kind: "domain_expiring", detail: "domain expires in 5 days", now: daysAgo(0) });
     expect((await inputsOf(s.businessId)).openDown).toBe(false);
+  });
+
+  it("an open update_failed sets updateFailed and an open cert_expiring sets certExpiring, each costing 15; closed ones do not", async () => {
+    const s = await seedClient();
+    await resolveAccess(s.site!.id);
+    expect(await inputsOf(s.businessId)).toMatchObject({ updateFailed: false, certExpiring: false });
+    const u = await openIncident(env.DB, { siteId: s.site!.id, businessId: s.businessId, kind: "update_failed", detail: "update failed on the Mac helper", now: daysAgo(0) });
+    expect(await inputsOf(s.businessId)).toMatchObject({ updateFailed: true, certExpiring: false, openDown: false });
+    expect(computeHealth(await inputsOf(s.businessId)).score).toBe(85);
+    await openIncident(env.DB, { siteId: s.site!.id, businessId: s.businessId, kind: "cert_expiring", detail: "certificate expires in 5 days", now: daysAgo(0) });
+    expect(computeHealth(await inputsOf(s.businessId)).score).toBe(70);
+    await env.DB.prepare(`UPDATE site_incidents SET closed_at = ?`).bind(daysAgo(0)).run();
+    expect(await inputsOf(s.businessId)).toMatchObject({ updateFailed: false, certExpiring: false });
+    expect(u.created).toBe(true);
   });
 
   it("a site whose address was cleared counts for nothing monitoring-related: no open down, no checks, no domain date; its access items still count", async () => {

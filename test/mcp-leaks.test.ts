@@ -15,6 +15,7 @@ import { insertMeetingIfNew } from "../src/worker/db/meetings";
 import { createOnboarding, listItems, saveItemText } from "../src/worker/db/onboardings";
 import { setAccess } from "../src/worker/db/sites";
 import { openIncident } from "../src/worker/db/monitoring";
+import { createSingleBatch, insertRun, setRunStatus } from "../src/worker/db/careUpdates";
 import { markSubscription } from "../src/worker/db/subscriptions";
 import { markSent } from "../src/worker/db/changeOrders";
 import { sha256Hex, canonicalJson } from "../src/worker/documents/hash";
@@ -30,6 +31,7 @@ const SENTINELS = {
   documentToken: "DOCUMENT-TOKEN-SENTINEL", bookingCancelToken: "BOOKING-CANCEL-TOKEN-SENTINEL", onboardingToken: "ONBOARDING-TOKEN-SENTINEL",
   changeOrderToken: "CHANGE-ORDER-TOKEN-SENTINEL", hostedUrl: "https://invoice.stripe.com/i/HOSTED-URL-SENTINEL", stripeInvoice: "in_STRIPE-INVOICE-SENTINEL",
   stripeCustomer: "cus_STRIPE-CUSTOMER-SENTINEL", stripeSubscription: "sub_STRIPE-SUBSCRIPTION-SENTINEL", transcriptKey: "transcript.json",
+  sshAlias: "SSH-ALIAS-SENTINEL-host", wpPath: "/var/www/WP-PATH-SENTINEL", backupFile: "BACKUP-FILE-SENTINEL",
   mailboxOut: env.MAILBOX_OUTREACH_PASSWORD, mailboxMain: env.MAILBOX_MAIN_PASSWORD,
 };
 const TRANSCRIPT = "TRANSCRIPT-SENTINEL";
@@ -86,6 +88,11 @@ beforeAll(async () => {
     endedAt: "2026-12-01T17:30:00.000Z", transcriptKey: key, notes: NOTES,
   });
   await insertTasks(env.DB, [newTask(s.project!.id, s.businessId, { stepKey: "a", title: "Write copy", owner: "logan" }), newTask(s.project!.id, s.businessId, { stepKey: "b", position: 1, title: "Draft", owner: "claude" })]);
+  // The Care updates access and a finished run with a backup: the Care tools must never say the alias, the folder or the backup file's name.
+  await env.DB.prepare(`UPDATE sites SET cms = 'wordpress', access_method = 'ssh_wpcli', wp_ssh_alias = ?, wp_path = ?, care_paths = '["/"]' WHERE id = ?`).bind(SENTINELS.sshAlias, SENTINELS.wpPath, s.site!.id).run();
+  const careBatch = await createSingleBatch(env.DB, s.site!.id, "2026-W49", "2026-12-05T08:00:00.000Z");
+  const careRun = await insertRun(env.DB, { batchId: careBatch.id, siteId: s.site!.id, wave: 0, now: "2026-12-05T08:00:00.000Z" });
+  await setRunStatus(env.DB, careRun.id, ["queued"], "ok", { summary: "1 applied", backupFile: `siteline-backups/${SENTINELS.backupFile}.sql.gz` }, "2026-12-05T08:30:00.000Z");
   // An open down incident on the client's site, so the Care tools have something to show.
   await openIncident(env.DB, { siteId: s.site!.id, businessId: s.businessId, kind: "down", detail: "HTTP 503", now: "2026-12-05T09:00:00.000Z" });
   await logActivity(env.DB, s.businessId, "note" as never, "Called Pat");
@@ -101,7 +108,7 @@ const calls = (): [string, unknown][] => [
   ["list_open_tasks", {}], ["list_open_tasks", { owner: "logan" }], ["list_open_tasks", { owner: "claude" }], ["list_open_tasks", { owner: "client" }],
   ["get_deal", { id: ids.dealId }], ["list_invoices", {}], ["list_invoices", { business_id: ids.businessId }], ["list_invoices", { status: "open" }],
   ["list_meetings", {}], ["list_meetings", { business_id: ids.businessId }], ["get_meeting", { id: ids.meetingId }],
-  ["get_care_overview", {}], ["list_incidents", {}], ["list_incidents", { open: true }], ["list_incidents", { open: false }], ["list_incidents", { clientId: ids.businessId }],
+  ["get_care_overview", {}], ["get_care_updates", {}], ["list_incidents", {}], ["list_incidents", { open: true }], ["list_incidents", { open: false }], ["list_incidents", { clientId: ids.businessId }],
   ["get_timeline", { record_type: "business", record_id: ids.businessId }], ["get_timeline", { record_type: "project", record_id: ids.projectId }],
 ];
 

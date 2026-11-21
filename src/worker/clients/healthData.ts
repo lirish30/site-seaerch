@@ -23,7 +23,7 @@ const marks = (xs: unknown[]) => xs.map(() => "?").join(",");
 
 /** What a client with nothing recorded looks like: no checks (so no uptime, which is unknown and never 0 or 100), nothing overdue, nothing missing. */
 const empty = (): HealthInput => ({
-  openDown: false, domainDaysLeft: null, uptime30: null, checks30: 0, overdueInvoices: 0, held: false, pastDueSubscription: false, accessUnresolved: 0, waitingOnClient: false,
+  openDown: false, updateFailed: false, certExpiring: false, domainDaysLeft: null, uptime30: null, checks30: 0, overdueInvoices: 0, held: false, pastDueSubscription: false, accessUnresolved: 0, waitingOnClient: false,
 });
 
 /** The live, real sites of real clients among the ids: not archived, not a test site, not a test client. A function, not a constant: `record.ts` and this file import each other, so nothing may call `testClientSql` while the modules load. */
@@ -54,9 +54,9 @@ export async function healthInputs(db: D1Database, businessIds: string[], now: D
          WHERE s.business_id IN (${inList}) AND ${monitoredLook()} AND c.checked_at >= ? GROUP BY s.business_id`,
       ).bind(...part, since).all<{ business_id: string; n: number; ok: number }>(),
       db.prepare(
-        `SELECT DISTINCT s.business_id AS business_id FROM site_incidents i JOIN sites s ON s.id = i.site_id JOIN businesses b ON b.id = s.business_id
-         WHERE s.business_id IN (${inList}) AND ${monitoredLook()} AND i.kind = 'down' AND i.closed_at IS NULL`,
-      ).bind(...part).all<{ business_id: string }>(),
+        `SELECT DISTINCT s.business_id AS business_id, i.kind AS kind FROM site_incidents i JOIN sites s ON s.id = i.site_id JOIN businesses b ON b.id = s.business_id
+         WHERE s.business_id IN (${inList}) AND ${monitoredLook()} AND i.kind IN ('down', 'update_failed', 'cert_expiring') AND i.closed_at IS NULL`,
+      ).bind(...part).all<{ business_id: string; kind: string }>(),
       db.prepare(
         `SELECT s.business_id AS business_id, a.status AS status FROM site_access_items a JOIN sites s ON s.id = a.site_id JOIN businesses b ON b.id = s.business_id
          WHERE s.business_id IN (${inList}) AND ${liveSites()}`,
@@ -79,7 +79,11 @@ export async function healthInputs(db: D1Database, businessIds: string[], now: D
       i.checks30 = r.n;
       i.uptime30 = r.n === 0 ? null : Math.round(((r.ok * 100) / r.n) * 10) / 10;
     }
-    for (const r of down.results) at(r.business_id).openDown = true;
+    for (const r of down.results) {
+      if (r.kind === "down") at(r.business_id).openDown = true;
+      else if (r.kind === "update_failed") at(r.business_id).updateFailed = true;
+      else at(r.business_id).certExpiring = true;
+    }
     const byBusiness = new Map<string, { status: AccessStatus }[]>();
     for (const r of access.results) (byBusiness.get(r.business_id) ?? byBusiness.set(r.business_id, []).get(r.business_id)!).push({ status: r.status });
     for (const [id, items] of byBusiness) at(id).accessUnresolved = unresolved(items).length;

@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
-import { closeIncident, openIncident, setDomainExpiry } from "../src/worker/db/monitoring";
+import { closeIncident, openIncident, setCertExpiry, setDomainExpiry } from "../src/worker/db/monitoring";
+import { createSingleBatch, insertPageChecks, insertRun, setRunStatus } from "../src/worker/db/careUpdates";
 import { archiveSite, createSite } from "../src/worker/db/sites";
 import { addSuppression } from "../src/worker/db/suppression";
 import { buildToday, TODAY_KINDS } from "../src/worker/today";
@@ -14,7 +15,7 @@ const ago = (ms: number) => new Date(NOW.getTime() - ms).toISOString();
 
 // buildToday reads every lead, so each test starts from an empty set (incidents and sites go first: they point at businesses).
 beforeEach(async () => {
-  for (const t of ["site_incidents", "site_checks"]) await env.DB.prepare(`DELETE FROM ${t}`).run();
+  for (const t of ["care_page_checks", "care_runs", "care_batches", "site_incidents", "site_checks"]) await env.DB.prepare(`DELETE FROM ${t}`).run();
   await resetProjectWork();
   for (const t of ["billing_holds", "invoice_nudges", "invoices", "subscriptions", "document_views", "document_signatures", "documents", "deals", "activity", "drafts", "audits", "search_results", "businesses", "suppressions"])
     await env.DB.prepare(`DELETE FROM ${t}`).run();
@@ -28,6 +29,62 @@ const domain = async (s: { id: string; businessId: string }, expiresOn: string, 
   await setDomainExpiry(env.DB, s.id, expiresOn, ago(0));
   await openIncident(env.DB, { siteId: s.id, businessId: s.businessId, kind: "domain_expiring", detail, now: ago(DAY) });
 };
+
+describe("site_incident from Care updates", () => {
+  const failed = (s: { id: string; businessId: string }, openedMsAgo: number) =>
+    openIncident(env.DB, { siteId: s.id, businessId: s.businessId, kind: "update_failed", detail: "update failed on the Mac helper", now: ago(openedMsAgo) });
+  const cert = async (s: { id: string; businessId: string }, expiresOn: string) => {
+    await setCertExpiry(env.DB, s.id, expiresOn, ago(0));
+    await openIncident(env.DB, { siteId: s.id, businessId: s.businessId, kind: "cert_expiring", detail: "certificate expires in 99 days", now: ago(DAY) });
+  };
+  const run = async (s: { id: string }, status: string, finishedMsAgo = 0) => {
+    const batch = await createSingleBatch(env.DB, s.id, "2026-W50", ago(finishedMsAgo + MIN));
+    const r = await insertRun(env.DB, { batchId: batch.id, siteId: s.id, wave: 0, status: "queued", now: ago(finishedMsAgo + MIN) });
+    await setRunStatus(env.DB, r.id, ["queued"], status as "changed", { summary: "x" }, ago(finishedMsAgo));
+    return r;
+  };
+
+  it("an update_failed after a rolled back run is 85 and says so, above a domain warning", async () => {
+    const s = await seedClient();
+    await run(s.site!, "rolled_back");
+    await failed(s.site!, MIN);
+    await domain(s.site!, "2026-12-20");
+    expect(await rows()).toEqual([expect.objectContaining({ kind: "site_incident", reason: "updates broke ace.com: rolled back", priority: 85 })]);
+  });
+
+  it("an update_failed without a rollback says the updates need a look", async () => {
+    const s = await seedClient();
+    await run(s.site!, "failed");
+    await failed(s.site!, MIN);
+    expect(await rows()).toEqual([expect.objectContaining({ reason: "updates need a look on ace.com", priority: 85 })]);
+  });
+
+  it("a down site (90) still outranks a failed update (85)", async () => {
+    const s = await seedClient();
+    await failed(s.site!, MIN);
+    await down(s.site!, 5 * MIN);
+    expect((await rows())[0]).toMatchObject({ priority: 90 });
+  });
+
+  it("a certificate expiring is 66, counted from its own date, and loses to a failed update", async () => {
+    const s = await seedClient();
+    await cert(s.site!, "2026-12-17");
+    expect(await rows()).toEqual([expect.objectContaining({ reason: "ace.com's certificate expires in 7 days", priority: 66 })]);
+    await failed(s.site!, MIN);
+    expect((await rows())[0]).toMatchObject({ priority: 85 });
+  });
+
+  it("a page waiting on a look for more than 24 hours is 70; a fresh one gives no row", async () => {
+    const s = await seedClient();
+    const r = await run(s.site!, "changed", 2 * 3_600_000);
+    await insertPageChecks(env.DB, r.id, [{ path: "/contact", beforeKey: null, afterKey: null, diffKey: null, statusBefore: 200, statusAfter: 200, formsBefore: 1, formsAfter: 1, ssim: 0.9, verdict: "changed", review: "pending" }]);
+    expect(await rows()).toEqual([]);
+    await env.DB.prepare(`UPDATE care_runs SET finished_at = ? WHERE id = ?`).bind(ago(25 * 3_600_000), r.id).run();
+    expect(await rows()).toEqual([expect.objectContaining({ reason: "a page changed after updates and is waiting for a look", priority: 70 })]);
+    await env.DB.prepare(`UPDATE care_page_checks SET review = 'logan_ok'`).run();
+    expect(await rows()).toEqual([]);
+  });
+});
 
 describe("site_incident", () => {
   it("is a Today kind", () => {

@@ -52,7 +52,14 @@ const FIELDS = {
   notes: siteNote.nullable(),
 };
 const SiteBody = z.object(FIELDS).partial().strict();
-const PatchSiteBody = SiteBody.refine((b) => Object.keys(b).length > 0, { message: "nothing to change" });
+// The Care updates access: checked again against fixed patterns by `updateSite` (a refusal there is a 400 with its sentence), because these reach a remote shell.
+const careWord = (label: string) => z.string(`${label} must be text.`).transform((s) => s.trim()).pipe(z.string().max(300, `${label} is too long.`)).transform((s) => s || null);
+const CARE_FIELDS = {
+  wpSshAlias: careWord("The SSH alias").nullable(),
+  wpPath: careWord("The WordPress folder").nullable(),
+  carePaths: z.array(z.string("Each page must be text.").max(300, "A page path is too long."), "Pages to check must be a list.").max(50, "Pick one to five pages to check."),
+};
+const PatchSiteBody = z.object({ ...FIELDS, ...CARE_FIELDS }).partial().strict().refine((b) => Object.keys(b).length > 0, { message: "nothing to change" });
 
 const vaultName = z.string("The item name must be text.")
   .superRefine((s, ctx) => { const p = vaultNameProblem(s); if (p) ctx.addIssue({ code: "custom", message: p }); }).transform(cleanVaultName);

@@ -33,6 +33,11 @@ function isoWeekday(now: Date, tz: string): number {
   return WEEKDAYS[new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short" }).format(now)] ?? 0;
 }
 
+/** A refusal with a plain sentence the owner may read (a route answers it 409); anything else thrown is a real fault. */
+export class CareRunRefused extends Error {
+  constructor(message: string) { super(message); this.name = "CareRunRefused"; }
+}
+
 const oneLine = (s: string, max = 100): string => s.replace(/\s+/g, " ").trim().slice(0, max);
 const plural = (n: number, w: string): string => `${n} ${w}${n === 1 ? "" : "s"}`;
 
@@ -53,6 +58,23 @@ export async function startWeeklyBatch(env: Env, now: Date): Promise<{ batch: Ca
   if (!tpl || !tpl.active) return { batch: null, queued: 0 };
   const tz = zoneOf(await getSettings(db));
   if (isoWeekday(now, tz) !== (tpl.cadenceDay ?? 3)) return { batch: null, queued: 0 };
+  return beginWeekly(env, now, tz);
+}
+
+/**
+ * Logan starts this week's batch by hand, on any weekday and whether or not CARE-1 is on. `created` is false (and nothing is queued) when this week's weekly batch already exists:
+ * the owner asks once, the Wednesday run or an earlier press already did it.
+ */
+export async function startBatchNow(env: Env, now: Date): Promise<{ batch: CareBatch; queued: number; created: boolean }> {
+  const tz = zoneOf(await getSettings(env.DB));
+  const { batch, created } = await ensureWeeklyBatch(env.DB, periodKey("weekly", now, tz), now.toISOString());
+  if (!created) return { batch, queued: 0, created: false };
+  const r = await beginWeekly(env, now, tz);
+  return { batch: r.batch ?? batch, queued: r.queued, created: true };
+}
+
+async function beginWeekly(env: Env, now: Date, tz: string): Promise<{ batch: CareBatch | null; queued: number }> {
+  const db = env.DB;
   const period = periodKey("weekly", now, tz);
   const { batch } = await ensureWeeklyBatch(db, period, now.toISOString());
   if (batch.status !== "inventory") return { batch, queued: 0 };
@@ -76,19 +98,19 @@ export async function startWeeklyBatch(env: Env, now: Date): Promise<{ batch: Ca
 export async function startSingleRun(env: Env, siteId: string, now: Date): Promise<CareBatch> {
   const db = env.DB;
   const site = (await updatableSites(db, { includeTest: true })).find((s) => s.id === siteId);
-  if (!site) throw new Error("This site cannot take updates: it must be live, have a live Care plan and no hold, run WordPress and have its SSH alias and folder filled in.");
+  if (!site) throw new CareRunRefused("This site cannot take updates: it must be live, have a live Care plan and no hold, run WordPress and have its SSH alias and folder filled in.");
   const open = await db.prepare(
     `SELECT 1 AS x FROM care_runs WHERE site_id = ? AND status IN ${OPEN_RUN}
      UNION ALL SELECT 1 FROM helper_jobs WHERE kind = 'care.update' AND dedupe_key = ? AND status IN ('pending', 'claimed') LIMIT 1`,
   ).bind(siteId, `care.update:${siteId}`).first();
-  if (open) throw new Error("This site already has an update waiting or running. Let it finish first.");
+  if (open) throw new CareRunRefused("This site already has an update waiting or running. Let it finish first.");
   const tz = zoneOf(await getSettings(db));
   const batch = await createSingleBatch(db, siteId, periodKey("weekly", now, tz), now.toISOString());
   try {
     await queueInventory(db, site, batch.id, `care.inventory:${siteId}:${batch.id}`);
   } catch (e) {
     await setBatchStatus(db, batch.id, ["inventory"], "cancelled", new Date().toISOString());
-    if (e instanceof InvalidHelperJobError) throw new Error("This site's SSH alias or folder did not pass the safety check, so nothing was queued.");
+    if (e instanceof InvalidHelperJobError) throw new CareRunRefused("This site's SSH alias or folder did not pass the safety check, so nothing was queued.");
     throw e;
   }
   return batch;

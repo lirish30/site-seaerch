@@ -109,6 +109,42 @@ export async function availableFor(db: D1Database, siteId: string): Promise<Care
   return rows.map(toUpdate);
 }
 
+/** The updates that can still be taken for many sites at once (50 per read), grouped by site, in `availableFor`'s order. */
+export async function availableForSites(db: D1Database, siteIds: string[]): Promise<Map<string, CareUpdate[]>> {
+  const out = new Map<string, CareUpdate[]>();
+  for (let i = 0; i < siteIds.length; i += 50) {
+    const part = siteIds.slice(i, i + 50);
+    const rows = (await db.prepare(
+      `SELECT * FROM care_updates WHERE site_id IN (${marks(part.length)}) AND status = 'available' ORDER BY site_id, CASE type WHEN 'core' THEN 0 WHEN 'plugin' THEN 1 ELSE 2 END, slug, to_version`,
+    ).bind(...part).all<UpdateRow>()).results;
+    for (const r of rows) (out.get(r.site_id) ?? out.set(r.site_id, []).get(r.site_id)!).push(toUpdate(r));
+  }
+  return out;
+}
+
+/** The newest run of each site (50 sites per read); a site that never ran is not in the map. */
+export async function lastRunsFor(db: D1Database, siteIds: string[]): Promise<Map<string, CareRun>> {
+  const out = new Map<string, CareRun>();
+  for (let i = 0; i < siteIds.length; i += 50) {
+    const part = siteIds.slice(i, i + 50);
+    const rows = (await db.prepare(
+      `SELECT r.* FROM care_runs r WHERE r.site_id IN (${marks(part.length)})
+         AND r.rowid = (SELECT r2.rowid FROM care_runs r2 WHERE r2.site_id = r.site_id ORDER BY r2.created_at DESC, r2.rowid DESC LIMIT 1)`,
+    ).bind(...part).all<RunRow>()).results;
+    for (const r of rows) out.set(r.site_id, toRun(r));
+  }
+  return out;
+}
+
+/** The sites a Care board lists: live, real sites of real clients with a live Care plan, oldest first. */
+export async function careBoardSites(db: D1Database): Promise<Site[]> {
+  const rows = (await db.prepare(
+    `SELECT s.* FROM sites s JOIN businesses b ON b.id = s.business_id
+     WHERE s.archived_at IS NULL AND s.test = 0 AND NOT ${testClientSql("b")} AND ${CARE_SUBSCRIPTION_SQL("b")} ORDER BY s.created_at, s.id`,
+  ).all<SiteRow>()).results;
+  return rows.map(toSite);
+}
+
 // --- inventory -----------------------------------------------------------------------------------------------------------------------------------------------------
 
 /** Saves what the helper read from a site (one row per site). Only the first 200 plugin slugs are kept. */
@@ -143,6 +179,12 @@ export async function createSingleBatch(db: D1Database, siteId: string, period: 
     `INSERT INTO care_batches (id, period, kind, site_id, status, created_at, updated_at) VALUES (?, ?, 'single', ?, 'inventory', ?, ?) RETURNING *`,
   ).bind(crypto.randomUUID(), period, siteId, now, now).first<BatchRow>();
   return toBatch(r!);
+}
+
+/** The weekly batch of a period, or null when none was made. */
+export async function getWeeklyBatch(db: D1Database, period: string): Promise<CareBatch | null> {
+  const r = await db.prepare(`SELECT * FROM care_batches WHERE kind = 'weekly' AND period = ?`).bind(period).first<BatchRow>();
+  return r ? toBatch(r) : null;
 }
 
 export async function getBatch(db: D1Database, id: string): Promise<CareBatch | null> {

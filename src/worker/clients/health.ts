@@ -4,6 +4,10 @@
 export interface HealthInput {
   /** A `down` incident is open on one of the client's live sites. */
   openDown: boolean;
+  /** An `update_failed` incident is open on one of the client's live sites (updates broke it, or a page looked wrong after them). */
+  updateFailed: boolean;
+  /** A `cert_expiring` incident is open on one of the client's live sites. */
+  certExpiring: boolean;
   /** Whole days until the soonest domain expiry among the client's live sites (negative once past), or null when none is known. */
   domainDaysLeft: number | null;
   /** The share of checks that were ok over the last 30 days, pooled over the client's sites; null when there were none (unknown, never 0 and never 100). */
@@ -39,7 +43,8 @@ const domainReason = (days: number): string =>
   days < 0 ? `Domain expired ${plural(-days, "day")} ago` : days === 0 ? "Domain expires today" : `Domain expires in ${plural(days, "day")}`;
 
 /**
- * Starts at 100 and takes off, each at most once: an open down incident 30; the domain 20 at 7 days or fewer (past included) and 10 at 8 to 30; uptime under 99.0% 20 and under 99.5% 10
+ * Starts at 100 and takes off, each at most once: an open down incident 30; the domain 20 at 7 days or fewer (past included) and 10 at 8 to 30; an open update_failed incident 15; an open
+ * cert_expiring incident 15; uptime under 99.0% 20 and under 99.5% 10
  * (only from 20 checks); an overdue invoice 15; billing on hold 25; a failed subscription payment 15; site access still missing 10; waiting on the client 10.
  * Clamped to 0 to 100. 80 or more is good, 60 to 79 watch, under 60 at risk.
  */
@@ -51,6 +56,8 @@ export function computeHealth(i: HealthInput): Health {
   if (i.openDown) take(30, "Site is down");
   if (i.domainDaysLeft !== null && i.domainDaysLeft <= 7) take(20, domainReason(i.domainDaysLeft));
   else if (i.domainDaysLeft !== null && i.domainDaysLeft <= 30) take(10, domainReason(i.domainDaysLeft));
+  if (i.updateFailed) take(15, "Updates need a look");
+  if (i.certExpiring) take(15, "Certificate is expiring");
   if (i.uptime30 !== null && i.checks30 >= MIN_UPTIME_CHECKS) {
     if (i.uptime30 < 99.0) take(20, `Uptime ${i.uptime30.toFixed(1)}% in 30 days`);
     else if (i.uptime30 < 99.5) take(10, `Uptime ${i.uptime30.toFixed(1)}% in 30 days`);

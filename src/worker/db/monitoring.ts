@@ -69,6 +69,12 @@ export async function openIncident(
   throw new Error("could not open the incident");
 }
 
+/** One incident by id (open or closed), or null. */
+export async function getIncident(db: D1Database, id: string): Promise<Incident | null> {
+  const r = await db.prepare(`SELECT * FROM site_incidents WHERE id = ?`).bind(id).first<IncidentRow>();
+  return r ? toIncident(r) : null;
+}
+
 /** Closes the open incident for the site and kind and returns it as closed; null when none was open. One statement, so two closers cannot both win. */
 export async function closeIncident(db: D1Database, siteId: string, kind: IncidentKind, now: string): Promise<Incident | null> {
   const row = await db.prepare(`UPDATE site_incidents SET closed_at = ? WHERE site_id = ? AND kind = ? AND closed_at IS NULL RETURNING *`).bind(now, siteId, kind).first<IncidentRow>();

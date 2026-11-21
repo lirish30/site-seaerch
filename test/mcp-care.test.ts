@@ -5,6 +5,7 @@ import { ACCESS_KEYS, archiveSite, setAccess } from "../src/worker/db/sites";
 import { seedClient } from "./fixtures/clients";
 import { resetProjectWork } from "./fixtures/projects";
 import { actionCount, mcp, ok, tool } from "./fixtures/mcp";
+import { createSingleBatch, insertRun, setRunStatus, upsertSeen } from "../src/worker/db/careUpdates";
 
 // The two Care tools through the MCP route: the same fleet and incident views the Care board shows, cut down to hand-built, read-only answers.
 const CARE = [{ key: "care" as const, monthlyCents: 12_900 }];
@@ -15,7 +16,7 @@ const VAULT = "VAULT-ITEM-CARE-SENTINEL";
 const NOTE = "ACCESS-NOTE-CARE-SENTINEL";
 
 beforeEach(async () => {
-  for (const t of ["site_incidents", "site_checks"]) await env.DB.prepare(`DELETE FROM ${t}`).run();
+  for (const t of ["care_page_checks", "care_runs", "care_batches", "care_updates", "site_inventories", "site_incidents", "site_checks"]) await env.DB.prepare(`DELETE FROM ${t}`).run();
   await resetProjectWork();
   for (const t of ["billing_holds", "invoice_nudges", "invoices", "subscriptions", "document_views", "document_signatures", "documents", "deals", "activity", "drafts", "audits", "search_results", "businesses", "suppressions"])
     await env.DB.prepare(`DELETE FROM ${t}`).run();
@@ -55,9 +56,10 @@ function expectNoLeaks(text: string, what: string) {
 }
 
 describe("the tool list", () => {
-  it("has the two care tools", async () => {
+  it("has the three care tools", async () => {
     const names = (await mcp("tools/list", {})).result.tools.map((t: { name: string }) => t.name);
     expect(names).toContain("get_care_overview");
+    expect(names).toContain("get_care_updates");
     expect(names).toContain("list_incidents");
   });
 });
@@ -204,5 +206,40 @@ describe("what neither tool may say", () => {
       expect(r.text.length, `${name} answered`).toBeGreaterThan(10);
       expectNoLeaks(r.text, `${name} ${JSON.stringify(args)}`);
     }
+  });
+});
+
+describe("get_care_updates", () => {
+  const ALIAS = "ALIAS-SENTINEL-host";
+  const PATH_ = "/var/www/PATH-SENTINEL";
+  type Out = { batch: unknown; sites: { siteId: string; domain: string | null; canUpdate: boolean; why: string | null; updates: { slug: string; risk: string; held: boolean; due: boolean }[]; lastRun: { status: string } | null; updateFailed: { detail: string } | null }[] };
+
+  it("lists a Care site with its due updates, last run and open update_failed, finite and with no alias or folder", async () => {
+    const s = await careClient("Ace Plumbing");
+    await env.DB.prepare(`UPDATE sites SET cms = 'wordpress', access_method = 'ssh_wpcli', wp_ssh_alias = ?, wp_path = ?, care_paths = '["/"]' WHERE id = ?`).bind(ALIAS, PATH_, s.site!.id).run();
+    await upsertSeen(env.DB, s.site!.id, [{ type: "plugin", slug: "akismet", name: "Akismet", fromVersion: "1.0", toVersion: "2.0", risk: "major", rollbackable: true }], iso(0));
+    const batch = await createSingleBatch(env.DB, s.site!.id, "2027-W05", iso(HOUR));
+    const run = await insertRun(env.DB, { batchId: batch.id, siteId: s.site!.id, wave: 0, now: iso(HOUR) });
+    await setRunStatus(env.DB, run.id, ["queued"], "rolled_back", { summary: "1 put back", backupFile: "siteline-backups/BACKUP-SENTINEL.sql.gz" }, iso(0));
+    await openIncident(env.DB, { siteId: s.site!.id, businessId: s.businessId, kind: "update_failed", detail: "updates rolled back: akismet failed", now: iso(0) });
+    const r = await tool("get_care_updates", {});
+    expect(r.isError).toBe(false);
+    const out = JSON.parse(r.text) as Out;
+    expect(out.batch).toBeNull();
+    expect(out.sites).toEqual([expect.objectContaining({
+      siteId: s.site!.id, canUpdate: true, why: null, lastRun: expect.objectContaining({ status: "rolled_back" }),
+      updates: [expect.objectContaining({ slug: "akismet", risk: "major", held: false, due: false })], updateFailed: expect.objectContaining({ detail: "updates rolled back: akismet failed" }),
+    })]);
+    for (const bad of [ALIAS, PATH_, "BACKUP-SENTINEL", "ssh", "http", VAULT, NOTE]) expect(r.text).not.toContain(bad);
+    expect(r.text).not.toMatch(/NaN|Infinity/);
+    expect(await actionCount("get_care_updates")).toBe(1);
+  });
+
+  it("says why a site cannot take updates, and leaves a test client out", async () => {
+    const s = await careClient("Ace Plumbing");
+    await env.DB.prepare(`UPDATE sites SET access_method = 'mainwp' WHERE id = ?`).bind(s.site!.id).run();
+    await careClient("Test Co", { test: true });
+    const out = await ok<Out>("get_care_updates", {});
+    expect(out.sites).toEqual([expect.objectContaining({ siteId: s.site!.id, canUpdate: false, why: "no SSH access", updates: [] })]);
   });
 });
