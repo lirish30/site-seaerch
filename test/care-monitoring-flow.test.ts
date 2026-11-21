@@ -245,10 +245,11 @@ describe("care monitoring, end to end", () => {
     expect((await owner("GET", `/sites/${test.site!.id}/checks`)).status).toBe(404);
     expect((await owner("PUT", `/sites/${test.site!.id}/monitoring`, { enabled: true })).status).toBe(404);
 
-    // --- Domains (09:30). The registry says Ace's domain ends in 12 days and Zed's in 400: Ace gets a domain incident and a Today row at priority 66, Zed none. (sweepDomains is called alone; see the top.)
+    // --- Domains (09:30). The registry says Ace's domain ends in 12 days and Zed's in 400 (from 3 December): Ace gets a domain incident and a Today row at priority 66, Zed none. (sweepDomains is called alone; see the top.)
     fetched = [];
     at(T("17:30"));
     expiry = { "ace-plumbing.example.com": "2026-12-15T23:59:59Z", "zed-plumbing.example.com": "2028-01-07T23:59:59Z" };
+    // checked is 3: Ace, Zed and Zed's private-address site, which is stamped as looked up but makes no RDAP call (an address with no domain name is never asked about).
     expect(await sweepDomains(E, T("17:30"))).toMatchObject({ checked: 3, opened: 1, closed: 0 });
     expect(rdapCalls().sort()).toEqual(["https://rdap.org/domain/ace-plumbing.example.com", "https://rdap.org/domain/zed-plumbing.example.com"]); // nobody else's domain is looked up
     const domainIncident = (await env.DB.prepare(`SELECT id, site_id, kind, closed_at FROM site_incidents WHERE kind = 'domain_expiring'`).all<{ id: string; site_id: string; kind: string; closed_at: string | null }>()).results;
@@ -265,12 +266,12 @@ describe("care monitoring, end to end", () => {
     const domainListed = JSON.parse((await tool("list_incidents", { open: true })).text) as { incidents: { kind: string; detail: string; domain: string }[] };
     expect(domainListed.incidents).toEqual([expect.objectContaining({ kind: "domain_expiring", detail: "domain expires in 12 days", domain: "ace-plumbing.example.com" })]);
 
-    // A week and more later the registry says the domain was renewed (400 days): the incident closes, Today is empty, and the closed one reads as a fixed phrase, not a stale number.
+    // A week and more later (the 11 December sweep) the registry says the domain was renewed (392 days out): the incident closes, Today is empty, and the closed one reads as a fixed phrase, not a stale number.
     fetched = [];
     const later = new Date("2026-12-11T17:00:00.000Z");
     at(later);
     expiry["ace-plumbing.example.com"] = "2028-01-07T23:59:59Z";
-    expect(await sweepDomains(E, later)).toMatchObject({ checked: 3, opened: 0, closed: 1 });
+    expect(await sweepDomains(E, later)).toMatchObject({ checked: 3, opened: 0, closed: 1 }); // 3 for the same reason: the private-address site is stamped, never asked
     expect(await siteRows()).toEqual([]);
     const closed = (await api<{ incidents: { kind: string; closedAt: string | null; detail: string; domain: string | null }[] }>("GET", "/incidents")).incidents;
     expect(closed.filter((i) => i.kind === "domain_expiring")).toEqual([expect.objectContaining({ closedAt: later.toISOString(), detail: "domain expiry warning", domain: "ace-plumbing.example.com" })]);
@@ -295,7 +296,24 @@ describe("care monitoring, end to end", () => {
     expect((await api<{ site: { monitored: boolean } }>("PUT", `/sites/${plain.site!.id}/monitoring`, { enabled: false })).site.monitored).toBe(false);
     fetched = [];
     await tick(D11("17:15"));
-    expect(siteCalls()).not.toContain(PLAIN);
+    expect(siteCalls().sort()).toEqual([ACE, ZED].sort());
+
+    // --- Care ends while a site is down: Zed's site fails twice and an incident opens (a Today row); Zed's Care is cancelled; the next tick closes the incident by itself, silently,
+    // and Zed leaves Today and the board (nothing is left to watch it).
+    status[ZED] = 503;
+    await tick(D11("17:20"));
+    await tick(D11("17:25"));
+    expect(await siteRows()).toEqual([expect.objectContaining({ businessId: zed.businessId, priority: 90 })]);
+    expect(await activityOf(zed.businessId, "site_down")).toHaveLength(1);
+    await markSubscription(env.DB, zed.subIds[0], { status: "cancelled" }, { from: ["active"] });
+    fetched = [];
+    await tick(D11("17:30"));
+    expect(siteCalls()).toEqual([ACE]); // Zed is not watched any more
+    expect(await siteRows()).toEqual([]);
+    expect((await env.DB.prepare(`SELECT closed_at FROM site_incidents WHERE business_id = ?`).bind(zed.businessId).all<{ closed_at: string | null }>()).results)
+      .toEqual([{ closed_at: D11("17:30").toISOString() }]);
+    expect(await activityOf(zed.businessId, "site_back")).toEqual([]);
+    expect((await board()).map((r) => r.businessId)).not.toContain(zed.businessId);
 
     // --- The story's most important line: monitoring sent nothing to anyone and made no approval, no task, no Claude task and no mail.
     expect({ approvals: await count("approvals"), tasks: await count("tasks"), claudeTasks: await count("claude_tasks"), mail: mail.sent.length }).toEqual(before);
