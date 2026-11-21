@@ -20,6 +20,38 @@ export async function freeBusy(f: Fetch, token: string, from: Date, to: Date): P
   return (r.calendars?.primary?.busy ?? []).map((b) => ({ start: Date.parse(b.start), end: Date.parse(b.end) }));
 }
 
+/** One timed, live event on the primary calendar. `attendees` are the other people's emails (yours left out), lower-cased. */
+export interface CalendarEvent { id: string; summary: string; startAt: string; endAt: string; attendees: string[] }
+
+interface GoogleEvent {
+  id: string; status?: string; summary?: string; start?: { dateTime?: string; date?: string }; end?: { dateTime?: string; date?: string };
+  attendees?: { email?: string; self?: boolean }[];
+}
+
+/** Pages read before giving up: 250 events a page, far more than three days of one person's calendar. */
+const EVENT_PAGES = 4;
+
+/** Events on the primary calendar that overlap [from, to], repeats expanded. Cancelled and all-day events are left out, and so is the calendar owner as an attendee. */
+export async function listEvents(f: Fetch, token: string, from: Date, to: Date): Promise<CalendarEvent[]> {
+  const out: CalendarEvent[] = [];
+  let pageToken: string | undefined;
+  for (let page = 0; page < EVENT_PAGES; page++) {
+    const q = new URLSearchParams({ singleEvents: "true", orderBy: "startTime", maxResults: "250", timeMin: from.toISOString(), timeMax: to.toISOString(), ...(pageToken && { pageToken }) });
+    const r = await google<{ items?: GoogleEvent[]; nextPageToken?: string }>(f, token, `${BASE}/calendars/primary/events?${q}`);
+    for (const e of r.items ?? []) {
+      const start = e.start?.dateTime, end = e.end?.dateTime;
+      if (e.status === "cancelled" || !start || !end || Number.isNaN(Date.parse(start)) || Number.isNaN(Date.parse(end))) continue; // an all-day event has a date, not a dateTime
+      out.push({
+        id: e.id, summary: e.summary ?? "", startAt: new Date(start).toISOString(), endAt: new Date(end).toISOString(),
+        attendees: (e.attendees ?? []).filter((a) => a.email && !a.self).map((a) => a.email!.trim().toLowerCase()),
+      });
+    }
+    pageToken = r.nextPageToken;
+    if (!pageToken) break;
+  }
+  return out;
+}
+
 /**
  * Creates the event with a Google Meet link. sendUpdates=none: the app sends the confirmation mail, not Google. A retry with the same requestId does not make a second Meet.
  * With `id` (the caller's own, 5 to 1024 characters of a-v and 0-9) the event is made under that id, so a caller that never heard the answer still knows what to delete.
