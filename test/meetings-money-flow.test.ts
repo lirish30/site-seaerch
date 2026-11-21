@@ -13,9 +13,11 @@ import { MEETILY_SYNC_KIND, syncFileKey, type MatchedMeetingsFile, type MeetilyS
 import { MAIL_SYNC_CRON, runScheduled } from "../src/worker/schedule";
 import type { OutboundMessage } from "../src/worker/mail/types";
 import { E } from "./fixtures/close";
+import { moneyDashboard } from "../src/worker/money/dashboard";
 import { seedClient } from "./fixtures/clients";
 import { readyToSend, stubPdfRenderer } from "./fixtures/documents";
 import { ok, tool } from "./fixtures/mcp";
+import { expectFiniteNumbers, expectNumbersSurvive } from "./fixtures/numbers";
 import { resetProjectWork } from "./fixtures/projects";
 import { setPdfRendererForTests } from "../src/worker/documents/signed";
 
@@ -43,11 +45,15 @@ const STRAY = "STRAY-RECORDING-SENTINEL";
 let mail: Awaited<ReturnType<typeof readyToSend>>;
 let cookie = "";
 let ipN = 0;
+/** What the app wrote to the console during a test. Each test checks it: the only line the story expects is the cron's calendar warning (no Google connection), and nothing may be logged as an error. */
+let errors: unknown[][] = [];
+let warnings: string[] = [];
 
 beforeEach(async () => {
-  vi.spyOn(console, "error").mockImplementation(() => {});
+  errors = []; warnings = [];
+  vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => { errors.push(a); });
+  vi.spyOn(console, "warn").mockImplementation((...a: unknown[]) => { warnings.push(a.map(String).join(" ")); });
   vi.spyOn(console, "log").mockImplementation(() => {});
-  vi.spyOn(console, "warn").mockImplementation(() => {});
   vi.useFakeTimers({ toFake: ["Date"] });
   at(NOW);
   await resetProjectWork();
@@ -55,7 +61,7 @@ beforeEach(async () => {
   await env.DB.batch([
     "helper_jobs", "helper_devices", "billing_holds", "invoice_nudges", "invoices", "task_comments", "time_entries", "tasks", "change_order_views", "change_orders", "project_milestones",
     "project_cadences", "subscriptions", "projects", "onboarding_nudges", "onboarding_answers", "onboarding_files", "onboarding_items", "onboardings", "document_signatures", "document_views",
-    "documents", "booking_reminders", "meetings", "bookings", "deals", "site_access_items", "sites", "stripe_customers", "usage", "spend_caps", "approvals", "messages", "google_auth",
+    "documents", "booking_reminders", "meetings", "bookings", "deals", "site_access_items", "sites", "stripe_customers", "usage", "spend_caps", "approvals", "messages", "google_auth", "claude_tasks",
   ].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
   await env.DB.prepare(`DELETE FROM businesses`).run();
   for (const o of (await env.RAW.list({ prefix: "meetings/" })).objects) await env.RAW.delete(o.key);
@@ -117,6 +123,11 @@ describe("meetings, MCP and money, end to end", () => {
     }))!;
     const test = await seedClient({ test: true, subs: [{ key: "care", monthlyCents: 55_500 }], invoice: { cents: 777_000 } });
     expect(await markInvoice(env.DB, test.invoice!.id, { status: "paid", paidAt: PAID_AT })).toBe(true);
+    // The sentinels really are stored (so a later "not in the output" proves a tool left them out, not that they were never saved).
+    expect(await env.DB.prepare(`SELECT vault_item, note FROM site_access_items WHERE site_id = ? AND key = 'hosting'`).bind(s.site!.id).first()).toEqual({ vault_item: SECRETS.vaultName, note: SECRETS.accessNote });
+    expect(await env.DB.prepare(`SELECT token, stripe_customer_id, stripe_subscription_id FROM subscriptions WHERE id = ?`).bind(s.subIds[0]).first()).toEqual({
+      token: SECRETS.subscriptionToken, stripe_customer_id: SECRETS.stripeCustomer, stripe_subscription_id: SECRETS.stripeSubscription,
+    });
 
     // --- The 15-minute cron queues one meetily.sync job for the booking's window, and a second tick while it is open queues nothing.
     await runScheduled(E, MAIL_SYNC_CRON, new Date());
@@ -219,7 +230,7 @@ describe("meetings, MCP and money, end to end", () => {
     expect((await api("GET", `/meetings?businessId=${s.businessId}`)).meetings[0]).toMatchObject({ followupSent: true });
     expect((await approvals("change_order.draft"))[0].status).toBe("pending"); // the change order is still Logan's to decide
     const again = await owner("POST", `/approvals/${followups[0].id}/approve`, {});
-    expect(again.status).not.toBe(200);
+    expect(again.status).toBe(409);
     expect(mail.sent).toHaveLength(1);
 
     // --- Claude reads the client, the meeting and the money through MCP, and no tool shows a secret.
@@ -231,8 +242,9 @@ describe("meetings, MCP and money, end to end", () => {
       for (const [what, value] of Object.entries(SECRETS)) expect(r.text, `${name} shows ${what}`).not.toContain(value);
       expect(r.text, `${name} shows the transcript`).not.toContain(TRANSCRIPT);
       expect(r.text, `${name} shows the stray recording`).not.toContain(STRAY);
-      expect(r.text, `${name} has a NaN`).not.toMatch(/NaN|Infinity/);
     }
+    // A client or meeting answer has no figure of its own to lose; what it carries is parsed and its numbers checked. The money answer is compared with the dashboard below.
+    for (const r of [client, meeting]) expectFiniteNumbers(JSON.parse(r.text));
     expect(client.text).not.toContain(NOTES);
     expect(money.text).not.toContain(NOTES);
     expect(meeting.text).toContain(NOTES); // intended: Meetily's own notes
@@ -251,14 +263,24 @@ describe("meetings, MCP and money, end to end", () => {
     expect(page.ar.openCents).toBe(0);
     expect(page.freedom.mrrCents).toBe(12_900);
     const raw = JSON.stringify(page);
+    // Every number the dashboard computes came through the route and the MCP tool as a finite number (JSON turns a NaN into null, so the text of the response cannot show one).
+    const dashboard = await moneyDashboard(env, new Date());
+    expectNumbersSurvive(page, dashboard);
+    expectNumbersSurvive(JSON.parse(money.text), dashboard);
     for (const testFigure of ["777000", "55500", test.businessId]) expect(raw, `the test client's ${testFigure} is on the page`).not.toContain(testFigure);
-    expect(raw).not.toMatch(/NaN|Infinity/);
     expect(JSON.parse(money.text)).toMatchObject({ revenue: { monthCents: 100_000 }, mrr: { cents: 12_900, subscriptions: 1 } });
     // The page carries no token or Stripe id either.
     for (const value of [SECRETS.subscriptionToken, SECRETS.stripeCustomer, SECRETS.stripeSubscription, SECRETS.vaultName, SECRETS.accessNote]) expect(raw).not.toContain(value);
     // Still one mail, and nothing was approved but the follow-up.
     expect(mail.sent).toHaveLength(1);
     expect((await approvals("meeting.followup")).map((a) => a.status)).toEqual(["approved"]);
+    // Nothing was logged as an error, and the only warnings are the two cron ticks finding no Google connection and the sync dropping the stray recording.
+    expect(errors).toEqual([]);
+    expect(warnings).toEqual([
+      "meeting windows: Google Calendar is not connected for reading events; bookings only",
+      "meeting windows: Google Calendar is not connected for reading events; bookings only",
+      expect.stringMatching(/^meetily sync: left out 1 of 2 matched meetings/),
+    ]);
   });
 
   it("the money page and its MCP tool with nothing but a test client's data are zeros, never NaN", async () => {
@@ -269,12 +291,14 @@ describe("meetings, MCP and money, end to end", () => {
       revenue: { monthCents: 0 }, ar: { openCents: 0, oldest: [] }, mrr: { cents: 0, subscriptions: 0, churnedLast30Cents: 0, churnRatePct: null },
       bookedNotBilled: { cents: 0, rows: [] }, profit: [], ltv: [], freedom: { mrrCents: 0, pct: 0 },
     });
-    const text = JSON.stringify(page);
-    expect(text).not.toMatch(/NaN|Infinity/);
-    expect(text).not.toContain(test.businessId);
+    expect(JSON.stringify(page)).not.toContain(test.businessId);
+    const dashboard = await moneyDashboard(env, new Date());
+    expectNumbersSurvive(page, dashboard);
     const viaMcp = await tool("get_money_summary", {});
     expect(viaMcp.isError).toBe(false);
-    expect(viaMcp.text).not.toMatch(/NaN|Infinity/);
+    expectNumbersSurvive(JSON.parse(viaMcp.text), dashboard);
     expect(JSON.parse(viaMcp.text)).toMatchObject({ revenue: { monthCents: 0 }, mrr: { cents: 0 }, ltv: [] });
+    expect(errors).toEqual([]);
+    expect(warnings).toEqual([]);
   });
 });
