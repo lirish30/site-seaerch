@@ -3,6 +3,7 @@ import { runDueRadars } from "./radar-run";
 import { searchWorkflowStarter } from "./search-start";
 import { scanDueSteps } from "./sequence/engine";
 import { syncAllMailboxes } from "./mail/sync";
+import { requestMeetilySync } from "./meetings/syncKind";
 import "./queue/kinds"; // expiring a task runs its kind's hook, so every kind must be registered
 import { EXPIRE_AFTER_DAYS, expireOldTasks } from "./queue/db";
 import { healCroHandovers } from "./queue/cro";
@@ -42,7 +43,7 @@ async function expireProposals(env: Env, now: Date): Promise<number> {
 }
 
 /**
- * Routes one Cron Trigger. The 15-minute cron only syncs mail and the 5-minute one only sends due booking reminders. Any other cron (the daily one) does, in order:
+ * Routes one Cron Trigger. The 15-minute cron only syncs mail and queues the Mac helper's Meetily pull (a failure of one never stops the other), and the 5-minute one only sends due booking reminders. Any other cron (the daily one) does, in order:
  * starts due radars, scans for due sequence steps, gives up on Claude tasks and Mac helper jobs nobody picked up in 14 days, expires proposals past their date,
  * re-queues CRO roadmaps that were never handed over, sweeps the open client onboardings (drafts the reminder or Friday update that is due, as an approval,
  * and notes 14 days of silence), and sweeps the projects (makes this period's recurring tasks, starts the projects a paid proposal never got, sends the Claude steps that are
@@ -53,6 +54,8 @@ async function expireProposals(env: Env, now: Date): Promise<number> {
 export async function runScheduled(env: Env, cron: string, now: Date): Promise<void> {
   if (cron === MAIL_SYNC_CRON) {
     await part("mail sync", () => syncAllMailboxes(env), true);
+    // Quiet unless a sync job was queued: it runs 96 times a day, mostly with nothing to match or a job still open.
+    await part("meeting sync", async () => { const r = await requestMeetilySync(env, now); return r.queued ? r : undefined; }, true);
     return;
   }
   if (cron === REMINDER_CRON) {

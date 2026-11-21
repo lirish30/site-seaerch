@@ -42,6 +42,7 @@ import { timeRoutes } from "./routes/time";
 import { changeOrderRoutes } from "./routes/changeOrders";
 import { billingRoutes } from "./routes/billing";
 import { clientRoutes } from "./routes/clients";
+import { meetingRoutes } from "./routes/meetings";
 import { stripeWebhookRoutes } from "./routes/stripeWebhook";
 import "./approvals/leadNote";
 import "./approvals/emailSend";
@@ -110,6 +111,7 @@ app.route("/api", projectRoutes); // /projects..., /tasks..., /me/tasks, /deals/
 app.route("/api", sopRoutes); // /sops...
 app.route("/api", timeRoutes); // /time..., /timer/stop, /tasks/:id/timer/start, /tasks/:id/time
 app.route("/api", clientRoutes); // /clients, /clients/:id, /clients/:id/sites, /sites/:id, /sites/:id/access/:key
+app.route("/api", meetingRoutes); // /meetings/sync
 app.route("/api", changeOrderRoutes); // /projects/:id/change-orders, /change-orders/:id/...
 app.route("/api", billingRoutes); // /billing/..., /change-orders/:id/invoice, /projects/:id/invoices/hourly
 // Mounted last at /api: /api/leads/:id/cro-audit(s), /api/cro-items/:id, /api/cro-audits/:id/... (all behind requireAuth).

@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { describe, it, expect, beforeEach } from "vitest";
 import { deleteBusiness } from "../src/worker/db/businesses";
 import { insertBookingIfFree } from "../src/worker/db/bookings";
-import { getMeeting, insertMeetingIfNew, knownMeetilyIds, listMeetings, markFollowupSent, meetingForBooking, saveSummary, setMeetingFailed } from "../src/worker/db/meetings";
+import { getMeeting, insertMeetingIfNew, knownMeetilyIds, meetingByMeetilyId, listMeetings, markFollowupSent, meetingForBooking, saveSummary, setMeetingFailed } from "../src/worker/db/meetings";
 import { MeetingSummarySchema, type MeetingSummary } from "../src/worker/meetings/summary";
 import { seedBusiness } from "./fixtures/cro";
 
@@ -34,6 +34,24 @@ describe("insertMeetingIfNew", () => {
     expect(second.meeting.id).toBe(first.meeting.id);
     expect(second.meeting.title).toBe("Kickoff call");
     expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM meetings`).first<{ n: number }>())!.n).toBe(1);
+  });
+});
+
+describe("a caller-chosen id and the lookup by Meetily id", () => {
+  it("stores the id the caller gives (so a transcript key can name it before the row exists) and keeps the first row's id on a repeat", async () => {
+    const b = await seedBusiness();
+    const first = await insertMeetingIfNew(env.DB, input(b.id, { id: "chosen-id" }));
+    expect(first).toMatchObject({ created: true, meeting: { id: "chosen-id", meetilyId: "m-1" } });
+    const again = await insertMeetingIfNew(env.DB, input(b.id, { id: "another-id" }));
+    expect(again).toMatchObject({ created: false, meeting: { id: "chosen-id" } });
+    expect(await getMeeting(env.DB, "another-id")).toBeNull();
+  });
+
+  it("meetingByMeetilyId finds the row for Meetily's id, or null", async () => {
+    const b = await seedBusiness();
+    const { meeting } = await insertMeetingIfNew(env.DB, input(b.id));
+    expect((await meetingByMeetilyId(env.DB, "m-1"))?.id).toBe(meeting.id);
+    expect(await meetingByMeetilyId(env.DB, "nope")).toBeNull();
   });
 });
 

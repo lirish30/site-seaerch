@@ -7,8 +7,8 @@ export interface Meeting {
   transcriptKey: string; notes: string | null; status: MeetingStatus; summary: MeetingSummary | null; followupSentAt: string | null; createdAt: string; summarizedAt: string | null;
 }
 
-/** What a caller gives to record a meeting; the id, status and timestamps are set here. */
-export type NewMeeting = Pick<Meeting, "meetilyId" | "businessId" | "bookingId" | "windowKey" | "title" | "startedAt" | "endedAt" | "transcriptKey" | "notes">;
+/** What a caller gives to record a meeting; the status and timestamps are set here. `id` is optional: a caller whose transcript key names the meeting picks it first (a repeat keeps the first row's id). */
+export type NewMeeting = Pick<Meeting, "meetilyId" | "businessId" | "bookingId" | "windowKey" | "title" | "startedAt" | "endedAt" | "transcriptKey" | "notes"> & { id?: string };
 
 interface Row {
   id: string; meetily_id: string; business_id: string; booking_id: string | null; window_key: string; title: string; started_at: string; ended_at: string;
@@ -36,7 +36,7 @@ export async function getMeeting(db: D1Database, id: string): Promise<Meeting | 
 
 /** Records a meeting unless Meetily's id is already here, in ONE statement. `created` is true only for the call that made the row; otherwise the row that was already there comes back untouched. */
 export async function insertMeetingIfNew(db: D1Database, m: NewMeeting): Promise<{ meeting: Meeting; created: boolean }> {
-  const id = crypto.randomUUID();
+  const id = m.id ?? crypto.randomUUID();
   const res = await db.prepare(
     `INSERT INTO meetings (id, meetily_id, business_id, booking_id, window_key, title, started_at, ended_at, transcript_key, notes, status, created_at)
      VALUES (?,?,?,?,?,?,?,?,?,?, 'received', ?)
@@ -45,6 +45,12 @@ export async function insertMeetingIfNew(db: D1Database, m: NewMeeting): Promise
   const created = (res.meta.changes ?? 0) === 1;
   const row = (await db.prepare(`SELECT * FROM meetings WHERE meetily_id = ?`).bind(m.meetilyId).first<Row>())!;
   return { meeting: toMeeting(row), created };
+}
+
+/** The meeting recorded for Meetily's id, if any. */
+export async function meetingByMeetilyId(db: D1Database, meetilyId: string): Promise<Meeting | null> {
+  const r = await db.prepare(`SELECT * FROM meetings WHERE meetily_id = ?`).bind(meetilyId).first<Row>();
+  return r ? toMeeting(r) : null;
 }
 
 /** Newest first. Pass `businessId` for one client's meetings. */

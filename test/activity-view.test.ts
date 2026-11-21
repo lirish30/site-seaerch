@@ -56,4 +56,8 @@ describe("activityView", () => {
     expect(describeActivity({ kind: "access_changed", detail: "Hosting: requested" })).toMatchObject({ title: "Access changed", detail: "Hosting: requested" });
     expect(describeActivity({ kind: "access_changed", detail: "DNS: details updated" }).detail).toBe("DNS: details updated");
   });
+
+  it("a recorded meeting reads as such, with its title as the detail", () => {
+    expect(describeActivity({ kind: "meeting_recorded", detail: "Meeting recorded: Kickoff call" })).toMatchObject({ title: "Meeting recorded", detail: "Kickoff call" });
+  });
 });
