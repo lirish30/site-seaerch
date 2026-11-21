@@ -9,3 +9,4 @@ import "./callRecap";
 import "./sopStep";
 import "./meetingSummary";
 import "./careReview";
+import "./careReport";
