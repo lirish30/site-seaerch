@@ -102,6 +102,11 @@ export async function setDomainExpiry(db: D1Database, siteId: string, expiresOn:
   await db.prepare(`UPDATE sites SET domain_expires_on = ?, domain_checked_at = ? WHERE id = ?`).bind(expiresOn, checkedAt, siteId).run();
 }
 
+/** Records the TLS certificate's expiry date (YYYY-MM-DD) and when the helper read it. */
+export async function setCertExpiry(db: D1Database, siteId: string, expiresOn: string, checkedAt: string): Promise<void> {
+  await db.prepare(`UPDATE sites SET cert_expires_on = ?, cert_checked_at = ? WHERE id = ?`).bind(expiresOn, checkedAt, siteId).run();
+}
+
 /** Turns monitoring on or off for a site by hand. Returns the site, or null when it is unknown. */
 export async function setMonitoring(db: D1Database, siteId: string, on: boolean, now: string): Promise<Site | null> {
   await db.prepare(`UPDATE sites SET monitoring = ?, updated_at = ? WHERE id = ?`).bind(on ? 1 : 0, now, siteId).run();

@@ -17,6 +17,7 @@ import { sweepProjects } from "./projects/sweep";
 import { sweepBilling } from "./billing/sweep";
 import { sweepDomains, sweepUptime } from "./monitoring/sweep";
 import { careBackstop, startWeeklyBatch } from "./care/batch";
+import { queueCertCheck } from "./care/certsKind";
 
 /** The cron strings in wrangler.jsonc. The daily one MUST stay first there: test/radar-info.test.ts reads the first entry. */
 export const DAILY_CRON = "17 13 * * *";
@@ -79,4 +80,5 @@ export async function runScheduled(env: Env, cron: string, now: Date): Promise<v
   await part("domain expiry", () => sweepDomains(env, now));
   await part("care updates", () => startWeeklyBatch(env, now));
   await part("care backstop", () => careBackstop(env, now));
+  await part("certificates", () => queueCertCheck(env, now));
 }

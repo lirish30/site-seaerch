@@ -142,3 +142,4 @@ registerHelperKind(render);
 import "../meetings/syncKind"; // registers meetily.sync; a kind that lives beside its own code, as queue/kinds.ts does for task kinds
 import "../care/inventoryKind"; // registers care.inventory
 import "../care/updateKind"; // registers care.update
+import "../care/certsKind"; // registers care.certs
