@@ -9,7 +9,7 @@ import { getBusiness } from "../db/businesses";
 import { getMeeting, saveSummary, setMeetingFailed, type Meeting } from "../db/meetings";
 import { listProjects, projectIsLive, type Project } from "../db/projects";
 import { listTasks, parseTaskPatch, TaskInputError } from "../db/tasks";
-import { MeetingSummarySchema, readTranscriptText, type MeetingSummary } from "../meetings/summary";
+import { MeetingSummarySchema, readTranscriptText, trimTranscript, type MeetingSummary } from "../meetings/summary";
 import { cleanText, looksLikeCredential } from "../onboarding/templates";
 import { addAdhocTask } from "../projects/service";
 import { refuseCurrencyIn } from "../sales/currency";
@@ -31,8 +31,6 @@ export type MeetingSummarizeResult = z.infer<typeof MeetingSummarizeResult>;
 export const requestMeetingSummary = (db: D1Database, meetingId: string): Promise<{ taskId: string; created: boolean }> =>
   enqueueTask(db, MEETING_SUMMARIZE_KIND, { meetingId }, { dedupeKey: meetingId, targetType: "meeting", targetId: meetingId }).then((r) => ({ taskId: r.id, created: r.created }));
 
-/** The most of a transcript Claude is shown, in characters. A longer one is cut at a line and says so. */
-const TRANSCRIPT_CAP = 60_000;
 const NOTES_CAP = 8_000;
 const MAX_TASK_TITLES = 40;
 
@@ -48,7 +46,7 @@ How to write
 What to send back
 - summary: two to five sentences on what the meeting was about and where it ended up, at most 1500 characters.
 - decisions: what was agreed, one short line each, at most 10 lines of 300 characters. It may be empty.
-- actionItems: each next step as {title, owner, dueOn}. title is at most 160 characters. owner is "logan" for what Logan does and "client" for what the client does. dueOn is a date like 2026-12-24 only when a day was named in the meeting, otherwise null. At most 15. Leave out what is already on the open task list.
+- actionItems: each next step as {title, owner, dueOn}. title is at most 120 characters. owner is "logan" for what Logan does and "client" for what the client does. dueOn is a date like 2026-12-24 only when a day was named in the meeting, otherwise null. At most 15. Leave out what is already on the open task list.
 - possibleChangeOrders: propose a change order only for extra work the client asked for beyond the signed scope, at most three. Each has a title (at most 120 characters), a summary of the work (at most 1500), the reason it is extra (at most 600) and your honest estimate in hours, from 0.25 to 40, in steps of 0.25. Do not name a price. Most meetings have none: send an empty list when nothing extra was asked for.
 - followUp: the email Logan would send the client the same day. subject at most 120 characters, body at most 2500, plain text, warm and short: thank them, say what happens next and who does it. No prices, links or logins. Logan's signature is added by the app: do not sign it.
 - If the transcript is empty or too thin to tell what happened, say so in the summary, send no action items or change orders, and keep the email to a thank-you.
@@ -68,14 +66,6 @@ async function loadTarget(env: Env, meetingId: string): Promise<Target> {
   const business = await getBusiness(env.DB, meeting.businessId);
   if (!business) return { stale: "the client no longer exists" };
   return { meeting, businessName: business.name };
-}
-
-/** The transcript, cut at a line when it is longer than the cap. */
-function cappedTranscript(text: string): string {
-  if (text.length <= TRANSCRIPT_CAP) return text;
-  const head = text.slice(0, TRANSCRIPT_CAP);
-  const cut = head.lastIndexOf("\n");
-  return `${cut > 0 ? head.slice(0, cut) : head}\n[The transcript was cut here: it is longer than ${TRANSCRIPT_CAP.toLocaleString("en-US")} characters.]`;
 }
 
 /**
@@ -163,7 +153,7 @@ const meetingSummary: TaskKindDef<MeetingSummarizePayload, MeetingSummarizeResul
     ].join("\n"));
     if (meeting.notes?.trim()) add(`Meetily's notes:\n${meeting.notes.trim().slice(0, NOTES_CAP)}`);
     const transcript = await readTranscriptText(env, meeting);
-    add(transcript ? `Transcript:\n${cappedTranscript(transcript)}` : "Transcript: none was recorded");
+    add(transcript ? `Transcript:\n${trimTranscript(transcript)}` : "Transcript: none was recorded");
     return { instructions: INSTRUCTIONS, untrusted };
   },
 

@@ -551,16 +551,22 @@ describe("a matched discovery recording feeds call.recap", () => {
     const a = await buildBundle(env, await queued(only.deal.id));
     if ("stale" in a) throw new Error(a.stale);
     expect(split(a.text).instructions).toMatch(/no dollar amounts at all in any field/i);
+    expect(split(a.text).instructions).not.toMatch(/exactly as it appears in the (typed )?notes/i); // a recording-only recap has no notes to repeat a figure from
+    expect(split(a.text).instructions).not.toMatch(/in the notes or the recording/i);
     await resetBookingTables(); // one discovery slot per run
     const both = await seedRecapDeal({ booking: true, name: "Both Ltd" });
     await seedDiscoveryMeeting(both.deal, TALK);
     const b = await buildBundle(env, await queued(both.deal.id));
     if ("stale" in b) throw new Error(b.stale);
     expect(split(b.text).instructions).toMatch(/only from the typed notes/i);
+    expect(split(b.text).instructions).toMatch(/exactly as it appears in the typed notes/i);
+    expect(split(b.text).instructions).not.toMatch(/in the notes or the recording/i); // the recording is no source of a figure when there are notes
     const plain = await seedRecapDeal({ name: "Plain Ltd" });
     const c = await buildBundle(env, await queued(plain.deal.id));
     if ("stale" in c) throw new Error(c.stale);
     expect(split(c.text).instructions).not.toMatch(/no dollar amounts at all|only from the typed notes/i);
+    expect(split(c.text).instructions).toMatch(/exactly as it appears in the notes/i);
+    expect(split(c.text).instructions).not.toMatch(/in the notes or the recording/i);
   });
 
   it("with notes and a recording, the notes' figures still work and the recording's figures are refused", async () => {

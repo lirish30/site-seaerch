@@ -8,6 +8,7 @@ import { getMeeting, markFollowupSent, type Meeting } from "../db/meetings";
 import { pocFor } from "../db/people";
 import { getSettings } from "../db/settings";
 import { isTestClient } from "../clients/record";
+import { cleanText } from "../onboarding/templates";
 import { mainMailboxProblem } from "../booking/mail";
 import { getMailDeps } from "../mail/deps";
 import { sendEmail } from "../mail/send";
@@ -43,8 +44,11 @@ export async function followupRecipient(env: Env, meeting: Pick<Meeting, "busine
   return { to: poc?.email?.trim() ?? "", name: poc ? oneLine(poc.name) || null : null, test: false, ownerName };
 }
 
-/** The mail as it will go: a test is marked in the subject, as an onboarding test is. */
-export const followupMail = (r: Pick<FollowupRecipient, "test">, f: MeetingSummary["followUp"]) => ({ subject: r.test ? `[Test] ${f.subject.trim()}` : f.subject.trim(), body: f.body.trim() });
+/** The mail as it will go: the subject is one clean line of at most 120 characters (no line break can reach a mail header), and a test is marked in it, as an onboarding test is. */
+export const followupMail = (r: Pick<FollowupRecipient, "test">, f: MeetingSummary["followUp"]) => {
+  const subject = cleanText(oneLine(f.subject), 120);
+  return { subject: r.test ? `[Test] ${subject}` : subject, body: f.body.trim() };
+};
 
 /** The approval's preview: who it goes to, the subject and the words, as the mail will read. */
 export async function describeFollowup(env: Env, meeting: Pick<Meeting, "businessId" | "bookingId">, f: MeetingSummary["followUp"]): Promise<string> {

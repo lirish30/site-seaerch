@@ -11,7 +11,7 @@ export const MeetingSummarySchema = z.object({
   summary: z.string().max(1500),
   decisions: z.array(z.string().max(300)).max(10),
   actionItems: z.array(z.object({
-    title: z.string().max(160),
+    title: z.string().max(120), // the same limit a task title has (`parseTaskPatch`), so an item that passes here can always be made into a task
     owner: z.enum(["logan", "client"]),
     dueOn: z.string().nullable(),
   })).max(15),
@@ -52,3 +52,13 @@ export async function readTranscriptText(env: Env, meeting: Pick<Meeting, "trans
     .filter(Boolean)
     .join("\n");
 }
+
+/** Most of a transcript a prompt carries, in characters; a longer one keeps its start and its end (what was agreed and who does what next is said last). */
+export const TRANSCRIPT_MAX = 60_000;
+const TRANSCRIPT_GAP = "\n[... the middle of the recording is left out ...]\n";
+/** The transcript as it goes into a prompt: whole when it fits, otherwise its first and last parts around a marker, `TRANSCRIPT_MAX` characters in all. */
+export const trimTranscript = (t: string): string => {
+  if (t.length <= TRANSCRIPT_MAX) return t;
+  const keep = TRANSCRIPT_MAX - TRANSCRIPT_GAP.length, head = Math.ceil(keep / 2);
+  return t.slice(0, head) + TRANSCRIPT_GAP + t.slice(t.length - (keep - head));
+};

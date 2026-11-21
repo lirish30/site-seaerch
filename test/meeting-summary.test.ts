@@ -13,7 +13,7 @@ import { saveSettings } from "../src/worker/db/settings";
 import { createProject, setProjectStatus } from "../src/worker/db/projects";
 import { setAccess } from "../src/worker/db/sites";
 import { insertTasks, listTasks } from "../src/worker/db/tasks";
-import { MeetingSummarySchema, type TranscriptFile } from "../src/worker/meetings/summary";
+import { MeetingSummarySchema, trimTranscript, TRANSCRIPT_MAX, type TranscriptFile } from "../src/worker/meetings/summary";
 import { claimById } from "./fixtures/draftTask";
 import { seedBusiness } from "./fixtures/cro";
 import { seedClient } from "./fixtures/clients";
@@ -69,6 +69,18 @@ const countOf = async (table: string) => (await env.DB.prepare(`SELECT COUNT(*) 
 beforeEach(async () => {
   await resetProjectWork();
   await env.DB.batch(["meetings", "bookings", "approvals"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+});
+
+describe("trimTranscript", () => {
+  it("returns a transcript that fits as it is, and otherwise keeps both ends within the cap", () => {
+    expect(trimTranscript("short")).toBe("short");
+    const long = "A".repeat(50_000) + "B".repeat(50_000);
+    const cut = trimTranscript(long);
+    expect(cut.length).toBeLessThanOrEqual(TRANSCRIPT_MAX);
+    expect(cut.startsWith("AAAA")).toBe(true);
+    expect(cut.endsWith("BBBB")).toBe(true);
+    expect(cut).toMatch(/middle of the recording is left out/);
+  });
 });
 
 describe("meeting.summarize kind", () => {
@@ -128,15 +140,34 @@ describe("build", () => {
     for (const secret of ["VAULT-ITEM-NAME", "ACCESS-NOTE-TEXT", "SITE-NOTES-TEXT", "ace.com"]) expect(bundle.text, secret).not.toContain(secret);
   });
 
-  it("caps a very long transcript and still has the rest of the brief", async () => {
+  it("keeps the start and the end of a very long transcript, says the middle is left out, and still has the rest of the brief", async () => {
+    // Decisions and next steps are said at the end of a meeting, so the end must reach Claude as much as the start.
     const lines = Array.from({ length: 4000 }, (_, i) => ({ speaker: "Pat", atSec: i, text: `line ${i} ${"word ".repeat(10)}` }));
     const { meeting } = await seedMeeting({ transcript: { lines } });
     const { untrusted } = await bundleOf(meeting);
     expect(untrusted.length).toBeLessThan(75_000);
     expect(untrusted).toContain("Pat: line 0 ");
-    expect(untrusted).not.toContain("line 3999 ");
-    expect(untrusted).toMatch(/transcript was cut/i);
+    expect(untrusted).toContain("Pat: line 3999 "); // the last line said
+    expect(untrusted).not.toContain("Pat: line 2000 "); // the middle is gone
+    expect(untrusted).toMatch(/middle of the recording is left out/i);
     expect(untrusted).toContain("UNIQUE-NOTES");
+  });
+
+  it("a transcript that fits is not cut at all", async () => {
+    const { meeting } = await seedMeeting();
+    const { untrusted } = await bundleOf(meeting);
+    expect(untrusted).not.toMatch(/left out/i);
+    expect(untrusted).toContain("UNIQUE-TRANSCRIPT");
+  });
+
+  it("the summary prompt and the schema agree with the task rules on an action item title: 120 characters", async () => {
+    const { meeting } = await seedMeeting();
+    const { instructions } = await bundleOf(meeting);
+    expect(instructions).toMatch(/title is at most 120 characters/);
+    expect(instructions).not.toMatch(/160/);
+    const parse = (title: string) => MeetingSummarySchema.omit({ generatedAt: true }).safeParse(result({ actionItems: [{ title, owner: "logan", dueOn: null }] })).success;
+    expect(parse("x".repeat(120))).toBe(true);
+    expect(parse("x".repeat(121))).toBe(false);
   });
 
   it("works from the notes and the title when the transcript object is missing or damaged", async () => {

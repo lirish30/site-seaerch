@@ -10,6 +10,7 @@ import { getMeeting, insertMeetingIfNew, saveSummary } from "../src/worker/db/me
 import { setMailDeps } from "../src/worker/mail/deps";
 import type { Env } from "../src/worker/env";
 import type { MeetingSummary } from "../src/worker/meetings/summary";
+import { describeFollowup, followupMail } from "../src/worker/approvals/meetingFollowup";
 import { seedClient } from "./fixtures/clients";
 import { OWNER_EMAIL, readyToSend } from "./fixtures/documents";
 import { resetProjectWork } from "./fixtures/projects";
@@ -57,6 +58,23 @@ describe("meeting.followup kind", () => {
     expect(() => h.parse({ meetingId: "" })).toThrow();
     expect(() => h.parse({ meetingId: "x", subject: "Pay me" })).toThrow();
     expect(() => h.parse({})).toThrow();
+  });
+});
+
+describe("the follow-up subject", () => {
+  const messy = { ...SUMMARY, followUp: { ...SUMMARY.followUp, subject: "  Recap of\n today\u202e\u0007  " } };
+
+  it("is one clean line in the preview and in the mail that goes, and they are the same", async () => {
+    const mail = await readyToSend();
+    const s = await seed({ summary: messy });
+    expect((await describeFollowup(env as Env, s.meeting, messy.followUp)).split("\n")[1]).toBe("Subject: Recap of today");
+    expect(await approve(env as Env, s.approval.id)).toEqual({ ok: true });
+    expect(mail.sent[0].subject).toBe("Recap of today");
+  });
+
+  it("cuts a long subject to 120 characters and keeps the Test mark on a rehearsal", () => {
+    expect(followupMail({ test: false }, { subject: "x".repeat(200), body: " b " })).toEqual({ subject: "x".repeat(120), body: "b" });
+    expect(followupMail({ test: true }, { subject: "Recap\nof today", body: "b" }).subject).toBe("[Test] Recap of today");
   });
 });
 
