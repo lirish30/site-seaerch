@@ -4,7 +4,7 @@ import { isTestClient } from "../clients/record";
 import { closeUnmonitoredIncidents, listIncidents, recentChecks, setMonitoring } from "../db/monitoring";
 import { getSite, type Site } from "../db/sites";
 import type { Env } from "../env";
-import { careClientIds, careFleet, incidentViews, monitoringViews } from "../monitoring/fleet";
+import { careClientIds, careFleet, incidentViews, monitoringViews, safeProbeError } from "../monitoring/fleet";
 import { monitorableUrl } from "../monitoring/probe";
 import { bodyOf, NOT_FOUND, ownerOnError, type Ctx } from "../projects/http";
 
@@ -41,7 +41,7 @@ careRoutes.get("/sites/:id/checks", async (c) => {
   const n = raw === undefined || raw.trim() === "" ? NaN : Number(raw);
   const limit = Number.isFinite(n) ? Math.max(1, Math.min(MAX_CHECKS, Math.trunc(n))) : DEFAULT_CHECKS;
   const checks = await recentChecks(c.env.DB, site.id, limit);
-  return c.json({ checks: checks.map((k) => ({ checkedAt: k.checkedAt, ok: k.ok, status: k.status, ms: k.ms, error: k.error })) });
+  return c.json({ checks: checks.map((k) => ({ checkedAt: k.checkedAt, ok: k.ok, status: k.status, ms: k.ms, error: safeProbeError(k.error) })) });
 });
 
 const SwitchBody = z.object({ enabled: z.boolean("enabled must be true or false.") }).strict();

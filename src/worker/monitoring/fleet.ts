@@ -59,6 +59,12 @@ const BOARD_SITE = `s.archived_at IS NULL AND s.test = 0 AND s.url IS NOT NULL A
 // Incidents
 
 const HTTP_DETAIL = /^HTTP [1-5]\d\d$/;
+/** A stored probe error as it may be shown: null stays null, `HTTP nnn` and the fixed `ERROR_TEXT` phrases pass, anything else becomes "could not connect". Nothing a remote site said gets through. */
+export function safeProbeError(raw: string | null): string | null {
+  if (raw === null) return null;
+  return HTTP_DETAIL.test(raw) || (Object.values(ERROR_TEXT) as string[]).includes(raw) ? raw : ERROR_TEXT.connect;
+}
+
 const DOMAIN_DETAIL = /^domain (expires today|expires in \d+ days?|expired \d+ days? ago)$/;
 
 /**
@@ -74,7 +80,7 @@ export function incidentView(incident: Incident, site: Pick<Site, "domain" | "do
   } else if (incident.kind === "domain_expiring") {
     detail = site?.domainExpiresOn ? domainDetail(domainDaysLeft(site.domainExpiresOn, now, zone)) : DOMAIN_DETAIL.test(incident.detail) ? incident.detail : "domain expiring";
   } else {
-    detail = HTTP_DETAIL.test(incident.detail) || (Object.values(ERROR_TEXT) as string[]).includes(incident.detail) ? incident.detail : ERROR_TEXT.connect;
+    detail = safeProbeError(incident.detail)!;
   }
   return { id: incident.id, siteId: incident.siteId, domain: site?.domain ?? null, kind: incident.kind, openedAt: incident.openedAt, closedAt: incident.closedAt, detail };
 }
