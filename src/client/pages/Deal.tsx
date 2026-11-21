@@ -27,6 +27,8 @@ const errorText = (e: unknown, fallback: string) => (e instanceof Error ? e.mess
 export default function DealPage() {
   const { id = "" } = useParams();
   const [deal, setDeal] = useState<Deal | null>(null);
+  // Whether the discovery call was recorded and matched (the server says so, never more). It lets "Draft recap" work without typed notes.
+  const [hasRecording, setHasRecording] = useState(false);
   const [lead, setLead] = useState<{ name: string; platform: string | null; findings: { code: string; evidence: string }[] } | null>(null);
   // The notes form lives here, not in the Notes tab, so typing survives a switch to Prep and back. It is replaced only by a save (or a new deal).
   const [form, setForm] = useState<NotesForm | null>(null);
@@ -47,10 +49,10 @@ export default function DealPage() {
 
   useEffect(() => {
     let live = true;
-    setDeal(null); setLead(null); setForm(null); setProposal(null); setPform(null); setProposalFailed(false); setOnboarding(null); setOnboardingFailed(false); setProjects([]); setStartError(""); setStartNotice(""); setTab(null); setFailed(false);
-    api.get<Deal>(`/deals/${id}`).then((d) => {
+    setDeal(null); setHasRecording(false); setLead(null); setForm(null); setProposal(null); setPform(null); setProposalFailed(false); setOnboarding(null); setOnboardingFailed(false); setProjects([]); setStartError(""); setStartNotice(""); setTab(null); setFailed(false);
+    api.get<Deal & { hasRecording?: boolean }>(`/deals/${id}`).then((d) => {
       if (!live) return;
-      setDeal(d);
+      setDeal(d); setHasRecording(d.hasRecording === true);
       // Projects started from this deal (by its paid deposit, or a test); the link is only offered when there is one.
       api.get<{ projects: ProjectRow[] }>(`/projects?businessId=${encodeURIComponent(d.businessId)}`).then((r) => { if (live) setProjects(dealProjects(r.projects, d.id)); }).catch(() => {});
       setTab(d.recap ? "recap" : d.stage === "booked" ? "prep" : "notes");
@@ -109,7 +111,7 @@ export default function DealPage() {
   if (failed) return <div className="deal"><p className="error deal-body" role="alert">Couldn’t load this deal. <Link to="/pipeline">Back to the pipeline</Link></p></div>;
   if (!deal || !tab || !form) return <div className="deal"><p className="muted deal-body">Loading…</p></div>;
 
-  const actions = nextActions(deal);
+  const actions = nextActions({ ...deal, hasRecording });
   const offers = startOffers(deal, proposal?.history ?? [], projects);
   const TABS: [Tab, string][] = [["prep", "Prep"], ["notes", "Notes"], ["recap", "Recap"], ["deck", "Deck"], ["proposal", "Proposal"]];
   if (onboarding && (onboarding.onboarding || deal.stage === "won" || onboarding.canStartTest)) TABS.push(["onboarding", "Onboarding"]);
@@ -148,7 +150,7 @@ export default function DealPage() {
         {onboardingFailed && <p className="error" role="alert">Couldn’t load the onboarding, so its tab is hidden. Reload the page to try again.</p>}
         {tab === "prep" && <CallPrepPanel leadId={deal.businessId} findings={lead?.findings ?? []} />}
         {tab === "notes" && <NotesTab deal={deal} form={form} setForm={setForm} audit={lead} dirty={dirty} onChange={setDeal} />}
-        {tab === "recap" && <RecapTab deal={deal} catalog={catalog} onChange={setDeal} />}
+        {tab === "recap" && <RecapTab deal={deal} hasRecording={hasRecording} catalog={catalog} onChange={setDeal} />}
         {tab === "deck" && <DeckTab deal={deal} catalog={catalog} />}
         {tab === "proposal" && (pform
           ? <ProposalTab deal={deal} catalog={catalog} data={proposal} form={pform} setForm={setPform} dirty={proposalDirty} onReload={reloadProposal} />
@@ -257,7 +259,7 @@ function DeckTab({ deal, catalog }: { deal: Deal; catalog: Package[] }) {
   );
 }
 
-function RecapTab({ deal, catalog, onChange }: { deal: Deal; catalog: Package[]; onChange: (d: Deal) => void }) {
+function RecapTab({ deal, hasRecording, catalog, onChange }: { deal: Deal; hasRecording: boolean; catalog: Package[]; onChange: (d: Deal) => void }) {
   const [queued, setQueued] = useState(false);
   const [editing, setEditing] = useState(false);
   const [times, setTimes] = useState<{ slots: string[]; tz: string } | null>(null);
@@ -269,7 +271,7 @@ function RecapTab({ deal, catalog, onChange }: { deal: Deal; catalog: Package[];
   const [meetingReloads, setMeetingReloads] = useState(0);
   const shownAt = useRef<string | null>(deal.recap?.generatedAt ?? null);
   const closed = deal.stage === "won" || deal.stage === "lost";
-  const written = hasNotes(deal.notes);
+  const canDraft = hasNotes(deal.notes) || hasRecording;
 
   useEffect(() => {
     let live = true;
@@ -303,11 +305,11 @@ function RecapTab({ deal, catalog, onChange }: { deal: Deal; catalog: Package[];
   return (
     <section className="deal-recap" aria-label="Recap">
       <div className="cp-actions">
-        <button type="button" className="btn" disabled={busy || queued || closed || !written} onClick={draft}>{recap ? "Draft recap again" : "Draft recap"}</button>
+        <button type="button" className="btn" disabled={busy || queued || closed || !canDraft} onClick={draft}>{recap ? "Draft recap again" : "Draft recap"}</button>
         {canOffer && <button type="button" className="btn" disabled={busy} onClick={offer}>Offer two times</button>}
         {options && !closed && <button type="button" className="btn-ghost-sm" onClick={() => setEditing(!editing)}>{editing ? "Close editor" : "Edit options"}</button>}
       </div>
-      {!written && <p className="muted small">Write the call notes first: the recap is built from the owner’s own words.</p>}
+      {!canDraft && <p className="muted small">Write the call notes first, or record the call: the recap is built from the owner’s own words.</p>}
       {queued && <p className="muted small" role="status">Queued. Claude writes it the next time it works the queue.</p>}
       {error && <p className="warn small" role="alert">{error}</p>}
       {booked && <p role="status">Recommendation meeting booked for {booked}. The invite is on its way.</p>}
@@ -350,7 +352,7 @@ function RecapTab({ deal, catalog, onChange }: { deal: Deal; catalog: Package[];
         </>
       )}
       {options && editing && <OptionsEditor deal={deal} options={options} catalog={catalog} onSaved={(d) => { onChange(d); setEditing(false); }} />}
-      {!recap && !queued && written && <p className="muted small">No recap yet. “Draft recap” asks Claude to write it from the notes.</p>}
+      {!recap && !queued && canDraft && <p className="muted small">No recap yet. “Draft recap” asks Claude to write it from the notes and the call recording.</p>}
     </section>
   );
 }
