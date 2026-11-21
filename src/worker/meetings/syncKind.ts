@@ -17,6 +17,16 @@ export const MEETILY_SYNC_KIND = "meetily.sync";
 const LOOKBACK_HOURS = 72;
 /** A recording may start this long before its window opens or after it closes (people start early and late) and still count. */
 const SLACK_MS = 15 * 60_000;
+
+/**
+ * Rule R8, the same two conditions the helper applies before it uploads anything (helper/src/meetily/match.ts), checked again because the helper is not trusted for which meeting belongs where:
+ * the recording overlaps the booked time itself by a positive amount, AND more than half of its length lies inside the window widened by 15 minutes on each side. A recording with no length matches nothing.
+ */
+function matchesWindow(start: number, end: number, from: number, to: number): boolean {
+  if (![start, end, from, to].every(Number.isFinite) || !(end > start)) return false;
+  if (!(Math.min(end, to) - Math.max(start, from) > 0)) return false;
+  return Math.min(end, to + SLACK_MS) - Math.max(start, from - SLACK_MS) > (end - start) / 2;
+}
 export const MAX_WINDOWS = 100;
 export const MAX_KNOWN_IDS = 2000;
 const MAX_MEETINGS = 50;
@@ -90,8 +100,7 @@ function accept(p: MeetilySyncPayload, entries: Entry[]): { kept: Accepted[]; dr
     const window = windows.get(entry.windowKey);
     const startedAt = utc(entry.startedAt), endedAt = utc(entry.endedAt);
     if (!window || known.has(entry.meetilyId) || !startedAt || !endedAt || endedAt < startedAt) continue;
-    const from = Date.parse(window.startAt), to = Date.parse(window.endAt), at = Date.parse(startedAt);
-    if (!Number.isFinite(from) || !Number.isFinite(to) || at < from - SLACK_MS || at > to + SLACK_MS) continue;
+    if (!matchesWindow(Date.parse(startedAt), Date.parse(endedAt), Date.parse(window.startAt), Date.parse(window.endAt))) continue;
     kept.push({ entry, window, startedAt, endedAt });
   }
   return { kept, dropped: entries.length - kept.length };

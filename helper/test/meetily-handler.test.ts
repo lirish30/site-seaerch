@@ -76,6 +76,22 @@ describe("meetilySyncHandler", () => {
     for (const secret of ["Dentist chat", "Private dental notes", "my molar hurts", "Family call", "grandma recipe", SECRET]) expect(everything).not.toContain(secret);
   });
 
+  it("does not upload a neighbouring recording: its title and words are in no upload, result or log", async () => {
+    // The client call is booked 10:00-11:00. Right before it a Webfor stand-up ends exactly at 10:00, right after it another starts exactly at 11:00,
+    // and a long one only overlaps the booked time by 5 minutes at the edge.
+    const neighbours: FixtureMeeting[] = [
+      meetings[0],
+      { id: "before", title: "Webfor stand-up", createdAt: "2026-11-17T09:30:00Z", updatedAt: "2026-11-17T10:00:00Z", summary: "Webfor roadmap notes", lines: [{ text: "webfor sprint words", startSec: 1, endSec: 1800 }] },
+      { id: "after", title: "Webfor retro", createdAt: "2026-11-17T11:00:00Z", updatedAt: "2026-11-17T11:30:00Z", summary: "Webfor retro notes", lines: [{ text: "webfor retro words", startSec: 1, endSec: 1800 }] },
+      { id: "long", title: "Webfor planning day", createdAt: "2026-11-17T08:00:00Z", updatedAt: "2026-11-17T10:05:00Z", summary: "Webfor planning notes", lines: [{ text: "webfor planning words", startSec: 1, endSec: 7500 }] },
+    ];
+    const { uploads, result, logged } = await run(job(goodPayload()), neighbours);
+    expect(result).toEqual({ scanned: 4, matched: 1, key: OUT });
+    expect(JSON.parse(uploads[0].body).meetings.map((m: { meetilyId: string }) => m.meetilyId)).toEqual(["match"]);
+    const everything = [uploads[0].body, JSON.stringify(result), ...logged].join("\n");
+    for (const secret of ["Webfor", "webfor", "stand-up", "retro", "planning"]) expect(everything).not.toContain(secret);
+  });
+
   it("uploads nothing and returns key null when nothing matches", async () => {
     const { uploads, result } = await run(job(goodPayload({ windows: [{ key: "w", businessId: "b", startAt: "2026-11-01T10:00:00Z", endAt: "2026-11-01T11:00:00Z", bookingId: null, source: "calendar" }] })));
     expect(result).toEqual({ scanned: 3, matched: 0, key: null });
@@ -103,7 +119,8 @@ describe("meetilySyncHandler", () => {
   });
 
   const sentOf = (body: string) => JSON.parse(body).meetings as { meetilyId: string; transcript: { text: string }[] }[];
-  const manyLines = (n: number, text: string) => Array.from({ length: n }, (_, i) => ({ text: `${i}:${text}`, startSec: i, endSec: i + 1 }));
+  // Every line sits in the first second, so a many-line recording is still short enough to match its booking (a recording's length is its last line's end).
+  const manyLines = (n: number, text: string) => Array.from({ length: n }, (_, i) => ({ text: `${i}:${text}`, startSec: 0, endSec: 1 }));
 
   it("stops adding meetings, oldest first, once the file would pass 10 MB, and the rest wait for the next sync", async () => {
     // Each meeting is about 1.9 MB: 400 lines of 4,800 characters.

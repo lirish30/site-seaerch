@@ -221,24 +221,37 @@ describe("applying the helper's result", () => {
     expect(await summaryTasks()).toHaveLength(0);
   });
 
-  it("drops an entry whose window is not in the payload, that starts too far outside its window, that Meetily already gave, or whose dates do not parse", async () => {
-    const { b, job, key, file } = await claimed();
+  it("drops an entry whose window is not in the payload, whose recording does not match its window (rule R8), that Meetily already gave, or whose dates do not parse", async () => {
+    const { b, job, key, file } = await claimed(); // the window is 17:00-17:20
     await upload(file, { meetings: [
-      entry({ meetilyId: "ok-edge-early", windowKey: key, startedAt: plus(START, -15), endedAt: plus(START, 5) }),
-      entry({ meetilyId: "ok-edge-late", windowKey: key, startedAt: plus(END, 15), endedAt: plus(END, 40) }),
       entry({ meetilyId: "ok-inside", windowKey: key }),
-      entry({ meetilyId: "too-early", windowKey: key, startedAt: plus(START, -16), endedAt: plus(START, 5) }),
-      entry({ meetilyId: "too-late", windowKey: key, startedAt: plus(END, 16), endedAt: plus(END, 40) }),
+      entry({ meetilyId: "ok-early", windowKey: key, startedAt: plus(START, -10), endedAt: plus(START, 10) }),
+      entry({ meetilyId: "ok-late-and-over", windowKey: key, startedAt: plus(START, 5), endedAt: plus(END, 10) }), // starts 5 minutes late, runs 10 over
+      entry({ meetilyId: "ends-as-it-starts", windowKey: key, startedAt: plus(START, -30), endedAt: START }), // the stand-up just before
+      entry({ meetilyId: "starts-as-it-ends", windowKey: key, startedAt: END, endedAt: plus(END, 30) }), // the one just after
+      entry({ meetilyId: "touches-5-min", windowKey: key, startedAt: plus(START, -60), endedAt: plus(START, 5) }), // overlaps by 5 minutes but is mostly outside the widened window
+      entry({ meetilyId: "long-mostly-outside", windowKey: key, startedAt: plus(END, -5), endedAt: plus(END, 55) }), // 60 minutes, 20 inside the widened window
+      entry({ meetilyId: "no-length", windowKey: key, startedAt: plus(START, 5), endedAt: plus(START, 5) }),
       entry({ meetilyId: "other-window", windowKey: "booking:nope" }),
       entry({ meetilyId: "bad-start", windowKey: key, startedAt: "yesterday-ish" }),
       entry({ meetilyId: "bad-end", windowKey: key, endedAt: "" }),
       entry({ meetilyId: "backwards", windowKey: key, startedAt: plus(START, 10), endedAt: plus(START, 5) }),
     ] });
     expect(await done(job, file)).toEqual({ ok: true });
-    expect((await meetings()).map((m) => m.meetily_id)).toEqual(["ok-edge-early", "ok-edge-late", "ok-inside"]);
+    expect((await meetings()).map((m) => m.meetily_id)).toEqual(["ok-early", "ok-inside", "ok-late-and-over"]);
     expect(await summaryTasks()).toHaveLength(3);
     expect((await listActivity(env.DB, b.id)).filter((a) => a.kind === "meeting_recorded")).toHaveLength(3);
     expect(await env.RAW.head(file)).toBeNull();
+  });
+
+  it("never stores a dropped neighbouring recording: no row, no transcript in R2, and its words are in no activity", async () => {
+    const { b, job, key, file } = await claimed();
+    await upload(file, { meetings: [entry({ meetilyId: "webfor", windowKey: key, title: "Webfor stand-up", startedAt: plus(START, -10), endedAt: START, notes: "webfor secret notes", transcript: [{ speaker: "Sam", atSec: 1, text: "webfor roadmap words" }] })] });
+    expect(await done(job, file)).toEqual({ ok: true });
+    expect(await meetings()).toEqual([]);
+    expect((await env.RAW.list({ prefix: "meetings/" })).objects.map((o) => o.key)).toEqual([]);
+    expect(JSON.stringify(await listActivity(env.DB, b.id))).not.toContain("Webfor");
+    expect(await summaryTasks()).toHaveLength(0);
   });
 
   it("drops an entry whose Meetily id the payload listed as known", async () => {

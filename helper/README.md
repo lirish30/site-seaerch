@@ -118,7 +118,7 @@ reads Meetily's database (`meetilyDb`, default `~/Library/Application Support/co
 The same database file holds Meetily's API keys and licence; the helper only ever queries the `meetings`, `transcripts` and `summary_processes` tables, so
 those never leave the Mac.
 
-- A meeting matches the booking or calendar window it overlaps most, after widening each window by 15 minutes. No overlap, or a tie, means no match.
+- A meeting matches a booking or calendar window only when it overlaps the booked time itself by a positive amount AND more than half of the recording lies inside the window widened by 15 minutes each side. A recording that merely ends when the call starts (or starts when it ends), a long one that only touches the edge, a zero-length one, or a tie between two windows means no match, and a meeting that matches nothing never leaves the Mac.
 - A meeting is held back, and picked up by a later sync, when it might not be finished: its record or summary changed, or its audio ended, in the last 5 minutes
   (still recording); a date in its record cannot be read; its summary is still pending or processing (for up to 24 hours after it ended); or it has no summary
   yet and ended under 30 minutes ago. All of it is read inside one read transaction, so a meeting and its transcript come from the same moment.
