@@ -146,7 +146,7 @@ describe("churn", () => {
 });
 
 describe("bookedNotBilled", () => {
-  const doc = (o: Partial<{ id: string; dealId: string; businessId: string; milestoneCents: number }> = {}) => ({ id: "d1", dealId: "deal1", businessId: "b1", milestoneCents: 200_000, ...o });
+  const doc = (o: Partial<{ id: string; dealId: string; businessId: string; milestoneCents: number; prepaidCents: number }> = {}) => ({ id: "d1", dealId: "deal1", businessId: "b1", milestoneCents: 200_000, ...o });
 
   it("a $2,000 schedule with a paid $1,000 deposit leaves $1,000", () => {
     const r = bookedNotBilled({ documents: [doc()], signedOrders: [], invoices: [paid("2027-01-01T00:00:00.000Z", { documentId: "d1", kind: "deposit", amountCents: 100_000 })] });
@@ -185,6 +185,29 @@ describe("bookedNotBilled", () => {
       invoices: [inv({ kind: "change_order", changeOrderId: "co1", documentId: "d1", status: "open", amountCents: 30_000 })],
     });
     expect(r.cents).toBe(200_000);
+  });
+
+  it("a signed change order paid by hand (paidAt, no invoice) is billed in full", () => {
+    const r = bookedNotBilled({ documents: [], signedOrders: [{ id: "co1", businessId: "b1", priceCents: 30_000, paidAt: "2027-02-01T00:00:00.000Z" }, { id: "co2", businessId: "b1", priceCents: 10_000, paidAt: null }], invoices: [] });
+    expect(r.cents).toBe(10_000);
+    expect(r.rows).toEqual([{ businessId: "b1", bookedCents: 40_000, billedCents: 30_000, cents: 10_000 }]);
+  });
+
+  it("the first Care month a deposit carries is not milestone billing: it comes off what the proposal has billed", () => {
+    // $2,000 of milestones; the $1,129 deposit is $1,000 of milestone money and a prepaid $129 Care month.
+    const deposit = paid("2027-01-01T00:00:00.000Z", { documentId: "d1", kind: "deposit", amountCents: 112_900 });
+    const r = bookedNotBilled({ documents: [doc({ prepaidCents: 12_900 })], signedOrders: [], invoices: [deposit] });
+    expect(r.cents).toBe(100_000);
+    expect(r.rows).toEqual([{ businessId: "b1", bookedCents: 200_000, billedCents: 100_000, cents: 100_000 }]);
+  });
+
+  it("the prepaid month comes off only when a deposit invoice exists, and billed never goes below 0", () => {
+    const milestone = inv({ documentId: "d1", kind: "milestone", amountCents: 5_000, status: "open" });
+    expect(bookedNotBilled({ documents: [doc({ prepaidCents: 12_900 })], signedOrders: [], invoices: [milestone] }).cents).toBe(195_000); // no deposit: nothing to take off
+    const draftDeposit = inv({ documentId: "d1", kind: "deposit", amountCents: 112_900, status: "draft" });
+    expect(bookedNotBilled({ documents: [doc({ prepaidCents: 12_900 })], signedOrders: [], invoices: [draftDeposit] }).cents).toBe(200_000);
+    const tiny = inv({ documentId: "d1", kind: "deposit", amountCents: 5_000, status: "open" });
+    expect(bookedNotBilled({ documents: [doc({ prepaidCents: 12_900 })], signedOrders: [], invoices: [tiny] }).rows[0]).toMatchObject({ billedCents: 0, cents: 200_000 });
   });
 
   it("overbilling clamps to 0 and never offsets another document", () => {

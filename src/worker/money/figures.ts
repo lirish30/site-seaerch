@@ -88,16 +88,18 @@ const BILLED_KINDS: readonly InvoiceKind[] = ["deposit", "milestone", "change_or
  * Money that is signed but not yet invoiced. Each signed proposal (its one-time milestones) and each signed change order (its price) is booked; the invoices made for it (open, failed or paid; a draft or void one
  * is not billing yet) are billed. The proposal is billed by its deposit and milestone invoices, the change order by its own invoice. What is left is never below 0 for an item, so billing more than was booked on one
  * cannot hide money still unbilled on another. Rows are per client, largest first: `bookedCents` and `billedCents` are the sums as they stand (so an overbilled item shows its true billed), and `cents` is the sum of what each item has left.
- * Subscriptions are not in it.
+ * Two things are not billing even though they sit on the invoices: a proposal's deposit invoice also carries the first Care month when that month is prepaid at signing (`prepaidCents`, taken off the proposal's billed total when it has a
+ * deposit invoice, never below 0), and a change order paid by hand (`paidAt` set, no invoice) is billed in full. Subscriptions are not in it.
  */
 export function bookedNotBilled(o: {
-  documents: { id: string; dealId: string; businessId: string; milestoneCents: number }[];
-  signedOrders: { id: string; businessId: string; priceCents: number }[];
+  documents: { id: string; dealId: string; businessId: string; milestoneCents: number; prepaidCents?: number }[];
+  signedOrders: { id: string; businessId: string; priceCents: number; paidAt?: string | null }[];
   invoices: InvoiceRow[];
 }): { cents: number; rows: { businessId: string; bookedCents: number; billedCents: number; cents: number }[] } {
   const billing = o.invoices.filter((i) => !i.test && BILLED_KINDS.includes(i.kind) && (i.status === "open" || i.status === "failed" || i.status === "paid"));
-  const byDocument = new Map<string, number>(), byOrder = new Map<string, number>();
+  const byDocument = new Map<string, number>(), byOrder = new Map<string, number>(), hasDeposit = new Set<string>();
   for (const i of billing) {
+    if (i.kind === "deposit" && i.documentId) hasDeposit.add(i.documentId);
     if (i.kind === "change_order") { if (i.changeOrderId) byOrder.set(i.changeOrderId, (byOrder.get(i.changeOrderId) ?? 0) + i.amountCents); }
     else if (i.documentId) byDocument.set(i.documentId, (byDocument.get(i.documentId) ?? 0) + i.amountCents);
   }
@@ -109,8 +111,8 @@ export function bookedNotBilled(o: {
     row.cents += Math.max(0, bookedCents - billedCents);
     rows.set(businessId, row);
   };
-  for (const d of o.documents) if (d.milestoneCents > 0) add(d.businessId, d.milestoneCents, byDocument.get(d.id) ?? 0);
-  for (const c of o.signedOrders) if (c.priceCents > 0) add(c.businessId, c.priceCents, byOrder.get(c.id) ?? 0);
+  for (const d of o.documents) if (d.milestoneCents > 0) add(d.businessId, d.milestoneCents, Math.max(0, (byDocument.get(d.id) ?? 0) - (hasDeposit.has(d.id) ? d.prepaidCents ?? 0 : 0)));
+  for (const c of o.signedOrders) if (c.priceCents > 0) add(c.businessId, c.priceCents, c.paidAt ? Math.max(c.priceCents, byOrder.get(c.id) ?? 0) : byOrder.get(c.id) ?? 0);
   const list = [...rows.values()].sort((a, b) => b.cents - a.cents || (a.businessId < b.businessId ? -1 : 1));
   return { cents: list.reduce((sum, r) => sum + r.cents, 0), rows: list };
 }

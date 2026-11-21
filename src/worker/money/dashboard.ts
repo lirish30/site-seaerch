@@ -32,6 +32,15 @@ export interface MoneyDashboard {
 }
 
 const REVENUE_MONTHS = 6;
+
+/** A proposal's one-time money (its milestones) and the first Care months its deposit also carries (its prepaid recurring items). */
+function scheduleCents(content: string): { milestoneCents: number; prepaidCents: number } {
+  const { schedule } = JSON.parse(content) as { schedule: { milestones: { amountCents: number }[]; recurring?: { monthlyCents: number; firstMonthPrepaid: boolean }[] } };
+  return {
+    milestoneCents: schedule.milestones.reduce((sum, m) => sum + m.amountCents, 0),
+    prepaidCents: (schedule.recurring ?? []).filter((r) => r.firstMonthPrepaid).reduce((sum, r) => sum + r.monthlyCents, 0),
+  };
+}
 const LTV_ROWS = 10;
 const placeholders = (n: number) => Array.from({ length: n }, () => "?").join(", ");
 
@@ -59,10 +68,11 @@ export async function moneyDashboard(env: Env, now: Date): Promise<MoneyDashboar
   ]);
   const invoices = real(allInvoices), subs: Subscription[] = real(allSubs);
 
-  // Signed proposals' one-time money, and every change order (only a signed one is booked; `soldAndPaid` filters by status itself).
+  // Signed proposals' one-time money (a deal holds one real signed proposal: `createDraft` refuses a new version once one is signed, and a signed real one cannot be voided or expire, so a superseded, void, expired, draft or sent one is never booked),
+  // and the first Care month a deposit carries (it is not milestone money). Every change order (only a signed one is booked; `soldAndPaid` filters by status itself).
   const documents = docRows.results.filter((d) => !testClients.has(d.business_id)).map((d) => ({
     id: d.id, dealId: d.deal_id, businessId: d.business_id,
-    milestoneCents: (JSON.parse(d.content) as { schedule: { milestones: { amountCents: number }[] } }).schedule.milestones.reduce((sum, m) => sum + m.amountCents, 0),
+    ...scheduleCents(d.content),
   }));
   const orders = orderRows.results.filter((o) => !o.test && !testClients.has(o.business_id)).map((o) => ({
     id: o.id, projectId: o.project_id, businessId: o.business_id, status: o.status, paidAt: o.paid_at, content: { priceCents: (JSON.parse(o.content) as { priceCents: number }).priceCents },
@@ -70,7 +80,7 @@ export async function moneyDashboard(env: Env, now: Date): Promise<MoneyDashboar
 
   const months = revenueByMonth(invoices, zone, today.slice(0, 7), REVENUE_MONTHS);
   const live = subs.filter((s) => clientMrrCents([s]) > 0);
-  const booked = bookedNotBilled({ documents, signedOrders: orders.filter((o) => o.status === "signed").map((o) => ({ id: o.id, businessId: o.businessId, priceCents: o.content.priceCents })), invoices });
+  const booked = bookedNotBilled({ documents, signedOrders: orders.filter((o) => o.status === "signed").map((o) => ({ id: o.id, businessId: o.businessId, priceCents: o.content.priceCents, paidAt: o.paidAt })), invoices });
   const mrrCents = clientMrrCents(subs);
 
   const costRateCentsPerHour = parseWorkConfig(settings.work_config).costRateCentsPerHour;

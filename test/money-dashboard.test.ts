@@ -1,6 +1,7 @@
 import { SELF, env } from "cloudflare:test";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { addDays, calendarDateIn } from "../src/worker/billing/dates";
+import { createDraft } from "../src/worker/db/documents";
 import { saveSettings } from "../src/worker/db/settings";
 import { markInvoice } from "../src/worker/db/invoices";
 import { markSubscription } from "../src/worker/db/subscriptions";
@@ -37,8 +38,15 @@ async function reset() {
 beforeEach(reset);
 
 /** The document gets a one-time payment schedule of this many cents (the real project's sold figure). */
-const schedule = (documentId: string, cents: number) =>
-  env.DB.prepare(`UPDATE documents SET content = ? WHERE id = ?`).bind(JSON.stringify({ ...proposal(), schedule: { milestones: [{ id: "m1", label: "Build", dueOn: "signing", amountCents: cents }], recurring: [], depositCents: 0 } }), documentId).run();
+const schedule = (documentId: string, cents: number, prepaidCareCents = 0) =>
+  env.DB.prepare(`UPDATE documents SET content = ? WHERE id = ?`).bind(JSON.stringify({
+    ...proposal(),
+    schedule: {
+      milestones: [{ id: "m1", label: "Build", dueOn: "signing", amountCents: cents }],
+      recurring: prepaidCareCents ? [{ key: "care", name: "Care", monthlyCents: prepaidCareCents, startsOn: "signing", termMonths: null, firstMonthPrepaid: true }] : [],
+      depositCents: cents + prepaidCareCents,
+    },
+  }), documentId).run();
 const pay = (invoiceId: string, paidAt = PAID_AT) => markInvoice(env.DB, invoiceId, { status: "paid", paidAt });
 const api = async (path: string) => (await SELF.fetch(`https://x/api${path}`, { headers: { cookie } })).json<any>();
 
@@ -141,6 +149,45 @@ describe("moneyDashboard", () => {
     const d = await moneyDashboard(env, NOW);
     expect(d.bookedNotBilled.cents).toBe(200_000 + 30_000);
     expect(d.bookedNotBilled.rows).toEqual([{ businessId: s.businessId, businessName: expect.any(String), bookedCents: 330_000, billedCents: 100_000, cents: 230_000 }]);
+  });
+
+  it("a change order paid by hand, with no invoice, is not booked-not-billed, and profit agrees it is paid", async () => {
+    const s = await seedClient();
+    const co = await addChangeOrder(s, s.project!.id);
+    await env.DB.prepare(`UPDATE change_orders SET status = 'signed', paid_at = ?, paid_via = 'manual' WHERE id = ?`).bind(PAID_AT, co.id).run();
+    await schedule(s.documentId, 100_000);
+    const d = await moneyDashboard(env, NOW);
+    expect(d.bookedNotBilled.cents).toBe(100_000); // the proposal's own money; the $300 order is paid
+    expect(d.bookedNotBilled.rows[0]).toMatchObject({ bookedCents: 130_000, billedCents: 30_000, cents: 100_000 });
+    expect(d.profit[0]).toMatchObject({ soldCents: 130_000, paidCents: 30_000 });
+  });
+
+  it("a deposit that carries a prepaid Care month bills only its milestone share", async () => {
+    const s = await seedClient({ invoice: { cents: 112_900 } }); // a $1,000 build deposit plus a $129 first Care month
+    await schedule(s.documentId, 200_000, 12_900);
+    await env.DB.prepare(`UPDATE invoices SET kind = 'deposit', ref = ? WHERE id = ?`).bind(`deposit:${s.documentId}`, s.invoice!.id).run();
+    const d = await moneyDashboard(env, NOW);
+    expect(d.bookedNotBilled.rows).toEqual([{ businessId: s.businessId, businessName: expect.any(String), bookedCents: 200_000, billedCents: 100_000, cents: 100_000 }]);
+  });
+
+  it("only a signed proposal is booked: a draft, sent, viewed, void or expired one books nothing", async () => {
+    for (const status of ["draft", "sent", "viewed", "void", "expired"]) {
+      const s = await seedClient();
+      await schedule(s.documentId, 100_000);
+      await env.DB.prepare(`UPDATE documents SET status = ? WHERE id = ?`).bind(status, s.documentId).run();
+    }
+    const d = await moneyDashboard(env, NOW);
+    expect(d.bookedNotBilled).toEqual({ cents: 0, rows: [] });
+  });
+
+  it("a test proposal books nothing, and a deal cannot hold a second real proposal once one is signed", async () => {
+    const t = await seedClient();
+    await schedule(t.documentId, 100_000);
+    await env.DB.prepare(`UPDATE documents SET test = 1 WHERE id = ?`).bind(t.documentId).run();
+    expect((await moneyDashboard(env, NOW)).bookedNotBilled.cents).toBe(0);
+    // The invariant the booked figure relies on: a real signed proposal blocks any new version on its deal, so the signed one is the only one.
+    const s = await seedClient();
+    await expect(createDraft(env.DB, { dealId: s.dealId, businessId: s.businessId, optionId: "b", content: proposal() })).rejects.toThrow(/already has a sent or signed proposal/);
   });
 
   it("profit has the same sold and paid as GET /api/projects/:id", async () => {
