@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { ApiError, careApi } from "../../api";
 import { shortDate } from "../../billingView";
+import { runLabel, whyLabel } from "../../careUpdatesView";
 import { bandTone, formatUptime, healthChipText, incidentLine, siteStateLabel } from "../../careView";
+import type { CareSiteView } from "../../../worker/care/views";
 import type { Health } from "../../../worker/clients/health";
 import type { Site } from "../../../worker/db/sites";
 import type { IncidentView, SiteMonitoringView } from "../../../worker/monitoring/fleet";
@@ -40,11 +43,21 @@ export function IncidentList({ incidents, now, zone, empty }: { incidents: Incid
 }
 
 /** One site's row in the panel: its state, uptime, domain expiry and the switch. */
-function SiteRow({ site, view, onChanged }: { site: Site; view: SiteMonitoringView; onChanged: () => Promise<void> }) {
+function SiteRow({ site, view, care, onChanged }: { site: Site; view: SiteMonitoringView; care: CareSiteView | null; onChanged: () => Promise<void> }) {
   const [on, setOn] = useState(site.monitoring);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [planning, setPlanning] = useState(false);
+  const [planned, setPlanned] = useState(false);
+  const [planError, setPlanError] = useState("");
   useEffect(() => { setOn(site.monitoring); }, [site.monitoring]);
+  async function plan() {
+    if (planning) return;
+    setPlanning(true); setPlanError(""); setPlanned(false);
+    try { await careApi.runSite(site.id); setPlanned(true); await onChanged(); }
+    catch (e) { setPlanError(e instanceof ApiError ? e.message : "Couldn’t plan the updates just now. Try again."); }
+    finally { setPlanning(false); }
+  }
   const viaCare = view.monitored && !site.monitoring;
   async function flip(next: boolean) {
     if (busy) return;
@@ -71,6 +84,15 @@ function SiteRow({ site, view, onChanged }: { site: Site; view: SiteMonitoringVi
       </label>
       {viaCare && <p className="muted small cr-note">Checked anyway, because this client has a Care plan.</p>}
       {error && <p className="error small" role="alert">{error}</p>}
+      <p className="small cr-note">
+        {care?.lastRun
+          ? <>Last update run: {runLabel(care.lastRun)}. <Link to={`/care/runs/${encodeURIComponent(care.lastRun.id)}`}>See the pages</Link></>
+          : <span className="muted">No update run yet.</span>}
+      </p>
+      {care && !care.canUpdate && <p className="muted small cr-note">{whyLabel(care.why)}</p>}
+      <button type="button" className="btn cu-run-btn" aria-disabled={planning} onClick={() => void plan()}>Plan updates for this site (you’ll approve them)</button>
+      {planned && <p className="small cr-note" role="status">Planned. Approve it on Today before anything is changed on the site.</p>}
+      {planError && <p className="error small" role="alert">{planError}</p>}
     </li>
   );
 }
@@ -84,9 +106,12 @@ export default function CarePanel({ businessId, health, sites, zone, onChanged }
 }) {
   const [incidents, setIncidents] = useState<IncidentView[] | null>(null);
   const [failed, setFailed] = useState(false);
+  const [board, setBoard] = useState<Map<string, CareSiteView>>(new Map());
   const load = useCallback(async () => {
     try { setIncidents(await careApi.incidents(businessId)); setFailed(false); }
     catch { setFailed(true); }
+    // The updates board is a separate, optional read: without it the panel just shows no last run.
+    try { setBoard(new Map((await careApi.updates()).sites.map((s) => [s.siteId, s]))); } catch { /* keep what we have */ }
   }, [businessId]);
   useEffect(() => { setIncidents(null); void load(); }, [load]);
   const changed = async () => { await Promise.all([onChanged(), load()]); };
@@ -101,7 +126,7 @@ export default function CarePanel({ businessId, health, sites, zone, onChanged }
       <h3 className="cr-sub">Sites</h3>
       {sites.length === 0 && <p className="muted small">No site to watch yet.</p>}
       <ul className="cr-sites">
-        {sites.map(({ site, monitoring }) => <SiteRow key={site.id} site={site} view={monitoring} onChanged={changed} />)}
+        {sites.map(({ site, monitoring }) => <SiteRow key={site.id} site={site} view={monitoring} care={board.get(site.id) ?? null} onChanged={changed} />)}
       </ul>
 
       <h3 className="cr-sub">Last 5 incidents</h3>

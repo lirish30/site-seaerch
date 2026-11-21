@@ -6,7 +6,7 @@ the Mac needs to be exposed. Everything it does is $0 and local.
 
 It keeps no state except `~/.siteline-helper/config.json` and a cache folder (`~/.siteline-helper/cache`). **Deleting the cache is always safe.**
 The jobs it understands: `voice.segment` (one script line in the cloned voice), `voice.sample` (one clip of the blind voice test), `render` (the finished
-video, see "Rendering" below) and `meetily.sync` (see "Meetily" below).
+video, see "Rendering" below), `meetily.sync` (see "Meetily" below) and three Care jobs: `care.inventory`, `care.update` and `care.certs` (see "Care updates" below).
 
 ## Requirements
 
@@ -30,7 +30,7 @@ video, see "Rendering" below) and `meetily.sync` (see "Meetily" below).
 
    This writes `~/.siteline-helper/config.json` (owner-only permissions) and checks the token with the server. The token is never printed.
    Set `SITELINE_HELPER_CONFIG=/path/to/config.json` to use a different file.
-3. `node helper/src/cli.ts doctor` shows the config, whether the server accepts the token, each voice engine's state, and the ffmpeg, ffprobe and hyperframes versions.
+3. `node helper/src/cli.ts doctor` shows the config, whether the server accepts the token, each voice engine's state, the ffmpeg, ffprobe and hyperframes versions, and Chrome's path and version (or "not found"; only care updates need Chrome).
 
 Pairing again keeps every other setting already in the file. If the token is revoked in Settings, the helper stops with a clear message; pair the Mac again.
 
@@ -127,6 +127,71 @@ those never leave the Mac.
   line, it is harmless; run with `NODE_NO_WARNINGS=1` to hide it. Do not switch to a different SQLite tool: this one opens the file read-only.
 - If Meetily is recording or saving when a sync runs, the job fails with "Meetily is busy with its database"; the next sync tries again.
 - `doctor` shows whether the database file is where the config says (it is optional, so a missing file does not fail `doctor`).
+
+## Care updates
+
+The weekly Care update batch (version 0.2.0 and up). The helper reads a client's WordPress over SSH with WP-CLI, and only after you approve a wave in Agency OS it takes a backup, updates plugins, themes and core, checks the pages and puts the old code back if a page breaks. It also reads each site's certificate expiry once a day. An older helper does not claim these jobs, so it keeps doing voice and render.
+
+### Set up one site
+
+Agency OS stores only a host alias and the WordPress folder for each site (the site panel on the client page: "SSH host alias" and "WordPress folder on the server", plus the access method set to SSH and WP-CLI). The alias is a `Host` entry in `~/.ssh/config` on this Mac. Nothing else about the login is stored anywhere in Agency OS.
+
+```
+Host client-alias
+  HostName ssh.example-host.com
+  User example-user
+  Port 22
+  IdentityAgent "~/Library/Group Containers/<1password-group-id>/t/agent.sock"
+```
+
+- `client-alias` is what you type in Agency OS. It must be a plain name: letters, digits, `.`, `_` and `-`, starting with a letter or digit, up to 64 characters.
+- The WordPress folder is the full path of the install on the server (the folder with `wp-config.php`): `/` first, letters, digits, `.`, `_`, `-` and `/`, no `..`.
+- Keys come from ssh-agent or the 1Password SSH agent. The helper runs `ssh -o BatchMode=yes`, so a missing key or a question from the server **fails the job** instead of waiting for a password. Test it by hand first: `ssh client-alias -- wp --path=/full/path core version`.
+- WP-CLI (`wp`) must be installed for that SSH user.
+
+### What it runs
+
+Every command goes to `ssh` as an argument list (no local shell), every word is checked against a fixed pattern on both sides and each remote word is single-quoted. The only things it runs on the server:
+
+- Reading: `wp core version`, `wp core check-update --format=json`, `wp cli info --format=json`, `wp plugin list --fields=... --format=json`, `wp theme list --fields=... --format=json`, `wp plugin get <slug> --field=version`, `wp theme get <slug> --field=version`.
+- Updating (only a site an approved wave covers): `wp db export`, `wp plugin update <slug> --version=<to>`, `wp theme update <slug> --version=<to>`, `wp core update --version=<to>`, `wp core update-db`, then `wp cache flush` once after the updates (best effort: a site with no object cache, or a refusal, changes nothing).
+- A **premium** plugin or theme (not on wordpress.org, marked "can't roll back") is updated with `wp plugin update <slug>` (or `wp theme update <slug>`) **without** `--version`: its own updater only offers its newest version. It counts as applied only when the version it then reads is the one the plan showed; otherwise it is failed, and as it cannot be put back the incident names the backup.
+- Putting back (only after a page breaks or an update fails): `wp plugin install <slug> --version=<from> --force`, `wp theme install ... --force`, `wp core update --version=<from> --force`, `wp core update-db`.
+- Housekeeping in the SSH user's home folder, nothing else: `mkdir -m 700 -p siteline-backups` (only the SSH user can read the dumps), `test -e` and `gzip -t` and `gzip -f` on a backup file, `find siteline-backups -name '*.sql.gz' -mtime +28 -delete`.
+
+It never runs `wp eval`, `wp shell`, `wp db query`, `wp db import`, `sh -c` or anything built from text a site returned. Plugin names, page HTML and WP-CLI output are only stored and shown as data.
+
+### Backups
+
+Before any update the helper runs `wp db export` and gzips it to `siteline-backups/<domain>-<run id>.sql.gz` in the SSH user's **home folder** on the server. Backups older than 28 days are deleted after a new one is safe. If several sites share one SSH user (one hosting account), they share that folder and each run's sweep covers all of them. It is a database backup only: files are left to the host's own backups. The rollback puts old **code** back and never imports the database (that would lose orders and form entries made since). If a rollback fails, the incident names the backup file and you restore it by hand.
+
+### Retries and the contact guard
+
+- A job that was claimed and never finished (the Mac slept, the helper was killed) is handed out again after 20 minutes. A **retry never applies an update**. It reads the versions, reports what is already at the target version, runs the page checks and rolls back if a page is broken. The updates it did not start wait for the next batch. A second backup is never taken over the first.
+- While it works, the helper tells Agency OS it is still alive after every step. If it cannot reach Agency OS for 10 minutes, it starts no new update ("stopped: lost contact with Agency OS"); it can still check pages and put code back.
+
+### Page checks and Chrome
+
+For each site it opens up to five pages (the site's check pages, default `/`) in headless Google Chrome at 1280 wide and 1600 tall, first screen only, before and after the updates. It reads the status, looks for the "critical error" text and counts `<form>` elements (forms are counted, never submitted).
+
+A cache in front of the site (WP Rocket, the host's Varnish, Cloudflare) could answer with a copy saved before the update and hide a broken page. So every read and every screenshot asks for its own address, the page plus `?siteline-check=<run id>-<attempt>-<page>-<before|after|recheck>` (no cache has that copy, and a retried job never reuses an address an earlier attempt asked for), each read sends `cache-control: no-cache` and `pragma: no-cache`, and `wp cache flush` runs after the updates. A read that gets no answer at all is tried once more, 2 seconds later, before it counts as broken. The query shows up in the site's access log and analytics as a visit to the page with that query. It compares the two screenshots with ffmpeg's SSIM (under 0.95 counts as changed) and uploads a before, an after and a difference picture for each page.
+
+Chrome's path is `chrome` in `~/.siteline-helper/config.json`; the default is `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`. Set it if Chrome is somewhere else. `node helper/src/cli.ts doctor` shows Chrome's path and its `--version`, or "not found".
+
+### Certificates
+
+Once a day the helper opens a TLS connection to port 443 of each monitored site's host name, reads the certificate's expiry date and closes the connection. It sends no request, trusts nothing and stores only the date. A site it cannot reach keeps its last reading. IP addresses and `.local` or `.internal` names are never connected to.
+
+### Rehearse on a throwaway site first
+
+Do this before any client.
+
+1. Make a throwaway WordPress site you can break (a cheap host or a copy) with SSH and WP-CLI. Add it in Agency OS as a **test** client with a test Care subscription and its address, set its SSH alias and WordPress folder, and set its WordPress access method to SSH.
+2. Put the alias in `~/.ssh/config`. Run `ssh <alias> -- wp --path=<folder> core version` by hand. It must answer without asking for anything.
+3. Run `node helper/src/cli.ts doctor`. Its `chrome` line must show a version, not "not found".
+4. On the client's Care panel, press "Plan updates for this site" (the single-site run). The helper reads the site; you approve one approval; the helper backs up, updates, checks the pages and reports. Look at the run view: the backup file name, each page and its pictures.
+5. Make it fail on purpose (for example a plugin update that breaks a page) and check that the code is put back. On a **test** client, what you will see is the run view, `/care/runs/<run id>`: status `rolled_back`, the summary, the backup file name and each page's pictures. Nothing links to it for a test client (the Care panel reads the updates board, which leaves test clients out, so it says "No update run yet."): open it by hand, with the id from D1 (`SELECT id, status, summary FROM care_runs ORDER BY created_at DESC LIMIT 1`). What you will NOT see: Today, the Care board, `/care/updates` and every incident list (including the "Last 5 incidents" on the client's Care panel, which says "No incidents yet.") leave test clients out, so the `update_failed` incident exists only in the database. It stays open until you close it with `POST /api/incidents/<id>/close` (find the id in D1: `SELECT id, detail FROM site_incidents WHERE kind = 'update_failed' AND closed_at IS NULL`); it blocks nothing, as a test site is never in a weekly batch. The CARE-5 fix task is made only when the client has a **live Care project** (CARE-0 started and not cancelled): start one for the test client before the rehearsal to see the task on that project, otherwise there is no task, only a warning in the log. A single-site run on a test site touches no weekly checklist.
+6. Only then add a real client's alias.
 
 ## Start it at login (launchd)
 

@@ -4,7 +4,7 @@ import { getSite, toSite, type Site, type SiteRow } from "./sites";
 // Care monitoring data (Plan 11): the probe's checks, the incidents they open and close, and which sites are watched.
 // Times are UTC ISO strings with milliseconds. No secret is stored: a check keeps a status, a time and a short error word, never a body or a header.
 
-export type IncidentKind = "down" | "domain_expiring";
+export type IncidentKind = "down" | "domain_expiring" | "update_failed" | "cert_expiring";
 
 export interface SiteCheck { id: string; siteId: string; checkedAt: string; ok: boolean; status: number | null; ms: number | null; error: string | null }
 export interface Incident { id: string; siteId: string; businessId: string; kind: IncidentKind; openedAt: string; closedAt: string | null; detail: string }
@@ -69,6 +69,12 @@ export async function openIncident(
   throw new Error("could not open the incident");
 }
 
+/** One incident by id (open or closed), or null. */
+export async function getIncident(db: D1Database, id: string): Promise<Incident | null> {
+  const r = await db.prepare(`SELECT * FROM site_incidents WHERE id = ?`).bind(id).first<IncidentRow>();
+  return r ? toIncident(r) : null;
+}
+
 /** Closes the open incident for the site and kind and returns it as closed; null when none was open. One statement, so two closers cannot both win. */
 export async function closeIncident(db: D1Database, siteId: string, kind: IncidentKind, now: string): Promise<Incident | null> {
   const row = await db.prepare(`UPDATE site_incidents SET closed_at = ? WHERE site_id = ? AND kind = ? AND closed_at IS NULL RETURNING *`).bind(now, siteId, kind).first<IncidentRow>();
@@ -100,6 +106,11 @@ export async function openIncidentsFor(db: D1Database, businessIds: string[]): P
 /** Records the domain's expiry date (YYYY-MM-DD, or null when it could not be found) and when it was looked up. */
 export async function setDomainExpiry(db: D1Database, siteId: string, expiresOn: string | null, checkedAt: string): Promise<void> {
   await db.prepare(`UPDATE sites SET domain_expires_on = ?, domain_checked_at = ? WHERE id = ?`).bind(expiresOn, checkedAt, siteId).run();
+}
+
+/** Records the TLS certificate's expiry date (YYYY-MM-DD) and when the helper read it. */
+export async function setCertExpiry(db: D1Database, siteId: string, expiresOn: string, checkedAt: string): Promise<void> {
+  await db.prepare(`UPDATE sites SET cert_expires_on = ?, cert_checked_at = ? WHERE id = ?`).bind(expiresOn, checkedAt, siteId).run();
 }
 
 /** Turns monitoring on or off for a site by hand. Returns the site, or null when it is unknown. */
@@ -138,11 +149,12 @@ export async function monitoredSites(db: D1Database, limit: number): Promise<Sit
  * Closes, silently (no activity line: nothing came back, the watching just stopped), every open incident whose site is not watched any more: Care ended, the switch is off, the address
  * was cleared, the site was archived or marked test. One statement, so it is safe to run on every tick and when two runs overlap; an incident of a watched site is never touched.
  * `siteId` narrows it to one site (the switch route). Returns how many incidents it closed.
+ * Only the watching kinds (down, domain_expiring, cert_expiring) close this way: an `update_failed` is about a site an update touched, and only Logan closes it.
  */
 export async function closeUnmonitoredIncidents(db: D1Database, now: string, siteId?: string): Promise<number> {
   const res = await db.prepare(
     `UPDATE site_incidents SET closed_at = ?
-     WHERE closed_at IS NULL ${siteId === undefined ? "" : "AND site_id = ?"}
+     WHERE closed_at IS NULL AND kind IN ('down', 'domain_expiring', 'cert_expiring') ${siteId === undefined ? "" : "AND site_id = ?"}
        AND NOT EXISTS (SELECT 1 FROM sites s JOIN businesses b ON b.id = s.business_id WHERE s.id = site_incidents.site_id AND ${monitoredSiteSql("s", "b")})`,
   ).bind(...(siteId === undefined ? [now] : [now, siteId])).run();
   return res.meta.changes ?? 0;

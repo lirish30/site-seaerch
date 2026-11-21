@@ -161,6 +161,15 @@ export async function failHelperJob(target: D1Database | Env, id: string, device
   return !!row;
 }
 
+/**
+ * The helper says it is still working: `claimed_at` becomes `now`, but only while the job is `claimed` by `deviceId`, so a long job (a care update) is not handed to a second Mac.
+ * False when the job is not this device's any more (done, failed, expired, or reclaimed by another).
+ */
+export async function touchHelperJob(db: D1Database, id: string, deviceId: string, now: Date): Promise<boolean> {
+  const r = await db.prepare(`UPDATE helper_jobs SET claimed_at = ? WHERE id = ? AND status = 'claimed' AND claimed_by = ?`).bind(now.toISOString(), id, deviceId).run();
+  return (r.meta.changes ?? 0) > 0;
+}
+
 /** Closes the open jobs of one video (it was cancelled or failed) so no Mac time is spent on them. They end `expired`. Returns how many. */
 export async function cancelHelperJobsFor(db: D1Database, videoId: string): Promise<number> {
   const r = await db.prepare(`UPDATE helper_jobs SET status = 'expired', error = 'cancelled: its video is finished with', done_at = ? WHERE video_id = ? AND status IN ('pending','claimed')`)

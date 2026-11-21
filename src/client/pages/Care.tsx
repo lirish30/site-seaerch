@@ -32,6 +32,7 @@ export default function Care() {
           <p>How each client’s sites are doing, worst first. Test clients are left out.</p>
         </div>
         <div className="header-actions">
+          <Link className="btn" to="/care/updates">Updates</Link>
           <button type="button" className="btn" onClick={() => void load()}><Icon name="refresh" size={16} />Refresh</button>
         </div>
       </header>

@@ -148,3 +148,22 @@
 .cr-switch { min-height:44px; }
 .cr-note { margin:0; }
 .cl .cr-switch input { min-height:0; }
+
+/* Care updates (Plan 12) */
+.cu-batch { display:flex; flex-direction:column; align-items:flex-start; gap:8px; margin-bottom:12px; }
+.cu-batch h2, .cu-batch p { margin:0; }
+.cu-site, .cu-page { display:flex; flex-direction:column; gap:10px; }
+.cu-why, .cu-lastrun, .cu-review { margin:0; }
+.cu-incident { display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; }
+.cu-updates { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
+.cu-update { display:flex; flex-direction:column; gap:6px; padding:10px 12px; border:1px solid var(--border); border-radius:10px; min-width:0; }
+.cu-update-head { display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; min-width:0; }
+.cu-update-name { overflow-wrap:anywhere; }
+.cu-switches { display:flex; flex-wrap:wrap; gap:0 18px; }
+.cu-pics { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px; }
+.cu-pic { margin:0; min-width:0; display:flex; flex-direction:column; gap:4px; }
+.cu-pic img { width:100%; height:auto; border:1px solid var(--border); border-radius:8px; display:block; }
+.cu-nopic { display:flex; align-items:center; justify-content:center; min-height:80px; border:1px dashed var(--border); border-radius:8px; }
+.cu-run-btn { align-self:flex-start; }
+.cu-sitefields { grid-column:1 / -1; }
+@media (max-width: 640px) { .cu-pics { grid-template-columns:minmax(0, 1fr); } }

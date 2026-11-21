@@ -16,7 +16,7 @@ afterEach(() => rmSync(workDir, { recursive: true, force: true }));
 
 const cfg = (): Config => ({
   apiBase: "https://x.example.com", token: "hlp_x", pollSeconds: 5, cacheDir: workDir,
-  python: { "qwen3-tts": "/nope/q", chatterbox: "/nope/c", "openvoice-v2": "/nope/o" }, ffmpeg: "ffmpeg", ffprobe: "ffprobe", hyperframes: "hyperframes", meetilyDb: "/nope/meeting_minutes.sqlite",
+  python: { "qwen3-tts": "/nope/q", chatterbox: "/nope/c", "openvoice-v2": "/nope/o" }, ffmpeg: "ffmpeg", ffprobe: "ffprobe", hyperframes: "hyperframes", chrome: "chrome", meetilyDb: "/nope/meeting_minutes.sqlite",
 });
 
 const REF_BYTES = "REFERENCE-AUDIO";
@@ -28,7 +28,7 @@ function fakeApi() {
     async claim() { return null; },
     async download(_id, key, to) { downloads.push({ key }); writeFileSync(to, REF_BYTES); },
     async upload(jobId, key, from, contentType) { uploads.push({ jobId, key, body: readFileSync(from, "utf8"), contentType }); },
-    async complete() {}, async fail() {},
+    async touch() {}, async complete() {}, async fail() {},
   };
   return { api, uploads, downloads };
 }

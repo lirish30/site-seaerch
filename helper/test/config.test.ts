@@ -19,6 +19,7 @@ describe("loadConfig", () => {
     expect(c.ffmpeg).toBe("ffmpeg");
     expect(c.ffprobe).toBe("ffprobe");
     expect(c.hyperframes).toBe("hyperframes");
+    expect(c.chrome).toBe("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome");
     expect(c.meetilyDb).toMatch(/Library\/Application Support\/com\.meetily\.ai\/meeting_minutes\.sqlite$/);
     expect(c.python["chatterbox"]).toMatch(/venvs\/chatterbox\/bin\/python$/);
     expect(Object.keys(c.python).sort()).toEqual(["chatterbox", "openvoice-v2", "qwen3-tts"]);

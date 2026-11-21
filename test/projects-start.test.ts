@@ -324,7 +324,7 @@ describe("starting projects at payment", () => {
     await startProjects(e, s.doc);
     await env.DB.prepare(`UPDATE sop_templates SET name = 'Edited' WHERE key = 'CARE-4'`).run();
     await startProjects(e, s.doc);
-    expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM sop_templates`).first<{ n: number }>())!.n).toBe(5);
+    expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM sop_templates`).first<{ n: number }>())!.n).toBe(6);
     await env.DB.prepare(`UPDATE sop_templates SET name = 'Care monthly report' WHERE key = 'CARE-4'`).run();
   });
 });

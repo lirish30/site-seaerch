@@ -18,7 +18,7 @@ afterEach(() => rmSync(workDir, { recursive: true, force: true }));
 
 const cfg = (): Config => ({
   apiBase: "https://x.example.com", token: "hlp_x", pollSeconds: 5, cacheDir: workDir,
-  python: { "qwen3-tts": "/nope/q", chatterbox: "/nope/c", "openvoice-v2": "/nope/o" }, ffmpeg: "ffmpeg", ffprobe: "ffprobe", hyperframes: "hyperframes", meetilyDb: "/nope/meeting_minutes.sqlite",
+  python: { "qwen3-tts": "/nope/q", chatterbox: "/nope/c", "openvoice-v2": "/nope/o" }, ffmpeg: "ffmpeg", ffprobe: "ffprobe", hyperframes: "hyperframes", chrome: "chrome", meetilyDb: "/nope/meeting_minutes.sqlite",
 });
 
 const flag = (args: string[], name: string): string | undefined => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
@@ -165,7 +165,7 @@ describe("render handler", () => {
       async claim() { return null; },
       async download(_id, key, to) { downloads.push(key); writeFileSync(to, `bytes of ${key}`); },
       async upload(_id, key, from, contentType) { uploads.push({ key, contentType, bytes: statSync(from).size }); },
-      async complete() {}, async fail() {},
+      async touch() {}, async complete() {}, async fail() {},
     };
     return { api, uploads, downloads };
   }

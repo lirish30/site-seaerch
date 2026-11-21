@@ -48,8 +48,8 @@ describe("the tool registry", () => {
     "run_audit", "log_time", "add_task", "add_task_comment", "add_note",
     // the money summary
     "get_money_summary",
-    // the two care tools
-    "get_care_overview", "list_incidents",
+    // the three care tools
+    "get_care_overview", "get_care_updates", "list_incidents",
   ];
   const registered = async (): Promise<string[]> => (await mcp("tools/list", {})).result.tools.map((t: { name: string }) => t.name);
 
@@ -267,5 +267,21 @@ describe("add_note", () => {
     expect(await activityOf(b.id, "note")).toHaveLength(0);
     const rows = await env.DB.prepare(`SELECT summary FROM agent_actions WHERE tool = 'add_note'`).all<{ summary: string }>();
     for (const row of rows.results) expect(row.summary).not.toContain("hunter2");
+  });
+});
+
+describe("propose_approval and care.updates (I1)", () => {
+  it("refuses care.updates: only the app drafts a care update wave, and nothing is written", async () => {
+    await import("../src/worker/approvals/careUpdates");
+    const count = async () => (await env.DB.prepare(`SELECT COUNT(*) AS n FROM approvals WHERE kind = 'care.updates'`).first<{ n: number }>())!.n;
+    const before = await count();
+    const r = await tool("propose_approval", {
+      kind: "care.updates", title: "Care updates", preview: "x",
+      payload: { batchId: "b1", wave: 0, sites: [{ siteId: "s1", domain: "x", updates: [{ id: "u1", type: "plugin", slug: "akismet", name: "a", from: "1", to: "2", risk: "minor", needsTick: false }] }] },
+    });
+    expect(r.isError).toBe(true);
+    expect(r.text).toMatch(/care\.updates/);
+    expect(await count()).toBe(before);
+    expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM agent_actions WHERE tool = 'propose_approval' AND summary LIKE '%refused care.updates%'`).first<{ n: number }>())!.n).toBeGreaterThan(0);
   });
 });

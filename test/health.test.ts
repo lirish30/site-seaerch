@@ -2,7 +2,7 @@ import { SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { computeHealth, type HealthInput } from "../src/worker/clients/health";
 
-const CLEAN: HealthInput = { openDown: false, domainDaysLeft: null, uptime30: null, checks30: 0, overdueInvoices: 0, held: false, pastDueSubscription: false, accessUnresolved: 0, waitingOnClient: false };
+const CLEAN: HealthInput = { openDown: false, updateFailed: false, certExpiring: false, domainDaysLeft: null, uptime30: null, checks30: 0, overdueInvoices: 0, held: false, pastDueSubscription: false, accessUnresolved: 0, waitingOnClient: false };
 const with_ = (p: Partial<HealthInput>): HealthInput => ({ ...CLEAN, ...p });
 
 describe("computeHealth", () => {
@@ -31,6 +31,12 @@ describe("computeHealth", () => {
       "Site is down", "Domain expires in 3 days", "Uptime 90.0% in 30 days", "An invoice is overdue", "Billing is on hold", "A subscription payment failed",
       "Site access is still missing", "Waiting on the client",
     ]);
+  });
+
+  it("an open update_failed takes 15 and an open cert_expiring takes 15", () => {
+    expect(computeHealth(with_({ updateFailed: true }))).toMatchObject({ score: 85, band: "good", reasons: ["Updates need a look"] });
+    expect(computeHealth(with_({ certExpiring: true }))).toMatchObject({ score: 85, reasons: ["Certificate is expiring"] });
+    expect(computeHealth(with_({ updateFailed: true, certExpiring: true, openDown: true }))).toMatchObject({ score: 40, band: "at_risk", reasons: ["Site is down", "Updates need a look", "Certificate is expiring"] });
   });
 
   it("uptime under 99.0 takes 20 and under 99.5 takes 10, only from 20 checks", () => {
@@ -85,7 +91,7 @@ describe("computeHealth", () => {
         for (const domainDaysLeft of [null, -40, 0, 7, 8, 30, 31, 400]) {
           const h = computeHealth({
             openDown: !!(bits & 1), domainDaysLeft, uptime30, checks30, overdueInvoices: bits & 2 ? 2 : 0, held: !!(bits & 4), pastDueSubscription: !!(bits & 8),
-            accessUnresolved: bits & 16 ? 3 : 0, waitingOnClient: !!(bits & 32),
+            accessUnresolved: bits & 16 ? 3 : 0, waitingOnClient: !!(bits & 32), updateFailed: !!(bits & 64), certExpiring: !!(bits & 128),
           });
           expect(Number.isInteger(h.score)).toBe(true);
           expect(h.score).toBeGreaterThanOrEqual(0);

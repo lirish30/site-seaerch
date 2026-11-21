@@ -81,7 +81,7 @@ describe("run and once", () => {
     }) as unknown as typeof fetch;
     const t = io();
     expect(await main(["once"], { configPath: path, fetch: fetchImpl, ...t.deps })).toBe(0);
-    expect(bodies).toEqual([{ kinds: ["voice.segment", "voice.sample", "render", "meetily.sync"] }]);
+    expect(bodies).toEqual([{ kinds: ["voice.segment", "voice.sample", "render", "meetily.sync", "care.inventory", "care.update", "care.certs"] }]);
   });
 
   it("names a config problem instead of crashing", async () => {
@@ -103,6 +103,20 @@ describe("doctor", () => {
     expect(text).toMatch(/NOT available/);
     expect(text).toMatch(/NOT FOUND/);
     expect(text).not.toContain(TOKEN);
+  });
+
+  it("reports the Chrome path and its --version, or not found (M6)", async () => {
+    const chrome = join(dir, "no-chrome");
+    writeFileSync(path, JSON.stringify({ apiBase: "https://agency.example.com", token: TOKEN, chrome, ffmpeg: join(dir, "no-ffmpeg"), ffprobe: join(dir, "no-ffprobe"), hyperframes: join(dir, "no-hf") }));
+    const t = io();
+    await main(["doctor"], { configPath: path, fetch: (async () => hello()) as unknown as typeof fetch, ...t.deps });
+    expect(t.out.find((l) => l.trim().startsWith("chrome"))).toBe(`  chrome        ${chrome}  not found (only needed for care updates)`);
+    const fake = join(dir, "fake-chrome");
+    writeFileSync(fake, "#!/bin/sh\necho 'Google Chrome 131.0.6778.86'\n", { mode: 0o755 });
+    writeFileSync(path, JSON.stringify({ apiBase: "https://agency.example.com", token: TOKEN, chrome: fake, ffmpeg: join(dir, "no-ffmpeg"), ffprobe: join(dir, "no-ffprobe"), hyperframes: join(dir, "no-hf") }));
+    const t2 = io();
+    await main(["doctor"], { configPath: path, fetch: (async () => hello()) as unknown as typeof fetch, ...t2.deps });
+    expect(t2.out.find((l) => l.trim().startsWith("chrome"))).toBe(`  chrome        ${fake}  Google Chrome 131.0.6778.86`);
   });
 
   it("an unknown command prints the usage and exits 2", async () => {

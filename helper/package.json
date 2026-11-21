@@ -1,6 +1,6 @@
 {
   "name": "siteline-helper",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "The Siteline Mac helper: polls the Worker for voice and render jobs and does them with local tools. No runtime dependencies.",

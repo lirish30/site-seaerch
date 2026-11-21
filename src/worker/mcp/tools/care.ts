@@ -2,14 +2,19 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { chunks } from "../../db/chunks";
 import { listIncidents } from "../../db/monitoring";
+import { WP_ARG } from "../../care/args";
+import { careUpdatesBoard } from "../../care/views";
 import { careFleet, incidentViews } from "../../monitoring/fleet";
 import type { ToolCtx } from "./context";
+
+const shown = (u: { slug: string; fromVersion: string; toVersion: string }): boolean =>
+  WP_ARG.slug.test(u.slug) && WP_ARG.version.test(u.fromVersion) && WP_ARG.version.test(u.toVersion);
 
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
 
 /**
- * The Care tools, read only: the fleet as the Care board shows it, and the incident list as the board's incident feed does.
+ * The Care tools, read only: the fleet as the Care board shows it, the Care updates board, and the incident list as the board's incident feed does.
  * Both answers are built here field by field from the fleet and incident views: no site address (only a domain), no vault name, no access note, no token, no Stripe id, no stored incident text.
  * Test clients and archived sites never appear. An agent sends only a flag, an id and a number, and nothing it sends is echoed.
  */
@@ -27,6 +32,26 @@ export function registerCareTools(server: McpServer, ctx: ToolCtx): void {
     }));
     await log("get_care_overview", `get_care_overview -> ${clients.length} clients`);
     return text({ clients });
+  });
+
+  server.registerTool("get_care_updates", {
+    description: "The Care updates board: this week's update batch (period, status) and, for each Care site, its domain, whether it can take updates (and why not), the updates it could take with their risk (security, major, mild, minor), whether each is held or due, the status of its last update run and its open update_failed incident. Read only. A plugin's name is never shown, and an update whose slug or version looks odd is only counted (skippedUpdates). Never an SSH alias, a folder, a page body or a picture.",
+    inputSchema: {},
+  }, async () => {
+    const board = await careUpdatesBoard(db, new Date());
+    const out = {
+      batch: board.batch ? { period: board.batch.period, kind: board.batch.kind, status: board.batch.status } : null,
+      sites: board.sites.map((s) => ({
+        siteId: s.siteId, domain: s.domain, canUpdate: s.canUpdate, why: s.why,
+        // Client-site text never goes out unchecked: only a slug and versions that match the fixed patterns are shown, and no name at all.
+        updates: s.updates.filter(shown).map((u) => ({ type: u.type, slug: u.slug, from: u.fromVersion, to: u.toVersion, risk: u.risk, held: u.held, due: u.due && !u.held })),
+        skippedUpdates: s.updates.filter((u) => !shown(u)).length,
+        lastRun: s.lastRun ? { status: s.lastRun.status, finishedAt: s.lastRun.finishedAt } : null,
+        updateFailed: s.openIncident ? { id: s.openIncident.id, openedAt: s.openIncident.openedAt, detail: s.openIncident.detail } : null,
+      })),
+    };
+    await log("get_care_updates", `get_care_updates -> ${out.sites.length} sites`);
+    return text(out);
   });
 
   server.registerTool("list_incidents", {

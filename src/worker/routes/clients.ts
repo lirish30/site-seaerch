@@ -4,7 +4,7 @@ import { getClientRecord, isClient, isTestClient, listClients } from "../clients
 import { logActivity } from "../db/activity";
 import { settleAccessItem } from "../db/onboardings";
 import {
-  ACCESS_KEYS, SiteConflictError, archiveSite, createSite, getSite, listAccess, setAccess, updateSite,
+  ACCESS_KEYS, SiteConflictError, SiteInputError, archiveSite, createSite, getSite, listAccess, setAccess, updateSite,
   type AccessKey, type AccessStatus, type Site, type SiteFields,
 } from "../db/sites";
 import type { Env } from "../env";
@@ -14,7 +14,7 @@ import { ACCESS_LABELS, cleanVaultName, isHttpUrl, noteProblem, vaultNameProblem
 
 /** Mounted at /api (behind requireAuth): /clients, /clients/:id, /clients/:id/sites, /sites/:id, /sites/:id/access/:key (and the same site routes under /clients/:id/sites/:siteId). */
 export const clientRoutes = new Hono<{ Bindings: Env }>();
-clientRoutes.onError((e, c) => (e instanceof SiteConflictError ? c.json({ error: e.message }, 409) : ownerOnError(e, c)));
+clientRoutes.onError((e, c) => (e instanceof SiteConflictError ? c.json({ error: e.message }, 409) : e instanceof SiteInputError ? c.json({ error: e.message }, 400) : ownerOnError(e, c)));
 
 const SHORT = 120;
 const URL_MAX = 300;
@@ -52,7 +52,14 @@ const FIELDS = {
   notes: siteNote.nullable(),
 };
 const SiteBody = z.object(FIELDS).partial().strict();
-const PatchSiteBody = SiteBody.refine((b) => Object.keys(b).length > 0, { message: "nothing to change" });
+// The Care updates access: checked again against fixed patterns by `updateSite` (a refusal there is a 400 with its sentence), because these reach a remote shell.
+const careWord = (label: string) => z.string(`${label} must be text.`).transform((s) => s.trim()).pipe(z.string().max(300, `${label} is too long.`)).transform((s) => s || null);
+const CARE_FIELDS = {
+  wpSshAlias: careWord("The SSH alias").nullable(),
+  wpPath: careWord("The WordPress folder").nullable(),
+  carePaths: z.array(z.string("Each page must be text.").max(300, "A page path is too long."), "Pages to check must be a list.").max(50, "Pick one to five pages to check."),
+};
+const PatchSiteBody = z.object({ ...FIELDS, ...CARE_FIELDS }).partial().strict().refine((b) => Object.keys(b).length > 0, { message: "nothing to change" });
 
 const vaultName = z.string("The item name must be text.")
   .superRefine((s, ctx) => { const p = vaultNameProblem(s); if (p) ctx.addIssue({ code: "custom", message: p }); }).transform(cleanVaultName);
@@ -72,7 +79,7 @@ const given = <T extends Record<string, unknown>>(b: T): Partial<SiteFields> => 
 /** What each site field is called in the activity line. Only these words are ever logged, never a value. */
 const FIELD_WORDS: Record<keyof SiteFields, string> = {
   url: "address", domain: "domain", cms: "platform", hostProvider: "host", registrar: "registrar", dnsProvider: "DNS provider", adminUrl: "admin address",
-  hostingTier: "hosting tier", accessMethod: "access method", notes: "notes",
+  hostingTier: "hosting tier", accessMethod: "access method", notes: "notes", wpSshAlias: "SSH alias", wpPath: "WordPress folder", carePaths: "pages to check",
 };
 
 /** The clients, by name; `?test=1` adds the rehearsal ones. */

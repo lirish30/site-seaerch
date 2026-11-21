@@ -4,6 +4,9 @@ import { ApiClient, HELPER_VERSION, TokenRevoked, versionAtLeast } from "./api.t
 import { configPath, loadConfig, writePairing, type Config } from "./config.ts";
 import { runProcess } from "./exec.ts";
 import { realMedia } from "./ffmpeg.ts";
+import { careCertsHandler } from "./handlers/careCerts.ts";
+import { careInventoryHandler } from "./handlers/careInventory.ts";
+import { careUpdateHandler } from "./handlers/careUpdate.ts";
 import { meetilySyncHandler } from "./handlers/meetilySync.ts";
 import { renderHandler } from "./handlers/render.ts";
 import { voiceSampleHandler } from "./handlers/voiceSample.ts";
@@ -32,11 +35,11 @@ export interface CliDeps {
 const stamp = (m: string) => `${new Date().toISOString()} ${m}`;
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** The jobs this helper can do: the cloned voice for a line, a clip of the voice test, the render, and the Meetily sync. */
+/** The jobs this helper can do: the cloned voice for a line, a clip of the voice test, the render, the Meetily sync, the read of a site's WordPress for care updates, the daily read of TLS certificate expiry dates, and the update of a site (backup, update, page checks, rollback). */
 export function buildHandlers(cfg: Config): JobHandler[] {
   const engines = createEngines(cfg);
   const media = realMedia(cfg);
-  return [voiceSegmentHandler(engines, media), voiceSampleHandler(engines, media), renderHandler(media), meetilySyncHandler()];
+  return [voiceSegmentHandler(engines, media), voiceSampleHandler(engines, media), renderHandler(media), meetilySyncHandler(), careInventoryHandler(), careUpdateHandler(), careCertsHandler()];
 }
 
 function abortableSleep(signal?: AbortSignal): (ms: number) => Promise<void> {
@@ -104,6 +107,9 @@ async function doctor(d: CliDeps, say: (m: string) => void): Promise<number> {
     if (v.startsWith("NOT FOUND") && name !== "hyperframes") bad = true; // ffmpeg and ffprobe are needed for every job; hyperframes only for renders
     say(`  ${name.padEnd(13)} ${v}`);
   }
+  // Chrome takes the before/after screenshots of a care update. Only care updates need it, so a missing Chrome is shown but never fails the check.
+  const chrome = await versionOf(cfg.chrome, "--version");
+  say(`  ${"chrome".padEnd(13)} ${cfg.chrome}  ${chrome.startsWith("NOT FOUND") ? "not found (only needed for care updates)" : chrome}`);
   // Meetily is optional (only the meeting sync needs it), so a missing database is shown but never fails the check.
   say(`meetily:       ${existsSync(cfg.meetilyDb) ? `database found at ${cfg.meetilyDb}` : `database NOT found at ${cfg.meetilyDb} (only needed for the meeting sync)`}`);
   return bad ? 1 : 0;

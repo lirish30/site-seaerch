@@ -1,9 +1,16 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { isTestClient } from "../clients/record";
-import { closeUnmonitoredIncidents, listIncidents, recentChecks, setMonitoring } from "../db/monitoring";
+import { closeUnmonitoredIncidents, getIncident, listIncidents, recentChecks, setMonitoring } from "../db/monitoring";
+import { getPageCheck, getRun, setReview, setUpdateFlag } from "../db/careUpdates";
 import { getSite, type Site } from "../db/sites";
 import type { Env } from "../env";
+import { CareRunRefused, onRunDone, startBatchNow, startSingleRun } from "../care/batch";
+import { closeUpdateIncident } from "../care/incidents";
+import { careUpdatesBoard, runDetail, updateView } from "../care/views";
+import { serveObject } from "../video/media";
+import { cancelTasksFor } from "../queue/db";
+import { CARE_REVIEW_TARGET } from "../queue/careReview";
 import { careClientIds, careFleet, incidentViews, monitoringViews, safeProbeError } from "../monitoring/fleet";
 import { monitorableUrl } from "../monitoring/probe";
 import { bodyOf, NOT_FOUND, ownerOnError, type Ctx } from "../projects/http";
@@ -61,4 +68,85 @@ careRoutes.put("/sites/:id/monitoring", async (c) => {
   if (!body.enabled) await closeUnmonitoredIncidents(c.env.DB, now.toISOString(), site.id);
   const [view] = await monitoringViews(c.env.DB, [updated], await careClientIds(c.env.DB, [updated.businessId]), now);
   return c.json({ site: view });
+});
+
+/**
+ * Logan looked at a page that changed after updates and it is fine: pending, unsure or broken (his look overrides Claude's) becomes `logan_ok`, Claude's open look at it is closed and the batch moves on.
+ * 404 for a page check nobody has; 409 when it is fine, already `logan_ok` or was never flagged. An open incident stays open: Logan closes it himself.
+ */
+careRoutes.post("/care/checks/:id/ok", async (c) => {
+  const check = await getPageCheck(c.env.DB, c.req.param("id"));
+  if (!check) return c.json(NOT_FOUND, 404);
+  if (!(await setReview(c.env.DB, check.id, ["pending", "unsure", "broken"], "logan_ok"))) return c.json({ error: "This page is not waiting for a look or open to your OK." }, 409);
+  await cancelTasksFor(c.env.DB, CARE_REVIEW_TARGET, check.id);
+  const run = await getRun(c.env.DB, check.runId);
+  if (run) await onRunDone(c.env, run.batchId);
+  return c.json({ ok: true });
+});
+
+// --- Care updates (Plan 12) --------------------------------------------------------------------------------------------------------------------------------------------
+
+/** This week's batch and every Care site with its updates, last run and open update incident. Never the SSH alias, the folder, a storage key or the backup directory. */
+careRoutes.get("/care/updates", async (c) => c.json(await careUpdatesBoard(c.env.DB, new Date())));
+
+const FlagBody = z.object({ held: z.boolean("held must be true or false.").optional(), security: z.boolean("security must be true or false.").optional() }).strict()
+  .refine((b) => b.held !== undefined || b.security !== undefined, { message: "nothing to change" });
+
+/** Logan's two marks on one update: hold it back, or call it a security fix (taken at once, whatever its size). An unknown id is 404. */
+careRoutes.put("/care/updates/:id", async (c) => {
+  const body = await bodyOf(c, FlagBody);
+  if (body instanceof Response) return body;
+  const id = c.req.param("id");
+  let update = null;
+  if (body.held !== undefined) update = await setUpdateFlag(c.env.DB, id, "held", body.held);
+  if (body.security !== undefined && (body.held === undefined || update)) update = await setUpdateFlag(c.env.DB, id, "security", body.security);
+  if (!update) return c.json(NOT_FOUND, 404);
+  return c.json({ update: updateView(update, new Date()) });
+});
+
+/** Starts this week's batch now, on any weekday. 409 when this week's batch already exists. */
+careRoutes.post("/care/batches", async (c) => {
+  const r = await startBatchNow(c.env, new Date());
+  if (!r.created) return c.json({ error: "This week's batch is already started." }, 409);
+  return c.json({ batch: r.batch, queued: r.queued }, 201);
+});
+
+/** Logan runs one site by hand, any day (a rehearsal site too). 404 for an unknown site; 409 with a plain sentence when the site cannot take updates or already has a run open. */
+careRoutes.post("/sites/:id/care-run", async (c) => {
+  const site = await getSite(c.env.DB, c.req.param("id"));
+  if (!site) return c.json(NOT_FOUND, 404);
+  try {
+    return c.json({ batch: await startSingleRun(c.env, site.id, new Date()) }, 201);
+  } catch (e) {
+    if (e instanceof CareRunRefused) return c.json({ error: e.message }, 409);
+    throw e;
+  }
+});
+
+/** One run with its page checks. Pictures are links to the owner's own picture route; the backup file name is shown here. */
+careRoutes.get("/care/runs/:id", async (c) => {
+  const run = await getRun(c.env.DB, c.req.param("id"));
+  if (!run) return c.json(NOT_FOUND, 404);
+  return c.json({ run: await runDetail(c.env.DB, run) });
+});
+
+const PICTURE_KEY = /^care\/[A-Za-z0-9-]{1,64}\/\d{1,2}-(before|after|diff)\.jpg$/;
+
+/** Streams one of a page check's three pictures. Only a key that belongs to that page check and has the care picture shape is ever read from storage. */
+careRoutes.get("/care/pictures/:checkId/:kind", async (c) => {
+  const kind = c.req.param("kind");
+  const check = await getPageCheck(c.env.DB, c.req.param("checkId"));
+  const key = !check ? null : kind === "before" ? check.beforeKey : kind === "after" ? check.afterKey : kind === "diff" ? check.diffKey : null;
+  if (!check || !key || !PICTURE_KEY.test(key) || !key.startsWith(`care/${check.runId}/`)) return c.json(NOT_FOUND, 404);
+  return serveObject(c.env.RAW, key, "image/jpeg", c.req.header("range") ?? null);
+});
+
+/** Logan closes an `update_failed` incident once he has dealt with it. The other kinds close themselves: 409. Unknown is 404; an incident already closed is 409. */
+careRoutes.post("/incidents/:id/close", async (c) => {
+  const incident = await getIncident(c.env.DB, c.req.param("id"));
+  if (!incident) return c.json(NOT_FOUND, 404);
+  if (incident.kind !== "update_failed") return c.json({ error: "This kind of incident closes by itself when the problem ends." }, 409);
+  if (incident.closedAt !== null) return c.json({ error: "This incident is already closed." }, 409);
+  await closeUpdateIncident(c.env, incident.siteId, new Date());
+  return c.json({ ok: true });
 });

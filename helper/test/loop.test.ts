@@ -12,7 +12,7 @@ afterEach(() => rmSync(cacheDir, { recursive: true, force: true }));
 
 const cfg = (): Config => ({
   apiBase: "https://x.example.com", token: "hlp_x", pollSeconds: 5, cacheDir,
-  python: { "qwen3-tts": "p", chatterbox: "p", "openvoice-v2": "p" }, ffmpeg: "ffmpeg", ffprobe: "ffprobe", hyperframes: "hyperframes", meetilyDb: "/nope/meeting_minutes.sqlite",
+  python: { "qwen3-tts": "p", chatterbox: "p", "openvoice-v2": "p" }, ffmpeg: "ffmpeg", ffprobe: "ffprobe", hyperframes: "hyperframes", chrome: "chrome", meetilyDb: "/nope/meeting_minutes.sqlite",
 });
 const job = (id: string, kind = "voice.segment"): ClaimedJob => ({ id, kind, attempts: 1, payload: {}, inputs: [], outputs: [] });
 
@@ -31,6 +31,7 @@ function fakeApi(script: (ClaimedJob | null | Error)[]) {
       return n;
     },
     async download() {}, async upload() {},
+    async touch() {},
     async complete(id, result) { completes.push({ id, result }); },
     async fail(id, error) { fails.push({ id, error }); },
   };

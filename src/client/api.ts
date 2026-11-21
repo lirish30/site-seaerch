@@ -2,6 +2,8 @@ import type { PublicSubscription } from "../worker/billing/checkout";
 import type { ClientRecord, ClientRow } from "../worker/clients/record";
 import type { AccessItem, AccessKey, AccessStatus, Site, SiteFields } from "../worker/db/sites";
 import type { CareRow, IncidentView, SiteMonitoringView } from "../worker/monitoring/fleet";
+import type { CareRunDetail, CareUpdateView, CareUpdatesBoard } from "../worker/care/views";
+import type { CareBatch } from "../worker/db/careUpdates";
 export class ApiError extends Error { constructor(public status: number, message: string, public fields: string[] = [], public code = "", public body: unknown = undefined) { super(message); } }
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -58,6 +60,20 @@ export const careApi = {
   incidents: (businessId: string) => api.get<{ incidents: IncidentView[] }>(`/incidents?businessId=${encodeURIComponent(businessId)}`).then((r) => r.incidents),
   /** Switches monitoring on or off for one site. A site whose address can't be monitored is a 409 with a plain sentence. */
   setMonitoring: (siteId: string, enabled: boolean) => api.put<{ site: SiteMonitoringView }>(`/sites/${encodeURIComponent(siteId)}/monitoring`, { enabled }).then((r) => r.site),
+  /** This week's batch and every Care site with its updates, last run and open update incident (Plan 12). */
+  updates: () => api.get<CareUpdatesBoard>("/care/updates"),
+  /** Hold an update back, or mark it as a security fix. Only the keys given change. */
+  setUpdateFlag: (id: string, flags: { held?: boolean; security?: boolean }) => api.put<{ update: CareUpdateView }>(`/care/updates/${encodeURIComponent(id)}`, flags).then((r) => r.update),
+  /** Starts this week's batch now. 409 with a plain sentence when it is already started. */
+  startBatch: () => api.post<{ batch: CareBatch; queued: number }>("/care/batches"),
+  /** Plans updates for one site by hand; it makes an approval. 409 with a plain sentence when the site can't take updates or has a run open. */
+  runSite: (siteId: string) => api.post<{ batch: CareBatch }>(`/sites/${encodeURIComponent(siteId)}/care-run`).then((r) => r.batch),
+  /** One run with its page checks and picture links. */
+  run: (id: string) => api.get<{ run: CareRunDetail }>(`/care/runs/${encodeURIComponent(id)}`).then((r) => r.run),
+  /** "Looks fine": Logan's own look at a page that is pending, unsure or broken. */
+  pageOk: (checkId: string) => api.post<{ ok: true }>(`/care/checks/${encodeURIComponent(checkId)}/ok`),
+  /** Closes an update_failed incident once Logan has dealt with it. */
+  closeIncident: (id: string) => api.post<{ ok: true }>(`/incidents/${encodeURIComponent(id)}/close`),
 };
 
 // The client's subscription page (`/s/<token>`). Public: it deliberately bypasses `req`, whose 401 handling sends the visitor to the owner's login. No cookie is sent.

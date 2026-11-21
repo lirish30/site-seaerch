@@ -13,7 +13,7 @@ const TIERS: [HostingTier, string][] = [["logan_hosted", "Hosted by you"], ["cli
 const METHODS: [AccessMethod, string][] = [["ssh_wpcli", "SSH with WP-CLI"], ["mainwp", "MainWP"], ["none", "None"], ["unknown", "Not known yet"]];
 const label = <T extends string>(list: [T, string][], v: T): string => list.find(([k]) => k === v)?.[1] ?? v;
 
-type TextKey = "url" | "domain" | "hostProvider" | "registrar" | "dnsProvider" | "adminUrl" | "notes";
+type TextKey = "url" | "domain" | "hostProvider" | "registrar" | "dnsProvider" | "adminUrl" | "notes" | "wpSshAlias" | "wpPath" | "carePaths";
 const TEXT: { key: TextKey; label: string; type?: "url"; multiline?: boolean; hint?: string }[] = [
   { key: "url", label: "Site address", type: "url", hint: "Starts with http:// or https://. The domain is worked out from it." },
   { key: "domain", label: "Domain" },
@@ -22,15 +22,24 @@ const TEXT: { key: TextKey; label: string; type?: "url"; multiline?: boolean; hi
   { key: "registrar", label: "Registrar" },
   { key: "dnsProvider", label: "DNS provider" },
   { key: "notes", label: "Notes", multiline: true },
+  { key: "wpSshAlias", label: "SSH host alias (from your ~/.ssh/config)", hint: "The Host name only, never a password or key." },
+  { key: "wpPath", label: "WordPress folder on the server", hint: "A plain path starting with /, like /var/www/html." },
+  { key: "carePaths", label: "Pages to check (one per line, up to 5)", multiline: true, hint: "Each starts with /, like / or /contact." },
 ];
+/** The pages to check as one per line: blank lines and spaces around a line are dropped. */
+const pagesOf = (v: string): string[] => v.split("\n").map((l) => l.trim()).filter(Boolean);
+/** A field as the form compares and saves it: the pages list is normalised line by line, every other field is trimmed. */
+const norm = (k: TextKey, v: string): string => (k === "carePaths" ? pagesOf(v).join("\n") : v.trim());
 const draftOf = (s: Site): Record<TextKey, string> => ({
   url: s.url ?? "", domain: s.domain ?? "", adminUrl: s.adminUrl ?? "", hostProvider: s.hostProvider ?? "", registrar: s.registrar ?? "", dnsProvider: s.dnsProvider ?? "", notes: s.notes ?? "",
+  wpSshAlias: s.wpSshAlias ?? "", wpPath: s.wpPath ?? "", carePaths: (s.carePaths ?? []).join("\n"),
 });
 
 /** The refusal to show before the request goes out, in the server's words for the same checks, or null. Never repeats what was typed. */
 function localProblem(d: Record<TextKey, string>, changed: TextKey[]): string | null {
   for (const k of changed) {
     const v = d[k].trim();
+    if (k === "carePaths") { const n = pagesOf(d[k]).length; if (n < 1 || n > 5) return "Pick one to five pages to check, one per line."; continue; }
     if (!v) continue;
     if (k === "url" || k === "adminUrl") { const p = addressProblem(v, k === "url" ? "The site address" : "The admin address"); if (p) return p; }
     if (k === "notes") { const p = noteProblem(v); if (p) return p; }
@@ -59,9 +68,9 @@ export default function SitePanel({ clientId, site, access, flags, onChanged }: 
   // The record was reloaded (a choice was made, or a save went through): fields you have not touched follow the server (a changed address re-works the domain); fields you are typing in stay as typed.
   if (seen !== site.updatedAt) {
     setSeen(site.updatedAt); setBase(original);
-    setDraft((d) => Object.fromEntries(TEXT.map((f) => [f.key, d[f.key].trim() === base[f.key] ? original[f.key] : d[f.key]])) as Record<TextKey, string>);
+    setDraft((d) => Object.fromEntries(TEXT.map((f) => [f.key, norm(f.key, d[f.key]) === norm(f.key, base[f.key]) ? original[f.key] : d[f.key]])) as Record<TextKey, string>);
   }
-  const dirty = TEXT.map((f) => f.key).filter((k) => draft[k].trim() !== original[k]);
+  const dirty = TEXT.map((f) => f.key).filter((k) => norm(k, draft[k]) !== norm(k, original[k]));
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -72,7 +81,10 @@ export default function SitePanel({ clientId, site, access, flags, onChanged }: 
     setBusy(true); setError("");
     try {
       const patch: Partial<SiteFields> = {};
-      for (const k of dirty) patch[k] = draft[k].trim() || null;
+      for (const k of dirty) {
+        if (k === "carePaths") patch.carePaths = pagesOf(draft[k]);
+        else patch[k] = draft[k].trim() || null;
+      }
       const { site: next } = await clientsApi.patchSite(clientId, site.id, patch);
       setDraft(draftOf(next)); setBase(draftOf(next));
       await onChanged();
