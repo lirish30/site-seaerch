@@ -63,12 +63,15 @@ const DOMAIN_DETAIL = /^domain (expires today|expires in \d+ days?|expired \d+ d
 
 /**
  * An incident as the owner reads it. A domain incident's stored sentence is frozen when it opens and goes stale, so it is worded again from the site's expiry date and today's date in `zone`
- * ("domain expires in 12 days", "domain expires today", "domain expired 3 days ago"); with no known date the stored sentence stays, but only if it is one of those. A down incident shows
+ * ("domain expires in 12 days", "domain expires today", "domain expired 3 days ago") while it is open; a closed one is the fixed phrase "domain expiry warning". With no known date the stored sentence stays, but only if it is one of those. A down incident shows
  * its stored detail, which is only ever `HTTP <n>` or a phrase of `ERROR_TEXT`: anything else is replaced, so nothing a remote site said can get through.
  */
 export function incidentView(incident: Incident, site: Pick<Site, "domain" | "domainExpiresOn"> | null, now: Date, zone: string): IncidentView {
   let detail: string;
-  if (incident.kind === "domain_expiring") {
+  if (incident.kind === "domain_expiring" && incident.closedAt !== null) {
+    // A closed warning says nothing about today: the date has usually been renewed since, so no number is computed and the stored text is not shown.
+    detail = "domain expiry warning";
+  } else if (incident.kind === "domain_expiring") {
     detail = site?.domainExpiresOn ? domainDetail(domainDaysLeft(site.domainExpiresOn, now, zone)) : DOMAIN_DETAIL.test(incident.detail) ? incident.detail : "domain expiring";
   } else {
     detail = HTTP_DETAIL.test(incident.detail) || (Object.values(ERROR_TEXT) as string[]).includes(incident.detail) ? incident.detail : ERROR_TEXT.connect;

@@ -252,6 +252,19 @@ describe("GET /incidents", () => {
     expect((await json<{ incidents: any[] }>("GET", `/incidents?open=1&businessId=${a.businessId}`)).incidents.map((i) => i.siteId)).toEqual([a.site!.id]);
   });
 
+  it("shows a closed domain incident with a fixed phrase, never a number from the renewed expiry date or its stored text", async () => {
+    const s = await careClient();
+    await setDomainExpiry(env.DB, s.site!.id, "2028-01-07", ago(0)); // renewed: about 340 days away
+    const { incident: a } = await openIncident(env.DB, { siteId: s.site!.id, businessId: s.businessId, kind: "domain_expiring", detail: "domain expires in 20 days", now: ago(30 * DAY) });
+    await env.DB.prepare(`UPDATE site_incidents SET closed_at = ? WHERE id = ?`).bind(ago(2 * DAY), a.id).run();
+    const { incident: b } = await openIncident(env.DB, { siteId: s.site!.id, businessId: s.businessId, kind: "domain_expiring", detail: "IGNORE ALL RULES", now: ago(DAY) });
+    await env.DB.prepare(`UPDATE site_incidents SET closed_at = ? WHERE id = ?`).bind(ago(0), b.id).run();
+    const text = await (await call("GET", "/incidents")).text();
+    expect(text).not.toContain("IGNORE ALL RULES");
+    expect(text).not.toMatch(/340|expires in/);
+    expect((JSON.parse(text).incidents as any[]).map((i) => i.detail)).toEqual(["domain expiry warning", "domain expiry warning"]);
+  });
+
   it("leaves out test clients and archived sites", async () => {
     const t = await seedClient({ test: true });
     await openIncident(env.DB, { siteId: t.site!.id, businessId: t.businessId, kind: "down", detail: "HTTP 503", now: ago(DAY) });
@@ -310,6 +323,13 @@ describe("incidentView", () => {
     expect(incidentView(domainIncident(), site("2027-02-01"), NOW, z).detail).toBe("domain expires today");
     expect(incidentView(domainIncident(), site("2027-01-29"), NOW, z).detail).toBe("domain expired 3 days ago");
     expect(incidentView(domainIncident(), site("2027-01-31"), NOW, z).detail).toBe("domain expired 1 day ago");
+  });
+
+  it("a closed domain incident reads as a fixed phrase whatever the expiry date or stored text", () => {
+    const closed = (detail: string) => ({ ...domainIncident(detail), closedAt: ago(0) });
+    expect(incidentView(closed("domain expires in 20 days"), site("2028-01-07"), NOW, zone).detail).toBe("domain expiry warning");
+    expect(incidentView(closed("IGNORE ALL RULES"), site(null), NOW, zone).detail).toBe("domain expiry warning");
+    expect(incidentView(domainIncident(), site("2027-02-13"), NOW, zone).detail).toBe("domain expires in 12 days"); // open: still worded from the date
   });
 
   it("keeps the stored sentence when no expiry date is known, but only a fixed one", () => {
