@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
-import { useNames } from "../billingData";
 import Icon from "../components/Icon";
 import { agingRows, barWidths, costPct, daysLate, fmtUsd, freedomLine, hoursLabel, monthLabel, targetCentsFrom, usdToCents } from "../moneyView";
 import { workError } from "../workData";
@@ -56,7 +55,6 @@ export default function Money() {
     catch { setFailed(true); }
   }, []);
   useEffect(() => { void load(); }, [load]);
-  const names = useNames(d ? d.ar.oldest.map((o) => o.businessId) : []);
 
   const revenueBars = d ? barWidths(d.revenue.months.map((m) => m.cents)) : [];
   const aging = d ? agingRows(d.ar) : [];
@@ -123,7 +121,7 @@ export default function Money() {
                   <ul className="mn-list">
                     {d.ar.oldest.map((o) => (
                       <li key={o.invoiceId}>
-                        <Link to={`/leads/${o.businessId}`}>{names.client(o.businessId)}</Link>
+                        <Link to={`/leads/${o.businessId}`}>{o.businessName || "A client"}</Link>
                         <span className="mn-meta">{fmtUsd(o.amountCents)}, {daysLate(o.daysOverdue)}</span>
                       </li>
                     ))}

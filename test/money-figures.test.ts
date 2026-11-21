@@ -229,6 +229,23 @@ describe("bookedNotBilled", () => {
     expect(r.cents).toBe(105_000);
   });
 
+  it("an item with nothing left has no row, and the total does not change", () => {
+    const r = bookedNotBilled({
+      documents: [doc({ id: "d1", businessId: "b1", milestoneCents: 100_000 }), doc({ id: "d2", businessId: "b2", milestoneCents: 80_000 }), doc({ id: "d3", businessId: "b3", milestoneCents: 50_000 })],
+      signedOrders: [{ id: "co1", businessId: "b3", priceCents: 10_000, paidAt: "2027-02-01T00:00:00.000Z" }],
+      invoices: [
+        paid("2027-01-01T00:00:00.000Z", { documentId: "d1", kind: "milestone", amountCents: 100_000 }), // billed in full
+        paid("2027-01-01T00:00:00.000Z", { documentId: "d3", kind: "milestone", amountCents: 60_000 }), // overbilled, and its change order is paid by hand
+      ],
+    });
+    expect(r.cents).toBe(80_000);
+    expect(r.rows).toEqual([{ businessId: "b2", bookedCents: 80_000, billedCents: 0, cents: 80_000 }]);
+  });
+
+  it("a client whose only booked money is all billed has no row", () => {
+    expect(bookedNotBilled({ documents: [doc()], signedOrders: [], invoices: [paid("2027-01-01T00:00:00.000Z", { documentId: "d1", kind: "milestone", amountCents: 200_000 })] })).toEqual({ cents: 0, rows: [] });
+  });
+
   it("nothing signed is 0 with no rows", () => {
     expect(bookedNotBilled({ documents: [], signedOrders: [], invoices: [] })).toEqual({ cents: 0, rows: [] });
   });

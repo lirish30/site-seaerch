@@ -20,7 +20,7 @@ export interface MoneyDashboard {
   zone: string;
   /** Cash received. `months` is six calendar months ending with the current one, oldest first; `monthCents` is the current one. */
   revenue: { monthCents: number; months: { month: string; cents: number }[] };
-  ar: ReturnType<typeof arAging>;
+  ar: Omit<ReturnType<typeof arAging>, "oldest"> & { oldest: (ReturnType<typeof arAging>["oldest"][number] & { businessName: string })[] };
   mrr: { cents: number; subscriptions: number; churnedLast30Cents: number; churnRatePct: number | null };
   bookedNotBilled: { cents: number; rows: (ReturnType<typeof bookedNotBilled>["rows"][number] & { businessName: string })[] };
   /** One row per live or finished project that was sold for something, largest sale first. */
@@ -43,6 +43,20 @@ function scheduleCents(content: string): { milestoneCents: number; prepaidCents:
 }
 const LTV_ROWS = 10;
 const placeholders = (n: number) => Array.from({ length: n }, () => "?").join(", ");
+/** D1 allows 100 bound values in one statement: ask for names 50 ids at a time. */
+const NAME_CHUNK = 50;
+
+/** Business names by id, read in chunks so a long list of clients cannot pass D1's bind limit. */
+async function businessNames(db: Env["DB"], ids: string[]): Promise<Map<string, string>> {
+  const unique = [...new Set(ids)];
+  const names = new Map<string, string>();
+  for (let i = 0; i < unique.length; i += NAME_CHUNK) {
+    const chunk = unique.slice(i, i + NAME_CHUNK);
+    const { results } = await db.prepare(`SELECT id, name FROM businesses WHERE id IN (${placeholders(chunk.length)})`).bind(...chunk).all<{ id: string; name: string }>();
+    for (const r of results) names.set(r.id, r.name);
+  }
+  return names;
+}
 
 /**
  * Everything on the money page, as of `now`. Each table is read once and filtered in memory (the client count is small); only the time totals are read per project.
@@ -97,16 +111,15 @@ export async function moneyDashboard(env: Env, now: Date): Promise<MoneyDashboar
   const paidBy = new Map<string, number>();
   for (const i of invoices) if (i.status === "paid") paidBy.set(i.businessId, (paidBy.get(i.businessId) ?? 0) + i.amountCents);
   const top = [...paidBy].filter(([, cents]) => cents > 0).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).slice(0, LTV_ROWS);
-  const bookedIds = booked.rows.map((r) => r.businessId);
-  const nameIds = [...new Set([...top.map(([id]) => id), ...bookedIds])];
-  const names = new Map<string, string>(nameIds.length === 0 ? [] : (await db.prepare(`SELECT id, name FROM businesses WHERE id IN (${placeholders(nameIds.length)})`).bind(...nameIds).all<{ id: string; name: string }>()).results.map((r) => [r.id, r.name]));
+  const ar = arAging(invoices, today);
+  const names = await businessNames(db, [...top.map(([id]) => id), ...booked.rows.map((r) => r.businessId), ...ar.oldest.map((o) => o.businessId)]);
   const nameOf = (id: string) => names.get(id) ?? "";
 
   const status = await spendStatus(db, now);
   return {
     asOf: now.toISOString(), zone,
     revenue: { monthCents: months.at(-1)?.cents ?? 0, months },
-    ar: arAging(invoices, today),
+    ar: { ...ar, oldest: ar.oldest.map((o) => ({ ...o, businessName: nameOf(o.businessId) })) },
     mrr: { cents: mrrCents, subscriptions: live.length, ...churn(subs, now) },
     bookedNotBilled: { cents: booked.cents, rows: booked.rows.map((r) => ({ ...r, businessName: nameOf(r.businessId) })) },
     profit,

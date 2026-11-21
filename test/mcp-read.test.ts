@@ -296,13 +296,14 @@ describe("list_meetings and get_meeting", () => {
 
 describe("get_money_summary", () => {
   it("returns the money dashboard (test clients left out) and writes one agent action", async () => {
-    await seedClient({ subs: [{ key: "care", monthlyCents: 12_900 }], invoice: { cents: 100_000, dueOn: "2020-01-01" } });
+    const real = await seedClient({ subs: [{ key: "care", monthlyCents: 12_900 }], invoice: { cents: 100_000, dueOn: "2020-01-01" } });
     await seedClient({ test: true, subs: [{ key: "care", monthlyCents: 55_500 }], invoice: { cents: 777_000, dueOn: "2020-01-01" } });
     const before = await actionCount("get_money_summary");
     const got = await ok<any>("get_money_summary", {});
     expect(await actionCount("get_money_summary")).toBe(before + 1);
     expect(got.mrr).toMatchObject({ cents: 12_900, subscriptions: 1 });
     expect(got.ar.openCents).toBe(100_000);
+    expect(got.ar.oldest).toEqual([expect.objectContaining({ businessId: real.businessId, amountCents: 100_000, businessName: expect.stringMatching(/\S/) })]); // the client is named, as on the page
     expect({ ...got, asOf: "" }).toEqual({ ...JSON.parse(JSON.stringify(await moneyDashboard(env, new Date()))), asOf: "" });
   });
 });

@@ -13,6 +13,7 @@ import { moneyDashboard } from "../src/worker/money/dashboard";
 import { serviceSpend, spendStatus } from "../src/worker/spend";
 import { addChangeOrder, seedClient } from "./fixtures/clients";
 import { proposal } from "./fixtures/documents";
+import { expectFiniteNumbers } from "./fixtures/numbers";
 import { newTask } from "./fixtures/projects";
 
 const NOW = new Date("2027-03-15T20:00:00.000Z");
@@ -59,7 +60,7 @@ describe("moneyDashboard", () => {
       bookedNotBilled: { cents: 0, rows: [] }, profit: [], ltv: [], freedom: { targetCents: 500_000, mrrCents: 0, pct: 0, gapCents: 500_000 },
     });
     expect(d.revenue.months.map((m) => m.month)).toEqual(["2026-10", "2026-11", "2026-12", "2027-01", "2027-02", "2027-03"]);
-    expect(JSON.stringify(d)).not.toMatch(/NaN|Infinity|null,"gapCents":-/);
+    expectFiniteNumbers(d); // every number anywhere in the dashboard, not a search of its JSON text (JSON turns NaN into null)
     expect(JSON.parse(JSON.stringify(d))).toEqual(d);
   });
 
@@ -149,6 +150,49 @@ describe("moneyDashboard", () => {
     const d = await moneyDashboard(env, NOW);
     expect(d.bookedNotBilled.cents).toBe(200_000 + 30_000);
     expect(d.bookedNotBilled.rows).toEqual([{ businessId: s.businessId, businessName: expect.any(String), bookedCents: 330_000, billedCents: 100_000, cents: 230_000 }]);
+  });
+
+  it("a fully billed client has no booked-not-billed row, so the page shows its empty state", async () => {
+    const s = await seedClient({ invoice: { cents: 100_000 } });
+    await schedule(s.documentId, 100_000);
+    const d = await moneyDashboard(env, NOW);
+    expect(d.bookedNotBilled).toEqual({ cents: 0, rows: [] });
+    // Another client with money left still shows, alone.
+    const t = await seedClient();
+    await schedule(t.documentId, 40_000);
+    expect((await moneyDashboard(env, NOW)).bookedNotBilled.rows).toEqual([{ businessId: t.businessId, businessName: expect.any(String), bookedCents: 40_000, billedCents: 0, cents: 40_000 }]);
+  });
+
+  it("names every client on the page even when there are more than 100 of them (D1 allows 100 bound values per query)", async () => {
+    const clients = [];
+    for (let i = 0; i < 120; i++) {
+      const s = await seedClient({ project: false, site: false });
+      await schedule(s.documentId, 10_000 + i);
+      clients.push(s);
+    }
+    const d = await moneyDashboard(env, NOW);
+    expect(d.bookedNotBilled.rows).toHaveLength(120);
+    const names = await env.DB.prepare(`SELECT id, name FROM businesses`).all<{ id: string; name: string }>();
+    const byId = new Map(names.results.map((r) => [r.id, r.name]));
+    for (const row of d.bookedNotBilled.rows) {
+      expect(row.businessName).not.toBe("");
+      expect(row.businessName).toBe(byId.get(row.businessId));
+    }
+    expect(d.bookedNotBilled.cents).toBe(clients.reduce((sum, _c, i) => sum + 10_000 + i, 0));
+    expect(JSON.parse(JSON.stringify(await api("/money")))).toMatchObject({ bookedNotBilled: { rows: expect.any(Array) } }); // and the route does not 500
+  }, 60_000);
+
+  it("names the client on each of the oldest unpaid invoices, with the same chunked lookup", async () => {
+    const ago = (days: number) => addDays(calendarDateIn(NOW, "America/Los_Angeles"), -days);
+    const a = await seedClient({ invoice: { cents: 40_000, dueOn: ago(20) } });
+    const b = await seedClient({ invoice: { cents: 5_000, dueOn: ago(3) } });
+    const d = await moneyDashboard(env, NOW);
+    const nameOf = async (id: string) => (await env.DB.prepare(`SELECT name FROM businesses WHERE id = ?`).bind(id).first<{ name: string }>())!.name;
+    expect(d.ar.oldest).toEqual([
+      expect.objectContaining({ businessId: a.businessId, businessName: await nameOf(a.businessId), amountCents: 40_000 }),
+      expect.objectContaining({ businessId: b.businessId, businessName: await nameOf(b.businessId), amountCents: 5_000 }),
+    ]);
+    expect(d.ar.oldest[0].businessName).not.toBe("");
   });
 
   it("a change order paid by hand, with no invoice, is not booked-not-billed, and profit agrees it is paid", async () => {

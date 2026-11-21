@@ -87,7 +87,7 @@ const BILLED_KINDS: readonly InvoiceKind[] = ["deposit", "milestone", "change_or
 /**
  * Money that is signed but not yet invoiced. Each signed proposal (its one-time milestones) and each signed change order (its price) is booked; the invoices made for it (open, failed or paid; a draft or void one
  * is not billing yet) are billed. The proposal is billed by its deposit and milestone invoices, the change order by its own invoice. What is left is never below 0 for an item, so billing more than was booked on one
- * cannot hide money still unbilled on another. Rows are per client, largest first: `bookedCents` and `billedCents` are the sums as they stand (so an overbilled item shows its true billed), and `cents` is the sum of what each item has left.
+ * cannot hide money still unbilled on another. Rows are per client, largest first, and a client with nothing left has no row (the total does not change): `bookedCents` and `billedCents` are the sums as they stand (so an overbilled item shows its true billed), and `cents` is the sum of what each item has left.
  * Two things are not billing even though they sit on the invoices: a proposal's deposit invoice also carries the first Care month when that month is prepaid at signing (`prepaidCents`, taken off the proposal's billed total when it has a
  * deposit invoice, never below 0), and a change order paid by hand (`paidAt` set, no invoice) is billed in full. Subscriptions are not in it.
  */
@@ -113,7 +113,7 @@ export function bookedNotBilled(o: {
   };
   for (const d of o.documents) if (d.milestoneCents > 0) add(d.businessId, d.milestoneCents, Math.max(0, (byDocument.get(d.id) ?? 0) - (hasDeposit.has(d.id) ? d.prepaidCents ?? 0 : 0)));
   for (const c of o.signedOrders) if (c.priceCents > 0) add(c.businessId, c.priceCents, c.paidAt ? Math.max(c.priceCents, byOrder.get(c.id) ?? 0) : byOrder.get(c.id) ?? 0);
-  const list = [...rows.values()].sort((a, b) => b.cents - a.cents || (a.businessId < b.businessId ? -1 : 1));
+  const list = [...rows.values()].filter((r) => r.cents > 0).sort((a, b) => b.cents - a.cents || (a.businessId < b.businessId ? -1 : 1));
   return { cents: list.reduce((sum, r) => sum + r.cents, 0), rows: list };
 }
 
