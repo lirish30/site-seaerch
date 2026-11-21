@@ -11,13 +11,14 @@ const MAX_BODY = 2 * 1024 * 1024;
 const FATAL_TEXT = "There has been a critical error on this website";
 
 /**
- * One GET (20 s, redirects followed). Reads at most 2 MB of the body, then stops. A request that fails or times out before the headers arrive gives `status: null`.
+ * One GET (20 s, redirects followed, `cache-control: no-cache` and `pragma: no-cache`). Reads at most 2 MB of the body, then stops. A request that fails or times out before the headers arrive gives `status: null`.
  * Once the headers have arrived the status is kept for good: a body that stalls or breaks off counts as an empty body (not fatal, no forms), never as an unreachable page.
  */
 export async function readPage(fetchFn: typeof fetch, url: string): Promise<{ status: number | null; fatal: boolean; forms: number }> {
   let res: Response;
   try {
-    res = await fetchFn(url, { redirect: "follow", signal: AbortSignal.timeout(20_000) });
+    // No cache in between may answer for the site: a cached 200 would hide a page the update broke.
+    res = await fetchFn(url, { redirect: "follow", signal: AbortSignal.timeout(20_000), headers: { "cache-control": "no-cache", pragma: "no-cache" } });
   } catch {
     return { status: null, fatal: false, forms: 0 };
   }
@@ -99,4 +100,16 @@ export function pageUrl(siteUrl: string, path: string): string {
   const url = new URL(path, origin);
   if (url.origin !== origin) throw new Error("this page path is not valid");
   return url.href;
+}
+
+/** Which read of a page this is: each one gets its own URL. */
+export type CheckTag = "before" | "after" | "recheck";
+
+/**
+ * `pageUrl` (same origin, checked path) plus `siteline-check=<runId>-<i>-<tag>`, so WP Rocket, a host's Varnish or Cloudflare cannot answer from a copy cached before the update.
+ * The query is added after pageUrl's checks, with `&` when the path already has one.
+ */
+export function checkUrl(siteUrl: string, path: string, runId: string, i: number, tag: CheckTag): string {
+  const url = pageUrl(siteUrl, path);
+  return `${url}${url.includes("?") ? "&" : "?"}siteline-check=${encodeURIComponent(`${runId}-${i}-${tag}`)}`;
 }

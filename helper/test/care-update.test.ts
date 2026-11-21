@@ -43,6 +43,14 @@ interface World {
   noopUpdate?: string[];
   /** Each `plugin update` takes this long on the injected clock. */
   updateTakesMs?: number;
+  /** What a `plugin update <slug>` with no --version (a premium updater) lands on. */
+  newest?: Record<string, string>;
+  /** `wp cache flush` fails. */
+  failCacheFlush?: boolean;
+  /** Per path, how many reads of it throw (no answer) before the fake answers. */
+  noAnswer?: Record<string, number>;
+  /** `plugin get` fails for everything with this message. */
+  readError?: string;
 }
 
 /** A fake server, Chrome and ffmpeg behind one exec, a fake fetch and a fake api, all writing to one ordered log. */
@@ -56,6 +64,9 @@ function setup(w: World, payload: unknown = PAYLOAD(), outputs?: string[], attem
   let updateDbFailed = false;
   const timeouts: number[] = [];
   const reads: Record<string, number> = {};
+  const fetched: { url: string; init: RequestInit }[] = [];
+  const sleeps: number[] = [];
+  const silent: Record<string, number> = { ...w.noAnswer };
   const exec: Exec = async (file, args, opts) => {
     if (file === "ssh") timeouts.push(opts?.timeoutMs ?? 0);
     if (file === "chrome") {
@@ -85,16 +96,18 @@ function setup(w: World, payload: unknown = PAYLOAD(), outputs?: string[], attem
     const [a, b, c] = words.slice(2);
     if (a === "core" && b === "version") return { stdout: `${versions.core}\n` };
     if ((a === "plugin" || a === "theme") && b === "get") {
+      if (w.readError) throw new Error(w.readError);
       if (w.unreadable?.includes(`${a}:${c}`)) throw new Error("Error: not installed");
       return { stdout: `Notice: banner\n${versions[`${a}:${c}`]}\n` };
     }
+    if (a === "cache" && b === "flush") { if (w.failCacheFlush) throw new Error("Error: no object cache"); return { stdout: "Success\n" }; }
     if (a === "db" && b === "export") { if (w.failExport) throw new Error("mysqldump missing"); return { stdout: "Success\n" }; }
     if ((a === "plugin" || a === "theme") && b === "update") {
       clock.t += w.updateTakesMs ?? 0;
       if (w.halfInstall?.includes(c)) { versions[`${a}:${c}`] = "0.9"; throw new Error("Error: timed out"); }
       if (w.noopUpdate?.includes(c)) return { stdout: "Success\n" };
       if (w.failUpdate?.includes(c)) throw new Error("Error: could not update the plugin");
-      versions[`${a}:${c}`] = words.find((x) => x.startsWith("--version="))!.slice(10);
+      versions[`${a}:${c}`] = words.find((x) => x.startsWith("--version="))?.slice(10) ?? w.newest?.[c] ?? `${versions[`${a}:${c}`]}-other`;
       return { stdout: "Success\n" };
     }
     if ((a === "plugin" || a === "theme") && b === "install") {
@@ -106,9 +119,11 @@ function setup(w: World, payload: unknown = PAYLOAD(), outputs?: string[], attem
     if (a === "core" && b === "update-db") { if (w.failUpdateDb && !updateDbFailed) { updateDbFailed = true; throw new Error("Error: db"); } return { stdout: "Success\n" }; }
     throw new Error(`unexpected wp command: ${cmd}`);
   };
-  const fetchFn = (async (url: string) => {
+  const fetchFn = (async (url: string, init: RequestInit) => {
     const path = new URL(url).pathname;
     log.push(`fetch ${path}`);
+    fetched.push({ url, init });
+    if ((silent[path] ?? 0) > 0) { silent[path]--; throw new Error("connect timeout"); }
     const q = w.pages?.[path] ?? [200];
     const n = reads[path] = (reads[path] ?? 0) + 1;
     return new Response("<form></form>", { status: q[Math.min(n, q.length) - 1] });
@@ -123,7 +138,8 @@ function setup(w: World, payload: unknown = PAYLOAD(), outputs?: string[], attem
   };
   const job: ClaimedJob = { id: "j1", kind: "care.update", attempts, payload, inputs: [], outputs: outputs ?? keysFor(2) };
   const ctx: JobContext = { job, api, cfg: { chrome: "chrome", ffmpeg: "ffmpeg" } as never, workDir: dir };
-  return { run: () => careUpdateHandler(exec, fetchFn, () => clock.t).run(ctx) as Promise<any>, log, argvs, uploads, versions, timeouts, touches: () => touches };
+  const sleep = async (ms: number) => { sleeps.push(ms); log.push(`sleep ${ms}`); };
+  return { run: () => careUpdateHandler(exec, fetchFn, () => clock.t, sleep).run(ctx) as Promise<any>, log, argvs, uploads, versions, timeouts, fetched, sleeps, touches: () => touches };
 }
 
 const BASIC: World = { versions: { "plugin:akismet": "5.0", "plugin:hello": "1.0" } };
@@ -135,12 +151,13 @@ describe("care.update", () => {
     const calls = s.log.filter((l) => l !== "touch");
     expect(calls).toEqual([
       "wp plugin get akismet --field=version", "wp plugin get hello --field=version",
-      "fetch /", "chrome https://acme.com/", "fetch /contact/", "chrome https://acme.com/contact/",
+      "fetch /", `chrome https://acme.com/?siteline-check=${RUN}-0-before`, "fetch /contact/", `chrome https://acme.com/contact/?siteline-check=${RUN}-1-before`,
       `remote test -e ${GZ}`,
     ].concat([
-      "remote mkdir -p siteline-backups", `wp db export ${BASE}`, `remote gzip -f ${BASE}`, "remote find siteline-backups -name *.sql.gz -mtime +28 -delete",
+      "remote mkdir -m 700 -p siteline-backups", `wp db export ${BASE}`, `remote gzip -f ${BASE}`, "remote find siteline-backups -name *.sql.gz -mtime +28 -delete",
       "wp plugin update akismet --version=5.1", "wp plugin get akismet --field=version", "wp plugin update hello --version=1.1", "wp plugin get hello --field=version",
-      "fetch /", "chrome https://acme.com/", "fetch /contact/", "chrome https://acme.com/contact/",
+      "wp cache flush",
+      "fetch /", `chrome https://acme.com/?siteline-check=${RUN}-0-after`, "fetch /contact/", `chrome https://acme.com/contact/?siteline-check=${RUN}-1-after`,
       "ffmpeg ssim", "ffmpeg jpg", "ffmpeg jpg", "ffmpeg jpg",
       "ffmpeg ssim", "ffmpeg jpg", "ffmpeg jpg", "ffmpeg jpg",
       ...keysFor(2).map((k) => `upload ${k}`),
@@ -216,14 +233,14 @@ describe("care.update", () => {
     expect(r.pages[0].verdict).toBe("broken");
     expect(r.pages[0].after.status).toBe(200); // the recheck
     expect(r.pages[1].after.status).toBe(200);
-    expect(s.log.filter((l) => l === "chrome https://acme.com/")).toHaveLength(2); // before and after only: the recheck takes no screenshot
+    expect(s.log.filter((l) => l.startsWith("chrome https://acme.com/?"))).toHaveLength(2); // before and after only: the recheck takes no screenshot
     expect(s.log.some((l) => /db import|db query/.test(l))).toBe(false);
   });
 
   it("a non-rollbackable update that broke the site is rollback_failed, and the others are put back", async () => {
     const p = PAYLOAD();
     p.updates[0] = upd("akismet", "5.0", "5.1", { rollbackable: false });
-    const s2 = setup({ ...BASIC, pages: { "/": [200, 500, 500] } }, p);
+    const s2 = setup({ ...BASIC, newest: { akismet: "5.1" }, pages: { "/": [200, 500, 500] } }, p);
     const r = await s2.run();
     expect(s2.log.some((l) => l.startsWith("wp plugin install akismet"))).toBe(false);
     expect(s2.log).toContain("wp plugin install hello --version=1.0 --force");
@@ -235,7 +252,7 @@ describe("care.update", () => {
   it("only non-rollbackable and broken: rollback_failed, nothing is installed, rolledBack is false", async () => {
     const p = PAYLOAD();
     p.updates = [upd("akismet", "5.0", "5.1", { rollbackable: false })];
-    const s = setup({ ...BASIC, pages: { "/": [200, 500] } }, p);
+    const s = setup({ ...BASIC, newest: { akismet: "5.1" }, pages: { "/": [200, 500] } }, p);
     const r = await s.run();
     expect(r.steps[0].outcome).toBe("rollback_failed");
     expect(r.rolledBack).toBe(false);
@@ -383,7 +400,7 @@ describe("care.update re-reads versions and keeps contact", () => {
     expect(r.steps[0].outcome).toBe("applied");
     expect(r.steps[1]).toEqual({ id: "u-hello", outcome: "skipped", note: "stopped: lost contact with Agency OS" });
     expect(s.log.some((l) => l.startsWith("wp plugin update hello"))).toBe(false);
-    expect(s.log.filter((l) => l === "chrome https://acme.com/")).toHaveLength(2);
+    expect(s.log.filter((l) => l.startsWith("chrome https://acme.com/?"))).toHaveLength(2);
   });
   it("still updates when touches fail briefly (under 10 minutes)", async () => {
     const s = setup({ ...BASIC, touchFails: true, updateTakesMs: 60_000 });
@@ -501,5 +518,87 @@ describe("care.update never runs anything outside the fixed set", () => {
     await s.run();
     expect(s.timeouts.length).toBeGreaterThan(5);
     expect(new Set(s.timeouts)).toEqual(new Set([300_000]));
+  });
+});
+
+describe("care.update on cached sites (C1)", () => {
+  it("every read and screenshot has its own siteline-check query and asks caches not to answer", async () => {
+    const s = setup({ ...BASIC, pages: { "/": [200, 500, 200] } });
+    await s.run();
+    const urls = s.fetched.map((f) => f.url);
+    expect(urls.filter((u) => u.startsWith("https://acme.com/?"))).toEqual(["before", "after", "recheck"].map((t) => `https://acme.com/?siteline-check=${RUN}-0-${t}`));
+    expect(new Set(urls).size).toBe(urls.length);
+    for (const f of s.fetched) expect(f.init.headers).toEqual({ "cache-control": "no-cache", pragma: "no-cache" });
+    const shots = s.log.filter((l) => l.startsWith("chrome "));
+    expect(shots.every((l) => /\?siteline-check=[0-9a-f-]+-\d-(before|after)$/.test(l))).toBe(true);
+  });
+  it("runs wp cache flush once, after the updates and before the after-shots", async () => {
+    const s = setup(BASIC);
+    await s.run();
+    expect(s.log.filter((l) => l === "wp cache flush")).toHaveLength(1);
+    const flush = s.log.indexOf("wp cache flush");
+    expect(flush).toBeGreaterThan(s.log.indexOf("wp plugin update hello --version=1.1"));
+    expect(flush).toBeLessThan(s.log.findIndex((l) => l.endsWith("-0-after")));
+  });
+  it("a failed cache flush does not fail the job", async () => {
+    const s = setup({ ...BASIC, failCacheFlush: true });
+    const r = await s.run();
+    expect(s.log).toContain("wp cache flush");
+    expect(r.steps.map((x: any) => x.outcome)).toEqual(["applied", "applied"]);
+    expect(r.pages.map((x: any) => x.verdict)).toEqual(["ok", "ok"]);
+  });
+});
+
+describe("care.update premium updates (I4)", () => {
+  it("a non-rollbackable update runs without --version, and the version re-read still decides applied", async () => {
+    const p = PAYLOAD();
+    p.updates = [upd("gravityforms", "2.7", "2.8", { rollbackable: false })];
+    const s = setup({ versions: { "plugin:gravityforms": "2.7" }, newest: { gravityforms: "2.8" } }, p);
+    const r = await s.run();
+    const call = s.argvs.find((a) => a.includes("'update'"))!;
+    expect(call.slice(call.indexOf("--") + 1)).toEqual(["wp", "--path='/var/www/html'", "'plugin'", "'update'", "'gravityforms'"]);
+    expect(r.steps[0].outcome).toBe("applied");
+  });
+  it("a premium update that lands on another version is not applied (and, as it cannot be put back, ends rollback_failed)", async () => {
+    const p = PAYLOAD();
+    p.updates = [upd("gravityforms", "2.7", "2.8", { rollbackable: false })];
+    const r = await setup({ versions: { "plugin:gravityforms": "2.7" }, newest: { gravityforms: "2.9" } }, p).run();
+    expect(r.steps[0].outcome).toBe("rollback_failed");
+  });
+});
+
+describe("care.update re-reads a page that gave no answer (M3)", () => {
+  it("first attempt: a null read is tried once more 2 s later before it counts", async () => {
+    const s = setup({ ...BASIC, noAnswer: { "/": 1 } });
+    const r = await s.run();
+    expect(s.sleeps).toEqual([2000]);
+    expect(r.pages[0].before.status).toBe(200);
+    const s2 = setup({ ...BASIC, noAnswer: { "/": 3 } }); // before: no answer twice; after: no answer once then 200
+    const r2 = await s2.run();
+    expect(r2.pages[0].before.status).toBeNull();
+    expect(r2.pages[0].after.status).toBe(200);
+  });
+  it("retry path: a null read is tried once more before the page counts as broken", async () => {
+    const s = setup({ versions: { "plugin:akismet": "5.1", "plugin:hello": "1.1" }, backupExists: true, noAnswer: { "/": 1 } }, PAYLOAD(), undefined, 2);
+    const r = await s.run();
+    expect(s.sleeps).toEqual([2000]);
+    expect(r.pages[0].verdict).toBe("ok");
+    expect(r.rolledBack).toBe(false);
+  });
+});
+
+describe("care.update backup folder and read errors (M4, M5)", () => {
+  it("makes the backup folder private", async () => {
+    const s = setup(BASIC);
+    await s.run();
+    const mk = s.argvs.find((a) => a.includes("mkdir"))!;
+    expect(mk.slice(mk.indexOf("--") + 1)).toEqual(["mkdir", "'-m'", "'700'", "'-p'", "'siteline-backups'"]);
+  });
+  it("when no version can be read the thrown error keeps the first ssh/wp error text", async () => {
+    const s = setup({ ...BASIC, readError: "ssh: Could not resolve hostname client1" });
+    await expect(s.run()).rejects.toThrow(/^could not read the current version: ssh: Could not resolve hostname client1$/);
+    const long = setup({ ...BASIC, readError: "x".repeat(500) });
+    const e = await long.run().catch((x) => x as Error);
+    expect(e.message.length).toBeLessThanOrEqual("could not read the current version: ".length + 300);
   });
 });

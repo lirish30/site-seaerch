@@ -106,9 +106,10 @@ describe("remote", () => {
   it("allows mkdir, test and gzip", async () => {
     const exec = fake("ok");
     expect(await remote(exec, "client1", ["mkdir", "-p", "siteline-backups"], { timeoutMs: 1 })).toBe("ok");
+    expect(await remote(exec, "client1", ["mkdir", "-m", "700", "-p", "siteline-backups"], { timeoutMs: 1 })).toBe("ok"); // M4: the private backup folder passes the word check
     await remote(exec, "client1", ["test", "-e", "siteline-backups/a.com-x.sql.gz"], { timeoutMs: 1 });
     await remote(exec, "client1", ["gzip", "-f", "siteline-backups/a.com-x.sql"], { timeoutMs: 1 });
-    expect(exec).toHaveBeenCalledTimes(3);
+    expect(exec).toHaveBeenCalledTimes(4);
   });
   it("refuses any other command, a bad alias, a hostile word, an absolute path or a tilde, and never spawns", async () => {
     const exec = fake("");

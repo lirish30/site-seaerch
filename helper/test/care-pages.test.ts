@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { compare, pageUrl, readPage, screenshot, toJpeg, verdictOf, type PageShot } from "../src/care/pages.ts";
+import { checkUrl, compare, pageUrl, readPage, screenshot, toJpeg, verdictOf, type PageShot } from "../src/care/pages.ts";
 import type { Exec } from "../src/exec.ts";
 
 const shot = (o: Partial<PageShot> = {}): PageShot => ({ path: "/", status: 200, fatal: false, forms: 1, png: "/tmp/a.png", ...o });
@@ -63,6 +63,12 @@ describe("readPage", () => {
     const init = (f as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0][1];
     expect(init.redirect).toBe("follow");
     expect(init.signal).toBeDefined();
+  });
+  it("asks every cache in between not to answer (C1)", async () => {
+    const f = vi.fn(async () => new Response("x")) as unknown as typeof fetch;
+    await readPage(f, "https://a.com/");
+    const init = (f as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0][1];
+    expect(init.headers).toEqual({ "cache-control": "no-cache", pragma: "no-cache" });
   });
   it("stops reading at 2 MB", async () => {
     const read = { n: 0 };
@@ -171,5 +177,19 @@ describe("pageUrl", () => {
     expect(() => pageUrl("https://acme.com/shop", "/a/../b")).toThrow();
     expect(() => pageUrl("https://acme.com/shop", "/a b")).toThrow();
     expect(() => pageUrl("https://acme.com/shop", "/a\\b")).toThrow();
+  });
+});
+
+describe("checkUrl (C1)", () => {
+  const RUN = "123e4567-e89b-12d3-a456-426614174000";
+  it("gives each read its own siteline-check query on the site's origin", () => {
+    expect(checkUrl("https://acme.com/shop", "/contact/", RUN, 1, "before")).toBe(`https://acme.com/contact/?siteline-check=${RUN}-1-before`);
+    const all = (["before", "after", "recheck"] as const).map((tag) => checkUrl("https://acme.com", "/", RUN, 0, tag));
+    expect(new Set(all).size).toBe(3);
+    for (const u of all) expect(new URL(u).searchParams.get("siteline-check")).toMatch(new RegExp(`^${RUN}-0-(before|after|recheck)$`));
+  });
+  it("keeps pageUrl's checks", () => {
+    expect(() => checkUrl("https://acme.com", "//evil.com/", RUN, 0, "after")).toThrow();
+    expect(() => checkUrl("https://acme.com", "/a/../b", RUN, 0, "after")).toThrow();
   });
 });

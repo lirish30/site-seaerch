@@ -2,7 +2,7 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { ApiError, TokenRevoked } from "../api.ts";
 import { WP_ARG, WpError, remote, wpRaw, wpText } from "../care/wp.ts";
-import { compare, pageUrl, readPage, screenshot, toJpeg, verdictOf, type PageShot, type Verdict } from "../care/pages.ts";
+import { checkUrl, compare, pageUrl, readPage, screenshot, toJpeg, verdictOf, type CheckTag, type PageShot, type Verdict } from "../care/pages.ts";
 import { runProcess, type Exec } from "../exec.ts";
 import type { JobHandler } from "../loop.ts";
 import { payloadOf } from "./clone.ts";
@@ -14,6 +14,8 @@ const CONTACT_MS = 10 * 60_000;
 const MAX_UPDATES = 40;
 const MAX_PATHS = 5;
 const BACKUP_DIR = "siteline-backups";
+/** A page read that got no answer at all is tried once more after this long before it counts. */
+const REREAD_MS = 2_000;
 
 type Target = { alias: string; path: string };
 type Outcome = "applied" | "skipped" | "failed" | "rolled_back" | "rollback_failed";
@@ -95,9 +97,13 @@ const fileExists = async (p: string): Promise<boolean> => { try { const s = awai
 /**
  * Updates one client site's plugins, themes and core over SSH, with a database backup first, page checks before and after, and the old versions put back if a page breaks.
  * Safe to run again after the Mac slept: it reads each component's version first, skips what is already at the new version, and keeps the first backup.
- * It runs `wp` (plugin get/update/install, theme get/update/install, core version/update/update-db, db export) and `mkdir`, `test`, `gzip`, `find`, nothing else.
+ * It runs `wp` (plugin get/update/install, theme get/update/install, core version/update/update-db, db export, cache flush) and `mkdir`, `test`, `gzip`, `find`, nothing else.
+ * Every page read and screenshot has its own `siteline-check` query and asks caches not to answer, and the object cache is flushed after the updates, so a cached copy never passes for a healthy page.
  */
-export function careUpdateHandler(exec: Exec = runProcess, fetchFn: typeof fetch = fetch, now: () => number = Date.now): JobHandler {
+export function careUpdateHandler(
+  exec: Exec = runProcess, fetchFn: typeof fetch = fetch, now: () => number = Date.now,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+): JobHandler {
   return {
     kind: "care.update",
     async run({ job, api, cfg, workDir }) {
@@ -117,14 +123,27 @@ export function careUpdateHandler(exec: Exec = runProcess, fetchFn: typeof fetch
       const changed = new Set<number>(); // updates this run touched (in the order applied): the only ones that can be put back
       const stepOf = (i: number, outcome: Outcome, note: string) => { steps[i] = { id: p.updates[i].id, outcome, note }; };
 
+      /** The first ssh/wp error a version read hit: named when no version could be read at all. */
+      let firstReadError = "";
       /** The version now, or null when it cannot be read. */
       const versionOf = async (u: Update): Promise<string | null> => {
         try {
           const v = u.type === "core" ? await wpText(exec, t, ["core", "version"], o) : await wpText(exec, t, [u.type, "get", u.slug, "--field=version"], o);
           return WP_ARG.version.test(v) ? v : null;
-        } catch { return null; }
+        } catch (e) {
+          firstReadError ||= (e instanceof Error ? e.message : String(e)).replace(/\s+/g, " ").trim().slice(0, 300);
+          return null;
+        }
       };
-      const urls = p.paths.map((x) => pageUrl(p.siteUrl, x));
+      /** Page i's URL for one read: its own cache-busting query each time. */
+      const urlOf = (i: number, tag: CheckTag): string => checkUrl(p.siteUrl, p.paths[i], p.runId, i, tag);
+      /** A read that got no answer at all (`status: null`) is tried once more, 2 s later, before it counts. */
+      const read = async (i: number, tag: CheckTag): Promise<Read> => {
+        const r = await readPage(fetchFn, urlOf(i, tag));
+        if (r.status !== null) return r;
+        await sleep(REREAD_MS);
+        return readPage(fetchFn, urlOf(i, tag));
+      };
       const backupExists = async (): Promise<boolean> => {
         try { await rem(["test", "-e", gz]); await rem(["gzip", "-t", gz]); return true; } catch { return false; }
       };
@@ -151,7 +170,7 @@ export function careUpdateHandler(exec: Exec = runProcess, fetchFn: typeof fetch
       /** Only the status, no screenshot: is the site back? */
       const recheck = async (pages: PageResult[]): Promise<void> => {
         for (let i = 0; i < p.paths.length; i++) {
-          const r = await readPage(fetchFn, urls[i]);
+          const r = await read(i, "recheck");
           pages[i].after = { status: r.status, fatal: r.fatal, forms: r.forms };
           await tick();
         }
@@ -168,7 +187,7 @@ export function careUpdateHandler(exec: Exec = runProcess, fetchFn: typeof fetch
         await tick();
       }
       // Not one version could be read: the site cannot be reached, which is a failed job (it may be tried again), not a list of skipped updates.
-      if (readErrors.length === p.updates.length) throw new WpError(SAY.noRead);
+      if (readErrors.length === p.updates.length) throw new WpError(firstReadError ? `${SAY.noRead}: ${firstReadError}` : SAY.noRead);
 
       // A retried job (the Mac slept or the helper died) never applies an update: it reports what is there, checks the pages and puts back what broke the site.
       if (job.attempts > 1) {
@@ -182,7 +201,7 @@ export function careUpdateHandler(exec: Exec = runProcess, fetchFn: typeof fetch
         }
         const pages: PageResult[] = [];
         for (let i = 0; i < p.paths.length; i++) {
-          const r = await readPage(fetchFn, urls[i]);
+          const r = await read(i, "after");
           const broken = r.status === null || r.status === 404 || r.status === 410 || r.status >= 500 || r.fatal;
           pages.push({ path: p.paths[i], before: empty, after: { status: r.status, fatal: r.fatal, forms: r.forms }, ssim: null, verdict: broken ? "broken" : "ok", uploaded: { before: false, after: false, diff: false } });
           await tick();
@@ -211,10 +230,10 @@ export function careUpdateHandler(exec: Exec = runProcess, fetchFn: typeof fetch
       // (2) The pages as they are now.
       const shoot = async (i: number, kind: "before" | "after"): Promise<PageShot> => {
         const png = join(workDir, `${i}-${kind}.png`);
-        const read = await readPage(fetchFn, urls[i]);
-        const ok = await screenshot(exec, cfg.chrome, urls[i], png);
+        const r = await read(i, kind);
+        const ok = await screenshot(exec, cfg.chrome, urlOf(i, kind), png);
         await tick();
-        return { path: p.paths[i], ...read, png: ok ? png : null };
+        return { path: p.paths[i], ...r, png: ok ? png : null };
       };
       const before: PageShot[] = [];
       for (let i = 0; i < p.paths.length; i++) before.push(await shoot(i, "before"));
@@ -224,7 +243,7 @@ export function careUpdateHandler(exec: Exec = runProcess, fetchFn: typeof fetch
       await tick();
       if (!backupOk) {
         try {
-          await rem(["mkdir", "-p", BACKUP_DIR]); await tick();
+          await rem(["mkdir", "-m", "700", "-p", BACKUP_DIR]); await tick();
           await wpRaw(exec, t, ["db", "export", sql], o); await tick();
           await rem(["gzip", "-f", sql]); await tick();
           backupOk = true;
@@ -252,6 +271,8 @@ export function careUpdateHandler(exec: Exec = runProcess, fetchFn: typeof fetch
         let why: unknown;
         try {
           if (u.type === "core") await wpRaw(exec, t, ["core", "update", `--version=${u.to}`], o);
+          // A premium plugin or theme (not on wordpress.org) has no versions to pick from: its own updater gives the newest. The version re-read below still decides `applied`.
+          else if (!u.rollbackable) await wpRaw(exec, t, [u.type, "update", u.slug], o);
           else await wpRaw(exec, t, [u.type, "update", u.slug, `--version=${u.to}`], o);
           if (u.type === "core") await wpRaw(exec, t, ["core", "update-db"], o);
         } catch (e) { why = e; }
@@ -267,6 +288,10 @@ export function careUpdateHandler(exec: Exec = runProcess, fetchFn: typeof fetch
         if (v === u.to) changed.add(i);
         await tick();
       }
+
+      // (4b) Empty the object cache so the after-reads see the new code. Best effort: a host without one (or a refusal) changes nothing.
+      try { await wpRaw(exec, t, ["cache", "flush"], o); } catch { /* ignored */ }
+      await tick();
 
       // (5) The pages again, compared.
       const afterShots: PageShot[] = [];

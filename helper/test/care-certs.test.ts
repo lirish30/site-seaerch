@@ -64,6 +64,12 @@ describe("care.certs helper handler", () => {
     expect(r.certs.map((c) => c.siteId)).toEqual(hosts.map((h) => h.siteId));
   });
 
+  it("gives null for a year outside 1970..9999 instead of a +010000 date (T10)", async () => {
+    const f = fake((h) => (h === "far.com" ? { valid_to: "Dec 11 23:59:59 10000 GMT" } : h === "old.com" ? { valid_to: "Dec 11 23:59:59 1969 GMT" } : "ok"));
+    const r = await run(f.connect, [{ siteId: "a", host: "far.com" }, { siteId: "b", host: "old.com" }, { siteId: "c", host: "ok.com" }]);
+    expect(r.certs.map((c) => c.validTo)).toEqual([null, null, "2026-12-11"]);
+  });
+
   it("refuses a payload without hosts", async () => {
     await expect(careCertsHandler(fake(() => "ok").connect).run(ctx({}))).rejects.toThrow();
   });

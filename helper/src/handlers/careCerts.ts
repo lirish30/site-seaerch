@@ -17,11 +17,14 @@ export type CertConnect = (o: { host: string; port: number; servername: string; 
 
 const realConnect: CertConnect = (o) => tls.connect(o) as unknown as CertSocket;
 
-/** "Dec 11 23:59:59 2026 GMT" as YYYY-MM-DD in UTC, or null for anything else. */
+/** "Dec 11 23:59:59 2026 GMT" as YYYY-MM-DD in UTC, or null for anything else, including a year outside 1970..9999 (which `toISOString` would write as `+010000-…`). */
 export function isoDate(validTo: unknown): string | null {
   if (typeof validTo !== "string") return null;
   const t = new Date(validTo).getTime();
-  return Number.isNaN(t) ? null : new Date(t).toISOString().slice(0, 10);
+  if (Number.isNaN(t)) return null;
+  const year = new Date(t).getUTCFullYear();
+  if (year < 1970 || year > 9999) return null;
+  return new Date(t).toISOString().slice(0, 10);
 }
 
 /** Never a name this Mac should connect to: an IP literal, a name that is not a plain DNS name, or a .local/.internal one. */
