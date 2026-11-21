@@ -12,8 +12,11 @@ export const FREE_MAIL_DOMAINS: readonly string[] = [
   "proton.me", "protonmail.com", "pm.me", "gmx.com", "zoho.com", "mail.com", "comcast.net",
 ];
 
-/** Known emails and site domains, each pointing at a business id. A domain two businesses both claim maps to `null` (it names nobody). */
-export type AttendeeIndex = { emails: Map<string, string>; domains: Map<string, string | null> };
+/**
+ * Known emails and site domains, each pointing at a business id. A domain two businesses both claim maps to `null` (it names nobody). An email two businesses share is in `ambiguousEmails`
+ * and in no other map: it names nobody, and its domain does not rescue it (a family's one address at a company's own domain is still not that company's).
+ */
+export type AttendeeIndex = { emails: Map<string, string>; ambiguousEmails: Set<string>; domains: Map<string, string | null> };
 
 const domainOfEmail = (email: string): string => email.slice(email.lastIndexOf("@") + 1);
 
@@ -32,20 +35,20 @@ export async function buildAttendeeIndex(db: D1Database): Promise<AttendeeIndex>
       `SELECT s.domain AS v, s.business_id AS id FROM sites s JOIN businesses b ON b.id = s.business_id WHERE s.domain IS NOT NULL AND s.archived_at IS NULL AND NOT ${testClientSql("b")}`,
     ).all<{ v: string; id: string }>(),
   ]);
-  // An email two businesses share (a family's one address) is dropped: matching it either way could file a meeting under the wrong client.
+  // An email two businesses share (a family's one address) names nobody: matching it either way could file a meeting under the wrong client.
   const claimed = new Map<string, string | null>();
   for (const r of [...people.results, ...bookings.results]) {
     const email = r.v.trim().toLowerCase();
     if (email.includes("@")) claim(claimed, email, r.id);
   }
-  const emails = new Map<string, string>();
-  for (const [email, id] of claimed) if (id) emails.set(email, id);
+  const emails = new Map<string, string>(), ambiguousEmails = new Set<string>();
+  for (const [email, id] of claimed) { if (id) emails.set(email, id); else ambiguousEmails.add(email); }
   const domains = new Map<string, string | null>();
   for (const r of sites.results) {
     const d = r.v.trim().toLowerCase();
     if (d && !FREE_MAIL_DOMAINS.includes(d)) claim(domains, d, r.id);
   }
-  return { emails, domains };
+  return { emails, ambiguousEmails, domains };
 }
 
 /** The one business the attendees point to: a known email first, else a site domain (never a free-mail one). Null when none match, or two different businesses do. */
@@ -54,6 +57,7 @@ export function resolveAttendees(emails: string[], index: AttendeeIndex): string
   for (const raw of emails) {
     const email = raw.trim().toLowerCase();
     if (!email.includes("@")) continue;
+    if (index.ambiguousEmails.has(email)) continue; // two businesses use this address: it says nothing, and its domain must not stand in for it
     const domain = domainOfEmail(email);
     const id = index.emails.get(email) ?? (FREE_MAIL_DOMAINS.includes(domain) ? null : index.domains.get(domain) ?? null);
     if (id) found.add(id);

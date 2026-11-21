@@ -87,6 +87,7 @@ describe("listEvents", () => {
 describe("resolveAttendees", () => {
   const index = {
     emails: new Map([["pat@ace.test", "A"], ["jo@b.test", "B"]]),
+    ambiguousEmails: new Set(["family@acmeplumbing.com"]),
     domains: new Map<string, string | null>([["acmeplumbing.com", "A"], ["shared.com", null], ["gmail.com", "A"]]),
   };
 
@@ -98,6 +99,13 @@ describe("resolveAttendees", () => {
     expect(resolveAttendees(["jane@shared.com"], index)).toBeNull();
     expect(resolveAttendees(["nobody@else.test"], index)).toBeNull();
     expect(resolveAttendees([], index)).toBeNull();
+  });
+
+  it("an email two businesses share matches nobody, and its domain does not rescue it", () => {
+    // family@acmeplumbing.com is on the list of ambiguous emails and acmeplumbing.com is business A's site domain.
+    expect(resolveAttendees(["family@acmeplumbing.com"], index)).toBeNull();
+    expect(resolveAttendees(["jane@acmeplumbing.com"], index)).toBe("A"); // any other address at that domain still matches
+    expect(resolveAttendees(["family@acmeplumbing.com", "pat@ace.test"], index)).toBe("A"); // the shared address adds nothing either way
   });
 
   it("is null when two different businesses match, and fine when the same one matches twice", () => {
@@ -123,6 +131,17 @@ describe("buildAttendeeIndex", () => {
     expect(index.emails.has("rehearsal@t.test")).toBe(false);
     expect(index.domains.has("rehearsal.com")).toBe(false);
     expect(t.businessId).not.toBe(a.businessId);
+  });
+
+  it("puts an email shared by two businesses in the ambiguous set only, and its domain does not rescue it", async () => {
+    await client("family@acmeplumbing.com", "acmeplumbing.com"); // business A owns the site acmeplumbing.com
+    await client("family@acmeplumbing.com"); // and a second business has the same address
+    await client("other@acmeplumbing.com");
+    const index = await buildAttendeeIndex(env.DB);
+    expect(index.emails.has("family@acmeplumbing.com")).toBe(false);
+    expect(index.ambiguousEmails.has("family@acmeplumbing.com")).toBe(true);
+    expect(resolveAttendees(["family@acmeplumbing.com"], index)).toBeNull(); // before: dropped from `emails`, then rescued by the domain match
+    expect(resolveAttendees(["someone@acmeplumbing.com"], index)).not.toBeNull(); // any other address at the site's domain still matches it
   });
 
   it("maps a domain claimed by two businesses to null, and keeps free-mail domains out", async () => {
