@@ -16,6 +16,7 @@ import { sweepOnboardings } from "./onboarding/sweep";
 import { sweepProjects } from "./projects/sweep";
 import { sweepBilling } from "./billing/sweep";
 import { sweepDomains, sweepUptime } from "./monitoring/sweep";
+import { careBackstop, startWeeklyBatch } from "./care/batch";
 
 /** The cron strings in wrangler.jsonc. The daily one MUST stay first there: test/radar-info.test.ts reads the first entry. */
 export const DAILY_CRON = "17 13 * * *";
@@ -50,7 +51,7 @@ async function expireProposals(env: Env, now: Date): Promise<number> {
  * and notes 14 days of silence), and sweeps the projects (makes this period's recurring tasks, starts the projects a paid proposal never got, sends the Claude steps that are
  * ready, expires change orders past their date, and saves a timer left running past its cap), and last sweeps the billing (drafts the milestone invoices a hook never made, plans and
  * proposes subscriptions, drafts the reminders and pause notices that are due and places the holds, notices or converts the terms that end, and settles the open invoices whose webhook never
- * came), then looks up the expiry of the monitored sites' domains and deletes old uptime checks. This is unattended work: it can only start searches, create approvals and holds, queue Claude steps and close queue tasks, never send, and it never throws.
+ * came), then looks up the expiry of the monitored sites' domains and deletes old uptime checks, starts the weekly Care update batch on its weekday (read-only inventories; the update waves are approvals) and runs the Care batch backstop. This is unattended work: it can only start searches, create approvals and holds, queue Claude steps and close queue tasks, never send, and it never throws.
  */
 export async function runScheduled(env: Env, cron: string, now: Date): Promise<void> {
   if (cron === MAIL_SYNC_CRON) {
@@ -76,4 +77,6 @@ export async function runScheduled(env: Env, cron: string, now: Date): Promise<v
   await part("project sweep", () => sweepProjects(env, now));
   await part("billing sweep", () => sweepBilling(env, now));
   await part("domain expiry", () => sweepDomains(env, now));
+  await part("care updates", () => startWeeklyBatch(env, now));
+  await part("care backstop", () => careBackstop(env, now));
 }
