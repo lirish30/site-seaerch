@@ -1,5 +1,5 @@
 import { env } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { WP_ARG } from "../src/worker/care/args";
 import { availableFor, getInventory } from "../src/worker/db/careUpdates";
 import { HelperRefused, getHelperKind } from "../src/worker/helper/kinds";
@@ -9,6 +9,7 @@ const KIND = "care.inventory";
 const def = () => getHelperKind(KIND)!;
 
 /** The same accept/refuse table as helper/test/care-wp.test.ts. */
+const ALIAS_ONLY = ["-oProxyCommand=x"];
 const HOSTILE = ["x; rm -rf ~", "$(id)", "`id`", "a b", "a\nb", "../etc", "/var/../etc"];
 
 async function careSite(o: { test?: boolean } = {}) {
@@ -37,12 +38,27 @@ describe("care.inventory payload", () => {
     expect(def().payload.safeParse(payload("s1", { path: bad })).success).toBe(false);
   });
 
+  it.each(ALIAS_ONLY)("refuses %j as the alias", (bad) => {
+    expect(def().payload.safeParse(payload("s1", { alias: bad })).success).toBe(false);
+  });
+
   it("uses the shared patterns", () => {
     for (const v of HOSTILE) expect(Object.values(WP_ARG).some((re) => re.test(v))).toBe(false);
   });
 });
 
 describe("care.inventory result", () => {
+  it("accepts an uppercase slug such as Divi", () => {
+    expect(def().result.safeParse(result({ themes: [item({ slug: "Divi" })], activeTheme: "Divi" })).success).toBe(true);
+  });
+
+  it("takes dropped (default 0) and refuses a negative or fractional one", () => {
+    expect(parse(result()).dropped).toBe(0);
+    expect(parse(result({ dropped: 4 })).dropped).toBe(4);
+    expect(def().result.safeParse(result({ dropped: -1 })).success).toBe(false);
+    expect(def().result.safeParse(result({ dropped: 1.5 })).success).toBe(false);
+  });
+
   it.each(HOSTILE)("refuses %j as a slug, an update version or the core version", (bad) => {
     expect(def().result.safeParse(result({ plugins: [item({ slug: bad })] })).success).toBe(false);
     expect(def().result.safeParse(result({ plugins: [item({ updateVersion: bad })] })).success).toBe(false);
@@ -72,6 +88,19 @@ describe("care.inventory apply", () => {
       ["plugin", "pro-thing", "1.0", "1.1", "mild", false],
     ]);
     expect(ups).toHaveLength(3);
+  });
+
+  it("warns with the site id and the count when the helper dropped rows, and stays quiet when it did not", async () => {
+    const s = await careSite();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await def().apply(env, def().payload.parse(payload(s.site!.id)), parse(result()));
+      expect(warn).not.toHaveBeenCalled();
+      await def().apply(env, def().payload.parse(payload(s.site!.id)), parse(result({ dropped: 3 })));
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0][0])).toContain(s.site!.id);
+      expect(String(warn.mock.calls[0][0])).toContain("3");
+    } finally { warn.mockRestore(); }
   });
 
   it("a second apply with one fewer update marks it gone", async () => {

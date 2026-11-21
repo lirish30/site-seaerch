@@ -35,6 +35,8 @@ export const CareInventoryResult = z.object({
   plugins: z.array(Item).max(MAX_PLUGINS),
   themes: z.array(Item).max(MAX_THEMES),
   activeTheme: text.nullable(),
+  /** Rows the helper left out: refused by its checks, or past the 300 and 50 caps. */
+  dropped: z.number().int().min(0).default(0),
 });
 export type CareInventoryResult = z.infer<typeof CareInventoryResult>;
 type Item = z.infer<typeof Item>;
@@ -69,6 +71,7 @@ const careInventory: HelperKindDef<CareInventoryPayload, CareInventoryResult> = 
   async apply(env: Env, p, r) {
     const site = (await updatableSites(env.DB, { includeTest: true })).find((s) => s.id === p.siteId);
     if (!site) throw new HelperRefused("that site is gone or no longer takes updates");
+    if (r.dropped > 0) console.warn(`care inventory: site ${site.id} left out ${r.dropped} plugin or theme rows (unsafe values or past the caps)`);
     const now = new Date().toISOString();
     await saveInventory(env.DB, {
       siteId: site.id, wpVersion: r.wpVersion, phpVersion: r.phpVersion, readAt: now,

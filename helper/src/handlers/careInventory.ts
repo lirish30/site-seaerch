@@ -1,5 +1,5 @@
-import { WP_ARG, WpError, wp } from "../care/wp.ts";
-import { runProcess } from "../exec.ts";
+import { WP_ARG, WpError, parseLastJson, wp, wpRaw, wpText } from "../care/wp.ts";
+import { runProcess, type Exec } from "../exec.ts";
 import type { JobHandler } from "../loop.ts";
 import { payloadOf, textField } from "./clone.ts";
 
@@ -9,11 +9,6 @@ const MAX_THEMES = 50;
 const LIST = "--fields=name,title,status,version,update_version,update_package";
 
 type Target = { alias: string; path: string };
-/** `wp` with its program and timeout bound, so a test can give a fake. */
-export type WpRun = (t: Target, args: string[], o: { timeoutMs: number }) => Promise<unknown>;
-
-const realWp: WpRun = (t, args, o) => wp(runProcess, t, args, o);
-
 interface Item { slug: string; name: string; status: string; version: string; updateVersion: string | null; fromWporg: boolean }
 
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : typeof v === "number" ? String(v) : "");
@@ -43,17 +38,21 @@ function itemOf(row: unknown): Item | null {
   };
 }
 
-const itemsOf = (answer: unknown, max: number): Item[] => {
+/** The rows that are safe to use, at most `max`, and how many were left out (refused by validation, or cut by the cap). */
+function itemsOf(answer: unknown, max: number): { items: Item[]; dropped: number } {
   if (!Array.isArray(answer)) throw new WpError("wp-cli gave no readable answer");
-  return answer.map(itemOf).filter((i): i is Item => i !== null).slice(0, max);
-};
+  const ok = answer.map(itemOf).filter((i): i is Item => i !== null);
+  return { items: ok.slice(0, max), dropped: answer.length - Math.min(ok.length, max) };
+}
 
-/** The version wp-cli offers for core, or null when there is none. wp-cli prints a sentence instead of JSON when WordPress is up to date, which reads as no answer, so that too means none. */
-async function coreUpdate(run: WpRun, t: Target): Promise<{ to: string } | null> {
-  let answer: unknown;
-  try { answer = await run(t, ["core", "check-update", "--format=json"], { timeoutMs: TIMEOUT_MS }); }
-  catch (e) { if (e instanceof WpError && e.message === "wp-cli gave no readable answer") return null; throw e; }
-  if (!Array.isArray(answer)) return null;
+const UP_TO_DATE = /^Success: WordPress is at the latest version\.?$/;
+
+/** The version wp-cli offers for core, or null. "No update" is only ever wp-cli's own up-to-date sentence (or an empty list); anything else without JSON (empty, HTML, a PHP fatal) is an error. */
+async function coreUpdate(exec: Exec, t: Target): Promise<{ to: string } | null> {
+  const out = await wpRaw(exec, t, ["core", "check-update", "--format=json"], { timeoutMs: TIMEOUT_MS });
+  if (out.split("\n").some((l) => UP_TO_DATE.test(l.trim()))) return null;
+  const answer = parseLastJson(out);
+  if (!Array.isArray(answer)) throw new WpError("wp-cli gave no readable answer");
   for (const u of answer) {
     const v = str((u as Record<string, unknown> | null)?.version);
     if (WP_ARG.version.test(v)) return { to: v };
@@ -65,7 +64,7 @@ async function coreUpdate(run: WpRun, t: Target): Promise<{ to: string } | null>
  * Reads one site's WordPress over SSH: its versions, its plugins and themes, and the updates waiting. Five read-only wp-cli commands; `wp eval`, `wp shell` and `wp db query` are never run.
  * Everything it reads is untrusted text: cut to length here and checked again by the Worker.
  */
-export function careInventoryHandler(run: WpRun = realWp): JobHandler {
+export function careInventoryHandler(exec: Exec = runProcess): JobHandler {
   return {
     kind: "care.inventory",
     async run({ job }) {
@@ -73,19 +72,21 @@ export function careInventoryHandler(run: WpRun = realWp): JobHandler {
       const t: Target = { alias: textField(p, "alias"), path: textField(p, "path") };
       if (!WP_ARG.alias.test(t.alias) || !WP_ARG.path.test(t.path)) throw new WpError("this site's SSH settings are not valid");
       const o = { timeoutMs: TIMEOUT_MS };
-      const wpVersion = str(await run(t, ["core", "version", "--format=json"], o));
-      const info = await run(t, ["cli", "info", "--format=json"], o);
-      const core = await coreUpdate(run, t);
-      const plugins = itemsOf(await run(t, ["plugin", "list", LIST, "--format=json"], o), MAX_PLUGINS);
-      const themes = itemsOf(await run(t, ["theme", "list", LIST, "--format=json"], o), MAX_THEMES);
+      const wpVersion = await wpText(exec, t, ["core", "version"], o);
+      if (!WP_ARG.version.test(wpVersion)) throw new WpError("wp-cli gave no readable answer");
+      const info = await wp(exec, t, ["cli", "info", "--format=json"], o);
+      const core = await coreUpdate(exec, t);
+      const pl = itemsOf(await wp(exec, t, ["plugin", "list", LIST, "--format=json"], o), MAX_PLUGINS);
+      const th = itemsOf(await wp(exec, t, ["theme", "list", LIST, "--format=json"], o), MAX_THEMES);
       const php = info && typeof info === "object" ? str((info as Record<string, unknown>).php_version) : "";
       return {
-        wpVersion: cut(wpVersion) || null,
+        wpVersion,
         phpVersion: cut(php) || null,
         core,
-        plugins,
-        themes,
-        activeTheme: themes.find((x) => x.status === "active")?.slug ?? null,
+        plugins: pl.items,
+        themes: th.items,
+        activeTheme: th.items.find((x) => x.status === "active")?.slug ?? null,
+        dropped: pl.dropped + th.dropped,
       };
     },
   };

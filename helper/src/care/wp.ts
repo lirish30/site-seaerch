@@ -7,7 +7,7 @@ import type { Exec } from "../exec.ts";
 export const WP_ARG = {
   alias: /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/,
   path: /^\/(?!.*\.\.)[A-Za-z0-9._/-]{1,200}$/,
-  slug: /^[a-z0-9][a-z0-9._-]{0,99}$/,
+  slug: /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/,
   version: /^[0-9][0-9A-Za-z.+-]{0,30}$/,
   checkPath: /^\/(?!.*\.\.)[A-Za-z0-9._~/%-]{0,200}$/,
 } as const;
@@ -21,7 +21,7 @@ export class WpError extends Error {}
 export const quoteRemote = (word: string): string => `'${word.replace(/'/g, `'\\''`)}'`;
 
 /** The last line of the output that is JSON (wp-cli may print PHP notices or a plugin's banner before it). */
-function lastJson(stdout: string): unknown {
+export function parseLastJson(stdout: string): unknown {
   const lines = stdout.split("\n");
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i].trim();
@@ -32,20 +32,30 @@ function lastJson(stdout: string): unknown {
 }
 
 /**
- * Runs `wp <args>` in the install at `t.path` on the host `t.alias` over SSH and returns the JSON it printed. The alias, the path and every word are checked first and nothing is spawned
+ * Runs `wp <args>` in the install at `t.path` on the host `t.alias` over SSH and returns its whole stdout. The alias, the path and every word are checked first and nothing is spawned
  * if one is not valid. `ssh` is started with an argument list (no local shell), `BatchMode` so a missing key fails instead of asking, and each remote word is single-quoted.
  */
-export async function wp(exec: Exec, t: { alias: string; path: string }, args: string[], o: { timeoutMs: number }): Promise<unknown> {
+export async function wpRaw(exec: Exec, t: { alias: string; path: string }, args: string[], o: { timeoutMs: number }): Promise<string> {
   if (!WP_ARG.alias.test(t.alias) || !WP_ARG.path.test(t.path) || !args.every((a) => WORD.test(a))) throw new WpError("this site's SSH settings are not valid");
-  let stdout: string;
   try {
-    ({ stdout } = await exec(
+    return (await exec(
       "ssh",
       ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15", t.alias, "--", "wp", `--path=${quoteRemote(t.path)}`, ...args.map(quoteRemote)],
       { timeoutMs: o.timeoutMs },
-    ));
+    )).stdout;
   } catch (e) {
     throw new WpError((e instanceof Error ? e.message : String(e)).slice(0, 300));
   }
-  return lastJson(stdout);
+}
+
+/** `wpRaw`, and the last line of it that is JSON. */
+export async function wp(exec: Exec, t: { alias: string; path: string }, args: string[], o: { timeoutMs: number }): Promise<unknown> {
+  return parseLastJson(await wpRaw(exec, t, args, o));
+}
+
+/** `wpRaw`, and the last non-empty line, trimmed: for a command that prints plain text (`wp core version`). */
+export async function wpText(exec: Exec, t: { alias: string; path: string }, args: string[], o: { timeoutMs: number }): Promise<string> {
+  const line = (await wpRaw(exec, t, args, o)).split("\n").map((l) => l.trim()).filter(Boolean).pop();
+  if (!line) throw new WpError("wp-cli gave no readable answer");
+  return line;
 }

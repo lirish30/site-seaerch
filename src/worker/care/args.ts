@@ -7,7 +7,7 @@ import { z } from "zod";
 export const WP_ARG = {
   alias: /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/,
   path: /^\/(?!.*\.\.)[A-Za-z0-9._/-]{1,200}$/,
-  slug: /^[a-z0-9][a-z0-9._-]{0,99}$/,
+  slug: /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/,
   version: /^[0-9][0-9A-Za-z.+-]{0,30}$/,
   checkPath: /^\/(?!.*\.\.)[A-Za-z0-9._~/%-]{0,200}$/,
 } as const;
