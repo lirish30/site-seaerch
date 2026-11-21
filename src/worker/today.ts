@@ -14,8 +14,10 @@ import { ACCESS_KEYS, type AccessStatus } from "./db/sites";
 import { liveProjectSql } from "./db/projects";
 import { clientSql, testClientSql } from "./clients/record";
 import { ACCESS_LABELS, unresolved } from "./sites/access";
+import { listIncidents, type Incident } from "./db/monitoring";
+import { domainDaysLeft } from "./monitoring/incidents";
 
-export const TODAY_KINDS = ["follow_up_due", "draft_unsent", "stalled_deal", "starred_idle", "promising_quick_scan", "proposal_follow_up", "onboarding_attention", "project_attention", "billing_attention", "access_missing"] as const;
+export const TODAY_KINDS = ["follow_up_due", "draft_unsent", "stalled_deal", "starred_idle", "promising_quick_scan", "proposal_follow_up", "onboarding_attention", "project_attention", "billing_attention", "access_missing", "site_incident"] as const;
 export type TodayKind = (typeof TODAY_KINDS)[number];
 export const isTodayKind = (s: string): s is TodayKind => (TODAY_KINDS as readonly string[]).includes(s);
 
@@ -50,7 +52,7 @@ export function parseSnooze(detail: string | null): { kind: TodayKind; until: nu
 // deal_created, deal_moved, call_prep, call_recap and followup_booked are the owner filing a deal (or the queue prepping or recapping a call), not contact with the prospect.
 // meeting_recorded is the sync filing a recording a day or so later, not contact made now.
 // video_watch is deliberately NOT in this set: a prospect watching the video is engagement and does un-stall a deal.
-const NOT_CONTACT = new Set(["today_done", "snoozed", "bulk", "starred", "unstarred", "job_found", "deal_created", "deal_moved", "call_prep", "call_recap", "followup_booked", "proposal_viewed", "proposal_signed", "proposal_void", "deposit_paid",
+const NOT_CONTACT = new Set(["today_done", "snoozed", "bulk", "starred", "unstarred", "job_found", "deal_created", "deal_moved", "call_prep", "call_recap", "followup_booked", "site_down", "site_back", "domain_expiring", "proposal_viewed", "proposal_signed", "proposal_void", "deposit_paid",
   "project_started", "project_milestone", "project_done", "change_order_sent", "change_order_signed", "change_order_paid", "change_order_void", "change_order_declined", "invoice_sent", "invoice_paid", "billing_hold_placed", "meeting_recorded"]);
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -100,6 +102,57 @@ async function accessAttention(db: D1Database, now: Date): Promise<Map<string, {
   for (const r of unresolved(rows)) (missing.get(r.business_id) ?? missing.set(r.business_id, new Set()).get(r.business_id)!).add(r.key);
   const out = new Map<string, { reason: string; priority: number }>();
   for (const [id, keys] of missing) out.set(id, { reason: `Access still missing: ${ACCESS_KEYS.filter((k) => keys.has(k)).map((k) => ACCESS_LABELS[k].label).join(", ")}`, priority: 65 });
+  return out;
+}
+
+/** "47 minutes", "1 hour 5 minutes", "2 hours", then whole days from 24 hours on. Under a minute is "less than a minute". */
+export function outageLength(ms: number): string {
+  const minutes = Math.max(0, Math.floor(ms / 60_000));
+  if (minutes < 1) return "less than a minute";
+  if (minutes < 60) return plural(minutes, "minute");
+  if (minutes < 24 * 60) return `${plural(Math.floor(minutes / 60), "hour")}${minutes % 60 ? ` ${plural(minutes % 60, "minute")}` : ""}`;
+  return plural(Math.floor(minutes / (24 * 60)), "day");
+}
+
+/**
+ * A client's site that is down or whose domain is about to lapse, one row per client: a site that is down (priority 90) beats a domain close to expiring (66). Only open incidents on live,
+ * real sites of real clients (listIncidents already leaves out test clients and test sites). It is the owner's own work, so it stays for a suppressed lead.
+ * The reason is built here from our own numbers (the open time, the site's expiry date) and never from `incident.detail`: that text is frozen when the incident opens, so a domain count would go stale,
+ * and it is never shown. With several sites down the one down longest is named and the others counted.
+ */
+async function incidentAttention(db: D1Database, now: Date): Promise<Map<string, { reason: string; priority: number }>> {
+  const incidents = await listIncidents(db, { open: true, limit: 1000 });
+  const out = new Map<string, { reason: string; priority: number }>();
+  if (!incidents.length) return out;
+  const sites = new Map<string, { domain: string | null; url: string | null; expiresOn: string | null }>();
+  for (const part of chunks([...new Set(incidents.map((i) => i.siteId))])) {
+    const rows = (await db.prepare(`SELECT id, domain, url, domain_expires_on FROM sites WHERE archived_at IS NULL AND id IN (${part.map(() => "?").join(",")})`).bind(...part)
+      .all<{ id: string; domain: string | null; url: string | null; domain_expires_on: string | null }>()).results;
+    for (const r of rows) sites.set(r.id, { domain: r.domain, url: r.url, expiresOn: r.domain_expires_on });
+  }
+  const zone = zoneOf(await getSettings(db));
+  const byClient = new Map<string, Incident[]>();
+  for (const i of incidents) if (sites.has(i.siteId)) (byClient.get(i.businessId) ?? byClient.set(i.businessId, []).get(i.businessId)!).push(i);
+  for (const [businessId, list] of byClient) {
+    const name = (i: Incident) => sites.get(i.siteId)!.domain ?? sites.get(i.siteId)!.url ?? "A site";
+    const downs = list.filter((i) => i.kind === "down").sort((a, c) => ms(a.openedAt) - ms(c.openedAt));
+    if (downs.length) {
+      const others = downs.length - 1;
+      const tail = others === 0 ? "" : `, and ${others} other ${others === 1 ? "site is" : "sites are"} down too`;
+      out.set(businessId, { reason: `${name(downs[0])} has been down for ${outageLength(now.getTime() - ms(downs[0].openedAt))}${tail}`, priority: 90 });
+      continue;
+    }
+    // The nearest expiry speaks.
+    const withDays = list.filter((i) => i.kind === "domain_expiring").map((i) => ({ i, days: sites.get(i.siteId)!.expiresOn ? domainDaysLeft(sites.get(i.siteId)!.expiresOn!, now, zone) : null }));
+    if (!withDays.length) continue;
+    withDays.sort((a, c) => (a.days ?? Infinity) - (c.days ?? Infinity));
+    const { i, days } = withDays[0];
+    const reason = days === null ? `${name(i)} domain is close to expiring`
+      : days < 0 ? `${name(i)} expired ${plural(-days, "day")} ago`
+      : days === 0 ? `${name(i)} expires today`
+      : `${name(i)} expires in ${plural(days, "day")}`;
+    out.set(businessId, { reason, priority: 66 });
+  }
   return out;
 }
 
@@ -158,6 +211,8 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
   const billing = await billingAttention(db, now);
   // A client's site access still missing: the owner's own work (like a project), so it stays for a suppressed lead.
   const access = await accessAttention(db, now);
+  // A client's site that is down or whose domain is about to expire: the owner's own work, so it stays for a suppressed lead.
+  const incidents = await incidentAttention(db, now);
   const activity = await recentActivity(db, candidates.map((b) => b.id), new Date(t - ACTIVITY_WINDOW_DAYS * DAY).toISOString());
 
   const lastContact = new Map<string, number>(), lastExport = new Map<string, number>();
@@ -209,6 +264,8 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
     if (owed && !hidden(b.id, "billing_attention")) items.push(push("billing_attention", b, owed.reason, null, owed.priority));
     const noAccess = access.get(b.id);
     if (noAccess && !hidden(b.id, "access_missing")) items.push(push("access_missing", b, noAccess.reason, null, noAccess.priority));
+    const incident = incidents.get(b.id);
+    if (incident && !hidden(b.id, "site_incident")) items.push(push("site_incident", b, incident.reason, null, incident.priority));
     // A paying client's onboarding is the owner's own work (like a stalled deal), so it stays for a suppressed lead.
     const attention = onboarding.get(b.id);
     if (attention && !hidden(b.id, "onboarding_attention")) items.push(push("onboarding_attention", b, attention, null, 70));

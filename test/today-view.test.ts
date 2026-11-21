@@ -8,7 +8,7 @@ const item = (kind: TodayItem["kind"], businessId: string): TodayItem =>
 
 describe("today view helpers", () => {
   it("labels every kind", () => {
-    expect(Object.keys(TODAY_KIND_LABEL).sort()).toEqual(["access_missing", "billing_attention", "draft_unsent", "follow_up_due", "onboarding_attention", "project_attention", "promising_quick_scan", "proposal_follow_up", "stalled_deal", "starred_idle"]);
+    expect(Object.keys(TODAY_KIND_LABEL).sort()).toEqual(["access_missing", "billing_attention", "draft_unsent", "follow_up_due", "onboarding_attention", "project_attention", "promising_quick_scan", "proposal_follow_up", "site_incident", "stalled_deal", "starred_idle"]);
     expect(TODAY_KIND_LABEL.follow_up_due).toBe("Follow-up");
     expect(TODAY_KIND_LABEL.starred_idle).toBe("Saved");
   });
