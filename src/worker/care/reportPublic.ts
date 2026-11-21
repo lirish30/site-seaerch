@@ -39,9 +39,9 @@ export interface PublicReport {
 
 /**
  * The report behind a link, or null. Null is one answer for a malformed token (never looked up), an unknown one, and every report that is not `sent` (collecting, ready, revoked,
- * cancelled), so the caller cannot tell them apart. A view is counted only on a `sent` report, and only when the page can be shown.
+ * cancelled), so the caller cannot tell them apart. A view is counted only on a `sent` report, and only when the page can be shown, and not when `o.countView` is false (the owner opening the link themselves).
  */
-export async function publicReport(env: Pick<Env, "DB">, token: string, now: Date): Promise<PublicReport | null> {
+export async function publicReport(env: Pick<Env, "DB">, token: string, now: Date, o: { countView?: boolean } = {}): Promise<PublicReport | null> {
   if (!isClientToken(token)) return null;
   const report = await getReportByToken(env.DB, token);
   if (!report || report.status !== "sent") return null;
@@ -50,7 +50,7 @@ export async function publicReport(env: Pick<Env, "DB">, token: string, now: Dat
   const f = parsed.data;
 
   const tz = zoneOf(await getSettings(env.DB));
-  await recordView(env.DB, report.id, now.toISOString());
+  if (o.countView !== false) await recordView(env.DB, report.id, now.toISOString());
 
   return {
     clientName: f.clientName,

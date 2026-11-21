@@ -146,6 +146,30 @@ describe("GET /api/public/m/:token", () => {
     for (const d of dead) expect((await views(d.id)).viewCount).toBe(0);
   });
 
+  it("the owner's own visit (a valid session cookie) shows the page and counts no view; a stranger, or an expired cookie, counts one", async () => {
+    const r = await seed();
+    const login = await worker.fetch(new Request("https://x/api/login", { method: "POST", body: JSON.stringify({ password: "test-pass" }), headers: { "content-type": "application/json" } }), e as never, ctx);
+    expect(login.status).toBe(200);
+    const cookie = login.headers.get("set-cookie")!.split(";")[0];
+    const own = await call(`/m/${r.token}`, { headers: { cookie } });
+    expect(own.status).toBe(200);
+    expect(((await own.json()) as { clientName: string }).clientName).toBe("Ace Plumbing");
+    expect((await views(r.id)).viewCount).toBe(0);
+    expect((await views(r.id)).firstViewedAt).toBeNull();
+    expect((await call(`/m/${r.token}`, { headers: { cookie: "session=not-a-real-session" } })).status).toBe(200);
+    expect((await views(r.id)).viewCount).toBe(1);
+    expect((await call(`/m/${r.token}`)).status).toBe(200);
+    expect((await views(r.id)).viewCount).toBe(2);
+  });
+
+  it("publicReport counts no view when told not to, and still shows the page", async () => {
+    const r = await seed();
+    expect(await publicReport(e, r.token, NOW, { countView: false })).not.toBeNull();
+    expect((await views(r.id)).viewCount).toBe(0);
+    expect(await publicReport(e, r.token, NOW)).not.toBeNull();
+    expect((await views(r.id)).viewCount).toBe(1);
+  });
+
   it("only GET reads it: a write to the same address is turned away without a session and counts nothing", async () => {
     const r = await seed();
     expect((await call(`/m/${r.token}`, { method: "POST" })).status).toBe(401);

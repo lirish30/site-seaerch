@@ -62,15 +62,19 @@ async function readCapped(req: Request, max: number): Promise<string | null> {
   return new TextDecoder().decode(await new Blob(chunks as BlobPart[]).arrayBuffer());
 }
 
+/** True when the request carries the owner's valid session cookie. An invalid or expired one is just a stranger. */
+async function isOwner(c: Context<{ Bindings: Env; Variables: { media?: boolean } }>): Promise<boolean> {
+  const session = getCookie(c, "session");
+  return !!session && (await verifySession(c.env.SESSION_SECRET, session, Date.now()).catch(() => false));
+}
+
 // The report page's watch beacon (open, play, progress, end). It always answers 204 with nothing in it: an unknown link, an unpublished video, a bad
 // body and a failed write are all the same to the caller, so it learns nothing about which links exist. Pages that are only fetched never send it.
 publicRoutes.post("/report/:token/events", async (c) => {
   const token = c.req.param("token");
   // The owner testing their own link is not a prospect watching it. The session cookie is same-site, so the beacon carries it (sendBeacon cannot leave it off);
   // a valid one means "the owner": answered like everything else, recorded as nothing. An invalid or expired cookie is just a stranger.
-  const session = getCookie(c, "session");
-  const owner = !!session && (await verifySession(c.env.SESSION_SECRET, session, Date.now()).catch(() => false));
-  if (TOKEN.test(token) && !owner) {
+  if (TOKEN.test(token) && !(await isOwner(c))) {
     try {
       const text = await readCapped(c.req.raw, MAX_EVENT_BYTES);
       const body = text ? ViewEventSchema.safeParse(JSON.parse(text)) : null;
@@ -340,7 +344,8 @@ publicRoutes.use("/m/:token", clientLimited);
 publicRoutes.get("/m/:token", async (c) => {
   const token = c.req.param("token");
   if (!TOKEN.test(token)) return c.json(NOT_FOUND, 404);
-  const page = await publicCareReport(c.env, token, new Date());
+  // The owner opening the link themselves (to look, or to rehearse) is not the client reading it: the page shows, and no view is counted.
+  const page = await publicCareReport(c.env, token, new Date(), { countView: !(await isOwner(c)) });
   return page ? c.json(page) : c.json(NOT_FOUND, 404);
 });
 
