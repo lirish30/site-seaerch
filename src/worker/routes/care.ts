@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { isTestClient } from "../clients/record";
+import { isClient, isTestClient } from "../clients/record";
 import { editLedger } from "../care/ledger";
 import { getBusiness } from "../db/businesses";
 import { getSettings } from "../db/settings";
@@ -12,6 +12,7 @@ import { getSite, type Site } from "../db/sites";
 import type { Env } from "../env";
 import { CareRunRefused, onRunDone, startBatchNow, startSingleRun } from "../care/batch";
 import { closeUpdateIncident } from "../care/incidents";
+import { CareReportRefused, startReport } from "../care/reportSweep";
 import { careUpdatesBoard, runDetail, updateView } from "../care/views";
 import { serveObject } from "../video/media";
 import { cancelTasksFor } from "../queue/db";
@@ -104,6 +105,22 @@ careRoutes.get("/clients/:id/edit-ledger", async (c) => {
   const month = c.req.query("month") ?? localDay(new Date().toISOString(), tz).slice(0, 7);
   if (!MONTH.test(month)) return c.json({ error: "month must look like 2026-11." }, 400);
   return c.json({ ledger: await editLedger(c.env, id, month, tz) });
+});
+
+/**
+ * Starts the report of last month for the client by hand, any day (a rehearsal client too): 201 with `{ report: { id, status, period } }`, or 200 with the one that is already there.
+ * 404 for an unknown client; 409 with a plain sentence for a client with no live Care project.
+ */
+careRoutes.post("/clients/:id/care-report", async (c) => {
+  const id = c.req.param("id");
+  if (!(await isClient(c.env.DB, id))) return c.json(NOT_FOUND, 404);
+  try {
+    const { report, created } = await startReport(c.env, id, { test: await isTestClient(c.env.DB, id), now: new Date() });
+    return c.json({ report: { id: report.id, status: report.status, period: report.period } }, created ? 201 : 200);
+  } catch (e) {
+    if (e instanceof CareReportRefused) return c.json({ error: e.message }, 409);
+    throw e;
+  }
 });
 
 // --- Care updates (Plan 12) --------------------------------------------------------------------------------------------------------------------------------------------

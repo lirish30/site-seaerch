@@ -160,9 +160,9 @@ describe("sweepProjects", () => {
     await startTimer(e, work.id, new Date("2026-12-04T23:00:00.000Z"));
     const c = await withCadence("CARE-4");
 
-    // Two Claude steps go out: the one made by hand, and the monthly report the sweep has just made (every step of it is Claude's or Claude drafting, so it is ready at once).
-    expect(await sweepProjects(e, now)).toEqual({ started: 0, recurring: 1, dispatched: 2, expired: 1, stopped: 1 });
-    expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM claude_tasks WHERE kind = ?`).bind(SOP_STEP_KIND).first<{ n: number }>())!.n).toBe(2);
+    // One Claude step goes out: the one made by hand. The monthly report task the sweep has just made is Claude drafting and ready at once, but the report sweep builds it, so it is not dispatched.
+    expect(await sweepProjects(e, now)).toEqual({ started: 0, recurring: 1, dispatched: 1, expired: 1, stopped: 1 });
+    expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM claude_tasks WHERE kind = ?`).bind(SOP_STEP_KIND).first<{ n: number }>())!.n).toBe(1);
     expect((await env.DB.prepare(`SELECT status FROM change_orders WHERE id = ?`).bind(o.co.id).first<{ status: string }>())!.status).toBe("expired");
     expect((await listActivity(env.DB, o.businessId)).some((x) => x.kind === "change_order_void" && /\): expired$/.test(x.detail ?? ""))).toBe(true);
     expect(await env.DB.prepare(`SELECT 1 FROM time_entries WHERE ended_at IS NULL`).first()).toBeNull();
@@ -294,10 +294,18 @@ describe("Care cadences on a finished onboarding project", () => {
     for (const s of [paused, cancelled, test]) expect(await cadenceTasks(s.project.id)).toEqual([]);
   });
 
-  it("a Claude-owned recurring task on a finished Care project is dispatched, and its step job is not stale", async () => {
+  it("a Claude-owned recurring task on a finished Care project is dispatched, and its step job is not stale; the monthly report task (CARE-4) is not", async () => {
     const s = await finishedCare();
-    expect((await sweepProjects(e, NOW)).dispatched).toBe(1); // the monthly report is Claude drafting; the weekly update is Logan's
-    const monthly = (await cadenceTasks(s.project.id)).find((t) => t.cadenceKey === "CARE-4")!;
+    const owned: SopTemplateInput = {
+      key: "R-MONTHLY", name: "Run R-MONTHLY", kind: "recurring", cadence: "monthly", cadenceDay: 1, appliesTo: [], active: true,
+      steps: [{ key: "s0", phaseKey: "r", phaseTitle: "Run", position: 1, title: "Do s0", owner: "claude_drafts", estMinutes: 5, doneWhen: "", docTemplate: null, emailTemplate: null, requires: [], milestone: null, clientSummary: null, skippable: false }],
+    };
+    await saveTemplate(env.DB, owned);
+    await addCadence(env.DB, s.project.id, "R-MONTHLY");
+    expect((await sweepProjects(e, NOW)).dispatched).toBe(1); // the weekly update is Logan's, the monthly report is built by the report sweep, and this one is Claude drafting
+    const report = (await cadenceTasks(s.project.id)).find((t) => t.cadenceKey === "CARE-4")!;
+    expect(await getTask(env.DB, report.id)).toMatchObject({ status: "todo", claudeTaskId: null });
+    const monthly = (await cadenceTasks(s.project.id)).find((t) => t.cadenceKey === "R-MONTHLY")!;
     const live = (await getTask(env.DB, monthly.id))!;
     expect(live).toMatchObject({ status: "in_progress", owner: "claude_drafts" });
     const job = await claimById(live.claudeTaskId!);
