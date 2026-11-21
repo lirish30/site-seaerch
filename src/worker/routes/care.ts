@@ -1,6 +1,11 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { isTestClient } from "../clients/record";
+import { editLedger } from "../care/ledger";
+import { getBusiness } from "../db/businesses";
+import { getSettings } from "../db/settings";
+import { zoneOf } from "../sop/cadence";
+import { localDay } from "../monitoring/rollup";
 import { closeUnmonitoredIncidents, getIncident, listIncidents, recentChecks, setMonitoring } from "../db/monitoring";
 import { getPageCheck, getRun, setReview, setUpdateFlag } from "../db/careUpdates";
 import { getSite, type Site } from "../db/sites";
@@ -82,6 +87,23 @@ careRoutes.post("/care/checks/:id/ok", async (c) => {
   const run = await getRun(c.env.DB, check.runId);
   if (run) await onRunDone(c.env, run.batchId);
   return c.json({ ok: true });
+});
+
+// --- Care reports (Plan 13) --------------------------------------------------------------------------------------------------------------------------------------------
+
+const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+/**
+ * A client's edit hours for one month (`?month=YYYY-MM`, default this month in the booking zone): `{ ledger }`, which is null when the client has no live Care plan.
+ * 404 for an unknown client or a rehearsal one; 400 for a month that is not `YYYY-MM`.
+ */
+careRoutes.get("/clients/:id/edit-ledger", async (c) => {
+  const id = c.req.param("id");
+  if (!(await getBusiness(c.env.DB, id)) || (await isTestClient(c.env.DB, id))) return c.json(NOT_FOUND, 404);
+  const tz = zoneOf(await getSettings(c.env.DB));
+  const month = c.req.query("month") ?? localDay(new Date().toISOString(), tz).slice(0, 7);
+  if (!MONTH.test(month)) return c.json({ error: "month must look like 2026-11." }, 400);
+  return c.json({ ledger: await editLedger(c.env, id, month, tz) });
 });
 
 // --- Care updates (Plan 12) --------------------------------------------------------------------------------------------------------------------------------------------

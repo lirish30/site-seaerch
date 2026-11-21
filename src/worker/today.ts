@@ -14,12 +14,14 @@ import { ACCESS_KEYS, type AccessStatus } from "./db/sites";
 import { liveProjectSql } from "./db/projects";
 import { clientSql, testClientSql } from "./clients/record";
 import { ACCESS_LABELS, unresolved } from "./sites/access";
-import { listIncidents, type Incident } from "./db/monitoring";
+import { CARE_SUBSCRIPTION_SQL, listIncidents, type Incident } from "./db/monitoring";
+import { editLedger } from "./care/ledger";
+import { localDay } from "./monitoring/rollup";
 import { lastRunsFor } from "./db/careUpdates";
 import { UPDATE_DETAIL, isStillBroken } from "./care/incidents";
 import { domainDaysLeft } from "./monitoring/incidents";
 
-export const TODAY_KINDS = ["follow_up_due", "draft_unsent", "stalled_deal", "starred_idle", "promising_quick_scan", "proposal_follow_up", "onboarding_attention", "project_attention", "billing_attention", "access_missing", "site_incident"] as const;
+export const TODAY_KINDS = ["follow_up_due", "draft_unsent", "stalled_deal", "starred_idle", "promising_quick_scan", "proposal_follow_up", "onboarding_attention", "project_attention", "billing_attention", "access_missing", "site_incident", "care_edit_hours"] as const;
 export type TodayKind = (typeof TODAY_KINDS)[number];
 export const isTodayKind = (s: string): s is TodayKind => (TODAY_KINDS as readonly string[]).includes(s);
 
@@ -104,6 +106,27 @@ async function accessAttention(db: D1Database, now: Date): Promise<Map<string, {
   for (const r of unresolved(rows)) (missing.get(r.business_id) ?? missing.set(r.business_id, new Set()).get(r.business_id)!).add(r.key);
   const out = new Map<string, { reason: string; priority: number }>();
   for (const [id, keys] of missing) out.set(id, { reason: `Access still missing: ${ACCESS_KEYS.filter((k) => keys.has(k)).map((k) => ACCESS_LABELS[k].label).join(", ")}`, priority: 65 });
+  return out;
+}
+
+/**
+ * A Care client's edit hours running out, one row per client for the current month in the booking zone: from 80% of the allowance up the row is priority 60, past it 64.
+ * Only real clients with a live Care plan; a test client never shows. The owner's own work, so it stays for a suppressed lead.
+ */
+async function editHoursAttention(db: D1Database, now: Date): Promise<Map<string, { percent: number | null; priority: number }>> {
+  const out = new Map<string, { percent: number | null; priority: number }>();
+  const ids = (await db.prepare(
+    `SELECT b.id AS id FROM businesses b
+     WHERE b.archived_at IS NULL AND ${CARE_SUBSCRIPTION_SQL("b")} AND NOT ${testClientSql("b")}
+       AND EXISTS (SELECT 1 FROM tasks t JOIN time_entries e ON e.task_id = t.id WHERE t.business_id = b.id AND t.edit_request = 1)`,
+  ).all<{ id: string }>()).results;
+  if (!ids.length) return out;
+  const tz = zoneOf(await getSettings(db));
+  const month = localDay(now.toISOString(), tz).slice(0, 7);
+  for (const { id } of ids) {
+    const l = await editLedger({ DB: db }, id, month, tz);
+    if (l && l.state !== "ok") out.set(id, { percent: l.percent, priority: l.state === "over" ? 64 : 60 });
+  }
   return out;
 }
 
@@ -259,6 +282,8 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
   const access = await accessAttention(db, now);
   // A client's site that is down or whose domain is about to expire: the owner's own work, so it stays for a suppressed lead.
   const incidents = await incidentAttention(db, now);
+  // A Care client's edit hours for this month running out: the owner's own work, so it stays for a suppressed lead.
+  const editHours = await editHoursAttention(db, now);
   const activity = await recentActivity(db, candidates.map((b) => b.id), new Date(t - ACTIVITY_WINDOW_DAYS * DAY).toISOString());
 
   const lastContact = new Map<string, number>(), lastExport = new Map<string, number>();
@@ -317,6 +342,9 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
     if (noAccess && !hidden(b.id, "access_missing")) items.push(push("access_missing", b, noAccess.reason, null, noAccess.priority));
     const incident = incidents.get(b.id);
     if (incident && !hidden(b.id, "site_incident", incident.openedAt)) items.push(push("site_incident", b, incident.reason, null, incident.priority));
+    const edits = editHours.get(b.id);
+    if (edits && !hidden(b.id, "care_edit_hours"))
+      items.push(push("care_edit_hours", b, edits.percent === null ? `${b.name} has logged edit time this month with no edit hours included` : `${b.name} has used ${edits.percent}% of this month's edit hours`, null, edits.priority));
     // A paying client's onboarding is the owner's own work (like a stalled deal), so it stays for a suppressed lead.
     const attention = onboarding.get(b.id);
     if (attention && !hidden(b.id, "onboarding_attention")) items.push(push("onboarding_attention", b, attention, null, 70));
