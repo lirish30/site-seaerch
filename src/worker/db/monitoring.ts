@@ -28,6 +28,16 @@ export async function recentChecks(db: D1Database, siteId: string, limit: number
   return rows.map(toCheck);
 }
 
+/**
+ * The site's latest `limit` distinct check times, newest first, each with whether any check at that time was ok. Checks written with the same time (a cron run that fired twice) are one moment, not two.
+ */
+export async function recentOutcomes(db: D1Database, siteId: string, limit: number): Promise<{ checkedAt: string; ok: boolean }[]> {
+  const rows = (await db.prepare(
+    `SELECT checked_at, MAX(ok) AS ok FROM site_checks WHERE site_id = ? GROUP BY checked_at ORDER BY checked_at DESC LIMIT ?`,
+  ).bind(siteId, limit).all<{ checked_at: string; ok: number }>()).results;
+  return rows.map((r) => ({ checkedAt: r.checked_at, ok: !!r.ok }));
+}
+
 /** The share of checks since `sinceIso` (inclusive) that were ok, to one decimal; `percent` is null when there were none. */
 export async function uptimePercent(db: D1Database, siteId: string, sinceIso: string): Promise<{ percent: number | null; checks: number }> {
   const r = await db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(ok), 0) AS ok FROM site_checks WHERE site_id = ? AND checked_at >= ?`).bind(siteId, sinceIso).first<{ n: number; ok: number }>();

@@ -45,6 +45,26 @@ describe("recordProbe", () => {
     expect(await checks(site.id)).toBe(4);
   });
 
+  it("two failed checks written with the identical time (a duplicated cron run) are one failure: no incident until a later check also fails", async () => {
+    const s = await seedClient();
+    const site = s.site!;
+    expect(await recordProbe(env, site, down503, at(0))).toEqual({ opened: false, closed: false });
+    expect(await recordProbe(env, site, down503, at(0))).toEqual({ opened: false, closed: false });
+    expect(await checks(site.id)).toBe(2);
+    expect(await listIncidents(env.DB, {})).toHaveLength(0);
+    expect(await kinds(s.businessId, "site_down")).toHaveLength(0);
+    expect(await recordProbe(env, site, down503, at(5))).toEqual({ opened: true, closed: false });
+    expect(await listIncidents(env.DB, {})).toHaveLength(1);
+  });
+
+  it("a failed check at the same time as an ok one does not count as a failure", async () => {
+    const s = await seedClient();
+    await recordProbe(env, s.site!, up, at(0));
+    await recordProbe(env, s.site!, down503, at(5));
+    await recordProbe(env, s.site!, up, at(5));
+    expect(await recordProbe(env, s.site!, down503, at(10))).toEqual({ opened: false, closed: false });
+  });
+
   it("an ok check closes it and logs one site_back with the minutes down; a second ok changes nothing", async () => {
     const s = await seedClient();
     const site = s.site!;

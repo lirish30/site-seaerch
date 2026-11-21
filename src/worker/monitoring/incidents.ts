@@ -1,6 +1,6 @@
 import { dayKey } from "../booking/slots";
 import { logActivity } from "../db/activity";
-import { closeIncident, insertCheck, openIncident, recentChecks, setDomainExpiry } from "../db/monitoring";
+import { closeIncident, insertCheck, openIncident, recentOutcomes, setDomainExpiry } from "../db/monitoring";
 import { getSettings } from "../db/settings";
 import type { Site } from "../db/sites";
 import type { Env } from "../env";
@@ -24,7 +24,7 @@ const NONE: Transition = { opened: false, closed: false };
 
 /**
  * Stores the check, then opens or closes the site's `down` incident.
- * Opens when the last DOWN_AFTER checks all failed; closes on an ok check. Opening twice or closing with nothing open does nothing
+ * Opens when the last DOWN_AFTER checks (at distinct times) all failed; closes on an ok check. Opening twice or closing with nothing open does nothing
  * (the unique index and the single-statement close decide who wins), and only the call that really changed the incident logs a line.
  */
 export async function recordProbe(env: Env, site: Site, r: ProbeResult, now: Date): Promise<Transition> {
@@ -40,7 +40,8 @@ export async function recordProbe(env: Env, site: Site, r: ProbeResult, now: Dat
     return { opened: false, closed: true };
   }
 
-  const last = await recentChecks(db, site.id, DOWN_AFTER);
+  // Distinct check times: two failures written with the same time (a duplicated cron run) are one failure, not an outage.
+  const last = await recentOutcomes(db, site.id, DOWN_AFTER);
   if (last.length < DOWN_AFTER || last.some((c) => c.ok)) return NONE;
   const detail = r.error ?? ERROR_TEXT.connect;
   const { created } = await openIncident(db, { siteId: site.id, businessId: site.businessId, kind: "down", detail, now: nowIso });
