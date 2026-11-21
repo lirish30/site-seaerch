@@ -25,7 +25,7 @@ const OUT = "helper-out/sync-1/meetings.json";
 
 const cfgFor = (meetilyDb: string): Config => ({
   apiBase: "https://x.example.com", token: "hlp_x", pollSeconds: 5, cacheDir: dir, meetilyDb,
-  python: { "qwen3-tts": "p", chatterbox: "p", "openvoice-v2": "p" }, ffmpeg: "ffmpeg", ffprobe: "ffprobe", hyperframes: "hyperframes",
+  python: { "qwen3-tts": "p", chatterbox: "p", "openvoice-v2": "p" }, ffmpeg: "ffmpeg", ffprobe: "ffprobe", hyperframes: "hyperframes", chrome: "chrome",
 });
 
 const job = (payload: unknown, o: Partial<ClaimedJob> = {}): ClaimedJob => ({ id: "job-1", kind: "meetily.sync", attempts: 1, payload, inputs: [], outputs: [OUT], ...o });

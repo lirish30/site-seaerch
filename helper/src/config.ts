@@ -14,6 +14,8 @@ export interface Config {
   ffmpeg: string;
   ffprobe: string;
   hyperframes: string;
+  /** Google Chrome, driven headless by the page checks of the care updates. */
+  chrome: string;
   /** Meetily's SQLite file, read (never written) by the `meetily.sync` job. */
   meetilyDb: string;
 }
@@ -75,6 +77,7 @@ export function loadConfig(path: string = configPath()): Config {
     ffmpeg: text(c, "ffmpeg", "ffmpeg"),
     ffprobe: text(c, "ffprobe", "ffprobe"),
     hyperframes: text(c, "hyperframes", "hyperframes"),
+    chrome: text(c, "chrome", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
     meetilyDb: text(c, "meetilyDb", join(homedir(), "Library", "Application Support", "com.meetily.ai", "meeting_minutes.sqlite")),
   };
 }
