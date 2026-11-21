@@ -92,6 +92,23 @@ export async function listOpenTasksForLogan(db: D1Database, o: { realOnly?: bool
   return rows.map((r) => ({ ...toTask(r), projectName: r.project_name, businessName: r.business_name }));
 }
 
+/**
+ * The open tasks of live, real (not test) projects, soonest due first. `logan`: his own and the drafts waiting for his review. `claude`: what Claude is to do or draft.
+ * `client`: what waits on the client. No `owner` lists all three.
+ */
+export async function listOpenTasks(db: D1Database, o: { owner?: "logan" | "claude" | "client"; limit?: number } = {}): Promise<(Task & { projectName: string; businessName: string })[]> {
+  const LOGAN = `((t.owner = 'logan' AND t.status IN ('todo', 'in_progress')) OR (t.owner = 'claude_drafts' AND t.status = 'in_review'))`;
+  const CLAUDE = `(t.owner IN ('claude', 'claude_drafts') AND t.status IN ('todo', 'in_progress'))`;
+  const CLIENT = `t.status = 'waiting_client'`;
+  const owned = o.owner === "logan" ? LOGAN : o.owner === "claude" ? CLAUDE : o.owner === "client" ? CLIENT : `(${LOGAN} OR ${CLAUDE} OR ${CLIENT})`;
+  const rows = (await db.prepare(
+    `SELECT t.*, p.name AS project_name, b.name AS business_name FROM tasks t JOIN projects p ON p.id = t.project_id JOIN businesses b ON b.id = t.business_id
+     WHERE ${liveProjectSql("p")} AND p.test = 0 AND ${owned}
+     ORDER BY t.due_on IS NULL, t.due_on, p.started_at, p.id, t.position, t.rowid LIMIT ?`,
+  ).bind(o.limit ?? 50).all<Row & { project_name: string; business_name: string }>()).results;
+  return rows.map((r) => ({ ...toTask(r), projectName: r.project_name, businessName: r.business_name }));
+}
+
 /** How many tasks wait for Logan's review, by lead, across real (not test) active projects. */
 export async function reviewCountsByBusiness(db: D1Database): Promise<Map<string, number>> {
   const rows = (await db.prepare(

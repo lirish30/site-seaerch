@@ -8,15 +8,15 @@ const at = (s: Deal["stage"]) => STAGE_ORDER.indexOf(s);
 
 /**
  * What is left to do on a deal, in order, each with whether it is done. Before the call there is only the call. After it: write the notes, then draft the
- * recap (once the notes exist), then offer two times (once there is a recap), then present the recommendation (once the meeting is booked). A closed deal has none.
+ * recap (once the notes exist or the call is recorded), then offer two times (once there is a recap), then present the recommendation (once the meeting is booked). A closed deal has none.
  */
-export function nextActions(d: Pick<Deal, "stage" | "skipCall" | "notes" | "recap">): { label: string; done: boolean }[] {
+export function nextActions(d: Pick<Deal, "stage" | "skipCall" | "notes" | "recap"> & { hasRecording?: boolean }): { label: string; done: boolean }[] {
   if (d.stage === "won" || d.stage === "lost") return [];
   if (d.stage === "booked") return [{ label: "Hold the discovery call", done: false }];
   const out: { label: string; done: boolean }[] = [];
   const written = hasNotes(d.notes);
   out.push({ label: "Write notes", done: written });
-  if (written) out.push({ label: "Draft recap", done: d.recap !== null });
+  if (written || d.hasRecording) out.push({ label: "Draft recap", done: d.recap !== null });
   if (d.recap !== null) out.push({ label: "Offer two times", done: at(d.stage) >= at("recommendation_booked") });
   if (at(d.stage) >= at("recommendation_booked")) out.push({ label: "Present the recommendation", done: at(d.stage) >= at("recommended") });
   return out;

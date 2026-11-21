@@ -53,11 +53,10 @@ describe("mcp", () => {
     expect((await SELF.fetch("https://x/mcp", { method: "GET" })).status).toBe(401);
   });
 
-  it("mcp lists exactly eight tools", async () => {
+  it("mcp lists the eight task and lead tools, the eleven read tools, the five act tools and the money summary", async () => {
     const j = await result("tools/list", {});
-    expect(j.result.tools.map((t: { name: string }) => t.name).sort()).toEqual(
-      ["complete_claude_task", "get_lead", "list_approvals", "next_claude_task", "propose_approval", "queue_status", "release_claude_task", "search_leads"],
-    );
+    expect(j.result.tools.map((t: { name: string }) => t.name).sort()).toEqual(["add_note", "add_task", "add_task_comment", "complete_claude_task", "get_client", "get_deal", "get_lead", "get_meeting", "get_money_summary", "get_project", "get_site", "get_timeline", "list_approvals", "list_invoices", "list_meetings",
+        "list_open_tasks", "list_projects", "log_time", "next_claude_task", "propose_approval", "queue_status", "release_claude_task", "run_audit", "search_clients", "search_leads"]);
   });
 
   it("search_leads finds seeded lead", async () => {
@@ -109,6 +108,15 @@ describe("mcp", () => {
       expect(await count(), kind).toBe(before);
       expect((await listAgentActions(env.DB, { limit: 500 })).some((a) => a.tool === "propose_approval" && a.summary.includes(`refused ${kind}`)), kind).toBe(true);
     }
+  });
+
+  it("mcp cannot propose meeting.followup with its own mail text", async () => {
+    const count = async () => (await env.DB.prepare(`SELECT COUNT(*) AS n FROM approvals WHERE kind = 'meeting.followup'`).first<{ n: number }>())!.n;
+    const before = await count();
+    const j = await call("propose_approval", { kind: "meeting.followup", title: "Looks harmless", preview: "Harmless text", payload: { meetingId: "m1" }, record_type: "meeting", record_id: "m1" });
+    expect(j.result.isError).toBe(true);
+    expect(j.result.content[0].text).toContain("the app proposes it itself");
+    expect(await count()).toBe(before);
   });
 
   it("propose lead.note creates pending approval and logs action", async () => {

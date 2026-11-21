@@ -57,6 +57,7 @@ const ACTIVITY_LABEL: Record<string, string> = {
   invoice_sent: "Invoice sent",
   invoice_paid: "Invoice paid",
   billing_hold_placed: "Work paused: invoice overdue",
+  meeting_recorded: "Meeting recorded",
 };
 
 const TABS = ["overview", "issues", "plan", "email", "activity"] as const;

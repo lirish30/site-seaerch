@@ -12,10 +12,14 @@ import { checkConflict } from "../conflict";
 
 /** The kinds the app proposes itself, with a card it builds: an agent's own title and preview over one of these could mislead the person approving it. */
 const APP_PROPOSED = ["video.publish", "proposal.send", "onboarding.welcome", "onboarding.nudge", "sop.review", "change_order.send",
-  "invoice.send", "invoice.reminder", "invoice.pause_notice", "subscription.start", "subscription.term_notice"];
+  "invoice.send", "invoice.reminder", "invoice.pause_notice", "subscription.start", "subscription.term_notice", "meeting.followup"];
 /** The kinds an agent may propose: all but those the app proposes itself. */
 const proposableKinds = () => registeredKinds().filter((k) => !APP_PROPOSED.includes(k));
-import { logAgentAction } from "../db/agentActions";
+import { makeCtx } from "./tools/context";
+import { registerActTools } from "./tools/act";
+import { registerMoneyTools } from "./tools/money";
+import { registerReadTools } from "./tools/read";
+import { approvalView } from "./tools/views";
 import { getBusiness } from "../db/businesses";
 import { isKnownRecipient } from "../db/contacts";
 import { latestAudit, latestAuditsFor } from "../db/audits";
@@ -28,15 +32,12 @@ import { getTaskKind, registeredTaskKinds } from "../queue/registry";
 const MAX_LEADS = 50;
 /** Tasks skipped in one call because their target is gone (each is closed, so the loop always makes progress). */
 const MAX_SKIPPED = 10;
-const text = (v: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(v) }] });
-const fail = (msg: string) => ({ isError: true as const, content: [{ type: "text" as const, text: msg }] });
 
 /** Read, propose, and work the Claude task queue. There is deliberately no approve, reject, send or execute tool: completing a task can only create approvals. */
 export function buildMcpServer(env: Env): McpServer {
-  const db = env.DB;
+  const ctx = makeCtx(env);
+  const { db, log, text, fail } = ctx;
   const server = new McpServer({ name: "agency-os", version: "1.0.0" });
-  const log = (tool: string, summary: string, record?: { type: string; id: string }) =>
-    logAgentAction(db, { actor: "mcp", tool, summary, record_type: record?.type, record_id: record?.id });
 
   server.registerTool("search_leads", {
     description: "Search leads by name/domain text and/or lead status. Returns up to 50.",
@@ -81,7 +82,7 @@ export function buildMcpServer(env: Env): McpServer {
   }, async ({ status }) => {
     const rows = await listApprovals(db, { status: status ?? "pending", limit: 50 });
     await log("list_approvals", `list_approvals ${status ?? "pending"} -> ${rows.length}`);
-    return text(rows);
+    return text(rows.map(approvalView));
   });
 
   /**
@@ -130,7 +131,7 @@ export function buildMcpServer(env: Env): McpServer {
     const spec = buildEmailSendApproval({ ...p, title, drafted_by: "mcp" }, await getSettings(db), await mailboxFromEmail(db, p.mailbox));
     const created = await createApproval(db, spec);
     await log("propose_approval", `proposed email.send: ${title}`, { type: "business", id: p.businessId });
-    return text(created);
+    return text(approvalView(created));
   };
 
   server.registerTool("propose_approval", {
@@ -149,7 +150,7 @@ export function buildMcpServer(env: Env): McpServer {
       }
       const created = await createApproval(db, { ...a, drafted_by: "mcp" });
       await log("propose_approval", `proposed ${a.kind}: ${a.title}`, a.record_type && a.record_id ? { type: a.record_type, id: a.record_id } : undefined);
-      return text(created);
+      return text(approvalView(created));
     } catch (e) {
       if (e instanceof UnknownKindError) {
         await log("propose_approval", `rejected unknown kind ${a.kind.slice(0, 100)}`);
@@ -215,5 +216,8 @@ export function buildMcpServer(env: Env): McpServer {
     return text(Object.fromEntries(Object.entries(counts).map(([kind, c]) => [kind, { ...c, suggested_model: getTaskKind(kind)?.suggestedModel ?? null }])));
   });
 
+  registerReadTools(server, ctx);
+  registerActTools(server, ctx);
+  registerMoneyTools(server, ctx);
   return server;
 }

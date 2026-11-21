@@ -1,8 +1,10 @@
+import { existsSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { ApiClient, HELPER_VERSION, TokenRevoked, versionAtLeast } from "./api.ts";
 import { configPath, loadConfig, writePairing, type Config } from "./config.ts";
 import { runProcess } from "./exec.ts";
 import { realMedia } from "./ffmpeg.ts";
+import { meetilySyncHandler } from "./handlers/meetilySync.ts";
 import { renderHandler } from "./handlers/render.ts";
 import { voiceSampleHandler } from "./handlers/voiceSample.ts";
 import { voiceSegmentHandler } from "./handlers/voiceSegment.ts";
@@ -30,11 +32,11 @@ export interface CliDeps {
 const stamp = (m: string) => `${new Date().toISOString()} ${m}`;
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** The jobs this helper can do: the cloned voice for a line, a clip of the voice test, and the render. */
+/** The jobs this helper can do: the cloned voice for a line, a clip of the voice test, the render, and the Meetily sync. */
 export function buildHandlers(cfg: Config): JobHandler[] {
   const engines = createEngines(cfg);
   const media = realMedia(cfg);
-  return [voiceSegmentHandler(engines, media), voiceSampleHandler(engines, media), renderHandler(media)];
+  return [voiceSegmentHandler(engines, media), voiceSampleHandler(engines, media), renderHandler(media), meetilySyncHandler()];
 }
 
 function abortableSleep(signal?: AbortSignal): (ms: number) => Promise<void> {
@@ -102,6 +104,8 @@ async function doctor(d: CliDeps, say: (m: string) => void): Promise<number> {
     if (v.startsWith("NOT FOUND") && name !== "hyperframes") bad = true; // ffmpeg and ffprobe are needed for every job; hyperframes only for renders
     say(`  ${name.padEnd(13)} ${v}`);
   }
+  // Meetily is optional (only the meeting sync needs it), so a missing database is shown but never fails the check.
+  say(`meetily:       ${existsSync(cfg.meetilyDb) ? `database found at ${cfg.meetilyDb}` : `database NOT found at ${cfg.meetilyDb} (only needed for the meeting sync)`}`);
   return bad ? 1 : 0;
 }
 

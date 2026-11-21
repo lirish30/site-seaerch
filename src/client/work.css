@@ -161,3 +161,30 @@
   .wk-cards { grid-template-columns:minmax(0, 1fr); }
   .wk-timer-actions { flex-wrap:wrap; }
 }
+
+/* Money: one column of cards; the stat strip and the bar rows collapse on a phone. No horizontal scroll at any width. */
+.mn-body { gap:16px; }
+.mn-card { display:flex; flex-direction:column; gap:10px; min-width:0; padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--bg-surface); }
+.mn-card h2 { margin:0; font-size:17px; line-height:24px; font-weight:600; }
+.mn-big { margin:0; font:600 22px/30px var(--font); letter-spacing:-.3px; overflow-wrap:anywhere; }
+.mn-stats { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:12px; }
+.mn-track { flex:1 1 auto; min-width:0; height:10px; border-radius:5px; background:var(--bg-muted); overflow:hidden; }
+.mn-fill { height:100%; min-width:0; border-radius:5px; background:var(--positive); }
+.mn-fill.warn { background:var(--warning); }
+.mn-target { display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px; }
+.mn-target .deal-field { flex:1 1 200px; min-width:0; }
+.mn-rows, .mn-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
+.mn-row { display:grid; grid-template-columns:110px minmax(0, 1fr) 96px; align-items:center; gap:12px; font-size:14px; }
+.mn-label { overflow-wrap:anywhere; }
+.mn-amt { text-align:right; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.mn-list li { display:flex; flex-wrap:wrap; justify-content:space-between; gap:2px 12px; font-size:14px; line-height:20px; overflow-wrap:anywhere; }
+.mn-list li > a, .mn-list li > span:first-child { min-width:0; }
+.mn-meta { color:var(--text-2); overflow-wrap:anywhere; }
+.mn-profit { flex-direction:column; align-items:flex-start; justify-content:flex-start; }
+
+@media (max-width: 640px) {
+  .mn-stats { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+  .mn-row { grid-template-columns:minmax(0, 1fr) auto; }
+  .mn-row .mn-track { grid-column:1 / -1; grid-row:2; }
+  .mn-card { padding:14px; }
+}

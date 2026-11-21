@@ -41,7 +41,9 @@ import { sopRoutes } from "./routes/sops";
 import { timeRoutes } from "./routes/time";
 import { changeOrderRoutes } from "./routes/changeOrders";
 import { billingRoutes } from "./routes/billing";
+import { moneyRoutes } from "./routes/money";
 import { clientRoutes } from "./routes/clients";
+import { meetingRoutes } from "./routes/meetings";
 import { stripeWebhookRoutes } from "./routes/stripeWebhook";
 import "./approvals/leadNote";
 import "./approvals/emailSend";
@@ -49,6 +51,7 @@ import "./approvals/videoPublish";
 import "./approvals/proposalSend";
 import "./approvals/onboardingWelcome";
 import "./approvals/onboardingNudge";
+import "./approvals/meetingFollowup";
 import "./approvals/sopReview";
 import "./approvals/changeOrderSend";
 import "./approvals/changeOrderDraft";
@@ -109,8 +112,10 @@ app.route("/api", projectRoutes); // /projects..., /tasks..., /me/tasks, /deals/
 app.route("/api", sopRoutes); // /sops...
 app.route("/api", timeRoutes); // /time..., /timer/stop, /tasks/:id/timer/start, /tasks/:id/time
 app.route("/api", clientRoutes); // /clients, /clients/:id, /clients/:id/sites, /sites/:id, /sites/:id/access/:key
+app.route("/api", meetingRoutes); // /meetings/sync
 app.route("/api", changeOrderRoutes); // /projects/:id/change-orders, /change-orders/:id/...
 app.route("/api", billingRoutes); // /billing/..., /change-orders/:id/invoice, /projects/:id/invoices/hourly
+app.route("/api", moneyRoutes); // /money
 // Mounted last at /api: /api/leads/:id/cro-audit(s), /api/cro-items/:id, /api/cro-audits/:id/... (all behind requireAuth).
 app.route("/api", croRoutes);
 // Also mounted at /api: /api/leads/:id/video and /api/video-audits/:id/... (behind requireAuth).

@@ -740,11 +740,12 @@ describe("mcp claude task tools", () => {
     expect(tools.length).toBeGreaterThanOrEqual(2); // the success, and each refusal
   });
 
-  it("mcp lists exactly eight tools", async () => {
+  it("mcp lists the task, lead, read and act tools", async () => {
     const text = await (await rpc("tools/list", {})).text();
     const json = JSON.parse(text.startsWith("{") ? text : text.split("\n").find((l) => l.startsWith("data:"))!.slice(5));
     expect(json.result.tools.map((t: { name: string }) => t.name).sort()).toEqual(
-      ["complete_claude_task", "get_lead", "list_approvals", "next_claude_task", "propose_approval", "queue_status", "release_claude_task", "search_leads"],
+      ["add_note", "add_task", "add_task_comment", "complete_claude_task", "get_client", "get_deal", "get_lead", "get_meeting", "get_money_summary", "get_project", "get_site", "get_timeline", "list_approvals", "list_invoices", "list_meetings",
+        "list_open_tasks", "list_projects", "log_time", "next_claude_task", "propose_approval", "queue_status", "release_claude_task", "run_audit", "search_clients", "search_leads"],
     );
   });
 

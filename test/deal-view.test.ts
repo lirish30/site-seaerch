@@ -18,6 +18,11 @@ describe("nextActions", () => {
     expect(nextActions(deal({ notes: written }))).toEqual([{ label: "Write notes", done: true }, { label: "Draft recap", done: false }]);
   });
 
+  it('lists "Draft recap" for a deal with no notes but a matched recording', () => {
+    expect(nextActions({ ...deal(), hasRecording: true })).toEqual([{ label: "Write notes", done: false }, { label: "Draft recap", done: false }]);
+    expect(nextActions({ ...deal({ notes: emptyNotes() }), hasRecording: false })).toEqual([{ label: "Write notes", done: false }]);
+  });
+
   it("before the call there is only the call", () => {
     expect(nextActions(deal({ stage: "booked" }))).toEqual([{ label: "Hold the discovery call", done: false }]);
   });

@@ -28,6 +28,7 @@ import { TWEAKS, createManualDraft, draftTaskState, requestDraft, type Tweak } f
 import { cancelTasksFor } from "../queue/db";
 import { SITE_REVIEW_KIND } from "../queue/siteReview";
 import { checkSpend, PER_LEAD_COST } from "../cost";
+import { startFullScan } from "../audit/start";
 import { getSettings } from "../db/settings";
 import { composeEmail } from "../email/render";
 import { reportFor, reportFileName } from "../report/data";
@@ -417,17 +418,9 @@ leadRoutes.post("/:id/reaudit", async (c) => {
 // Pays for the rest of a quick-scanned lead (screenshots, PageSpeed, AI review, draft). Any lead may be re-run this way;
 // the draft step skips a suppressed lead itself, so there is no suppression check here.
 leadRoutes.post("/:id/full-scan", async (c) => {
-  const id = c.req.param("id");
-  if (!(await getBusiness(c.env.DB, id))) return c.json({ error: "not found" }, 404);
-  const spend = await checkSpend(c.env.DB, PER_LEAD_COST);
-  if (!spend.ok) return c.json({ error: "spend limit", ...spend }, 402);
-  try {
-    await c.env.LEAD_WORKFLOW.create({ id: `fullscan-${id}-${Date.now()}`, params: { businessId: id, searchId: null, forceDraft: false, stage: "full" } });
-  } catch (e) {
-    return c.json({ error: String((e as Error)?.message ?? e).slice(0, 300) }, 502);
-  }
-  await logActivity(c.env.DB, id, "reaudit", "Full scan");
-  return c.json({ ok: true }, 202);
+  const r = await startFullScan(c.env, c.req.param("id"));
+  if (r.ok) return c.json({ ok: true }, 202);
+  return c.json(r.status === 402 ? { error: r.error, ...r.spend } : { error: r.error }, r.status);
 });
 
 const reportView = (r: ReportRow) => ({ token: r.token, url: `/r/${r.token}`, expiresAt: r.expires_at });

@@ -48,9 +48,10 @@ export function parseSnooze(detail: string | null): { kind: TodayKind; until: nu
 // Rows written by the Today queue or by bulk edits are not contact with the prospect, so they must not un-stall a deal.
 // job_found rows were written by the removed job watch; old ones still must not count as contact.
 // deal_created, deal_moved, call_prep, call_recap and followup_booked are the owner filing a deal (or the queue prepping or recapping a call), not contact with the prospect.
+// meeting_recorded is the sync filing a recording a day or so later, not contact made now.
 // video_watch is deliberately NOT in this set: a prospect watching the video is engagement and does un-stall a deal.
 const NOT_CONTACT = new Set(["today_done", "snoozed", "bulk", "starred", "unstarred", "job_found", "deal_created", "deal_moved", "call_prep", "call_recap", "followup_booked", "proposal_viewed", "proposal_signed", "proposal_void", "deposit_paid",
-  "project_started", "project_milestone", "project_done", "change_order_sent", "change_order_signed", "change_order_paid", "change_order_void", "change_order_declined", "invoice_sent", "invoice_paid", "billing_hold_placed"]);
+  "project_started", "project_milestone", "project_done", "change_order_sent", "change_order_signed", "change_order_paid", "change_order_void", "change_order_declined", "invoice_sent", "invoice_paid", "billing_hold_placed", "meeting_recorded"]);
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 /** "2026-10-02" as "2 Oct". */

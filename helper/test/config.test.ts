@@ -19,9 +19,14 @@ describe("loadConfig", () => {
     expect(c.ffmpeg).toBe("ffmpeg");
     expect(c.ffprobe).toBe("ffprobe");
     expect(c.hyperframes).toBe("hyperframes");
+    expect(c.meetilyDb).toMatch(/Library\/Application Support\/com\.meetily\.ai\/meeting_minutes\.sqlite$/);
     expect(c.python["chatterbox"]).toMatch(/venvs\/chatterbox\/bin\/python$/);
     expect(Object.keys(c.python).sort()).toEqual(["chatterbox", "openvoice-v2", "qwen3-tts"]);
     expect(c.cacheDir).toMatch(/\.siteline-helper\/cache$/);
+  });
+
+  it("lets config.json point meetilyDb somewhere else", () => {
+    expect(loadConfig(put({ apiBase: "https://x.example.com", token: TOKEN, meetilyDb: "/data/meetily.sqlite" })).meetilyDb).toBe("/data/meetily.sqlite");
   });
 
   it("config naming a missing field says which", () => {
@@ -36,6 +41,7 @@ describe("loadConfig", () => {
     expect(() => loadConfig(put({ apiBase: "https://x.example.com", token: TOKEN, pollSeconds: 0 }))).toThrow(/pollSeconds/);
     expect(() => loadConfig(put({ apiBase: "https://x.example.com", token: TOKEN, python: { chatterbox: 4 } }))).toThrow(/python\.chatterbox/);
     expect(() => loadConfig(put({ apiBase: "https://x.example.com", token: TOKEN, ffmpeg: "" }))).toThrow(/ffmpeg/);
+    expect(() => loadConfig(put({ apiBase: "https://x.example.com", token: TOKEN, meetilyDb: 7 }))).toThrow(/meetilyDb/);
   });
 
   it("allows plain http only for a local server", () => {
