@@ -167,4 +167,34 @@ describe("site_incident", () => {
       await env.DB.prepare(`INSERT INTO activity (id, business_id, kind, detail, created_at) VALUES (?,?,?,?,?)`).bind(crypto.randomUUID(), s.businessId, k, "x", ago(1 * DAY)).run();
     expect(await stalled()).toBe(1);
   });
+
+  // A client with nothing else on Today (no live project, invoice, onboarding or hold) is still a Today candidate when an incident is open.
+  it("a client with no project at all still gets the row, for a down incident and for a domain incident", async () => {
+    const downOnly = await seedClient({ project: false });
+    await down(downOnly.site!, 47 * MIN);
+    const domainOnly = await seedClient({ project: false });
+    await domain(domainOnly.site!, "2026-12-22");
+    const found = await rows();
+    expect(found.map((i) => [i.businessId, i.reason, i.priority]).sort()).toEqual([
+      [downOnly.businessId, "ace.com has been down for 47 minutes", 90],
+      [domainOnly.businessId, "ace.com expires in 12 days", 66],
+    ].sort());
+    expect(await rows(downOnly.businessId)).toHaveLength(1);
+    expect(await rows(domainOnly.businessId)).toHaveLength(1);
+  });
+
+  it("a client with no project is not admitted by a closed incident, a test site's or an archived site's", async () => {
+    const closed = await seedClient({ project: false });
+    await down(closed.site!, 47 * MIN);
+    await closeIncident(env.DB, closed.site!.id, "down", ago(0));
+    const testSite = await seedClient({ project: false, site: false });
+    const rehearsal = (await createSite(env.DB, { businessId: testSite.businessId, url: "https://rehearsal.example", test: true })).site;
+    await down(rehearsal, 47 * MIN);
+    const archived = await seedClient({ project: false });
+    await down(archived.site!, 47 * MIN);
+    await archiveSite(env.DB, archived.site!.id, ago(0));
+    const testClient = await seedClient({ project: false, test: true });
+    await down(testClient.site!, 47 * MIN);
+    expect(await rows()).toEqual([]);
+  });
 });
