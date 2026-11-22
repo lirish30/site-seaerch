@@ -5,6 +5,7 @@ import type { CareRow, IncidentView, SiteMonitoringView } from "../worker/monito
 import type { CareRunDetail, CareUpdateView, CareUpdatesBoard } from "../worker/care/views";
 import type { CareBatch } from "../worker/db/careUpdates";
 import type { PublicReport } from "../worker/care/reportPublic";
+import type { PublicSeoReport } from "../worker/seo/reportPublic";
 import type { EditLedger } from "../worker/care/ledger";
 import type { ReportRow } from "../worker/care/reportAdmin";
 export class ApiError extends Error { constructor(public status: number, message: string, public fields: string[] = [], public code = "", public body: unknown = undefined) { super(message); } }
@@ -108,6 +109,14 @@ export async function publicCareReport(token: string): Promise<{ status: number;
   try {
     const res = await fetch(`/api/public/m/${token}`, { credentials: "omit", cache: "no-store" });
     return { status: res.status, page: res.ok ? ((await res.json()) as PublicReport) : null };
+  } catch { return { status: 0, page: null }; }
+}
+
+/** The client's monthly Local SEO report (`/l/<token>`): `{ status, page }`, `page` only for a 200. A dropped connection is `status` 0. Public: no cookie is sent. */
+export async function publicSeoReport(token: string): Promise<{ status: number; page: PublicSeoReport | null }> {
+  try {
+    const res = await fetch(`/api/public/l/${token}`, { credentials: "omit", cache: "no-store" });
+    return { status: res.status, page: res.ok ? ((await res.json()) as PublicSeoReport) : null };
   } catch { return { status: 0, page: null }; }
 }
 

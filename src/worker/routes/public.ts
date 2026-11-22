@@ -7,6 +7,7 @@ import { BookingFormSchema, bookingPage, cancelByToken, createVisitorBooking } f
 import { findSubscription, startCheckout, subscriptionPage } from "../billing/checkout";
 import { changeOrderPage, declineChangeOrderPublic, signChangeOrderPublic, type ChangeOrderWriteResult } from "../changeorders/public";
 import { publicReport as publicCareReport } from "../care/reportPublic";
+import { publicSeoReport } from "../seo/reportPublic";
 import { publicReport } from "../db/reports";
 import { ensureDepositInvoice } from "../documents/deposit";
 import { SignFormSchema, proposalPage, signProposal, signedProposalFor } from "../documents/public";
@@ -346,6 +347,17 @@ publicRoutes.get("/m/:token", async (c) => {
   if (!TOKEN.test(token)) return c.json(NOT_FOUND, 404);
   // The owner opening the link themselves (to look, or to rehearse) is not the client reading it: the page shows, and no view is counted.
   const page = await publicCareReport(c.env, token, new Date(), { countView: !(await isOwner(c)) });
+  return page ? c.json(page) : c.json(NOT_FOUND, 404);
+});
+
+// The client's monthly Local SEO report (Plan 14): the same rules as the Care report's. The same 404 for every link that is not live, a malformed token never reaches the database, only a sent report is shown,
+// showing it counts as a view, and the owner opening it does not.
+publicRoutes.use("/l/:token", clientLimited);
+
+publicRoutes.get("/l/:token", async (c) => {
+  const token = c.req.param("token");
+  if (!TOKEN.test(token)) return c.json(NOT_FOUND, 404);
+  const page = await publicSeoReport(c.env, token, new Date(), { countView: !(await isOwner(c)) });
   return page ? c.json(page) : c.json(NOT_FOUND, 404);
 });
 
