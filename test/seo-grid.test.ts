@@ -202,6 +202,38 @@ describe("runRankGrid", () => {
     expect(rows.every((r) => r.takenOn === DAY && r.points.every((p) => p.pos === 2))).toBe(true);
   });
 
+  it("a throttled rerun the same day does not degrade a good row", async () => {
+    const s = await ready();
+    stub(google(() => found(5)));
+    await runRankGrid(e, s.businessId, NOW);
+    stub(google(() => new Response("boom", { status: 500 })));
+    expect(await runRankGrid(e, s.businessId, new Date("2026-12-02T20:00:00.000Z"))).toEqual({ checked: 1, unmeasured: 0 });
+    const [row] = await rankChecksFor(env.DB, s.businessId, {});
+    expect(row.points.every((p) => p.ok && p.pos === 5)).toBe(true);
+  });
+
+  it("keeps the earlier measurement where a rerun's point failed, and takes the rerun's where it measured", async () => {
+    const s = await ready();
+    stub(google((n) => (n === 0 || n === 8 ? new Response("", { status: 403 }) : found(3))));
+    await runRankGrid(e, s.businessId, NOW);
+    stub(google((n) => (n === 2 || n === 4 || n === 8 ? new Response("", { status: 403 }) : found(1))));
+    await runRankGrid(e, s.businessId, new Date("2026-12-02T20:00:00.000Z"));
+    const [row] = await rankChecksFor(env.DB, s.businessId, {});
+    expect(row.points.map((p) => [p.ok, p.pos])).toEqual([[true, 1], [true, 1], [true, 3], [true, 1], [true, 3], [true, 1], [true, 1], [true, 1], [false, null]]);
+  });
+
+  it("a throttled rerun writes no row for a keyword it never got to, and leaves that keyword's good row alone", async () => {
+    const s = await ready([{ term: "plumber", town: "Tigard" }, { term: "drain cleaning", town: "Tigard" }]);
+    stub(google(() => found(2)));
+    await runRankGrid(e, s.businessId, NOW);
+    stub(google(() => new Response("", { status: 429 })));
+    expect(await runRankGrid(e, s.businessId, NOW)).toEqual({ checked: 1, unmeasured: 1 });
+    expect(searches).toHaveLength(3);
+    const rows = await rankChecksFor(env.DB, s.businessId, {});
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r.points.every((p) => p.ok && p.pos === 2))).toBe(true);
+  });
+
   it("skips a keyword that was switched off", async () => {
     const s = await ready([{ term: "plumber", town: "Tigard" }, { term: "drain cleaning", town: "Tigard" }]);
     await setKeywordActive(env.DB, s.ids[1], false);
@@ -284,6 +316,27 @@ describe("runBaseline", () => {
     stub(google((n) => (n >= 9 && n % 2 === 0 ? new Response("", { status: 403 }) : found(1))));
     const r = await runBaseline(e, s.businessId, NOW);
     expect(r.ranked).toBe(1);
+  });
+
+  it("carries on past a name, address and phone check that cannot be done: the grid runs, the watch starts, nap is null with a note", async () => {
+    const s = await ready();
+    stub((u, i) => (u === "https://ace.com/" ? new Response("", { status: 500 }) : google(() => found(2))(u, i)));
+    const down = await runBaseline(e, s.businessId, NOW);
+    expect(down.nap).toBeNull();
+    expect(down.napNote).toMatch(/couldn't|could not/i);
+    expect(down.ranked).toBe(1);
+    expect(down.snapshot).toMatchObject({ rating: 4.6 });
+    expect(await rankChecksFor(env.DB, s.businessId, {})).toHaveLength(1);
+    const profile = (await getProfile(env.DB, s.businessId))!;
+    expect(profile.status).toBe("active");
+    expect(profile.napResult).toBeNull();
+
+    await env.DB.prepare(`UPDATE sites SET url = NULL, domain = NULL WHERE business_id = ?`).bind(s.businessId).run();
+    stub(google(() => found(2)));
+    const none = await runBaseline(e, s.businessId, NOW);
+    expect(none.nap).toBeNull();
+    expect(none.napNote).toMatch(/website|site/i);
+    expect(none.ranked).toBe(1);
   });
 
   it("does not make the profile active when Google cannot be reached, and says so plainly", async () => {

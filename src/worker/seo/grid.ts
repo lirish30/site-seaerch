@@ -3,7 +3,7 @@
 import type { Env } from "../env";
 import type { Fetcher } from "../crawler/crawl";
 import { getSettings } from "../db/settings";
-import { getProfile, listKeywords, upsertRankCheck, type RankPoint } from "../db/seo";
+import { getProfile, listKeywords, rankChecksFor, upsertRankCheck, type RankPoint } from "../db/seo";
 import { localDay } from "../monitoring/rollup";
 import { zoneOf } from "../sop/cadence";
 import { PlacesError, PlacesNotConfigured, rankAt } from "./places";
@@ -35,7 +35,7 @@ export const radiusMeters = (km: number): number => (km * 1000) / 2;
 export const isUsable = (points: RankPoint[]): boolean => points.filter((p) => p.ok).length >= MIN_MEASURED_POINTS;
 
 /**
- * Checks every active keyword of the client from the 9 grid points and stores one check per keyword for the booking-zone day of `now` (a second run that day replaces it).
+ * Checks every active keyword of the client from the 9 grid points and stores one check per keyword for the booking-zone day of `now` (a second run that day replaces it, but a point that failed this time keeps the measurement an earlier run made from the same spot, and nothing is written when that changes nothing).
  * The calls are made one after another. A call that throws leaves its point `{ pos: null, ok: false }` (not found is `pos: null, ok: true`). After 3 retryable errors in a row the run stops:
  * the keyword in progress is stored with the points it measured and the rest `ok: false`, and the keywords not reached are not stored at all.
  * `checked` is the keywords stored; `unmeasured` is the active keywords that ended without a usable check (stored with too few points, or not reached).
@@ -52,14 +52,19 @@ export async function runRankGrid(env: Env, businessId: string, now: Date, o: { 
   const grid = gridPoints({ lat: profile.lat, lng: profile.lng }, profile.gridKm);
   const radiusM = radiusMeters(profile.gridKm);
 
+  const today = new Map((await rankChecksFor(env.DB, businessId, { from: takenOn, to: takenOn })).map((r) => [r.keywordId, r.points]));
+
   let checked = 0;
   let usable = 0;
   let retryableInARow = 0;
   for (const keyword of keywords) {
+    if (retryableInARow >= MAX_RETRYABLE_IN_A_ROW) break;
     const term = keyword.town ? `${keyword.term} ${keyword.town}` : keyword.term;
     const points: RankPoint[] = [];
+    let attempted = 0;
     for (const p of grid) {
       if (retryableInARow >= MAX_RETRYABLE_IN_A_ROW) { points.push({ lat: p.lat, lng: p.lng, pos: null, ok: false }); continue; }
+      attempted++;
       try {
         const pos = await rankAt(env, { term, lat: p.lat, lng: p.lng, radiusM, placeId: profile.placeId }, o.fetch);
         retryableInARow = 0;
@@ -69,10 +74,17 @@ export async function runRankGrid(env: Env, businessId: string, now: Date, o: { 
         points.push({ lat: p.lat, lng: p.lng, pos: null, ok: false });
       }
     }
-    await upsertRankCheck(env.DB, { businessId, keywordId: keyword.id, takenOn, points, now: now.toISOString() });
+    if (attempted === 0) break;
+    // A point that failed this time keeps the measurement an earlier run that day made from the same spot, so a worse rerun never degrades the day's check.
+    const before = today.get(keyword.id);
+    const merged = points.map((pt, i) => {
+      const old = before?.[i];
+      return !pt.ok && old && old.ok && old.lat === pt.lat && old.lng === pt.lng ? old : pt;
+    });
+    const same = before !== undefined && before.length === merged.length && merged.every((m, i) => m.lat === before[i].lat && m.lng === before[i].lng && m.pos === before[i].pos && m.ok === before[i].ok);
+    if (!same) await upsertRankCheck(env.DB, { businessId, keywordId: keyword.id, takenOn, points: merged, now: now.toISOString() });
     checked++;
-    if (isUsable(points)) usable++;
-    if (retryableInARow >= MAX_RETRYABLE_IN_A_ROW) break;
+    if (isUsable(merged)) usable++;
   }
   return { checked, unmeasured: keywords.length - usable };
 }

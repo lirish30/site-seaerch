@@ -15,10 +15,10 @@ import { SeoRefusal, placesRefusal, runNapCheck } from "./profile";
  * Takes the client's baseline: saves today's snapshot of the Google listing (rating, review count, category, photos, hours), checks the site's name, address and phone against the listing,
  * runs the rank grid for every active keyword, switches the profile to `active`, and logs one `seo_baseline` line per booking-zone day. Safe to run again the same day: the snapshot and the
  * rank checks are replaced, and no second line is logged.
- * Refused, with a plain sentence, when the profile has no Google place yet, Google no longer knows it, Google can't be reached, or the site can't be read for the name, address and phone check;
- * the profile is switched on only after all of it worked. `ranked` is how many active keywords ended with a usable check.
+ * Refused, with a plain sentence, when the profile has no Google place yet, Google no longer knows it or Google can't be reached. A name, address and phone check that can't be done (no site address,
+ * site down) does not stop the rest: `nap` is null and `napNote` says why. `ranked` is how many active keywords ended with a usable check.
  */
-export async function runBaseline(env: Env, businessId: string, now: Date): Promise<{ snapshot: GbpSnapshot | null; nap: NapResult; ranked: number }> {
+export async function runBaseline(env: Env, businessId: string, now: Date): Promise<{ snapshot: GbpSnapshot | null; nap: NapResult | null; napNote: string | null; ranked: number }> {
   const profile = await getProfile(env.DB, businessId);
   if (!profile) throw new SeoRefusal("Set up the profile first, so there is a Google place to take the baseline from.", 409);
   if (!profile.placeId || profile.lat === null || profile.lng === null) throw new SeoRefusal("Pick this client's Google place first, then take the baseline.", 409);
@@ -33,11 +33,14 @@ export async function runBaseline(env: Env, businessId: string, now: Date): Prom
   };
   await upsertSnapshot(env.DB, { ...snapshot, now: now.toISOString() });
 
-  const nap = await runNapCheck(env, businessId, undefined, now);
+  // The three measurements are independent: a site that is down or has no address must not keep the rank grid from running or the watch from starting.
+  let nap: NapResult | null = null;
+  let napNote: string | null = null;
+  try { nap = await runNapCheck(env, businessId, undefined, now); } catch (e) { if (!(e instanceof SeoRefusal)) throw e; napNote = e.message; }
   const { unmeasured } = await runRankGrid(env, businessId, now);
   const active = (await listKeywords(env.DB, businessId, { activeOnly: true })).length;
 
   await upsertProfile(env.DB, businessId, { status: "active" }, now.toISOString());
   await logActivityOnce(env.DB, businessId, "seo_baseline", `Baseline for ${takenOn}`);
-  return { snapshot, nap, ranked: Math.max(0, active - unmeasured) };
+  return { snapshot, nap, napNote, ranked: Math.max(0, active - unmeasured) };
 }
