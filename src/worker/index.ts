@@ -43,6 +43,7 @@ import { changeOrderRoutes } from "./routes/changeOrders";
 import { billingRoutes } from "./routes/billing";
 import { moneyRoutes } from "./routes/money";
 import { careRoutes } from "./routes/care";
+import { seoRoutes } from "./routes/seo";
 import { clientRoutes } from "./routes/clients";
 import { meetingRoutes } from "./routes/meetings";
 import { stripeWebhookRoutes } from "./routes/stripeWebhook";
@@ -120,6 +121,7 @@ app.route("/api", changeOrderRoutes); // /projects/:id/change-orders, /change-or
 app.route("/api", billingRoutes); // /billing/..., /change-orders/:id/invoice, /projects/:id/invoices/hourly
 app.route("/api", moneyRoutes); // /money
 app.route("/api", careRoutes); // /care, /incidents, /sites/:id/checks, /sites/:id/monitoring
+app.route("/api", seoRoutes); // /clients/:id/seo/place-search, /profile, /keywords, /citations/:directory, /nap-check
 // Mounted last at /api: /api/leads/:id/cro-audit(s), /api/cro-items/:id, /api/cro-audits/:id/... (all behind requireAuth).
 app.route("/api", croRoutes);
 // Also mounted at /api: /api/leads/:id/video and /api/video-audits/:id/... (behind requireAuth).

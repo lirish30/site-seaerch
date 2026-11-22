@@ -1,0 +1,133 @@
+import { Hono } from "hono";
+import { z } from "zod";
+import { isClient, todayKey } from "../clients/record";
+import { addKeyword, listCitations, listKeywords, setCitation, setKeywordActive, type CitationStatus } from "../db/seo";
+import { getSettings } from "../db/settings";
+import type { Env } from "../env";
+import { bodyOf, NOT_FOUND, ownerOnError, type Ctx } from "../projects/http";
+import { CITATION_DIRECTORIES, parseNapResult } from "../seo/nap";
+import { findPlaces } from "../seo/places";
+import { CREDENTIAL_REFUSED, MAX_TEXT, MIN_TEXT, SeoRefusal, placesRefusal, runNapCheck, setupProfile, tidy } from "../seo/profile";
+import { looksLikeCredential } from "../onboarding/templates";
+
+/**
+ * Mounted at /api (behind requireAuth), all under /clients/:id/seo (the owner's local SEO setup for one client; a test client is allowed):
+ * POST /place-search, PUT /profile, POST /keywords, DELETE /keywords/:keywordId, PUT /citations/:directory, POST /nap-check.
+ * Places data, site text and business names are untrusted: nothing from the request body sets a location, and neither the Places key nor anything a remote service said is ever returned.
+ */
+export const seoRoutes = new Hono<{ Bindings: Env }>();
+seoRoutes.onError((e, c) => (e instanceof SeoRefusal ? c.json({ error: e.message }, e.status) : ownerOnError(e, c)));
+
+export const MAX_ACTIVE_KEYWORDS = 10;
+const CITATION_STATUSES = ["todo", "listed", "needs_fix", "not_applicable"] as const satisfies readonly CitationStatus[];
+
+/** The client's id, or the 404 to send back when this is not a client. */
+async function clientId(c: Ctx): Promise<string | Response> {
+  const id = c.req.param("id") ?? "";
+  return (await isClient(c.env.DB, id)) ? id : c.json(NOT_FOUND, 404);
+}
+
+const SearchBody = z.object({ name: z.string().trim().min(1, "name is required.").max(200), address: z.string().trim().max(300) });
+
+/** Google's best matches for a business name and address (five at most). The owner picks one; nothing is chosen here, even when two have the same name. */
+seoRoutes.post("/clients/:id/seo/place-search", async (c) => {
+  const id = await clientId(c);
+  if (id instanceof Response) return id;
+  const body = await bodyOf(c, SearchBody);
+  if (body instanceof Response) return body;
+  try {
+    return c.json({ candidates: await findPlaces(c.env, body) });
+  } catch (e) {
+    throw placesRefusal(e) ?? e;
+  }
+});
+
+const ProfileBody = z.object({ placeId: z.string(), trade: z.string(), towns: z.array(z.string()), gridKm: z.number(), siteId: z.string().optional() });
+
+/** Ties the client to the chosen Google place. The location, name, address and phone come from Google; any other field in the body is ignored. */
+seoRoutes.put("/clients/:id/seo/profile", async (c) => {
+  const id = await clientId(c);
+  if (id instanceof Response) return id;
+  const body = await bodyOf(c, ProfileBody);
+  if (body instanceof Response) return body;
+  const profile = await setupProfile(c.env, id, body, new Date().toISOString());
+  return c.json({ profile: { ...profile, napResult: parseNapResult(profile.napResult) }, citations: await listCitations(c.env.DB, id) });
+});
+
+const KeywordBody = z.object({ term: z.string(), town: z.string().optional() });
+
+const sameWords = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+const lengthOk = (s: string) => s.length >= MIN_TEXT && s.length <= MAX_TEXT;
+
+/**
+ * Adds a keyword to track (a term, and a town if it is one). Ten may be active; adding one that is already there changes nothing, and adding one that was switched off puts it back if there is room.
+ * 201 for a new keyword, 200 for one that was already there.
+ */
+seoRoutes.post("/clients/:id/seo/keywords", async (c) => {
+  const id = await clientId(c);
+  if (id instanceof Response) return id;
+  const body = await bodyOf(c, KeywordBody);
+  if (body instanceof Response) return body;
+  const term = tidy(body.term);
+  const town = tidy(body.town ?? "");
+  if (!lengthOk(term)) throw new SeoRefusal(`A keyword must be ${MIN_TEXT} to ${MAX_TEXT} characters.`);
+  if (town !== "" && !lengthOk(town)) throw new SeoRefusal(`A town must be ${MIN_TEXT} to ${MAX_TEXT} characters.`);
+  if (looksLikeCredential(term) || looksLikeCredential(town)) throw new SeoRefusal(CREDENTIAL_REFUSED);
+
+  const all = await listKeywords(c.env.DB, id);
+  const there = all.find((k) => sameWords(k.term, term) && sameWords(k.town, town));
+  if (there?.active) return c.json({ keyword: there, created: false });
+  if (all.filter((k) => k.active).length >= MAX_ACTIVE_KEYWORDS) throw new SeoRefusal(`You can track ${MAX_ACTIVE_KEYWORDS} keywords at most. Switch one off first.`, 409);
+  if (there) {
+    await setKeywordActive(c.env.DB, there.id, true);
+    return c.json({ keyword: { ...there, active: true }, created: false });
+  }
+  const { keyword, created } = await addKeyword(c.env.DB, id, { term, town }, new Date().toISOString());
+  return c.json({ keyword, created }, created ? 201 : 200);
+});
+
+/** Switches a keyword off (its past rank checks stay). Switching off one that is off already is fine. */
+seoRoutes.delete("/clients/:id/seo/keywords/:keywordId", async (c) => {
+  const id = await clientId(c);
+  if (id instanceof Response) return id;
+  const keyword = (await listKeywords(c.env.DB, id)).find((k) => k.id === c.req.param("keywordId"));
+  if (!keyword) return c.json(NOT_FOUND, 404);
+  await setKeywordActive(c.env.DB, keyword.id, false);
+  return c.json({ keyword: { ...keyword, active: false } });
+});
+
+const isWebAddress = (s: string): boolean => {
+  try {
+    const u = new URL(s);
+    return (u.protocol === "https:" || u.protocol === "http:") && u.username === "" && u.password === "";
+  } catch { return false; }
+};
+const CitationBody = z.object({
+  status: z.enum(CITATION_STATUSES, "status must be todo, listed, needs_fix or not_applicable."),
+  url: z.string().trim().max(500).refine(isWebAddress, "url must be an http or https address.").optional(),
+  note: z.string().max(500).optional(),
+});
+
+/** Records where the client stands in one directory: its status, the listing's link and a note. What is not given is left as it was. */
+seoRoutes.put("/clients/:id/seo/citations/:directory", async (c) => {
+  const id = await clientId(c);
+  if (id instanceof Response) return id;
+  const directory = c.req.param("directory");
+  if (!CITATION_DIRECTORIES.includes(directory)) return c.json(NOT_FOUND, 404);
+  const body = await bodyOf(c, CitationBody);
+  if (body instanceof Response) return body;
+  const note = body.note === undefined ? undefined : tidy(body.note);
+  if (note !== undefined && looksLikeCredential(note)) throw new SeoRefusal(CREDENTIAL_REFUSED);
+  const takenOn = todayKey(await getSettings(c.env.DB), new Date());
+  const saved = await setCitation(c.env.DB, id, directory, { status: body.status, ...(body.url !== undefined ? { url: body.url } : {}), ...(note !== undefined ? { note } : {}) }, takenOn);
+  if (!saved) return c.json(NOT_FOUND, 404);
+  const citations = await listCitations(c.env.DB, id);
+  return c.json({ citation: citations.find((x) => x.directory === directory), citations });
+});
+
+/** Reads the client's site and compares its name, address and phone with the listing's. */
+seoRoutes.post("/clients/:id/seo/nap-check", async (c) => {
+  const id = await clientId(c);
+  if (id instanceof Response) return id;
+  return c.json({ nap: await runNapCheck(c.env, id) });
+});
