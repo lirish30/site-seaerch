@@ -45,7 +45,7 @@ export function registerReadTools(server: McpServer, ctx: ToolCtx): void {
   });
 
   server.registerTool("get_client", {
-    description: "One client: contacts, sites (access as key, label and status only), subscriptions, MRR, the grade (A, B or C, set by the owner, with its note) and the grade the rules suggest with the reasons, projects, invoice totals, documents, change orders and the newest 20 activity items.",
+    description: "One client: contacts, sites (access as key, label and status only), subscriptions, MRR, the grade (A, B or C, set by the owner, with its note) and the grade the rules suggest with the reasons, projects, invoice totals, documents, change orders, the post-launch ladder (each step with its due day and status) and the newest 20 activity items.",
     inputSchema: { id },
   }, async ({ id: businessId }) => {
     const rec = await getClientRecord(db, businessId, new Date());

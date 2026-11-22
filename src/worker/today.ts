@@ -20,8 +20,9 @@ import { localDay } from "./monitoring/rollup";
 import { lastRunsFor } from "./db/careUpdates";
 import { UPDATE_DETAIL, isStillBroken } from "./care/incidents";
 import { domainDaysLeft } from "./monitoring/incidents";
+import { dueLadderByBusiness, type LadderRow } from "./db/ladder";
 
-export const TODAY_KINDS = ["follow_up_due", "draft_unsent", "stalled_deal", "starred_idle", "promising_quick_scan", "proposal_follow_up", "onboarding_attention", "project_attention", "billing_attention", "access_missing", "site_incident", "care_edit_hours", "seo_waiting"] as const;
+export const TODAY_KINDS = ["follow_up_due", "draft_unsent", "stalled_deal", "starred_idle", "promising_quick_scan", "proposal_follow_up", "onboarding_attention", "project_attention", "billing_attention", "access_missing", "site_incident", "care_edit_hours", "seo_waiting", "ladder_due"] as const;
 export type TodayKind = (typeof TODAY_KINDS)[number];
 export const isTodayKind = (s: string): s is TodayKind => (TODAY_KINDS as readonly string[]).includes(s);
 
@@ -151,6 +152,31 @@ async function seoAttention(db: D1Database): Promise<Map<string, { reason: (name
   for (const r of rows) {
     if (r.stars !== null) out.set(r.id, { reason: (name) => `${name}: a review of ${r.stars} ${r.stars === 1 ? "star" : "stars"} needs you`, priority: 66, since: r.flagged_at ? ms(r.flagged_at) : -Infinity });
     else if (r.replies + r.content > 0) out.set(r.id, { reason: (name) => `${name}: ${plural(r.replies + r.content, "Local SEO draft")} waiting`, priority: 58, since: -Infinity });
+  }
+  return out;
+}
+
+/** The words a due step says on Today. Its own note (what is missing) speaks when it has one. */
+const LADDER_REASON: Record<LadderRow["step"], (name: string) => string> = {
+  thank_you: (n) => `Thank-you package is due for ${n}`, case_study: (n) => `Case study post is due for ${n}`, review_request: (n) => `Review request is due for ${n}`,
+  testimonial: (n) => `Testimonial request is due for ${n}`, check_in: (n) => `Check-in is due for ${n}`, december_letter: (n) => `December letter is due for ${n}`,
+};
+
+/**
+ * A client with a post-launch step waiting on Logan (a thank-you package, a case study post, or a mail that was held back for want of a link or an address), one row per client: the oldest `due` step speaks.
+ * Only real clients; a test client never shows. The owner's own work, so it stays for a suppressed lead. Priority 56, under every money row.
+ */
+async function ladderAttention(db: D1Database): Promise<Map<string, { reason: (name: string) => string; priority: number }>> {
+  const due = await dueLadderByBusiness(db);
+  const out = new Map<string, { reason: (name: string) => string; priority: number }>();
+  if (!due.length) return out;
+  const real = new Set<string>();
+  for (const part of chunks([...new Set(due.map((r) => r.businessId))])) {
+    for (const r of (await db.prepare(`SELECT b.id AS id FROM businesses b WHERE b.archived_at IS NULL AND ${clientSql("b")} AND NOT ${testClientSql("b")} AND b.id IN (${part.map(() => "?").join(",")})`).bind(...part).all<{ id: string }>()).results) real.add(r.id);
+  }
+  for (const r of due) {
+    if (!real.has(r.businessId) || out.has(r.businessId)) continue;
+    out.set(r.businessId, { reason: (name) => r.note.trim() || LADDER_REASON[r.step](name), priority: 56 });
   }
   return out;
 }
@@ -311,6 +337,8 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
   const editHours = await editHoursAttention(db, now);
   // A Local SEO client with drafts waiting or a low-rated review to answer: the owner's own work, so it stays for a suppressed lead.
   const seo = await seoAttention(db);
+  // A client with a post-launch step due: the owner's own work, so it stays for a suppressed lead.
+  const ladder = await ladderAttention(db);
   const activity = await recentActivity(db, candidates.map((b) => b.id), new Date(t - ACTIVITY_WINDOW_DAYS * DAY).toISOString());
 
   const lastContact = new Map<string, number>(), lastExport = new Map<string, number>();
@@ -374,6 +402,8 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
       items.push(push("care_edit_hours", b, edits.percent === null ? `${b.name} has logged edit time this month with no edit hours included` : `${b.name} has used ${edits.percent}% of this month's edit hours`, null, edits.priority));
     const seoRow = seo.get(b.id);
     if (seoRow && !hidden(b.id, "seo_waiting", seoRow.since)) items.push(push("seo_waiting", b, seoRow.reason(b.name), null, seoRow.priority));
+    const ladderRow = ladder.get(b.id);
+    if (ladderRow && !hidden(b.id, "ladder_due")) items.push(push("ladder_due", b, ladderRow.reason(b.name), null, ladderRow.priority));
     // A paying client's onboarding is the owner's own work (like a stalled deal), so it stays for a suppressed lead.
     const attention = onboarding.get(b.id);
     if (attention && !hidden(b.id, "onboarding_attention")) items.push(push("onboarding_attention", b, attention, null, 70));

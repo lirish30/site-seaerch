@@ -56,3 +56,27 @@ export async function setLadderLink(db: D1Database, id: string, link: string | n
   const res = await db.prepare(`UPDATE ladder_steps SET link = ? WHERE id = ?`).bind(link, id).run();
   return (res.meta.changes ?? 0) === 1;
 }
+
+/** One step by id, or null. */
+export async function getLadderRow(db: D1Database, id: string): Promise<LadderRow | null> {
+  const r = await db.prepare(`SELECT * FROM ladder_steps WHERE id = ?`).bind(id).first<Row>();
+  return r ? toRow(r) : null;
+}
+
+/**
+ * Like `setLadderStatus`, but only when the step is in one of the `from` states right now (one statement, so two callers never both win). Returns false when it was in none of them or does not exist.
+ * `now` should always be given for `done` and `skipped`: it is what stamps `done_at`.
+ */
+export async function moveLadder(db: D1Database, id: string, from: LadderStatus[], to: LadderStatus, o: { approvalId?: string; note?: string; now?: string }): Promise<boolean> {
+  const finished = to === "done" || to === "skipped";
+  const res = await db.prepare(
+    `UPDATE ladder_steps SET status = ?, approval_id = COALESCE(?, approval_id), note = COALESCE(?, note), done_at = ? WHERE id = ? AND status IN (${from.map(() => "?").join(",")})`,
+  ).bind(to, o.approvalId ?? null, o.note ?? null, finished ? (o.now ?? null) : null, id, ...from).run();
+  return (res.meta.changes ?? 0) === 1;
+}
+
+/** Every step in `due`, oldest first (the first one per business speaks for it on Today). */
+export async function dueLadderByBusiness(db: D1Database): Promise<LadderRow[]> {
+  const rows = (await db.prepare(`SELECT * FROM ladder_steps WHERE status = 'due' ORDER BY due_on, rowid`).all<Row>()).results;
+  return rows.map(toRow);
+}

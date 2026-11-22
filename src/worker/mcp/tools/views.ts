@@ -150,6 +150,7 @@ export function clientView(r: ClientRecord) {
     invoices: { openCents: r.invoices.openCents, overdueCount: r.invoices.overdueCount, paidCents: r.invoices.paidCents },
     documents: r.documents.map((d) => ({ id: d.id, dealId: d.dealId, version: d.version, status: d.status, test: d.test, reference: d.reference, sentAt: d.sentAt, signedAt: d.signedAt, paidAt: d.paidAt })),
     changeOrders: r.changeOrders.map((c) => ({ id: c.id, projectId: c.projectId, status: c.status, title: c.title, reference: c.reference, priceCents: c.priceCents, test: c.test, signedAt: c.signedAt, paidAt: c.paidAt })),
+    ladder: r.ladder.map((l) => ({ id: l.id, step: l.step, dueOn: l.dueOn, status: l.status, note: l.note, doneAt: l.doneAt })),
     activity: r.activity.slice(0, 20).map(activityView),
   };
 }

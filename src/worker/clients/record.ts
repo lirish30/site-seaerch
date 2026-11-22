@@ -4,6 +4,7 @@ import { getBusiness } from "../db/businesses";
 import { listChangeOrdersForBusiness, type ChangeOrder, type ChangeOrderStatus } from "../db/changeOrders";
 import { listForBusiness, type Document, type DocumentStatus } from "../db/documents";
 import { isOnHold } from "../db/holds";
+import { listLadder, type LadderRow } from "../db/ladder";
 import { listInvoices } from "../db/invoices";
 import { listPeople } from "../db/people";
 import { listProjects } from "../db/projects";
@@ -154,6 +155,8 @@ export interface ClientRecord {
   changeOrders: ClientChangeOrder[];
   held: boolean;
   nextRenewalOn: string | null;
+  /** The steps owed after a build (review request, testimonial, thank-you, check-in, case study, December letters), soonest due first. */
+  ladder: LadderRow[];
   activity: Activity[];
 }
 
@@ -198,9 +201,9 @@ export async function getClientRecord(db: D1Database, businessId: string, now: D
   if (!business || !client) return null;
   const settings = await getSettings(db);
   const today = todayKey(settings, now);
-  const [people, subs, projects, invoices, documents, changeOrders, held, activity, sites] = await Promise.all([
+  const [people, subs, projects, invoices, documents, changeOrders, held, activity, sites, ladder] = await Promise.all([
     listPeople(db, businessId), listSubscriptions(db, { businessId }), listProjects(db, { businessId }), listInvoices(db, { businessId }), listForBusiness(db, businessId),
-    listChangeOrdersForBusiness(db, businessId), isOnHold(db, businessId), listActivity(db, businessId), listSites(db, { businessId }),
+    listChangeOrdersForBusiness(db, businessId), isOnHold(db, businessId), listActivity(db, businessId), listSites(db, { businessId }), listLadder(db, businessId),
   ]);
   const care = careLabel(subs);
   const answers = sites.length > 0 ? await clientAnswers(db, businessId) : new Map<string, string>();
@@ -221,6 +224,6 @@ export async function getClientRecord(db: D1Database, businessId: string, now: D
       overdueCount: owed.filter((i) => isOverdue(i, today)).length,
       paidCents: invoices.filter((i) => !i.test && i.status === "paid").reduce((n, i) => n + i.amountCents, 0),
     },
-    documents: documents.map(toDocument), changeOrders: changeOrders.map(toChangeOrder), held, nextRenewalOn: nextRenewalOn(subs), activity,
+    documents: documents.map(toDocument), changeOrders: changeOrders.map(toChangeOrder), held, nextRenewalOn: nextRenewalOn(subs), ladder, activity,
   };
 }
