@@ -3,7 +3,7 @@
 import { LIVE } from "../clients/record";
 import { insertContentSlots, listContent, listKeywords, type ContentItem, type ContentKind } from "../db/seo";
 import type { Env } from "../env";
-import { queueContentDraft } from "../queue/seoContent";
+import { SEO_CONTENT_KIND, SEO_CONTENT_TARGET, queueContentDraft } from "../queue/seoContent";
 
 export { SEO_CONTENT_KIND } from "../queue/seoContent";
 
@@ -26,6 +26,17 @@ export async function planFor(db: D1Database, businessId: string): Promise<SeoPl
   ).bind(businessId, ...LIVE, ...PLAN_KEYS).all<{ package_key: SeoPlanKey }>()).results;
   if (!rows.length) return null;
   return SEO_PLAN[rows.some((r) => r.package_key === "local_seo_growth") ? "local_seo_growth" : "local_seo"];
+}
+
+/** A slot is handed to Claude again after its draft task expired or failed, but only until this many draft tasks for it have ended that way; after that it stays `planned` for Logan to write or reject. */
+export const MAX_DRAFT_TRIES = 2;
+
+/** How many draft tasks of each of the client's slots ended `failed` or `expired` (a slot with none is not in the map). */
+export async function draftTriesFor(db: D1Database, businessId: string): Promise<Map<string, number>> {
+  const rows = (await db.prepare(
+    `SELECT target_id AS id, COUNT(*) AS n FROM claude_tasks WHERE kind = ? AND target_type = ? AND status IN ('failed', 'expired') AND target_id IN (SELECT id FROM seo_content WHERE business_id = ?) GROUP BY target_id`,
+  ).bind(SEO_CONTENT_KIND, SEO_CONTENT_TARGET, businessId).all<{ id: string; n: number }>()).results;
+  return new Map(rows.map((r) => [r.id, r.n]));
 }
 
 const PERIOD = /^\d{4}-(?:0[1-9]|1[0-2])$/;
@@ -72,8 +83,9 @@ export async function ensureSlots(env: Env, businessId: string, period: string, 
     }], now.toISOString());
   }
 
+  const tries = await draftTriesFor(env.DB, businessId);
   for (const i of await listContent(env.DB, { businessId, period })) {
-    if (i.status === "planned" && i.claudeTaskId === null) await queueContentDraft(env, i, now);
+    if (i.status === "planned" && i.claudeTaskId === null && (tries.get(i.id) ?? 0) < MAX_DRAFT_TRIES) await queueContentDraft(env, i, now);
   }
   return listContent(env.DB, { businessId, period });
 }

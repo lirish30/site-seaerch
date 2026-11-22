@@ -16,6 +16,7 @@ import "../src/worker/queue/kinds";
 import { previousMonth } from "../src/worker/care/reportSweep";
 import { DAILY_CRON, runScheduled } from "../src/worker/schedule";
 import * as contentMod from "../src/worker/seo/content";
+import { MAX_DRAFT_TRIES, draftTriesFor } from "../src/worker/seo/content";
 import { plainSeoSummary, type SeoReportFacts } from "../src/worker/seo/reportFacts";
 import { runBaseline } from "../src/worker/seo/baseline";
 import { setupProfile } from "../src/worker/seo/profile";
@@ -303,6 +304,31 @@ describe("sweepSeo", () => {
     expect(await jobs("seo.content")).toHaveLength(5);
     await sweepSeo(e, at(NOW, 16));
     expect(await jobs("seo.content")).toHaveLength(5);
+  });
+
+  it("stops handing a slot to Claude after two draft tasks for it expired, and leaves it planned for Logan, touching nothing else", async () => {
+    expect(MAX_DRAFT_TRIES).toBe(2);
+    const s = await seoClient({ keywords: 2 });
+    await generateRecurring(e, NOW);
+    await check(s, "2026-12-01");
+    await sweepSeo(e, NOW);
+    const [kept, ...rest] = await listContent(env.DB, { businessId: s.businessId, period: "2026-12" });
+    expect(await setContent(env.DB, kept.id, ["drafting"], { title: "A title", body: "A body", status: "drafted" }, NOW.toISOString())).toBe(true);
+    await expireOldTasks(e, at(NOW, 15)); // the first draft task of each of the other two expires
+    await sweepSeo(e, at(NOW, 15)); // so they are handed over again
+    expect((await listContent(env.DB, { businessId: s.businessId, period: "2026-12" })).map((i) => i.status)).toEqual(["drafted", "drafting", "drafting"]);
+    await expireOldTasks(e, at(NOW, 30)); // the second one expires too
+    const checks = (await rankChecksFor(env.DB, s.businessId, {})).length;
+    const tasks = (await jobs("seo.content")).length;
+    await sweepSeo(e, at(NOW, 30));
+    await sweepSeo(e, at(NOW, 30));
+    const after = await listContent(env.DB, { businessId: s.businessId, period: "2026-12" });
+    expect(after.map((i) => [i.status, i.claudeTaskId === null])).toEqual([["drafted", false], ["planned", true], ["planned", true]]);
+    expect(after[0]).toMatchObject({ title: "A title", body: "A body" });
+    expect(await jobs("seo.content")).toHaveLength(tasks); // no third task for either slot
+    expect((await rankChecksFor(env.DB, s.businessId, {})).length).toBe(checks); // nothing else was redone
+    const tries = await draftTriesFor(env.DB, s.businessId);
+    expect([tries.get(rest[0].id), tries.get(rest[1].id)]).toEqual([2, 2]);
   });
 
   it("says on the client's timeline when the listing gained reviews that Google did not show us, once for each watch", async () => {

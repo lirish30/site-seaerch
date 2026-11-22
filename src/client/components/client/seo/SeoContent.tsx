@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { seoApi, type SeoOverview } from "../../../api";
 import { safeHref } from "../../../clientView";
-import { CONTENT_LIMITS, contentByMonth, contentCopy, contentStatusLabel, contentStatusTone, kindLabel, type ContentItem } from "../../../seoView";
+import { CONTENT_LIMITS, DRAFT_STUCK_TEXT, contentByMonth, contentCopy, contentStatusLabel, draftStuck, contentStatusTone, kindLabel, type ContentItem } from "../../../seoView";
 import { CopyButton, Part, Say, sentence } from "./seoBits";
 
 type Mode = "" | "publish" | "reject";
@@ -41,6 +41,7 @@ function ContentCard({ item, onChanged }: { item: ContentItem; onChanged: (next:
         <span className={`badge2${contentStatusTone(item.status) ? ` ${contentStatusTone(item.status)}` : ""}`}><i className="dot" aria-hidden="true" />{contentStatusLabel(item.status)}</span>
       </div>
       <p className="small muted sx-review-by">{item.brief}</p>
+      {draftStuck(item) && <p className="small cr-note" role="status">{DRAFT_STUCK_TEXT}</p>}
       {!editable && item.title && <p className="sx-content-title">{item.title}</p>}
       {item.status === "published" && live && <p className="small"><a href={live} target="_blank" rel="noopener noreferrer">Open the live page</a></p>}
       {editable && (

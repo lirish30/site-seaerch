@@ -89,6 +89,11 @@ export function sortReviews<T extends Pick<SeoReview, "replyStatus" | "flagged">
 const CONTENT: Record<ContentStatus, string> = {
   planned: "Planned", drafting: "Claude is writing it", drafted: "Ready for you to look at", approved: "Approved, not on the site yet", published: "You put it live", rejected: "Rejected",
 };
+/** How many draft tasks Claude may fail or let expire for one slot before the app stops handing it over (the server's `MAX_DRAFT_TRIES`). */
+export const MAX_DRAFT_TRIES = 2;
+/** A slot nobody will draft any more: still planned, no task, and its draft tasks have ended badly as often as the app tries. */
+export const draftStuck = (c: Pick<ContentItem, "status" | "claudeTaskId"> & { draftTries?: number }): boolean => c.status === "planned" && c.claudeTaskId === null && (c.draftTries ?? 0) >= MAX_DRAFT_TRIES;
+export const DRAFT_STUCK_TEXT = "Claude could not draft this: write it yourself or reject it.";
 export const contentStatusLabel = (s: ContentStatus): string => CONTENT[s] ?? "Unknown";
 export const contentStatusTone = (s: ContentStatus): "" | "positive" | "warning" | "critical" => (s === "drafted" ? "warning" : s === "published" ? "positive" : s === "rejected" ? "critical" : "");
 const KIND: Record<ContentKind, string> = { page: "Page", post: "Blog post", gbp_post: "Google post" };

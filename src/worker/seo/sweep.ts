@@ -15,7 +15,7 @@ import { localDay } from "../monitoring/rollup";
 import { queueSeoReport } from "../queue/seoReport";
 import { periodKey, zoneOf } from "../sop/cadence";
 import { optionalJobBlock } from "../spend";
-import { ensureSlots, planFor as slotPlanFor } from "./content";
+import { MAX_DRAFT_TRIES, draftTriesFor, ensureSlots, planFor as slotPlanFor } from "./content";
 import { isUsable, runRankGrid } from "./grid";
 import { buildSeoFacts } from "./reportFacts";
 import { watchReviews } from "./reviews";
@@ -149,9 +149,10 @@ async function planFor(env: Env, businessId: string, o: { today: string; monthFr
   if (checks.length > 0 && active.length > 0) {
     const slotPlan = await slotPlanFor(env.DB, businessId);
     if (slotPlan) {
-      // A slot left `planned` with no task (its draft task expired or was given up on, or a crash came between making the row and queueing it) is due too: `ensureSlots` hands it to Claude again.
+      // A slot left `planned` with no task (its draft task expired or was given up on fewer than `MAX_DRAFT_TRIES` times, or a crash came between making the row and queueing it) is due too: `ensureSlots` hands it to Claude again.
       const rows = await listContent(env.DB, { businessId, period: o.current });
-      slotsDue = rows.length < slotPlan.content + slotPlan.gbpPosts || rows.some((i) => i.status === "planned" && i.claudeTaskId === null);
+      const tries = await draftTriesFor(env.DB, businessId);
+      slotsDue = rows.length < slotPlan.content + slotPlan.gbpPosts || rows.some((i) => i.status === "planned" && i.claudeTaskId === null && (tries.get(i.id) ?? 0) < MAX_DRAFT_TRIES);
     }
   }
   return {

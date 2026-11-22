@@ -16,7 +16,7 @@ import { CREDENTIAL_REFUSED, MAX_TEXT, MIN_TEXT, SeoRefusal, placesRefusal, runN
 import { looksLikeCredential } from "../onboarding/templates";
 import { SeoContentResult, kindProblem } from "../queue/seoContent";
 import { replyText } from "../queue/seoReviewReply";
-import { planFor } from "../seo/content";
+import { draftTriesFor, planFor } from "../seo/content";
 import { latestGrid, waitingFor } from "../seo/overview";
 import { checkSeoWords, editSeoReport, revokeSeoReportNow, seoReportRow } from "../seo/reportAdmin";
 import { SeoReportRefused, startSeoReport } from "../seo/sweep";
@@ -236,13 +236,19 @@ async function contentOf(c: Ctx): Promise<ContentItem | Response> {
   return item && (await isClient(c.env.DB, item.businessId)) ? item : c.json(NOT_FOUND, 404);
 }
 
+/** The items with how many draft tasks for each ended failed or expired (`draftTries`): the panel says Claude could not draft a slot once that reaches the cap. */
+async function withTries(db: D1Database, businessId: string, items: ContentItem[]): Promise<(ContentItem & { draftTries: number })[]> {
+  const tries = await draftTriesFor(db, businessId);
+  return items.map((i) => ({ ...i, draftTries: tries.get(i.id) ?? 0 }));
+}
+
 /** The client's content: every month, or one with `?period=YYYY-MM`, and what its plan includes each month (null when it has no live Local SEO plan). */
 seoRoutes.get("/clients/:id/seo/content", async (c) => {
   const id = await clientId(c);
   if (id instanceof Response) return id;
   const period = c.req.query("period");
   if (period !== undefined && !/^\d{4}-(?:0[1-9]|1[0-2])$/.test(period)) throw new SeoRefusal("period must be a month written YYYY-MM.");
-  return c.json({ plan: await planFor(c.env.DB, id), content: await listContent(c.env.DB, { businessId: id, ...(period !== undefined ? { period } : {}) }) });
+  return c.json({ plan: await planFor(c.env.DB, id), content: await withTries(c.env.DB, id, await listContent(c.env.DB, { businessId: id, ...(period !== undefined ? { period } : {}) })) });
 });
 
 const EditBody = z.object({ title: z.string().optional(), metaTitle: z.string().optional(), metaDescription: z.string().optional(), body: z.string().optional() });
@@ -347,7 +353,7 @@ seoRoutes.get("/clients/:id/seo", async (c) => {
     snapshot: (await snapshotsFor(db, id, {})).at(-1) ?? null,
     nap: profile ? parseNapResult(profile.napResult) : null,
     reviews: (await listReviews(db, id)).reverse().slice(0, MAX_REVIEWS_SHOWN),
-    content: await listContent(db, { businessId: id }),
+    content: await withTries(db, id, await listContent(db, { businessId: id })),
     citations: await listCitations(db, id),
     report: latest && row ? {
       id: row.id, period: row.period, status: row.status, summary: row.summary, recommendation: row.recommendation, priorities: row.priorities, source: row.source, sentOn: row.sentOn, views: row.views, test: row.test,

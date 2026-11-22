@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { SEO_ONBOARDING_KEY } from "../src/worker/db/projects";
 import {
-  boardReportLine, citationLabel, contentByMonth, contentCopy, contentStatusLabel, gridCells, hasSeoOnboarding, hasSeoPlan, SEO_ONBOARDING, keywordLimitLeft, kindLabel, movement, napPartLine, replyStatusLabel, reportWordsForm, sortReviews, starsLabel, termMovement, wordsReady,
+  DRAFT_STUCK_TEXT, MAX_DRAFT_TRIES, boardReportLine, citationLabel, draftStuck, contentByMonth, contentCopy, contentStatusLabel, gridCells, hasSeoOnboarding, hasSeoPlan, SEO_ONBOARDING, keywordLimitLeft, kindLabel, movement, napPartLine, replyStatusLabel, reportWordsForm, sortReviews, starsLabel, termMovement, wordsReady,
 } from "../src/client/seoView";
 
 const pt = (pos: number | null, ok = true) => ({ pos, ok });
@@ -103,6 +103,16 @@ describe("words for status values", () => {
     expect(napPartLine("Address", "mismatch")).toBe("Address: differs from the listing");
     expect(napPartLine("Name", "missing")).toBe("Name: not found on the site");
     expect(napPartLine("Phone", "unknown")).toBe("Phone: not compared (the listing has nothing to compare it with)");
+  });
+  it("calls a planned slot with no task stuck only once its draft tasks have ended badly as often as the app tries", () => {
+    expect(MAX_DRAFT_TRIES).toBe(2);
+    const slot = { status: "planned" as const, claudeTaskId: null };
+    expect(draftStuck({ ...slot, draftTries: 2 })).toBe(true);
+    expect(draftStuck({ ...slot, draftTries: 1 })).toBe(false);
+    expect(draftStuck(slot)).toBe(false);
+    expect(draftStuck({ ...slot, claudeTaskId: "t1", draftTries: 3 })).toBe(false);
+    expect(draftStuck({ status: "drafted", claudeTaskId: null, draftTries: 3 })).toBe(false);
+    expect(DRAFT_STUCK_TEXT).toBe("Claude could not draft this: write it yourself or reject it.");
   });
   it("gives a rating in words", () => {
     expect(starsLabel(5)).toBe("5 of 5 stars");

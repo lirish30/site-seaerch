@@ -55,6 +55,21 @@ const approvalOf = (id: string) => env.DB.prepare(`SELECT status, preview, decis
 const taskOf = (id: string) => env.DB.prepare(`SELECT status FROM claude_tasks WHERE id = ?`).bind(id).first<{ status: string }>();
 const words = (over: Record<string, unknown> = {}) => ({ summary: SUMMARY, recommendation: RECOMMENDATION, priorities: PRIORITIES, ...over });
 
+describe("a slot's failed draft tasks", () => {
+  it("are counted on each content item (draftTries), in the panel's answer and in the content list", async () => {
+    const s = await seoClient();
+    const item = await seoContent(s.businessId, { status: "planned", period: "2026-12" });
+    for (const status of ["expired", "failed", "done"]) {
+      const { id } = await enqueueTask(env.DB, "seo.content", { contentId: item.id }, { dedupeKey: `${item.id}-${status}`, targetType: "seo_content", targetId: item.id });
+      await env.DB.prepare(`UPDATE claude_tasks SET status = ? WHERE id = ?`).bind(status, id).run();
+    }
+    const panel = await json<{ content: { id: string; draftTries: number }[] }>("GET", `/clients/${s.businessId}/seo`);
+    expect(panel.content.map((c) => [c.id, c.draftTries])).toEqual([[item.id, 2]]);
+    const list = await json<{ content: { id: string; draftTries: number }[] }>("GET", `/clients/${s.businessId}/seo/content`);
+    expect(list.content.map((c) => c.draftTries)).toEqual([2]);
+  });
+});
+
 describe("owner session", () => {
   it("every route is 401 without a session", async () => {
     const calls: [string, string, unknown?][] = [
@@ -93,7 +108,7 @@ describe("GET /clients/:id/seo", () => {
     expect(a.snapshot).toMatchObject({ takenOn: "2026-12-01", rating: 4.6, reviewCount: 42 });
     expect(a.reviews.map((r: { id: string }) => r.id)).toEqual([low.id, old.id]); // newest first
     expect(a.reviews[0]).toMatchObject({ rating: 2, replyStatus: "drafted", replyDraft: REPLY_DRAFT, flagged: true });
-    expect(a.content).toEqual([expect.objectContaining({ id: item.id, status: "drafted", title: "Drain cleaning in Tigard" })]);
+    expect(a.content).toEqual([expect.objectContaining({ id: item.id, status: "drafted", title: "Drain cleaning in Tigard", draftTries: 0 })]);
     expect(a.citations.map((x: { directory: string; status: string }) => [x.directory, x.status])).toEqual([["google", "listed"], ["bing", "todo"]]);
     expect(a.report).toEqual({
       id: sent.id, period: "2026-11", status: "sent", summary: SUMMARY, recommendation: RECOMMENDATION, priorities: PRIORITIES, source: "claude", sentOn: "2026-12-01", views: 0, test: false,
