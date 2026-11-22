@@ -213,3 +213,12 @@
 .gr-sub { margin:10px 0 4px !important; font-size:13px !important; color:var(--text-2); }
 .gr-reasons { margin:0; padding-left:18px; font-size:14px; overflow-wrap:anywhere; }
 .cr-chips { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+
+/* Batches (Plan 15): the board reuses the Care board's card, head and chips; these are the task rows. */
+.bt-tasks { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; }
+.bt-task { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:4px 12px; min-width:0; padding:4px 0; border-top:1px solid var(--border); }
+.bt-task:first-child { border-top:0; }
+.bt-task.is-closed { color:var(--text-3); }
+.bt-client { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; min-width:0; overflow-wrap:anywhere; }
+.bt-client a { display:inline-flex; align-items:center; min-height:44px; color:inherit; }
+.bt-meta { display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; color:var(--text-2); }

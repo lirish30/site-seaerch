@@ -18,6 +18,7 @@ const APP_PROPOSED = ["video.publish", "proposal.send", "onboarding.welcome", "o
 const proposableKinds = () => registeredKinds().filter((k) => !APP_PROPOSED.includes(k));
 import { makeCtx } from "./tools/context";
 import { registerActTools } from "./tools/act";
+import { registerBatchTools } from "./tools/batches";
 import { registerCareTools } from "./tools/care";
 import { registerCareReportTools } from "./tools/careReport";
 import { registerMoneyTools } from "./tools/money";
@@ -226,5 +227,6 @@ export function buildMcpServer(env: Env): McpServer {
   registerCareTools(server, ctx);
   registerCareReportTools(server, ctx);
   registerSeoTools(server, ctx);
+  registerBatchTools(server, ctx);
   return server;
 }

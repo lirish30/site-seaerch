@@ -49,6 +49,7 @@ import Documents from "./pages/settings/Documents";
 import BillingSettings from "./pages/settings/Billing";
 import Billing from "./pages/Billing";
 import Money from "./pages/Money";
+import Batches from "./pages/Batches";
 import Care from "./pages/Care";
 import CareReports from "./pages/CareReports";
 import SeoBoard from "./pages/SeoBoard";
@@ -93,6 +94,7 @@ export default function App() {
             <Route path="/timesheet" element={<Timesheet />} />
             <Route path="/billing" element={<Billing />} />
             <Route path="/money" element={<Money />} />
+            <Route path="/batches" element={<Batches />} />
             <Route path="/care" element={<Care />} />
             <Route path="/care/updates" element={<CareUpdates />} />
             <Route path="/care/reports" element={<CareReports />} />

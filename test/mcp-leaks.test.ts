@@ -116,7 +116,7 @@ const calls = (): [string, unknown][] => [
   ["get_deal", { id: ids.dealId }], ["list_invoices", {}], ["list_invoices", { business_id: ids.businessId }], ["list_invoices", { status: "open" }],
   ["list_meetings", {}], ["list_meetings", { business_id: ids.businessId }], ["get_meeting", { id: ids.meetingId }],
   ["get_care_overview", {}], ["get_care_updates", {}], ["get_care_report", {}], ["get_care_report", { period: "2026-11" }], ["get_care_report", { period: "2026-11", clientId: ids.businessId }], ["list_incidents", {}], ["list_incidents", { open: true }], ["list_incidents", { open: false }], ["list_incidents", { clientId: ids.businessId }],
-  ["get_seo_status", {}], ["get_seo_status", { period: "2026-11", clientId: ids.businessId }],
+  ["get_seo_status", {}], ["get_seo_status", { period: "2026-11", clientId: ids.businessId }], ["list_batches", {}],
   ["get_timeline", { record_type: "business", record_id: ids.businessId }], ["get_timeline", { record_type: "project", record_id: ids.projectId }],
 ];
 

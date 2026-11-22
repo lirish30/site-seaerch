@@ -4,6 +4,7 @@ import type { ClientRecord, ClientRow } from "../worker/clients/record";
 import type { Grade } from "../worker/db/grade";
 import type { AccessItem, AccessKey, AccessStatus, Site, SiteFields } from "../worker/db/sites";
 import type { CareRow, IncidentView, SiteMonitoringView } from "../worker/monitoring/fleet";
+import type { BatchGroup } from "../worker/batches/groups";
 import type { CareRunDetail, CareUpdateView, CareUpdatesBoard } from "../worker/care/views";
 import type { CareBatch } from "../worker/db/careUpdates";
 import type { PublicReport } from "../worker/care/reportPublic";
@@ -63,6 +64,11 @@ export const clientsApi = {
   /** One checklist line: a new status, the NAME of a password manager item, or the owner note. Only the keys given change; null clears. */
   setAccess: (id: string, siteId: string, key: AccessKey, patch: { status?: AccessStatus; vaultItem?: string | null; note?: string | null }) =>
     api.put<{ item: AccessItem }>(`/clients/${encodeURIComponent(id)}/sites/${encodeURIComponent(siteId)}/access/${key}`, patch).then((r) => r.item),
+};
+
+/** The batch board (Plan 15): each recurring job's current period across live clients. Read only. */
+export const batchesApi = {
+  list: () => api.get<{ groups: BatchGroup[] }>("/batches").then((r) => r.groups),
 };
 
 /** The Care routes (Plan 11): the board, one client's incidents, and the monitoring switch. A site's address never comes back, only its domain. */
