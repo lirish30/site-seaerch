@@ -49,7 +49,7 @@ describe("batches routes", () => {
     const s = await seedWeekly("Ace Plumbing");
     const names = (await mcp("tools/list", {})).result.tools.map((t: { name: string }) => t.name);
     expect(names).toContain("list_batches");
-    expect(names).toHaveLength(31);
+    expect(names).toHaveLength(32);
     const before = await actionCount("list_batches");
     const text = JSON.stringify(await ok("list_batches", {}));
     const answer = JSON.parse(text) as { groups: { templateKey: string; period: string; tasks: Record<string, unknown>[] }[] };

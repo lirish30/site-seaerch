@@ -50,6 +50,7 @@ import BillingSettings from "./pages/settings/Billing";
 import Billing from "./pages/Billing";
 import Money from "./pages/Money";
 import Batches from "./pages/Batches";
+import Studio from "./pages/Studio";
 import Care from "./pages/Care";
 import CareReports from "./pages/CareReports";
 import SeoBoard from "./pages/SeoBoard";
@@ -96,6 +97,7 @@ export default function App() {
             <Route path="/billing" element={<Billing />} />
             <Route path="/money" element={<Money />} />
             <Route path="/batches" element={<Batches />} />
+            <Route path="/studio" element={<Studio />} />
             <Route path="/care" element={<Care />} />
             <Route path="/care/updates" element={<CareUpdates />} />
             <Route path="/care/reports" element={<CareReports />} />

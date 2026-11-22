@@ -56,6 +56,8 @@ describe("the tool registry", () => {
     "get_seo_status",
     // the batch board
     "list_batches",
+    // the Studio
+    "get_studio_posts",
   ];
   const registered = async (): Promise<string[]> => (await mcp("tools/list", {})).result.tools.map((t: { name: string }) => t.name);
 

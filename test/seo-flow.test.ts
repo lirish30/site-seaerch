@@ -611,7 +611,7 @@ describe("local SEO, end to end", () => {
     const tools = await mcp("tools/list");
     const names = tools.result.tools.map((t: { name: string }) => t.name);
     expect(names).toContain("get_seo_status");
-    expect(names).toHaveLength(31);
+    expect(names).toHaveLength(32);
     const status = await ask("get_seo_status", { period: "2026-11" });
     expect(status.period).toBe("2026-11");
     expect(status.clients.map((c: { client: string; status: string }) => [c.client, c.status])).toEqual([["Ace Plumbing", "active"], ["Bravo Heating", "active"], ["Delta Auto", "active"]]);

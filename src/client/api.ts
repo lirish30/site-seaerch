@@ -18,6 +18,7 @@ import type { PlaceCandidate } from "../worker/seo/places";
 import type { SeoReportRow } from "../worker/seo/reportAdmin";
 import type { LadderRow } from "../worker/db/ladder";
 import type { AutoApproveState } from "../worker/routes/autoApprove";
+import type { StudioCopy, StudioPost } from "./studioView";
 export class ApiError extends Error { constructor(public status: number, message: string, public fields: string[] = [], public code = "", public body: unknown = undefined) { super(message); } }
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -35,6 +36,15 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 /** Sends a file as it is (a recording), not as JSON. */
 async function putRaw<T>(path: string, body: Blob, headers: Record<string, string>): Promise<T> {
   const res = await fetch(`/api${path}`, { method: "PUT", credentials: "same-origin", headers, body });
+  if (res.status === 401) { location.href = "/login"; throw new ApiError(401, "unauthorized"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new ApiError(res.status, (data as any).error ?? `HTTP ${res.status}`);
+  return data as T;
+}
+
+/** Sends a form (a file upload) as it is: the browser sets the multipart header itself. */
+async function postForm<T>(path: string, body: FormData): Promise<T> {
+  const res = await fetch(`/api${path}`, { method: "POST", credentials: "same-origin", body });
   if (res.status === 401) { location.href = "/login"; throw new ApiError(401, "unauthorized"); }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new ApiError(res.status, (data as any).error ?? `HTTP ${res.status}`);
@@ -66,6 +76,20 @@ export const clientsApi = {
   /** One checklist line: a new status, the NAME of a password manager item, or the owner note. Only the keys given change; null clears. */
   setAccess: (id: string, siteId: string, key: AccessKey, patch: { status?: AccessStatus; vaultItem?: string | null; note?: string | null }) =>
     api.put<{ item: AccessItem }>(`/clients/${encodeURIComponent(id)}/sites/${encodeURIComponent(siteId)}/access/${key}`, patch).then((r) => r.item),
+};
+
+/** The Studio (Plan 15): social posts from a draft to posted. A post comes back with how many pictures it has, never where they are kept; a picture is `imageUrl`. Nothing here posts anywhere. */
+export const studioApi = {
+  list: () => api.get<{ posts: StudioPost[] }>("/studio").then((r) => r.posts),
+  create: (body: Record<string, unknown>) => api.post<StudioPost>("/studio", body),
+  write: (id: string) => api.post<StudioPost>(`/studio/${encodeURIComponent(id)}/write`),
+  upload: (id: string, slot: "before" | "after", file: File) => { const f = new FormData(); f.set("file", file); return postForm<StudioPost>(`/studio/${encodeURIComponent(id)}/upload/${slot}`, f); },
+  render: (id: string) => api.post<StudioPost>(`/studio/${encodeURIComponent(id)}/render`),
+  saveCopy: (id: string, copy: StudioCopy) => api.put<StudioPost>(`/studio/${encodeURIComponent(id)}/copy`, copy),
+  posted: (id: string) => api.post<StudioPost>(`/studio/${encodeURIComponent(id)}/posted`),
+  discard: (id: string) => api.post<StudioPost>(`/studio/${encodeURIComponent(id)}/discard`),
+  /** The picture behind the session; `v` changes when the post does, so a redrawn picture is fetched again. */
+  imageUrl: (id: string, n: number, v: string) => `/api/studio/${encodeURIComponent(id)}/image/${n}?v=${encodeURIComponent(v)}`,
 };
 
 /** The batch board (Plan 15): each recurring job's current period across live clients. Read only. */

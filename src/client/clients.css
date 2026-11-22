@@ -235,3 +235,20 @@
 .lp-link input { width:100%; min-width:0; }
 .lp-actions { display:flex; flex-wrap:wrap; gap:8px; }
 .lp-actions .btn, .lp-link .btn { min-height:44px; }
+
+/* Studio (Plan 15): the New post form and the post cards reuse the Care board's card, head and chips; these are the slides row and the words. */
+.st-new { display:flex; flex-direction:column; gap:10px; margin-bottom:12px; }
+.st-new h2 { margin:0; font-size:16px; line-height:22px; }
+.st-consent { display:flex; flex-direction:column; gap:2px; }
+.st-check { display:flex; align-items:center; gap:10px; min-height:44px; }
+.st-check:has(input:disabled) { color:var(--text-3); }
+.st-slides { list-style:none; margin:0; padding:0 0 4px; display:flex; gap:12px; overflow-x:auto; }
+.st-slide { flex:none; display:flex; flex-direction:column; gap:6px; width:108px; }
+.st-slide img { display:block; width:108px; height:135px; object-fit:cover; border-radius:8px; border:1px solid var(--border); background:var(--bg-muted); }
+.st-slide .btn { justify-content:center; padding:0 6px; }
+.st-words { display:flex; flex-direction:column; gap:6px; min-width:0; }
+.st-caption { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; }
+.st-edit { display:flex; flex-direction:column; gap:10px; }
+.st-edit .deal-field { width:100%; }
+.st-slide-edit { margin:0; padding:8px 10px; border:1px solid var(--border); border-radius:10px; display:flex; flex-direction:column; gap:8px; min-width:0; }
+.st-pics { grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); }

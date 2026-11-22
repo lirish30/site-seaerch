@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { ApiError, ladderApi } from "../../api";
 import { latestOnly, problemText } from "../../clientView";
 import { LADDER_LINK_MAX, STEP_LABEL, dueLine, isOpen, linkProblem, ordered, sendByHand, statusTone, statusWord, takesLink, type LadderRow } from "../../ladderView";
 
 /** One step: its name, day and status, the review link box on a review request, the case study button, and Done and Skip while it is open. Every text is a React text node. */
-function Step({ row, today, busy, onRun }: { row: LadderRow; today: string; busy: boolean; onRun: (job: () => Promise<unknown>, fail: string) => Promise<void> }) {
+function Step({ row, today, busy, onRun }: { row: LadderRow; today: string; busy: boolean; onRun: (job: () => Promise<unknown>, fail: string) => Promise<boolean> }) {
   const [link, setLink] = useState(row.link ?? "");
   const [problem, setProblem] = useState<string | null>(null);
+  const navigate = useNavigate();
   useEffect(() => { setLink(row.link ?? ""); setProblem(null); }, [row.id, row.link]);
   const dirty = link.trim() !== (row.link ?? "");
   async function saveLink() {
@@ -17,7 +18,8 @@ function Step({ row, today, busy, onRun }: { row: LadderRow; today: string; busy
     await onRun(() => ladderApi.setLink(row.id, link.trim() || null), "Could not save the link.");
   }
   async function startCaseStudy() {
-    await onRun(async () => { await ladderApi.startCaseStudy(row.businessId); await ladderApi.done(row.id); }, "Could not start the case study post.");
+    // On success the post is waiting in the Studio for its words.
+    if (await onRun(async () => { await ladderApi.startCaseStudy(row.businessId); await ladderApi.done(row.id); }, "Could not start the case study post.")) navigate("/studio");
   }
   return (
     <li className={`lp-step lp-${row.status}`}>
@@ -69,11 +71,12 @@ export default function LadderPanel({ businessId, today }: { businessId: string;
   }, [businessId, guard]);
   useEffect(() => { setRows(null); setFailed(false); setError(""); void load(); return () => guard.cancel(); }, [load, guard]);
 
-  async function run(job: () => Promise<unknown>, fail: string) {
-    if (busy) return;
+  /** Runs one change and reloads; true when it worked. */
+  async function run(job: () => Promise<unknown>, fail: string): Promise<boolean> {
+    if (busy) return false;
     setBusy(true); setError("");
-    try { await job(); await load(); }
-    catch (e) { setError(e instanceof ApiError ? problemText(e, fail) : fail); }
+    try { await job(); await load(); return true; }
+    catch (e) { setError(e instanceof ApiError ? problemText(e, fail) : fail); return false; }
     finally { setBusy(false); }
   }
 

@@ -368,6 +368,7 @@ export default function LeadDetail() {
             ? <FindingsList findings={a.findings} scores={a.category_scores} added={d.changes?.added} selected={focus} onToggle={pickFocus}
                 trailing={<>
                   <span className="audited" title={[`Audited ${new Date(a.created_at).toLocaleString()}`, a.pagespeed_mobile !== null && `Google mobile speed ${a.pagespeed_mobile}/100`, a.seo_score != null && `Google SEO check ${a.seo_score}/100`, a.accessibility_score != null && `Accessibility ${a.accessibility_score}/100`].filter(Boolean).join(" · ")}>Audited {dayLabel(a.created_at)} · {b.scan_stage === "quick" ? "quick scan" : "full scan"}</span>
+                  <Link className="btn-ghost-sm" to={`/studio?audit=${encodeURIComponent(a.id)}`} title="Make a social post of tips from this audit, without the business's name"><Icon name="image" size={16} />Post a tip</Link>
                   <button className="btn-ghost-sm" onClick={flagScore} title="Tell us the audit got something wrong and re-run it"><Icon name="alert" size={16} />Score looks wrong?</button>
                 </>}
                 afterToolbar={d.changes ? <ChangesBar changes={d.changes} /> : null} />
