@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { isClient, todayKey } from "../clients/record";
+import { previousMonth } from "../care/reportSweep";
+import { isClient, isTestClient, todayKey } from "../clients/record";
 import { logActivity } from "../db/activity";
 import { addKeyword, getContent, getReview, listCitations, listContent, listKeywords, setCitation, setContent, setKeywordActive, setReviewDraft, setReviewStatus, type CitationStatus, type ContentItem, type SeoReview } from "../db/seo";
 import { getSettings } from "../db/settings";
@@ -15,10 +16,12 @@ import { looksLikeCredential } from "../onboarding/templates";
 import { SeoContentResult, kindProblem } from "../queue/seoContent";
 import { replyText } from "../queue/seoReviewReply";
 import { planFor } from "../seo/content";
+import { SeoReportRefused, startSeoReport } from "../seo/sweep";
+import { zoneOf } from "../sop/cadence";
 
 /**
  * Mounted at /api (behind requireAuth), all under /clients/:id/seo (the owner's local SEO setup for one client; a test client is allowed):
- * POST /place-search, PUT /profile, POST /keywords, DELETE /keywords/:keywordId, PUT /citations/:directory, POST /nap-check, POST /baseline, POST /rank-check.
+ * POST /place-search, PUT /profile, POST /keywords, DELETE /keywords/:keywordId, PUT /citations/:directory, POST /nap-check, POST /baseline, POST /rank-check and POST /report (last month's report by hand).
  * And, for a review of a client's listing, PUT /seo/reviews/:id/draft, POST /seo/reviews/:id/posted and POST /seo/reviews/:id/skip. The app never posts a reply to Google: "posted" is Logan saying he did.
  * And, for the month's content: GET /clients/:id/seo/content (?period=YYYY-MM), PUT /seo/content/:id (edit the words) and POST /seo/content/:id/{approve,published,reject}. The app never publishes anything:
  * "published" is Logan saying he put it on the client's site or profile.
@@ -156,6 +159,23 @@ seoRoutes.post("/clients/:id/seo/rank-check", async (c) => {
   const id = await clientId(c);
   if (id instanceof Response) return id;
   return c.json(await runRankGrid(c.env, id, new Date()));
+});
+
+/**
+ * Starts last month's report for the client by hand, any day (a rehearsal client too): 201 with `{ report: { id, status, period } }`, or 200 with the one that is already there. No Places call is made: the report is built from the
+ * rank checks already stored. 404 for something that is not a client; 409 with a plain sentence when there is no usable rank check from this month yet.
+ */
+seoRoutes.post("/clients/:id/seo/report", async (c) => {
+  const id = await clientId(c);
+  if (id instanceof Response) return id;
+  const now = new Date();
+  try {
+    const { report, created } = await startSeoReport(c.env, id, previousMonth(now, zoneOf(await getSettings(c.env.DB))), { test: await isTestClient(c.env.DB, id), now });
+    return c.json({ report: { id: report.id, status: report.status, period: report.period } }, created ? 201 : 200);
+  } catch (e) {
+    if (e instanceof SeoReportRefused) return c.json({ error: e.message }, 409);
+    throw e;
+  }
 });
 
 /** The review, or the 404 to send back when it does not exist or its business is not a client. */

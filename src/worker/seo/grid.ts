@@ -40,8 +40,11 @@ export const isUsable = (points: RankPoint[]): boolean => points.filter((p) => p
  * the keyword in progress is stored with the points it measured and the rest `ok: false`, and the keywords not reached are not stored at all.
  * `checked` is the keywords stored; `unmeasured` is the active keywords that ended without a usable check (stored with too few points, or not reached).
  * Refused, with nothing requested, when the profile has no place or location yet or the Places key is not set.
+ * `o.calls`, when given, is a counter this run adds each Places request it starts to (a request that fails counts too: it is still a subrequest), so the daily sweep can keep within the Worker's subrequest budget.
  */
-export async function runRankGrid(env: Env, businessId: string, now: Date, o: { fetch?: Fetcher } = {}): Promise<{ checked: number; unmeasured: number }> {
+export async function runRankGrid(
+  env: Env, businessId: string, now: Date, o: { fetch?: Fetcher; calls?: { n: number } } = {},
+): Promise<{ checked: number; unmeasured: number }> {
   const profile = await getProfile(env.DB, businessId);
   if (!profile) throw new SeoRefusal("Set up the profile first, so there is a place to check rankings for.", 409);
   if (!profile.placeId || profile.lat === null || profile.lng === null) throw new SeoRefusal("Pick this client's Google place first, so there is somewhere to check rankings from.", 409);
@@ -65,6 +68,7 @@ export async function runRankGrid(env: Env, businessId: string, now: Date, o: { 
     for (const p of grid) {
       if (retryableInARow >= MAX_RETRYABLE_IN_A_ROW) { points.push({ lat: p.lat, lng: p.lng, pos: null, ok: false }); continue; }
       attempted++;
+      if (o.calls) o.calls.n++;
       try {
         const pos = await rankAt(env, { term, lat: p.lat, lng: p.lng, radiusM, placeId: profile.placeId }, o.fetch);
         retryableInARow = 0;
