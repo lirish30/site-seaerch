@@ -28,8 +28,16 @@ import { SEO_1, tickSeo1 } from "./tasks";
 export const WATCH_EVERY_DAYS = 6;
 /** The most clients one daily run handles; the rest are picked up by the next run, the one handled longest ago first. */
 export const MAX_CLIENTS_PER_RUN = 25;
-/** A Worker invocation may make about 1000 subrequests. A rank grid is up to 9 Places calls per active keyword (90 for ten), so the run stops starting Places work once this many are counted (the rest of the 1000 is for the database and the queue). */
-export const MAX_PLACES_CALLS_PER_RUN = 700;
+/**
+ * A scheduled Worker on the Paid plan may make 10,000 subrequests an invocation, and every D1 call counts as one, and a Places call is two (the request and the row that records its price). What really bounds the run is its
+ * wall time (a scheduled run may last about 15 minutes, and the Places calls are made one after another). So the run stops starting a client's Places work once this many calls are counted (a rank grid is 9 calls per active
+ * keyword, 90 for ten, so a client with ten keywords costs 91 with its watch) and, separately, once `MAX_PLACES_WALL_MS` have passed. The rest of the clients wait for the next run.
+ */
+export const MAX_PLACES_CALLS_PER_RUN = 400;
+/** The run starts no more Places work for any client this long after it began (reports, slots and ticks are never held by it): a call that is slow or throttled must not take the run's 15 minutes. */
+export const MAX_PLACES_WALL_MS = 6 * 60_000;
+/** The clock the wall-time guard reads, so a test can move it. */
+export const seoClock = { now: (): number => Date.now() };
 /** A month's rank pull is retried on a later day while some active keyword still has no usable check, but on at most this many distinct days of the month (the cost bound). */
 export const MAX_PULL_DAYS_PER_MONTH = 4;
 const CALLS_PER_KEYWORD = 9;
@@ -165,7 +173,7 @@ export interface SeoSweepResult { clients: number; watched: number; ranked: numb
  *    and the tick of 1.1 on the month's SEO-1 task once a usable check exists;
  * 3. last month's report, when it has none and a usable rank check from this month exists (so it follows the pull): the frozen facts, the row and Claude's job for the words. No Places call, so neither the budget nor the spend gate holds it.
  * Parts 1 and 2 call Places. They stop for everyone, with one logged line, once the places sub-cap or the total cap is reached (`blocked`), and the run counts its Places calls and starts no client's Places work that would take it
- * past `MAX_PLACES_CALLS_PER_RUN` (a client's watch and pull are held back together, and so is every client after it, so the next run starts with it: a client held back is not touched and so stays first in line).
+ * past `MAX_PLACES_CALLS_PER_RUN` (or once `MAX_PLACES_WALL_MS` have passed since the run began; a client's watch and pull are held back together, and so is every client after it, so the next run starts with it: a client held back is not touched and so stays first in line).
  * Returns `clients` (handled), `watched` (listings read), `ranked` (clients with at least one usable check made now), `reports` (made now) and `blocked` (Places work was held back by the spend gate).
  */
 export async function sweepSeo(env: Env, now: Date): Promise<SeoSweepResult> {
@@ -176,6 +184,7 @@ export async function sweepSeo(env: Env, now: Date): Promise<SeoSweepResult> {
   const monthFrom = monthRange(current, tz).fromDay;
   const out: SeoSweepResult = { clients: 0, watched: 0, ranked: 0, reports: 0, blocked: false };
 
+  const startedAt = seoClock.now();
   let used = 0;
   let stopped = false; // the run's Places budget is spent
   let gate: "unknown" | "open" | "blocked" = "unknown";
@@ -218,6 +227,9 @@ export async function sweepSeo(env: Env, now: Date): Promise<SeoSweepResult> {
       if (used + plan.cost > MAX_PLACES_CALLS_PER_RUN) {
         stopped = true;
         console.log("seo sweep: the Places budget for this run is used, the rest wait for the next run");
+      } else if (seoClock.now() - startedAt > MAX_PLACES_WALL_MS) {
+        stopped = true;
+        console.log("seo sweep: the run has used its time for Places work, the rest wait for the next run");
       } else go = true;
     }
     if (!go && !(plan.reportOpen && plan.usable) && !plan.slotsDue && !plan.tickDue) continue; // nothing this client can have done today

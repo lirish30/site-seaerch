@@ -19,7 +19,7 @@ import * as contentMod from "../src/worker/seo/content";
 import { plainSeoSummary, type SeoReportFacts } from "../src/worker/seo/reportFacts";
 import { runBaseline } from "../src/worker/seo/baseline";
 import { setupProfile } from "../src/worker/seo/profile";
-import { MAX_CLIENTS_PER_RUN, MAX_PLACES_CALLS_PER_RUN, MAX_PULL_DAYS_PER_MONTH, SeoReportRefused, WATCH_EVERY_DAYS, startSeoReport, sweepSeo } from "../src/worker/seo/sweep";
+import { MAX_CLIENTS_PER_RUN, MAX_PLACES_CALLS_PER_RUN, MAX_PLACES_WALL_MS, MAX_PULL_DAYS_PER_MONTH, SeoReportRefused, seoClock, WATCH_EVERY_DAYS, startSeoReport, sweepSeo } from "../src/worker/seo/sweep";
 import { zoneOf } from "../src/worker/sop/cadence";
 import { getSettings } from "../src/worker/db/settings";
 import { localDay } from "../src/worker/monitoring/rollup";
@@ -430,37 +430,62 @@ describe("sweepSeo", () => {
     expect((await rankChecksFor(env.DB, all[24].businessId, {})).map((r) => r.takenOn)).toEqual(["2026-12-01"]); // the one that did not fit now
   }, 60_000);
 
-  it("keeps within the Places budget: the 8th of 20 clients with 10 keywords waits for the next run, which starts with it", async () => {
-    expect(MAX_PLACES_CALLS_PER_RUN).toBe(700);
+  it("keeps within the Places budget: the 5th of 20 clients with 10 keywords waits for the next run, which starts with it", async () => {
+    expect(MAX_PLACES_CALLS_PER_RUN).toBe(400);
     const all: Client[] = [];
     for (let i = 0; i < 20; i++) all.push(await seoClient({ keywords: 10, placeId: `ChIJ${i}` }));
     const done = async () => (await Promise.all(all.map(async (s) => (await rankChecksFor(env.DB, s.businessId, {})).length))).map((n) => n > 0);
 
     const first = await sweepSeo(e, NOW);
-    expect(first).toMatchObject({ clients: 7, watched: 7, ranked: 7, blocked: false });
-    expect(placesCalls()).toBe(7 * 91);
+    expect(first).toMatchObject({ clients: 4, watched: 4, ranked: 4, blocked: false });
+    expect(placesCalls()).toBe(4 * 91);
     expect(placesCalls()).toBeLessThanOrEqual(MAX_PLACES_CALLS_PER_RUN);
-    expect(await done()).toEqual([...Array(7).fill(true), ...Array(13).fill(false)]);
+    expect(await done()).toEqual([...Array(4).fill(true), ...Array(16).fill(false)]);
     expect(logs).toHaveBeenCalledWith(expect.stringContaining("seo sweep"));
 
     urls = [];
-    expect(await sweepSeo(e, at(NOW, 1))).toMatchObject({ clients: 7, ranked: 7 });
-    expect(urls[0]).toBe("https://places.googleapis.com/v1/places/ChIJ7"); // the client that was skipped goes first
-    expect(placesCalls()).toBe(7 * 91);
-    expect(await done()).toEqual([...Array(14).fill(true), ...Array(6).fill(false)]);
+    expect(await sweepSeo(e, at(NOW, 1))).toMatchObject({ clients: 4, ranked: 4 });
+    expect(urls[0]).toBe("https://places.googleapis.com/v1/places/ChIJ4"); // the client that was skipped goes first
+    expect(placesCalls()).toBe(4 * 91);
+    expect(await done()).toEqual([...Array(8).fill(true), ...Array(12).fill(false)]);
 
-    urls = [];
-    expect(await sweepSeo(e, at(NOW, 2))).toMatchObject({ clients: 6, ranked: 6 });
-    expect(urls[0]).toBe("https://places.googleapis.com/v1/places/ChIJ14");
+    for (const d of [2, 3, 4]) await sweepSeo(e, at(NOW, d));
     expect((await done()).every(Boolean)).toBe(true);
   }, 120_000);
+
+  it("starts no more Places work 6 minutes into the run, still makes the reports, slots and ticks, and the next run starts with the clients it did not reach", async () => {
+    expect(MAX_PLACES_WALL_MS).toBe(6 * 60_000);
+    const all: Client[] = [];
+    for (let i = 0; i < 3; i++) all.push(await seoClient({ keywords: 1, placeId: `ChIJ${i}` }));
+    await generateRecurring(e, NOW);
+    // The clock moves 4 minutes on every look: the first client starts at 4 minutes, the second at 8, which is past the guard.
+    let t = 0;
+    const real = seoClock.now;
+    seoClock.now = () => (t += 4 * 60_000);
+    try {
+      const out = await sweepSeo(e, NOW);
+      expect(out).toMatchObject({ clients: 1, watched: 1, ranked: 1, reports: 1 });
+    } finally { seoClock.now = real; }
+    expect(await rankChecksFor(env.DB, all[0].businessId, {})).toHaveLength(1);
+    for (const s of all.slice(1)) expect(await rankChecksFor(env.DB, s.businessId, {})).toEqual([]);
+    expect(logs).toHaveBeenCalledWith(expect.stringContaining("used its time for Places work"));
+    // Not touched, so first in line next time; a client with a usable check but out of time still gets its report and slots.
+    await check(all[2], "2026-12-01");
+    urls = [];
+    t = 0;
+    seoClock.now = () => (t += 4 * 60_000);
+    try { await sweepSeo(e, at(NOW, 1)); } finally { seoClock.now = real; }
+    expect(urls[0]).toBe("https://places.googleapis.com/v1/places/ChIJ1");
+    expect((await reports()).map((r) => r.businessId)).toContain(all[2].businessId);
+    expect((await listContent(env.DB, { businessId: all[2].businessId, period: "2026-12" })).length).toBeGreaterThan(0);
+  });
 
   it("a report start is never held back by the budget: a client with a usable check still gets its report when the run's Places budget is used", async () => {
     const heavy: Client[] = [];
     for (let i = 0; i < 8; i++) heavy.push(await seoClient({ keywords: 10, placeId: `ChIJ${i}` }));
     const late = await seoClient({ keywords: 1 });
     await check(late, "2026-12-01"); // pulled by hand earlier today, but its report is not made yet
-    expect(await sweepSeo(e, NOW)).toMatchObject({ clients: 7 + 1, ranked: 7, reports: 7 + 1 });
+    expect(await sweepSeo(e, NOW)).toMatchObject({ clients: 4 + 1, ranked: 4, reports: 4 + 1 });
     expect(await getSeoReportFor(env.DB, late.businessId, "2026-11")).not.toBeNull();
     expect(await getSeoReportFor(env.DB, heavy[7].businessId, "2026-11")).toBeNull(); // waited for Places, so it has no check to report from
   }, 120_000);
