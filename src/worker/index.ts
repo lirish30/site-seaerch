@@ -6,6 +6,7 @@ import { passkeyRoutes } from "./routes/passkeys";
 import { searchRoutes } from "./routes/searches";
 import { leadRoutes } from "./routes/leads";
 import { settingsRoutes } from "./routes/settings";
+import { autoApproveRoutes } from "./routes/autoApprove";
 import { googleRoutes } from "./routes/google";
 import { croRoutes } from "./routes/cro";
 import { videoRoutes } from "./routes/video";
@@ -92,6 +93,7 @@ app.route("/api/searches", searchRoutes);
 app.route("/api/leads", leadRoutes);
 app.route("/api/leads", sequenceRoutes); // /:id/sequence/*; leadRoutes has no handler for these paths
 app.route("/api/settings", settingsRoutes);
+app.route("/api/auto-approve", autoApproveRoutes);
 app.route("/api/google", googleRoutes);
 app.route("/api/public", publicRoutes);
 app.route("/api/radar", radarRoutes);

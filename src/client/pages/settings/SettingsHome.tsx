@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../../api";
+import { api, autoApproveApi } from "../../api";
 import Icon, { type IconName } from "../../components/Icon";
 import SettingsPage from "../../components/SettingsPage";
 import type { WorkSample } from "../../emailView";
@@ -9,6 +9,7 @@ import {
   bookingSummary, documentsSummary, hasBuiltSignature, profileMissing, samplesNeeded, setupItems, setupSentence, suppressionWord, voiceSummary, workSummary,
 } from "../../settingsPagesView";
 import { billingTermsSummary } from "../../billingView";
+import type { AutoApproveState } from "../../autoApproveView";
 import type { HelperStatus } from "../../helperView";
 import type { FitProfile, Service, Suppression } from "../../types";
 
@@ -20,6 +21,7 @@ interface Data {
   /** GET /api/spend: usage plus active fixed costs against the cap, the same total the cap enforces. */
   spend: { spentUsd: number; limitUsd: number } | null | false;
   helper: HelperStatus | null | false;
+  auto: AutoApproveState | null | false;
 }
 type Tone = "positive" | "warning" | "";
 interface Chip { tone: Tone; text: string }
@@ -55,6 +57,10 @@ function chips(d: Data): Record<string, Chip | null> {
     booking: wait(d.doc, () => bookingSummary(String(doc.booking_config ?? ""))),
     documents: wait(d.doc, () => documentsSummary(String(doc.documents_config ?? ""))),
     billing: wait(d.doc, () => billingTermsSummary(String(doc.billing_config ?? ""))),
+    "auto-approve": wait(d.auto, () => {
+      const n = (d.auto as AutoApproveState).rules.filter((r) => r.enabled).length;
+      return n ? { tone: "warning", text: `${n} of 2 on` } : { tone: "", text: "Off" };
+    }),
     sops: { tone: "", text: "Templates" },
     work: wait(d.doc, () => workSummary(String(doc.work_config ?? ""))),
     security: { tone: "", text: "Passkeys" },
@@ -101,12 +107,13 @@ const SECTIONS: { name: string; tint: "signal" | "info" | "positive" | "plain"; 
     { slug: "booking", title: "Booking", icon: "calendar", text: "The hours people can book a call, notice, buffer and the budget choices on the form." },
     { slug: "documents", title: "Documents", icon: "pen", text: "The clause library, the lawyer-review record, the late fee and how long a proposal stays open." },
     { slug: "billing", title: "Billing", icon: "card", text: "Days to pay an invoice, the reminder schedule, when work pauses, and what to switch on in Stripe." },
+    { slug: "auto-approve", title: "Auto-approve", icon: "check", text: "Let the first reminders on an invoice or an onboarding go out without your click. Off until you switch it on." },
   ] },
 ];
 
 /** Settings: the overview. A card per page with its real status, and a banner for what is still missing. */
 export default function SettingsHome() {
-  const [d, setD] = useState<Data>({ doc: null, usage: [], samples: null, services: null, fits: null, supps: null, google: null, spend: null, helper: null });
+  const [d, setD] = useState<Data>({ doc: null, usage: [], samples: null, services: null, fits: null, supps: null, google: null, spend: null, helper: null, auto: null });
   useEffect(() => {
     let live = true;
     const part = <T,>(p: Promise<T>, apply: (v: T | false) => void) => p.then((v) => live && apply(v)).catch(() => live && apply(false));
@@ -118,6 +125,7 @@ export default function SettingsHome() {
     void part(api.get<{ spentUsd: number; limitUsd: number }>("/spend"), (v) => setD((o) => ({ ...o, spend: v })));
     void part(api.get<Google>("/google/status"), (v) => setD((o) => ({ ...o, google: v })));
     void part(api.get<HelperStatus>("/helper/status"), (v) => setD((o) => ({ ...o, helper: v })));
+    void part(autoApproveApi.get(), (v) => setD((o) => ({ ...o, auto: v })));
     return () => { live = false; };
   }, []);
   const status = chips(d);

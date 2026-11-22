@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { describeActivity } from "../src/client/activityView";
-import { countAutoApprovalsOn, listAutoApprovals, listRules, recordAutoApproval, setRule } from "../src/worker/db/autoApprove";
+import { countAutoApprovalsOn, listAutoApprovals, listRules, recordAutoApproval, releaseAutoApproval, reserveAutoApproval, setRule } from "../src/worker/db/autoApprove";
 import { getGrades, setGrade } from "../src/worker/db/grade";
 import { dueLadderRows, insertLadderRows, listLadder, setLadderLink, setLadderStatus } from "../src/worker/db/ladder";
 import { createPost, getPost, listPosts, patchPost } from "../src/worker/db/studio";
@@ -66,6 +66,30 @@ describe("auto-approve", () => {
     expect((await listRules(env.DB)).find((r) => r.kind === "review_reply")).toEqual({ kind: "review_reply", enabled: true, enabledAt: T0 });
     await setRule(env.DB, "review_reply", false, T1);
     expect((await listRules(env.DB)).find((r) => r.kind === "review_reply")).toEqual({ kind: "review_reply", enabled: false, enabledAt: null });
+  });
+
+  it("setRule on for a rule already on keeps the original enabled_at, and off then on stamps afresh", async () => {
+    await setRule(env.DB, "keep_stamp", true, T0);
+    await setRule(env.DB, "keep_stamp", true, T1); // an idempotent save must not move the cutoff forward
+    expect((await listRules(env.DB)).find((r) => r.kind === "keep_stamp")).toEqual({ kind: "keep_stamp", enabled: true, enabledAt: T0 });
+    await setRule(env.DB, "keep_stamp", false, T1);
+    await setRule(env.DB, "keep_stamp", true, "2026-12-01T12:00:00.000Z");
+    expect((await listRules(env.DB)).find((r) => r.kind === "keep_stamp")).toEqual({ kind: "keep_stamp", enabled: true, enabledAt: "2026-12-01T12:00:00.000Z" });
+  });
+
+  it("reserveAutoApproval takes a place only while the day has room, once per approval, and release gives back only an unfinished one", async () => {
+    const r = (id: string, day = "2026-12-05") => ({ approvalId: id, kind: "review_reply", businessId: null, decidedAt: T0, decidedOn: day });
+    expect(await reserveAutoApproval(env.DB, r("r1"), 2)).toBe(true);
+    expect(await reserveAutoApproval(env.DB, r("r1"), 2)).toBe(false); // the same approval twice
+    expect(await reserveAutoApproval(env.DB, r("r2"), 2)).toBe(true);
+    expect(await reserveAutoApproval(env.DB, r("r3"), 2)).toBe(false); // the day is full
+    expect(await reserveAutoApproval(env.DB, r("r4", "2026-12-06"), 2)).toBe(true); // another day has room
+    expect(await countAutoApprovalsOn(env.DB, "2026-12-05")).toBe(2);
+    expect((await listAutoApprovals(env.DB, 10)).find((a) => a.approvalId === "r1")).toMatchObject({ outcome: "failed", error: "sending" });
+    await recordAutoApproval(env.DB, { ...r("r1"), outcome: "sent" });
+    await releaseAutoApproval(env.DB, "r1"); // finished: stays
+    await releaseAutoApproval(env.DB, "r2"); // unfinished: goes
+    expect(await countAutoApprovalsOn(env.DB, "2026-12-05")).toBe(1);
   });
 
   it("countAutoApprovalsOn counts one local day only", async () => {

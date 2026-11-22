@@ -17,6 +17,7 @@ import type { GridRow } from "../worker/seo/overview";
 import type { PlaceCandidate } from "../worker/seo/places";
 import type { SeoReportRow } from "../worker/seo/reportAdmin";
 import type { LadderRow } from "../worker/db/ladder";
+import type { AutoApproveState } from "../worker/routes/autoApprove";
 export class ApiError extends Error { constructor(public status: number, message: string, public fields: string[] = [], public code = "", public body: unknown = undefined) { super(message); } }
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -138,6 +139,12 @@ export const ladderApi = {
   setLink: (id: string, link: string | null) => api.put<{ row: LadderRow }>(`/ladder/${encodeURIComponent(id)}/link`, { link }).then((r) => r.row),
   /** Starts a case study post for the client in the Studio (Plan 15, Task 9). */
   startCaseStudy: (businessId: string) => api.post<unknown>(`/studio`, { kind: "case_study", businessId }),
+};
+
+/** The auto-approve routes (Plan 15): which two fixed reminders may go without a click, and what went. Switching a rule answers with the whole page's data. */
+export const autoApproveApi = {
+  get: () => api.get<AutoApproveState>("/auto-approve"),
+  set: (kind: string, enabled: boolean) => api.put<AutoApproveState>(`/auto-approve/${encodeURIComponent(kind)}`, { enabled }),
 };
 
 /** The Local SEO routes (Plan 14). A refusal is an ApiError whose message is a plain sentence; nothing here ever posts or publishes anywhere. Types only come from the worker. */

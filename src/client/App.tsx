@@ -56,6 +56,7 @@ import SeoBoard from "./pages/SeoBoard";
 import CareUpdates, { CareRunPage } from "./pages/CareUpdates";
 import Sops from "./pages/settings/Sops";
 import Work from "./pages/settings/Work";
+import AutoApprove from "./pages/settings/AutoApprove";
 import Clients from "./pages/Clients";
 import ClientPage from "./pages/Client";
 import Shell from "./components/Shell";
@@ -127,6 +128,7 @@ export default function App() {
             <Route path="/settings/billing" element={<BillingSettings />} />
             <Route path="/settings/sops" element={<Sops />} />
             <Route path="/settings/work" element={<Work />} />
+            <Route path="/settings/auto-approve" element={<AutoApprove />} />
           </Routes>
         </Shell>
       } />

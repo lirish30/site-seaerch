@@ -1,8 +1,9 @@
 import type { Env } from "../env";
+import { maybeAutoApprove } from "../approvals/auto";
 import { CLIENT_BASE_PROBLEM } from "../approvals/onboardingWelcome";
 import { describeNudge, ownerZone, recipientOf, type OnboardingNudgePayload } from "../approvals/onboardingNudge";
 import { logActivityOnce } from "../db/activity";
-import { createApproval } from "../db/approvals";
+import { createApproval, type Approval } from "../db/approvals";
 import {
   attachNudgeApproval, forgetNudge, listItems, listNudgeKeys, listOpenOnboardings, recordNudge, type Onboarding, type OnboardingItem,
 } from "../db/onboardings";
@@ -102,20 +103,22 @@ async function draftingProblem(env: Env, o: Onboarding): Promise<{ text: string;
 async function draft(env: Env, o: Onboarding, items: OnboardingItem[], n: Nudge, now: Date): Promise<boolean> {
   const db = env.DB;
   if (!(await recordNudge(db, o.id, n.key, now.toISOString()))) return false; // another sweep has it
-  let approvalId: string;
+  let approval: Approval;
   try {
     const d = await describeNudge(env, o, items, n.key, now);
     const a = await createApproval(db, {
       kind: "onboarding.nudge", title: d.title, preview: d.preview, payload: { onboardingId: o.id, nudgeKey: n.key } satisfies OnboardingNudgePayload,
       record_type: "deal", record_id: o.dealId, drafted_by: "job",
     });
-    approvalId = a.id;
+    approval = a;
   } catch (e) {
     console.error(`onboarding sweep: could not draft ${n.key} for ${o.id}`, msg(e));
     await forgetNudge(db, o.id, n.key).catch((err) => console.error("onboarding sweep: could not release the nudge", msg(err)));
     return false;
   }
   // The approval exists: a failure here must not release the claim (that would draft it twice).
-  await attachNudgeApproval(db, o.id, n.key, approvalId).catch((e) => console.error("onboarding sweep: could not link the approval to its nudge", msg(e)));
+  await attachNudgeApproval(db, o.id, n.key, approval.id).catch((e) => console.error("onboarding sweep: could not link the approval to its nudge", msg(e)));
+  // Outside the catches above: whatever happens here (it never throws) the claim stays. If the rule is on the reminder goes now, through the normal approval path.
+  await maybeAutoApprove(env, approval, now);
   return true;
 }

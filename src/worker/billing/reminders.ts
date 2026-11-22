@@ -1,7 +1,8 @@
 import { dollars } from "../../client/packagesView";
 import { REMINDER_KIND, reminderBase, reminderMail } from "../approvals/invoiceReminder"; // importing it registers the kind, which must exist before an approval of it is made
+import { maybeAutoApprove } from "../approvals/auto";
 import { reject } from "../approvals/decide";
-import { createApproval } from "../db/approvals";
+import { createApproval, type Approval } from "../db/approvals";
 import { getBusiness } from "../db/businesses";
 import { listInvoices, type InvoiceRow } from "../db/invoices";
 import { getSettings } from "../db/settings";
@@ -94,9 +95,10 @@ export async function sweepReminders(env: Env, now: Date): Promise<number> {
       const key = `r${step}`;
       const claimed = await db.prepare(`INSERT OR IGNORE INTO invoice_nudges (invoice_id, step, created_at) VALUES (?, ?, ?)`).bind(inv.id, key, now.toISOString()).run();
       if ((claimed.meta.changes ?? 0) !== 1) continue; // another sweep has it
+      let a: Approval;
       try {
         const { title, preview } = await previewOf(env, inv, step, cfg.reminderOffsets.length);
-        const a = await createApproval(db, {
+        a = await createApproval(db, {
           kind: REMINDER_KIND, title, preview, payload: { invoiceId: inv.id, step }, record_type: "business", record_id: inv.businessId, drafted_by: "logan",
         });
         await db.prepare(`UPDATE invoice_nudges SET approval_id = ? WHERE invoice_id = ? AND step = ?`).bind(a.id, inv.id, key).run();
@@ -106,6 +108,8 @@ export async function sweepReminders(env: Env, now: Date): Promise<number> {
         await db.prepare(`DELETE FROM invoice_nudges WHERE invoice_id = ? AND step = ? AND approval_id IS NULL`).bind(inv.id, key).run();
         throw e;
       }
+      // The reminder exists and is linked to its claim. If its rule is on it goes now, through the normal approval path; this never throws, and the claim above is not touched whatever happens.
+      await maybeAutoApprove(env, a, now);
     } catch (e) {
       console.error("reminders: could not draft a reminder", inv.id, e instanceof Error ? e.message : "unknown error");
     }
