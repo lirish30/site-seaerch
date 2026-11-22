@@ -7,6 +7,7 @@ import ActivityTab from "../components/ActivityTab";
 import Icon from "../components/Icon";
 import MeetingsPanel from "../components/MeetingsPanel";
 import CarePanel from "../components/client/CarePanel";
+import GradePanel, { GradeChip } from "../components/client/GradePanel";
 import ClientSeoPanel from "../components/client/ClientSeoPanel";
 import LinkedPanel from "../components/client/LinkedPanel";
 import SitePanel from "../components/client/SitePanel";
@@ -109,6 +110,7 @@ export default function ClientPage() {
               {late && <span className="badge2 warning"><i className="dot" />Payment late</span>}
             </span>
           </div>
+          <div className="cl-chip"><span className="cl-chip-label">Grade</span><span className="cl-chip-value"><GradeChip grade={client.grade} /></span></div>
           <div className="cl-chip"><span className="cl-chip-label">MRR</span><span className="cl-chip-value">{moneyLabel(client.mrrCents, { monthly: true })}</span></div>
           {client.held && (
             <div className="cl-chip"><span className="cl-chip-label">Billing</span><span className="cl-chip-value"><span className="badge2 warning"><i className="dot" />On hold</span></span></div>
@@ -154,6 +156,7 @@ export default function ClientPage() {
           </div>
 
           <div className="cl-col">
+            <GradePanel businessId={b.id} grade={client.grade} onChanged={refresh} />
             <CarePanel businessId={b.id} health={client.health} sites={client.sites.map(({ site, monitoring }) => ({ site, monitoring }))} zone={tz} onChanged={refresh} />
             <MeetingsPanel businessId={b.id} />
             <section className="cl-card" aria-label="Timeline">

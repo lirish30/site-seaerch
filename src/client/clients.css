@@ -204,3 +204,12 @@
 .rp-last { margin:0; display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; }
 
 @media (max-width: 640px) { .cu-pics { grid-template-columns:minmax(0, 1fr); } }
+
+/* The grade: the chip, the picker and the suggestion's reasons */
+.gr-suggested { font-weight:400; color:var(--text-3); }
+.gr-chip { margin:0 0 8px; }
+.gr-panel .seg-pills { margin-bottom:10px; }
+.gr-panel textarea { width:100%; resize:vertical; }
+.gr-sub { margin:10px 0 4px !important; font-size:13px !important; color:var(--text-2); }
+.gr-reasons { margin:0; padding-left:18px; font-size:14px; overflow-wrap:anywhere; }
+.cr-chips { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }

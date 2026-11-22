@@ -17,6 +17,8 @@ import { siteFlags, type SiteFlag } from "../sites/access";
 import { monitoringViews, type SiteMonitoringView } from "../monitoring/fleet";
 import { computeHealth, type Health } from "./health";
 import { healthFor, healthInputs } from "./healthData";
+import type { GradeView } from "./grade";
+import { gradeViewFor, gradeViews } from "./gradeData";
 import type { Activity, Business, Person } from "../types";
 
 /** A subscription is live (billing, or late on a bill) in these states. */
@@ -75,6 +77,8 @@ export interface ClientRow {
   id: string; name: string; /** True for a rehearsal client (see `testClientSql`); such rows only come back with `includeTest`. */ test: boolean; careLabel: string | null; mrrCents: number; siteCount: number; accessMissing: number; openInvoiceCents: number; held: boolean; nextRenewalOn: string | null;
   /** The client health score (0 to 100), the same number the Care board shows; null for a client with no live Care and no switched-on site, and for a rehearsal client. */
   healthScore: number | null;
+  /** The grade the owner set (or none) and what the rules suggest; see `grade.ts`. */
+  grade: GradeView;
 }
 
 interface ListRow {
@@ -83,7 +87,7 @@ interface ListRow {
 
 /**
  * Every client, by name. The numbers come from one query (each is a subquery of the business row), plus one read of the live subscriptions for the Care label, so the list costs two
- * reads however many clients there are, plus the health inputs of the clients that have a score (in chunks). Test records are left out unless `includeTest`. `now` decides the scores.
+ * reads however many clients there are, plus the health inputs and grade facts of the clients (in chunks). Test records are left out unless `includeTest`. `now` decides the scores.
  */
 export async function listClients(db: D1Database, o: { includeTest?: boolean; now?: Date } = {}): Promise<ClientRow[]> {
   const [rows, active] = await Promise.all([
@@ -105,12 +109,15 @@ export async function listClients(db: D1Database, o: { includeTest?: boolean; no
   ]);
   const byBusiness = new Map<string, Subscription[]>();
   for (const s of active) byBusiness.set(s.businessId, [...(byBusiness.get(s.businessId) ?? []), s]);
-  // A score only for the clients on the Care board (a live Care subscription or a site switched on), computed exactly as the board does.
-  const scored = rows.results.filter((r) => r.is_test !== 1 && (careLabel(byBusiness.get(r.id) ?? []) !== null || r.switched_on === 1)).map((r) => r.id);
-  const inputs = await healthInputs(db, scored, o.now ?? new Date());
+  // A score only for the clients on the Care board (a live Care subscription or a site switched on), computed exactly as the board does. The grade suggestion reads every client's health.
+  const now = o.now ?? new Date();
+  const scored = new Set(rows.results.filter((r) => r.is_test !== 1 && (careLabel(byBusiness.get(r.id) ?? []) !== null || r.switched_on === 1)).map((r) => r.id));
+  const ids = rows.results.map((r) => r.id);
+  const health = new Map([...await healthInputs(db, ids, now)].map(([id, i]) => [id, computeHealth(i)]));
+  const grades = await gradeViews(db, ids, now, health);
   return rows.results.map((r) => ({
     id: r.id, name: r.name, test: r.is_test === 1, careLabel: careLabel(byBusiness.get(r.id) ?? []), mrrCents: r.mrr_cents, siteCount: r.site_count, accessMissing: r.access_missing,
-    openInvoiceCents: r.open_cents, held: r.held === 1, nextRenewalOn: r.next_renewal_on, healthScore: inputs.has(r.id) ? computeHealth(inputs.get(r.id)!).score : null,
+    openInvoiceCents: r.open_cents, held: r.held === 1, nextRenewalOn: r.next_renewal_on, healthScore: scored.has(r.id) ? health.get(r.id)!.score : null, grade: grades.get(r.id)!,
   }));
 }
 
@@ -136,6 +143,8 @@ export interface ClientRecord {
   sites: { site: Site; access: ClientAccessItem[]; flags: SiteFlag[]; monitoring: SiteMonitoringView }[];
   /** The client's health score and its reasons: the same number the Care board shows, for any client. */
   health: Health;
+  /** The grade the owner set (or none) and what the rules suggest, with the reasons. */
+  grade: GradeView;
   subscriptions: ClientSubscription[];
   mrrCents: number;
   careLabel: string | null;
@@ -198,6 +207,7 @@ export async function getClientRecord(db: D1Database, businessId: string, now: D
   // The client's answers are about their website as a whole, so they sit on the primary site only (the oldest live one when there is no primary), never repeated on a second site.
   const answerSiteId = (sites.find((s) => s.seedKey === "primary") ?? sites[0])?.id;
   const [health, monitoring] = await Promise.all([healthFor(db, businessId, now), monitoringViews(db, sites, new Set(care ? [businessId] : []), now)]);
+  const grade = await gradeViewFor(db, businessId, now, health);
   const withAccess = await Promise.all(sites.map(async (site, n) => {
     const items = await listAccess(db, site.id);
     const access = items.map((i) => ({ ...i, clientAnswer: site.id === answerSiteId ? (answers.get(`${ACCESS_ITEM_PREFIX}${i.key}`) ?? null) : null }));
@@ -205,7 +215,7 @@ export async function getClientRecord(db: D1Database, businessId: string, now: D
   }));
   const owed = invoices.filter(isOwed);
   return {
-    business, people, sites: withAccess, health, subscriptions: subs.map(toSubscription), mrrCents: clientMrrCents(subs), careLabel: care, projects,
+    business, people, sites: withAccess, health, grade, subscriptions: subs.map(toSubscription), mrrCents: clientMrrCents(subs), careLabel: care, projects,
     invoices: {
       openCents: owed.reduce((n, i) => n + i.amountCents, 0),
       overdueCount: owed.filter((i) => isOverdue(i, today)).length,

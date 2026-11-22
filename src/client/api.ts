@@ -1,5 +1,7 @@
 import type { PublicSubscription } from "../worker/billing/checkout";
+import type { GradeView } from "../worker/clients/grade";
 import type { ClientRecord, ClientRow } from "../worker/clients/record";
+import type { Grade } from "../worker/db/grade";
 import type { AccessItem, AccessKey, AccessStatus, Site, SiteFields } from "../worker/db/sites";
 import type { CareRow, IncidentView, SiteMonitoringView } from "../worker/monitoring/fleet";
 import type { CareRunDetail, CareUpdateView, CareUpdatesBoard } from "../worker/care/views";
@@ -50,6 +52,8 @@ export const clientsApi = {
   /** Every client by name; `includeTest` adds the rehearsal ones (`?test=1`). */
   list: (includeTest = false) => api.get<{ clients: ClientRow[] }>(`/clients${includeTest ? "?test=1" : ""}`).then((r) => r.clients),
   get: (id: string) => api.get<{ client: ClientRecord }>(`/clients/${encodeURIComponent(id)}`).then((r) => r.client),
+  /** Sets the grade (A, B or C, with a note of at most 300 characters), or clears it with null (which clears the note too). */
+  setGrade: (id: string, grade: Grade | null, note = "") => api.put<GradeView>(`/clients/${encodeURIComponent(id)}/grade`, { grade, note }),
   /** A site added by hand (six `needed` access items come with it). A domain the client already has on a live site is a 409. */
   addSite: (id: string, fields: Partial<SiteFields> = {}) => api.post<{ site: Site; access: AccessItem[] }>(`/clients/${encodeURIComponent(id)}/sites`, fields),
   /** Only the fields given change. */
