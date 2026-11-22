@@ -7,11 +7,14 @@ import { logActivity } from "../db/activity";
 import { freezeDeckOn, getDeal, stampDeckFrozen, type Deal } from "../db/deals";
 import { getPackage, listCurrentPackages, snapshotOf } from "../db/packages";
 import { getSettings } from "../db/settings";
+import { getProject } from "../db/projects";
+import { listTasks } from "../db/tasks";
 import { latestVideoFor } from "../db/videoAudits";
 import { listWorkSamples } from "../db/workSamples";
 import { offerOf } from "../queue/callRecap";
 import { buildDeck, planProblems, problemsOf, scorecardOf, type DeckInput, type DeckPackage } from "../sales/deck";
 import { renderDeckHtml } from "../sales/deckHtml";
+import { buildKickoffDeck } from "../sales/kickoffDeck";
 import { emptyNotes } from "../sales/notes";
 import { htmlToPdf } from "../render/render";
 
@@ -59,6 +62,10 @@ export function deckFileName(name: string, now: Date, o: { ascii?: boolean } = {
 /** A download header for a file name given twice: a plain ASCII `filename` for old clients and the real name in `filename*` (RFC 6266), so a name outside Latin-1 never reaches a header raw. */
 export const attachmentHeader = (asciiName: string, fullName: string): string =>
   `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(fullName).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)}`;
+
+/** "<Client> - Kickoff - <YYYY-MM-DD>.pdf", made safe the same way as the recommendation deck's name. */
+export const kickoffFileName = (name: string, now: Date, o: { ascii?: boolean } = {}): string => `${safeFileName(name, o)} - Kickoff - ${now.toISOString().slice(0, 10)}.pdf`;
+export const kickoffContentDisposition = (name: string, now: Date): string => attachmentHeader(kickoffFileName(name, now, { ascii: true }), kickoffFileName(name, now));
 
 export const deckContentDisposition = (name: string, now: Date): string => attachmentHeader(deckFileName(name, now, { ascii: true }), deckFileName(name, now));
 
@@ -155,5 +162,29 @@ export function deckRoutes(deps: { pdf?: (binding: Fetcher, html: string) => Pro
     return c.json(await getDeal(c.env.DB, deal.id));
   });
 
+  return app;
+}
+
+/** The kickoff deck for a build project, as a PDF, mounted at `/api/projects`. Built from the project's steps at the moment of the download; it changes nothing. */
+export function kickoffDeckRoutes(deps: { pdf?: (binding: Fetcher, html: string) => Promise<Uint8Array> } = {}) {
+  const pdf = deps.pdf ?? htmlToPdf;
+  const app = new Hono<{ Bindings: Env }>();
+  app.get("/:id/kickoff-deck.pdf", async (c) => {
+    const project = await getProject(c.env.DB, c.req.param("id"));
+    if (!project) return c.json({ error: "not found" }, 404);
+    if (project.kind !== "build") return c.json({ error: "The kickoff deck is only for a website build project." }, 422);
+    if (!c.env.BROWSER) return c.json({ error: "PDF export needs the Browser Rendering binding" }, 501);
+    const [business, tasks, settings] = await Promise.all([getBusiness(c.env.DB, project.businessId), listTasks(c.env.DB, project.id), getSettings(c.env.DB)]);
+    const name = business?.name ?? project.name;
+    const steps = tasks.filter((t) => t.isStep).map((t) => ({ phaseKey: t.phaseKey, phaseTitle: t.phaseTitle, title: t.title, owner: t.owner, clientSummary: t.clientSummary, status: t.status }));
+    const html = renderDeckHtml(buildKickoffDeck({ clientName: name, yourName: settings.your_name, steps }), { title: `${name} - Kickoff`, print: true });
+    let bytes: Uint8Array;
+    try { bytes = await pdf(c.env.BROWSER, html); }
+    catch (e) {
+      console.error("kickoff deck pdf failed", e instanceof Error ? e.message : "unknown error");
+      return c.json({ error: "could not make the PDF, please try again" }, 502);
+    }
+    return new Response(new Uint8Array(bytes), { headers: { "content-type": "application/pdf", "content-disposition": kickoffContentDisposition(name, new Date()), "cache-control": "no-store" } });
+  });
   return app;
 }

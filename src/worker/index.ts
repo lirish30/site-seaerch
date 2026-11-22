@@ -35,7 +35,7 @@ import { helperRoutes } from "./routes/helper";
 import { helperAdminRoutes } from "./routes/helperAdmin";
 import { packageRoutes } from "./routes/packages";
 import { dealRoutes, leadDealRoutes } from "./routes/deals";
-import { deckRoutes } from "./routes/deck";
+import { deckRoutes, kickoffDeckRoutes } from "./routes/deck";
 import { studioRoutes } from "./routes/studio";
 import { bookingRoutes } from "./routes/bookings";
 import { documentRoutes } from "./routes/documents";
@@ -121,6 +121,7 @@ app.route("/api/helper", helperAdminRoutes);
 app.route("/api/packages", packageRoutes);
 app.route("/api/deals", dealRoutes);
 app.route("/api/deals", deckRoutes()); // /:id/deck.html, /:id/deck.pdf, /:id/deck/freeze
+app.route("/api/projects", kickoffDeckRoutes()); // /:id/kickoff-deck.pdf (a build project's kickoff deck)
 app.route("/api/leads", leadDealRoutes); // /:id/deal
 app.route("/api/bookings", bookingRoutes);
 app.route("/api", documentRoutes); // /deals/:id/proposal, /documents/:id/...
