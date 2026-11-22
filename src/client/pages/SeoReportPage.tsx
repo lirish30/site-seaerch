@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import Icon from "../components/Icon";
+import TrafficSection from "../components/TrafficSection";
 import { publicSeoReport } from "../api";
 import { dayLabel } from "../careReportPageView";
 import { isReportToken } from "../reportView";
+import { trafficView } from "../trafficView";
 import { seoReportPageView, type PublicSeoReport } from "../seoReportPageView";
 
 type Load = "loading" | "ok" | "gone" | "error";
@@ -39,7 +41,7 @@ function Skeleton() {
 /** The band a cell text is in, for its colour. The words in the cell say the same, so the colour is never the only signal. */
 const band = (text: string) => (text === "1-3" ? "top" : text === "4-10" ? "mid" : text === "11-20" ? "low" : text === "not checked" ? "off" : "none");
 
-// Public page: no session and no Shell. Every word that came from a person or from Claude (the summary, the recommendation, the priorities, the search terms, the content titles) is shown as React text, which
+// Public page: no session and no Shell. Every word that came from a person or from Claude (the summary, the recommendation, the priorities, the search terms, the content titles, the searches and page paths Google counted) is shown as React text, which
 // escapes it, and the page loads no script but the app's own. The summary and what we suggest come first; the figures follow. Nothing on it looks forward: a rank is only what our own check saw.
 export default function SeoReportPage() {
   const rest = useParams()["*"];
@@ -83,6 +85,8 @@ export default function SeoReportPage() {
 
   const v = seoReportPageView(page, { summary: page.summary, recommendation: page.recommendation, priorities: page.priorities });
   const sent = dayLabel(page.sentOn);
+  // Search Console's average position is Google's own figure, not our rank check: it is only ever shown here, named as Google Search's.
+  const traffic = trafficView(page.traffic, { positionLabel: "Average position in Google Search" });
 
   return (
     <main className="rp mr sr">
@@ -142,6 +146,8 @@ export default function SeoReportPage() {
             </dl>
           </div>
         </section>
+
+        {traffic && <TrafficSection view={traffic} />}
 
         <section className="mr-section" aria-labelledby="sr-content-h">
           <h2 id="sr-content-h" className="mr-h">What we published</h2>

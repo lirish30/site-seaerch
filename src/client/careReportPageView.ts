@@ -3,6 +3,7 @@ import type { PublicReport, PublicReportSite, PublicTraffic } from "../worker/ca
 /** Pure helpers for the client's monthly report page (`/m/<token>`). Plain values in, plain text out: no DOM, no fetch, no clock. */
 
 export type { PublicReport, PublicReportSite, PublicTraffic };
+export { trafficView, type TrafficView } from "./trafficView";
 type Edits = NonNullable<PublicReport["edits"]>;
 type Renewal = PublicReport["renewals"][number];
 
@@ -73,38 +74,4 @@ export function siteDetails(s: PublicReportSite): { label: string; value: string
   if (s.backups > 0) rows.push({ label: "Backups", value: `${s.backups} taken` });
   if (s.speedScore !== null) rows.push({ label: "Mobile speed", value: `${s.speedScore} out of 100` });
   return rows;
-}
-
-const whole = (n: number) => n.toLocaleString("en-US");
-/** A figure, and last month's beside it when there is one: "40 (last month 30)". */
-const beside = (n: number, previous: number | null) => (previous === null ? whole(n) : `${whole(n)} (last month ${whole(previous)})`);
-
-export interface TrafficView {
-  /** Null when search was not measured: the block is left out, never shown as 0. */
-  search: { rows: { label: string; value: string }[]; empty: string | null; queries: { text: string; value: string }[]; pages: { text: string; value: string }[] } | null;
-  visits: { rows: { label: string; value: string }[] } | null;
-  note: string;
-}
-
-/** The "Search and visits" section: null (no section) unless a search or a visits block was measured. Queries and paths are returned as they are, for the page to put in as text. */
-export function trafficView(t: PublicTraffic | undefined): TrafficView | null {
-  if (!t || (!t.search && !t.visits)) return null;
-  const clicks = (n: number) => plural(n, "click", "clicks");
-  let search: TrafficView["search"] = null;
-  if (t.search) {
-    const s = t.search;
-    // Google counted the month and the site was never shown: a real zero, said in words (the rows would only repeat it).
-    if (s.clicks === 0 && s.impressions === 0) search = { rows: [], empty: "No search impressions were recorded.", queries: [], pages: [] };
-    else {
-      const rows = [{ label: "Shown in Google", value: beside(s.impressions, s.previousImpressions) }, { label: "Clicked", value: beside(s.clicks, s.previousClicks) }];
-      if (s.position !== null) rows.push({ label: "Average position", value: String(s.position) });
-      search = { rows, empty: null, queries: s.queries.map((q) => ({ text: q.query, value: clicks(q.clicks) })), pages: s.pages.map((p) => ({ text: p.path, value: clicks(p.clicks) })) };
-    }
-  }
-  const visits = t.visits ? { rows: [
-    { label: "Visits", value: beside(t.visits.sessions, t.visits.previousSessions) },
-    { label: "People", value: whole(t.visits.users) },
-    { label: "Visits from search", value: beside(t.visits.organic, t.visits.previousOrganic) },
-  ] } : null;
-  return { search, visits, note: "Counted by Google's own month." };
 }

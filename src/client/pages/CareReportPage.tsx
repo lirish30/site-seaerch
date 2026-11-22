@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import Icon from "../components/Icon";
+import TrafficSection from "../components/TrafficSection";
 import { publicCareReport } from "../api";
 import { dayLabel, editsLine, renewalLine, siteDetails, trafficView, type PublicReport } from "../careReportPageView";
 import { isReportToken } from "../reportView";
@@ -120,47 +121,7 @@ export default function CareReportPage() {
           </section>
         )}
 
-        {traffic && (
-          <section className="mr-section" aria-labelledby="mr-traffic-h">
-            <h2 id="mr-traffic-h" className="mr-h">Search and visits</h2>
-            {traffic.search && (
-              <article className="rp-card mr-site">
-                <h3>In Google's search results</h3>
-                {traffic.search.empty && <p className="mr-note">{traffic.search.empty}</p>}
-                {traffic.search.rows.length > 0 && (
-                  <dl className="mr-rows">
-                    {traffic.search.rows.map((row) => <div key={row.label} className="mr-row"><dt>{row.label}</dt><dd>{row.value}</dd></div>)}
-                  </dl>
-                )}
-                {traffic.search.queries.length > 0 && (
-                  <>
-                    <p className="mr-note">What people searched for</p>
-                    <ul className="mr-renewals">
-                      {traffic.search.queries.map((q, i) => <li key={`q-${i}`}><span className="mr-renewal-title">{q.text}</span><span className="mr-renewal-date">{q.value}</span></li>)}
-                    </ul>
-                  </>
-                )}
-                {traffic.search.pages.length > 0 && (
-                  <>
-                    <p className="mr-note">Pages people came to from search</p>
-                    <ul className="mr-renewals">
-                      {traffic.search.pages.map((p, i) => <li key={`p-${i}`}><span className="mr-renewal-title">{p.text}</span><span className="mr-renewal-date">{p.value}</span></li>)}
-                    </ul>
-                  </>
-                )}
-              </article>
-            )}
-            {traffic.visits && (
-              <article className="rp-card mr-site">
-                <h3>Visits to your site</h3>
-                <dl className="mr-rows">
-                  {traffic.visits.rows.map((row) => <div key={row.label} className="mr-row"><dt>{row.label}</dt><dd>{row.value}</dd></div>)}
-                </dl>
-              </article>
-            )}
-            <p className="mr-note">{traffic.note}</p>
-          </section>
-        )}
+        {traffic && <TrafficSection view={traffic} />}
 
         {edits && page.edits && (
           <section className="mr-section" aria-labelledby="mr-edits-h">

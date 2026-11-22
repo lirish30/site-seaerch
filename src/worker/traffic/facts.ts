@@ -50,6 +50,11 @@ export const TrafficFacts = z.object({
 });
 export type TrafficFacts = z.infer<typeof TrafficFacts>;
 
+/** Whether a month's traffic has a search or a visits block. A profile block alone (Google Business Profile) says nothing about search or visits, so it counts as no traffic for the report sections and Claude's rules. */
+export function hasSearchOrVisits(t: TrafficFacts | null | undefined): t is TrafficFacts {
+  return !!t && (t.search !== null || t.visits !== null);
+}
+
 type Search = NonNullable<TrafficFacts["search"]>;
 type Visits = NonNullable<TrafficFacts["visits"]>;
 type Profile = NonNullable<TrafficFacts["profile"]>;

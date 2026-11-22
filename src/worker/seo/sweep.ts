@@ -15,6 +15,7 @@ import { localDay } from "../monitoring/rollup";
 import { queueSeoReport } from "../queue/seoReport";
 import { periodKey, zoneOf } from "../sop/cadence";
 import { optionalJobBlock } from "../spend";
+import { trafficWait } from "../traffic/pull";
 import { MAX_DRAFT_TRIES, draftTriesFor, ensureSlots, planFor as slotPlanFor } from "./content";
 import { isUsable, runRankGrid } from "./grid";
 import { buildSeoFacts } from "./reportFacts";
@@ -173,6 +174,8 @@ export interface SeoSweepResult { clients: number; watched: number; ranked: numb
  *    then, with no Places call and whoever made the month's first check (the sweep, the owner's rank check or the baseline): the month's content slots (SEO-1's period) once the month has a check and fewer slots than its plan,
  *    and the tick of 1.1 on the month's SEO-1 task once a usable check exists;
  * 3. last month's report, when it has none and a usable rank check from this month exists (so it follows the pull): the frozen facts, the row and Claude's job for the words. No Places call, so neither the budget nor the spend gate holds it.
+ *    A report not yet made waits while Google's numbers of the month are still being pulled (`trafficWait`, until the 7th); a client waiting is still handled for its other parts, and the report is made on a later run.
+ *    `startSeoReport`, by hand, never waits.
  * Parts 1 and 2 call Places. They stop for everyone, with one logged line, once the places sub-cap or the total cap is reached (`blocked`), and the run counts its Places calls and starts no client's Places work that would take it
  * past `MAX_PLACES_CALLS_PER_RUN` (or once `MAX_PLACES_WALL_MS` have passed since the run began; a client's watch and pull are held back together, and so is every client after it, so the next run starts with it: a client held back is not touched and so stays first in line).
  * Returns `clients` (handled), `watched` (listings read), `ranked` (clients with at least one usable check made now), `reports` (made now) and `blocked` (Places work was held back by the spend gate).
@@ -279,7 +282,9 @@ export async function sweepSeo(env: Env, now: Date): Promise<SeoSweepResult> {
 
     if (plan.reportOpen && usable) {
       try {
-        if ((await begin(env, businessId, period, false, now, tz)).created) out.reports++;
+        // A report not yet made waits for Google's numbers of the month (until the 7th), and is made on a later run; one that exists is never waited for, its facts are frozen. The client's other parts above have run.
+        const waiting = !(await getSeoReportFor(env.DB, businessId, period)) && (await trafficWait(env, businessId, period, now));
+        if (!waiting && (await begin(env, businessId, period, false, now, tz)).created) out.reports++;
       } catch (e) {
         if (!(e instanceof SeoReportRefused)) console.error("seo sweep: could not start a client's report", msg(e));
       }

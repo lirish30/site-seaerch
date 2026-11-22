@@ -3,6 +3,8 @@ import { proposeReportApproval } from "../approvals/careReport";
 import { plainSummary, ReportFacts } from "../care/reportFacts";
 import { getReport, setSummary, setTaskAndApproval, type CareReport } from "../db/careReports";
 import type { Env } from "../env";
+import { hasSearchOrVisits } from "../traffic/facts";
+import { trafficLines } from "../traffic/lines";
 import { enqueueTask } from "./db";
 import { registerTaskKind, type TaskKindDef } from "./registry";
 
@@ -44,7 +46,7 @@ const TRAFFIC_RULES = [
 
 /** The fixed instructions for Claude's draft of `f`: Care's own rules, and one more block when the report carries traffic. The text is the same for every report without it. */
 export function instructionsFor(f: ReportFacts): string {
-  return (f.traffic ? [...RULES.slice(0, -1), TRAFFIC_RULES, RULES[RULES.length - 1]] : RULES).join("\n\n");
+  return (hasSearchOrVisits(f.traffic) ? [...RULES.slice(0, -1), TRAFFIC_RULES, RULES[RULES.length - 1]] : RULES).join("\n\n");
 }
 
 const plain = (report: CareReport): string => {
@@ -53,24 +55,6 @@ const plain = (report: CareReport): string => {
 };
 
 const num = (n: number | null, unit: string) => (n === null ? "not measured" : `${n}${unit}`);
-
-const times = (n: number) => `${n.toLocaleString("en-US")} ${n === 1 ? "time" : "times"}`;
-/** `1,200 (last month 900)`, or only the figure when last month's is not known. */
-const beside = (text: string, previous: number | null) => (previous === null ? text : `${text} (last month ${previous.toLocaleString("en-US")})`);
-
-/** Google's numbers as plain lines: counts and comparisons only. The search queries and page paths are written by strangers and are left out; the page shows them. */
-function trafficLines(t: NonNullable<ReportFacts["traffic"]>): string[] {
-  const lines = ["Search and visits (counted by Google):"];
-  if (t.search) {
-    const s = t.search;
-    lines.push(`Search results: shown ${beside(times(s.impressions), s.previousImpressions)}; clicked ${beside(times(s.clicks), s.previousClicks)}${s.position === null ? "" : `; average position ${s.position}`}`);
-  }
-  if (t.visits) {
-    const v = t.visits;
-    lines.push(`Visits: ${beside(`${v.sessions.toLocaleString("en-US")} ${v.sessions === 1 ? "visit" : "visits"}`, v.previousSessions)} from ${v.users.toLocaleString("en-US")} ${v.users === 1 ? "person" : "people"}; ${beside(`${v.organic.toLocaleString("en-US")} from search`, v.previousOrganic)}`);
-  }
-  return lines.length > 1 ? lines : [];
-}
 
 /** The report's numbers as plain lines, for the untrusted block. */
 function factLines(f: ReportFacts): string {

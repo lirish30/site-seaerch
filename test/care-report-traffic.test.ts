@@ -225,6 +225,12 @@ describe("Claude's instructions", () => {
     expect(text.split("\n\n")).toHaveLength(OLD_INSTRUCTIONS.split("\n\n").length + 1);
   });
 
+  it("a profile block alone is no traffic: the old instructions and no traffic sentence", () => {
+    const profileOnly = ReportFacts.parse({ ...FROZEN, traffic: { version: 1, period: PERIOD, search: null, visits: null, profile: { calls: 4, directions: 3, websiteClicks: 2, previousCalls: 1 } } });
+    expect(instructionsFor(profileOnly)).toBe(OLD_INSTRUCTIONS);
+    expect(plainSummary(profileOnly)).toBe(plainSummary(ReportFacts.parse(FROZEN)));
+  });
+
   it("the Claude input lists search queries only inside the untrusted block", async () => {
     // Counts and comparisons only: the query and page texts (written by strangers) do not reach Claude at all, and certainly not the fixed instructions.
     const s = await seedClient({ subs: CARE });

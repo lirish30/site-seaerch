@@ -4,7 +4,10 @@ import { getSettings } from "../db/settings";
 import { isClientToken } from "../documents/token";
 import type { Env } from "../env";
 import { zoneOf } from "../sop/cadence";
+import { publicTraffic, type PublicTraffic } from "../traffic/public";
 import { ReportFacts } from "./reportFacts";
+
+export type { PublicTraffic };
 
 // What a client sees at `/m/<token>` (Plan 13): the monthly report, field by field. Nothing is spread from the stored facts and nothing is added to them here, so a field that is not
 // listed in `PublicReport` can never reach a client: no id, no approval or task id, no raw facts, no alias, WordPress folder, backup or vault name, no token.
@@ -24,16 +27,6 @@ export interface PublicReportSite {
   speedScore: number | null;
 }
 
-/** What Google counted, as the page shows it. A block is left out when it was not measured; queries and page paths are plain strings (the page puts them in as text). */
-export interface PublicTraffic {
-  search?: {
-    clicks: number; impressions: number; position: number | null; previousClicks: number | null; previousImpressions: number | null;
-    queries: { query: string; clicks: number; impressions: number }[];
-    pages: { path: string; clicks: number }[];
-  };
-  visits?: { sessions: number; users: number; organic: number; previousSessions: number | null; previousOrganic: number | null };
-}
-
 export interface PublicReport {
   clientName: string;
   /** `November 2026`. */
@@ -47,24 +40,6 @@ export interface PublicReport {
   traffic?: PublicTraffic;
   /** The day the report was sent, `YYYY-MM-DD` in the booking zone. */
   sentOn: string;
-}
-
-/** The traffic block of the page, field by field, or undefined when the report has neither a search nor a visits block. */
-function publicTraffic(t: ReportFacts["traffic"]): PublicTraffic | undefined {
-  if (!t || (!t.search && !t.visits)) return undefined;
-  const out: PublicTraffic = {};
-  if (t.search) {
-    const s = t.search;
-    out.search = {
-      clicks: s.clicks, impressions: s.impressions, position: s.position, previousClicks: s.previousClicks, previousImpressions: s.previousImpressions,
-      queries: s.queries.map((q) => ({ query: q.query, clicks: q.clicks, impressions: q.impressions })), pages: s.pages.map((p) => ({ path: p.path, clicks: p.clicks })),
-    };
-  }
-  if (t.visits) {
-    const v = t.visits;
-    out.visits = { sessions: v.sessions, users: v.users, organic: v.organic, previousSessions: v.previousSessions, previousOrganic: v.previousOrganic };
-  }
-  return out;
 }
 
 /**

@@ -4,10 +4,13 @@ import { getSettings } from "../db/settings";
 import { isClientToken } from "../documents/token";
 import type { Env } from "../env";
 import { zoneOf } from "../sop/cadence";
+import { publicTraffic, type PublicTraffic } from "../traffic/public";
 import { SeoReportFacts } from "./reportFacts";
 
 // What a client sees at `/l/<token>` (Plan 14): the monthly Local SEO report, field by field. Nothing is spread from the stored facts and nothing is added to them here, so a field that is not listed in
 // `PublicSeoReport` can never reach a client: no id, no approval or task id, no raw facts, no Google place id or map location, no review text or reviewer name, no alias or vault name, no token.
+
+export type { PublicTraffic };
 
 export interface PublicSeoTerm {
   term: string;
@@ -36,6 +39,8 @@ export interface PublicSeoReport {
   reviews: { seen: number; posted: number };
   content: { published: { kind: "page" | "post" | "gbp_post"; title: string }[] };
   citations: { listed: number; needsFix: number; todo: number } | null;
+  /** What Google counted (Plan 16), with Search Console's average position inside it and nowhere else. Absent when the report has no search or visit figures (older reports, or nothing linked). */
+  traffic?: PublicTraffic;
   /** The day the report was sent, `YYYY-MM-DD` in the booking zone. */
   sentOn: string;
 }
@@ -53,6 +58,7 @@ export async function publicSeoReport(env: Pick<Env, "DB">, token: string, now: 
   const f = parsed.data;
 
   const tz = zoneOf(await getSettings(env.DB));
+  const traffic = publicTraffic(f.traffic);
   if (o.countView !== false) await recordSeoView(env.DB, report.id, now.toISOString());
 
   return {
@@ -70,6 +76,7 @@ export async function publicSeoReport(env: Pick<Env, "DB">, token: string, now: 
     reviews: { seen: f.reviews.seen, posted: f.reviews.posted },
     content: { published: f.content.published.map((c) => ({ kind: c.kind, title: c.title })) },
     citations: f.citations ? { listed: f.citations.listed, needsFix: f.citations.needsFix, todo: f.citations.todo } : null,
+    ...(traffic ? { traffic } : {}),
     sentOn: dayKey(Date.parse(report.sentAt ?? "") || now.getTime(), tz),
   };
 }

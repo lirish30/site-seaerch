@@ -6,12 +6,12 @@ import { monitoredSiteSql } from "../db/monitoring";
 import { siteDomain } from "../db/businesses";
 import { getSettings } from "../db/settings";
 import { toSite, type Site, type SiteRow } from "../db/sites";
-import { monthsFor } from "../db/traffic";
 import type { Env } from "../env";
 import { MIN_CHECKS_FOR_A_DAY, uptimeOf } from "../monitoring/rollup";
 import { runPageSpeed } from "../pagespeed";
 import { periodLabel, zoneOf } from "../sop/cadence";
-import { mergeTraffic, plainTraffic, TrafficFacts } from "../traffic/facts";
+import { hasSearchOrVisits, plainTraffic, TrafficFacts } from "../traffic/facts";
+import { trafficFor } from "../traffic/forClient";
 import { editLedger } from "./ledger";
 import { COLLATERAL_NOTE } from "./updateKind";
 
@@ -183,17 +183,6 @@ async function renewalsOf(env: Env, businessId: string, sites: Site[], today: st
   return all.sort((a, b) => a.on.localeCompare(b.on) || rank[a.what] - rank[b.what] || (a.domain ?? "").localeCompare(b.domain ?? "")).slice(0, MAX_RENEWALS);
 }
 
-/** The client's linked sites' pulled months merged into one, or null when no site gave one. A month that failed contributes nothing, and a month's error text is never read. */
-async function trafficOf(env: Env, businessId: string, period: string): Promise<TrafficFacts | null> {
-  const parts: TrafficFacts[] = [];
-  for (const m of await monthsFor(env.DB, businessId, period)) {
-    if (m.status === "failed") continue;
-    const facts = TrafficFacts.safeParse(m.facts);
-    if (facts.success) parts.push(facts.data);
-  }
-  return mergeTraffic(period, parts);
-}
-
 /**
  * The facts of the report of `period` (the month REPORTED, `YYYY-MM`) for a client, as of `now`. The sites are the client's live, real, monitored ones. The speed score is asked of PageSpeed
  * only when `o.speed !== false`, and any failure leaves it null. `edits` is null for a client with no live Care plan.
@@ -220,7 +209,7 @@ export async function buildFacts(env: Env, businessId: string, period: string, n
     version: 1, period, label: periodLabel("monthly", period), from: range.from, to: range.to, clientName: name.slice(0, 200), sites: perSite,
     edits: ledger ? { ...ledger, requestsDone } : null,
     renewals: await renewalsOf(env, businessId, sites, dayKey(now.getTime(), tz)),
-    traffic: await trafficOf(env, businessId, period),
+    traffic: await trafficFor(env.DB, businessId, period),
     generatedAt: now.toISOString(),
   });
 }
@@ -285,7 +274,7 @@ export function plainSummary(f: ReportFacts): string {
   if (f.renewals.length) lines.push(`${f.renewals.length} ${f.renewals.length === 1 ? "renewal is" : "renewals are"} coming up in the next ${RENEWAL_DAYS} days.`);
 
   // Last, so what Google counted never pushes out a sentence about the site itself.
-  if (f.traffic) lines.push(...plainTraffic(f.traffic));
+  if (hasSearchOrVisits(f.traffic)) lines.push(...plainTraffic(f.traffic));
 
   let text = lines[0];
   for (const line of lines.slice(1)) {
