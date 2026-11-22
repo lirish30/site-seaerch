@@ -1,19 +1,23 @@
-import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Fragment, useCallback, useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { ApiError, careApi } from "../api";
 import { dayLabel } from "../careReportPageView";
-import { ledgerBar, statusChip, statusTone, type ReportRow } from "../careReportsView";
+import { ledgerBar, MONTH_STAGES, monthStage, stageLabel, type MonthStage, type ReportRow } from "../careReportsView";
 import { latestOnly, moneyLabel } from "../clientView";
 import { formatUptime } from "../careView";
 import Icon from "../components/Icon";
-import { Card, EmptyState, Meter, StatRow } from "../components/PageBits";
-import { LedgerBar } from "../components/client/CareEditHours";
+import { Avatar, Banner, Card, Chip, Empty, Meter, Note, PageHeader, type Tone } from "../components/ds";
 import { periodLabel } from "../../worker/sop/cadence";
 import type { CareRow } from "../../worker/monitoring/fleet";
 
 const sentence = (e: unknown, fallback: string): string => (e instanceof ApiError ? e.message : fallback);
 const SUMMARY_MAX = 600;
 const RECOMMENDATION_MAX = 300;
+const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
+
+const STAGE_TONE: Record<MonthStage, Tone> = { none: "outline", collecting: "info", ready: "warning", sent: "positive", opened: "positive", off: "critical" };
+const STAGE_ORDER: Record<MonthStage, number> = { ready: 0, collecting: 1, none: 2, sent: 3, opened: 4, off: 5 };
+const BAR_TONE = { ok: "positive", warn: "warning", over: "critical", none: "neutral" } as const;
 
 /** The report's link in a box to select, and a button that copies it. A copy that is refused says so and leaves the link to copy by hand. */
 function LinkBox({ link }: { link: string }) {
@@ -22,14 +26,15 @@ function LinkBox({ link }: { link: string }) {
     try { await navigator.clipboard.writeText(link); setNote("Link copied."); }
     catch { setNote("Could not copy: select the link and copy it by hand."); }
   }
+  const id = `link-${link.slice(-12)}`;
   return (
-    <div className="rp-link">
-      <label className="rp-link-label small" htmlFor={`link-${link.slice(-12)}`}>Link to the report page</label>
-      <div className="rp-link-row">
-        <input id={`link-${link.slice(-12)}`} readOnly value={link} onFocus={(e) => e.currentTarget.select()} />
-        <button type="button" className="btn" onClick={() => void copy()}><Icon name="copy" size={16} />Copy link</button>
+    <div className="crx-field">
+      <span><label htmlFor={id}>Link to the report page</label></span>
+      <div className="crx-link-row">
+        <input id={id} readOnly value={link} onFocus={(e) => e.currentTarget.select()} />
+        <button type="button" className="btn sm" onClick={() => void copy()}><Icon name="copy" size={14} />Copy link</button>
       </div>
-      {note && <p className="small muted" role="status">{note}</p>}
+      {note && <p className="crx-ok" role="status">{note}</p>}
     </div>
   );
 }
@@ -51,21 +56,26 @@ function WordsForm({ r, onSaved }: { r: ReportRow; onSaved: (next: ReportRow) =>
     finally { setBusy(false); }
   }
   return (
-    <div className="rp-words">
-      <label htmlFor={`sum-${r.id}`}><b>Summary</b> <span className="muted small">what the client reads in the mail ({summary.length} of {SUMMARY_MAX})</span></label>
-      <textarea id={`sum-${r.id}`} rows={4} maxLength={SUMMARY_MAX} value={summary} onChange={(e) => { setSummary(e.target.value); setSaved(false); }} />
-      <label htmlFor={`rec-${r.id}`}><b>Recommendation</b> <span className="muted small">on the report page ({recommendation.length} of {RECOMMENDATION_MAX})</span></label>
-      <textarea id={`rec-${r.id}`} rows={2} maxLength={RECOMMENDATION_MAX} value={recommendation} onChange={(e) => { setRecommendation(e.target.value); setSaved(false); }} />
-      <div className="rp-actions">
-        <button type="button" className="btn primary" aria-disabled={busy || !dirty} onClick={() => void save()}>Save my words</button>
-        {saved && <span className="small muted" role="status">Saved. The card on Today shows these words now.</span>}
+    <div className="crx-words">
+      <label className="crx-field" htmlFor={`sum-${r.id}`}>
+        <span>Summary <em>what the client reads in the mail · {summary.length} of {SUMMARY_MAX}</em></span>
+        <textarea id={`sum-${r.id}`} rows={4} maxLength={SUMMARY_MAX} value={summary} onChange={(e) => { setSummary(e.target.value); setSaved(false); }} />
+      </label>
+      <label className="crx-field" htmlFor={`rec-${r.id}`}>
+        <span>Recommendation <em>on the report page · {recommendation.length} of {RECOMMENDATION_MAX}</em></span>
+        <textarea id={`rec-${r.id}`} rows={2} maxLength={RECOMMENDATION_MAX} value={recommendation} onChange={(e) => { setRecommendation(e.target.value); setSaved(false); }} />
+      </label>
+      <div className="crx-actions">
+        <button type="button" className="btn primary sm" aria-disabled={busy || !dirty} onClick={() => void save()}>{busy ? "Saving…" : "Save my words"}</button>
+        {saved ? <span className="crx-ok" role="status">Saved. The card on Today shows these words now.</span> : !dirty && <span className="crx-ok">Change the words to save them.</span>}
       </div>
-      {error && <p className="error small" role="alert">{error}</p>}
+      {error && <p className="crx-err" role="alert">{error}</p>}
     </div>
   );
 }
 
-function ReportCard({ r, onChanged }: { r: ReportRow; onChanged: (next: ReportRow) => void }) {
+/** Revoke, with a plain question first: the link stops working, even for a client who already has it. */
+function Revoke({ r, onChanged }: { r: ReportRow; onChanged: (next: ReportRow) => void }) {
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -76,50 +86,46 @@ function ReportCard({ r, onChanged }: { r: ReportRow; onChanged: (next: ReportRo
     catch (e) { setError(sentence(e, "Couldn’t take it back. Try again.")); }
     finally { setBusy(false); }
   }
-  const bar = r.status === "revoked" || r.status === "cancelled" ? null : ledgerBar(r.ledger);
   return (
-    <li className="cl-card rp-card">
-      <div className="cr-card-head">
-        <h2 className="cr-name"><Link to={`/clients/${encodeURIComponent(r.clientId)}`}>{r.client || "Client"}</Link></h2>
-        <span className={`badge2${statusTone(r.status) ? ` ${statusTone(r.status)}` : ""}`}><i className="dot" aria-hidden="true" />{statusChip(r.status)}</span>
-      </div>
-      <p className="cr-meta small">
-        {r.test && <span className="badge2 outline">Test</span>}
-        {r.sentOn && <span>Sent {dayLabel(r.sentOn) ?? r.sentOn}</span>}
-        {r.status === "sent" && <span>{r.views === 0 ? "Not opened yet" : `Opened ${r.views} ${r.views === 1 ? "time" : "times"}`}</span>}
-      </p>
-      {bar && <LedgerBar bar={bar} label="Edit hours used that month" />}
-      {r.status === "collecting" && <p className="muted small">The numbers are being collected and the words written. This card changes when they are ready.</p>}
-      {r.status === "ready" && (
-        <>
-          <WordsForm r={r} onSaved={onChanged} />
-          <p className="small">Approve it on <Link to="/today">Today</Link> to send it. Nothing is mailed before that.</p>
-        </>
-      )}
-      {r.status === "sent" && (
-        <>
-          <p className="rp-text">{r.summary}</p>
-          {r.recommendation && <p className="rp-text small muted">Recommendation: {r.recommendation}</p>}
-        </>
-      )}
-      {(r.status === "revoked" || r.status === "cancelled") && <p className="muted small">{r.status === "revoked" ? "You took this report back. Its link no longer opens." : "This report was cancelled and never went out."}</p>}
-      {r.link && <LinkBox link={r.link} />}
-      {(r.status === "ready" || r.status === "sent") && (
-        asking ? (
-          <div className="rp-actions" role="group" aria-label="Take this report back?">
-            <span className="small">Its link will stop working{r.status === "sent" ? ", even for the client who has it" : ""}.</span>
-            <button type="button" className="btn" aria-disabled={busy} onClick={() => void revoke()}>Yes, take it back</button>
-            <button type="button" className="btn-plain" onClick={() => setAsking(false)}>Keep it</button>
+    <>
+      {asking ? (
+        <div className="crx-ask" role="group" aria-label="Take this report back?">
+          <p>Take this report back? Its link will stop working{r.status === "sent" ? ", even for the client who has it" : ""}.</p>
+          <div className="crx-actions">
+            <button type="button" className="btn sm crx-btn-danger" aria-disabled={busy} onClick={() => void revoke()}>Yes, take it back</button>
+            <button type="button" className="btn sm" onClick={() => setAsking(false)}>Keep it</button>
           </div>
-        ) : <button type="button" className="btn rp-revoke" onClick={() => setAsking(true)}>Revoke</button>
-      )}
-      {error && <p className="error small" role="alert">{error}</p>}
-    </li>
+        </div>
+      ) : <div className="crx-actions"><button type="button" className="btn sm" onClick={() => setAsking(true)}><Icon name="ban" size={14} />Revoke</button><span className="crx-ok">Stops the link working.</span></div>}
+      {error && <p className="crx-err" role="alert">{error}</p>}
+    </>
   );
 }
 
-/** A Care client with no report for the month yet, with the button that makes it now. A refusal is shown as the server's sentence. */
-function Missing({ c, onBuilt }: { c: CareRow; onBuilt: () => Promise<void> }) {
+/** What opens under a report's row: the words (editable while ready), the link to copy and Revoke. */
+function Detail({ r, onChanged }: { r: ReportRow; onChanged: (next: ReportRow) => void }) {
+  if (r.status === "revoked" || r.status === "cancelled") {
+    return <div className="crx-detail-box one"><p className="crx-quote-sub">{r.status === "revoked" ? "You took this report back. Its link no longer opens." : "This report was cancelled and never went out."}</p></div>;
+  }
+  return (
+    <div className="crx-detail-box">
+      {r.status === "ready" ? <WordsForm r={r} onSaved={onChanged} /> : (
+        <div className="crx-words">
+          <p className="crx-quote">{r.summary}</p>
+          {r.recommendation && <p className="crx-quote-sub"><b>Recommendation:</b> {r.recommendation}</p>}
+        </div>
+      )}
+      <div className="crx-detail-side">
+        {r.link && <LinkBox link={r.link} />}
+        {r.status === "ready" && <Note><span>Approve it on <Link to="/today">Today</Link> to send it. Nothing is mailed before that.</span></Note>}
+        {(r.status === "ready" || r.status === "sent") && <Revoke r={r} onChanged={onChanged} />}
+      </div>
+    </div>
+  );
+}
+
+/** "Build now" for a Care client with no report this month. A refusal is shown as the server's sentence. */
+function BuildNow({ c, onBuilt }: { c: CareRow; onBuilt: () => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   async function build() {
@@ -130,21 +136,35 @@ function Missing({ c, onBuilt }: { c: CareRow; onBuilt: () => Promise<void> }) {
     finally { setBusy(false); }
   }
   return (
-    <li className="crp-row">
-      <span className="crp-name"><Link to={`/clients/${encodeURIComponent(c.businessId)}`}>{c.name}</Link><small>{c.careLabel ?? "Care"} · {c.uptime30 === null ? "no uptime checks yet" : `uptime ${formatUptime(c.uptime30)} over 30 days`}{c.openIncidents.length ? ` · ${c.openIncidents.length} open incident${c.openIncidents.length === 1 ? "" : "s"}` : ""}</small></span>
-      <span className={`badge2 ${!c.health.hasData ? "outline" : c.health.band === "good" ? "positive" : c.health.band === "watch" ? "warning" : "critical"}`}><i className="dot" aria-hidden="true" />{c.health.hasData ? `Health ${c.health.score}` : "No health yet"}</span>
-      <button type="button" className="btn" aria-disabled={busy} onClick={() => void build()}>{busy ? "Starting…" : "Build now"}</button>
-      {error && <p className="error small" role="alert">{error}</p>}
-    </li>
+    <span className="crx-row-actions">
+      {error && <span className="crx-err" role="alert">{error}</span>}
+      <button type="button" className="btn sm" aria-disabled={busy} onClick={() => void build()}><Icon name="sparkles" size={14} />{busy ? "Starting…" : "Build now"}</button>
+    </span>
   );
 }
 
-/** The month's Care reports: each client's report with its status, the words to edit while it is ready, the link to copy, Revoke, and a Build now for the clients that have none yet. */
+/** The edit-hours meter of a report's month, with the figure and a note in words. */
+function Hours({ r }: { r: ReportRow }) {
+  const bar = r.status === "revoked" || r.status === "cancelled" ? null : ledgerBar(r.ledger);
+  if (!bar) return <span className="crx-dim">–</span>;
+  return (
+    <span className="crx-hours">
+      <Meter value={bar.width} max={100} tone={BAR_TONE[bar.tone]} label={`Edit hours: ${bar.label}`} />
+      <small className={bar.tone}>{bar.note || bar.label}</small>
+    </span>
+  );
+}
+
+type Line = { key: string; stage: MonthStage; clientId: string; name: string; sub: string; report: ReportRow | null; care: CareRow | null };
+
+/** The month's Care reports: each Care client's report and where it stands, the words to edit while it is ready, the link to copy, Revoke, and Build now for clients with none yet. */
 export default function CareReports() {
+  const navigate = useNavigate();
   const [period, setPeriod] = useState<string | null>(null);
   const [reports, setReports] = useState<ReportRow[] | null>(null);
   const [fleet, setFleet] = useState<CareRow[] | null>(null);
   const [failed, setFailed] = useState(false);
+  const [open, setOpen] = useState<Record<string, boolean>>({});
   const [guard] = useState(latestOnly);
   const load = useCallback(async () => {
     const ticket = guard.next();
@@ -157,82 +177,124 @@ export default function CareReports() {
   useEffect(() => { void load(); return () => guard.cancel(); }, [load, guard]);
 
   const replace = (next: ReportRow) => setReports((rs) => rs && rs.map((r) => (r.id === next.id ? next : r)));
-  const withReport = new Set((reports ?? []).map((r) => r.clientId));
-  const missing = (fleet ?? []).filter((c) => !withReport.has(c.businessId) && c.careLabel !== null);
   const list = reports ?? [];
-  const live = list.filter((r) => r.status !== "revoked" && r.status !== "cancelled");
-  const count = (st: ReportRow["status"]) => list.filter((r) => r.status === st).length;
-  const ready = count("ready"), sent = count("sent"), collecting = count("collecting");
-  const opened = list.filter((r) => r.status === "sent" && r.views > 0).length;
-  const due = live.length + missing.length;
+  const byClient = new Map((fleet ?? []).map((c) => [c.businessId, c]));
+  const withReport = new Set(list.map((r) => r.clientId));
+  const missing = (fleet ?? []).filter((c) => !withReport.has(c.businessId) && c.careLabel !== null);
+  const lines: Line[] = [
+    ...list.map((r) => ({ key: r.id, stage: monthStage(r), clientId: r.clientId, name: r.client || "Client", sub: byClient.get(r.clientId)?.careLabel ?? "Care", report: r, care: byClient.get(r.clientId) ?? null })),
+    ...missing.map((c) => ({
+      key: `m-${c.businessId}`, stage: "none" as const, clientId: c.businessId, name: c.name, report: null, care: c,
+      sub: `${c.careLabel ?? "Care"} · ${c.uptime30 === null ? "no uptime checks yet" : `uptime ${formatUptime(c.uptime30)}`}${c.openIncidents.length ? ` · ${plural(c.openIncidents.length, "open incident")}` : ""}`,
+    })),
+  ].sort((a, b) => STAGE_ORDER[a.stage] - STAGE_ORDER[b.stage] || a.name.localeCompare(b.name));
+  const count = (s: MonthStage) => lines.filter((l) => l.stage === s).length;
+  const live = lines.filter((l) => l.stage !== "off");
+  const due = live.length;
+  const sentAll = count("sent") + count("opened");
+  const ready = count("ready");
   const careMrr = (fleet ?? []).filter((c) => c.careLabel !== null).reduce((n, c) => n + c.mrrCents, 0);
   const loaded = reports !== null;
+  const month = period ? periodLabel("monthly", period) : "This month";
+  const isOpen = (l: Line) => open[l.key] ?? l.stage === "ready";
+  const toggle = (l: Line) => setOpen((o) => ({ ...o, [l.key]: !isOpen(l) }));
+
   return (
-    <div className="cl cr">
-      <header className="page-header">
-        <div>
-          <h1>Care reports</h1>
-          <p>{period ? `${periodLabel("monthly", period)}. ` : ""}The monthly proof each Care client gets that their site was looked after. Nothing goes out until you approve it on Today.</p>
-        </div>
-        <div className="header-actions">
-          <Link className="btn" to="/care">Health</Link>
-          <Link className="btn" to="/care/updates">Updates</Link>
-          <button type="button" className="btn" onClick={() => void load()}><Icon name="refresh" size={16} />Refresh</button>
-        </div>
-      </header>
-      <div className="pb-page">
-        {failed && <p className="error" role="alert">Couldn’t load the reports{reports ? ". What you see may be out of date" : ""}. <button type="button" className="btn" onClick={() => void load()}>Try again</button></p>}
-        {!loaded && !failed && <p className="muted">Loading…</p>}
-        {loaded && (
-          <StatRow stats={[
-            { label: "Reports this month", value: <>{sent}<small>of {due} sent</small></>, sub: <Meter value={sent} max={Math.max(1, due)} label={`${sent} of ${due} sent`} /> },
-            { label: "Waiting for your OK", value: ready, sub: ready ? <Link to="/today">Approve on Today</Link> : "Nothing to approve", tone: ready ? "warning" : "" },
-            { label: "Opened by clients", value: sent ? `${opened} of ${sent}` : "—", sub: sent ? (opened < sent ? "A nudge on your next call helps" : "Every sent report was read") : "Shows once a report is sent" },
-            { label: "Care revenue", value: moneyLabel(careMrr), sub: "a month, the work these reports prove" },
-          ]} label="This month's reports" />
-        )}
-        {loaded && list.length === 0 && missing.length === 0 && (
-          <EmptyState icon="file-text" title="No Care clients to report on yet"
-            steps={[
-              { title: "Put a client on Care", text: "Care starts from a signed proposal or the client's Billing. Their sites are then watched every day.", to: "/clients" },
-              { title: "The report builds itself", text: "Early each month the uptime, updates, edit hours and traffic are collected and Claude writes the summary." },
-              { title: "You read, tweak, approve", text: "Edit the words here, then approve it on Today. Only then is it mailed with a private link." },
-            ]}>
+    <div className="ds-page crx">
+      <PageHeader
+        title="Care reports"
+        sub={loaded && lines.length > 0 ? `${month} · ${sentAll} of ${due} sent · the monthly proof each Care client gets that their site was looked after.` : "The monthly proof each Care client gets that their site was looked after."}
+        actions={<>
+          <button type="button" className="ds-icon-btn crx-refresh" aria-label="Refresh" title="Refresh" onClick={() => void load()}><Icon name="refresh" size={16} /></button>
+          <Link className="btn" to="/care"><Icon name="shield" size={16} />Care board</Link>
+          <Link className="btn" to="/care/updates"><Icon name="zap" size={16} />Updates</Link>
+        </>}
+      />
+      <div className="ds-body">
+        {failed && <Banner tone="critical" title="Couldn't load the reports" action={<button type="button" className="btn sm" onClick={() => void load()}>Try again</button>}>{reports ? "What you see may be out of date." : "Check your connection and try again."}</Banner>}
+        {!loaded && !failed && <p className="crx-loading">Loading this month's reports…</p>}
+        {loaded && lines.length === 0 && (
+          <div className="ds-card"><Empty icon="file-text" title="No Care clients to report on yet" action={<Link className="btn primary" to="/clients"><Icon name="users" size={16} />Go to clients</Link>}>
             Each month every Care client gets a short report: how their site did, what was done and what's next.
-          </EmptyState>
+            <ol className="crx-steps">
+              <li><span><b>Put a client on Care.</b> It starts from a signed proposal or the client's Billing. Their sites are then watched every day.</span></li>
+              <li><span><b>The report builds itself.</b> Early each month the uptime, updates, edit hours and traffic are collected and Claude writes the summary.</span></li>
+              <li><span><b>You read, tweak, approve.</b> Edit the words here, then approve on Today. Only then is it mailed with a private link.</span></li>
+            </ol>
+          </Empty></div>
         )}
-        {loaded && (list.length > 0 || missing.length > 0) && (
-          <div className="pb-cols">
-            <div className="pb-side">
-              {missing.length > 0 && (
-                <Card icon="clock" title="Not started" note={`${missing.length} client${missing.length === 1 ? "" : "s"}`} flush>
-                  <p className="pb-hint" style={{ padding: "12px 18px 0" }}>On Care but no report for this month yet. They start by themselves in the first days of the month; Build now makes one straight away.</p>
-                  <ul className="rp-missing-list" style={{ listStyle: "none", margin: 0, padding: 0 }}>{missing.map((c) => <Missing key={c.businessId} c={c} onBuilt={load} />)}</ul>
-                </Card>
-              )}
-              {list.length > 0 && <ul className="cr-board">{list.map((r) => <ReportCard key={r.id} r={r} onChanged={replace} />)}</ul>}
-            </div>
-            <div className="pb-side">
-              <Card icon="list" title="This month" note={period ? periodLabel("monthly", period) : undefined}>
-                <ul className="pb-rows">
-                  <li><span>Not started</span><b>{missing.length}</b></li>
-                  <li><span>Collecting numbers</span><b>{collecting}</b></li>
-                  <li><span>Ready for your OK</span><b>{ready}</b></li>
-                  <li><span>Sent</span><b>{sent}</b></li>
+        {loaded && lines.length > 0 && (
+          <>
+            {ready > 0 && (
+              <Banner tone="warning" title={`${plural(ready, "report")} ${ready === 1 ? "waits" : "wait"} for your OK`}
+                action={<Link className="btn sm" to="/today">Approve on Today</Link>}>
+                Read and tweak the words below, then approve on Today. Nothing is mailed before that.
+              </Banner>
+            )}
+
+            <Card icon="calendar" title={`${month} at a glance`} note={`Care revenue ${moneyLabel(careMrr)} a month`} flush>
+              <div className="crx-progress">
+                <div className="crx-progress-top">
+                  <p className="ds-big">{sentAll}<small>of {due} sent</small></p>
+                  <p>{sentAll === due && due > 0 ? "Every report for the month is out." : `${plural(due - sentAll, "report")} still to go.`} {count("opened")} opened by the client{sentAll > count("opened") ? "; a nudge on your next call helps the rest" : ""}.</p>
+                </div>
+                <div className="crx-stack" role="img" aria-label={MONTH_STAGES.map((s) => `${s.label} ${count(s.stage)}`).join(", ")}>
+                  {MONTH_STAGES.map((s) => count(s.stage) > 0 && <i key={s.stage} className={`t-${s.stage}`} style={{ flex: count(s.stage) }} />)}
+                </div>
+                <ul className="crx-stages">
+                  {MONTH_STAGES.map((s) => (
+                    <li key={s.stage} className={s.stage === "ready" && count("ready") > 0 ? "on" : ""}>
+                      <b><i className={`crx-key crx-stack-key t-${s.stage}`} aria-hidden="true" />{count(s.stage)}</b>
+                      <span>{s.label}</span>
+                      <small>{s.hint}</small>
+                    </li>
+                  ))}
                 </ul>
-              </Card>
-              <Card icon="info" title="What the client gets">
-                <ul className="pb-rows">
-                  <li><span>Uptime and site health</span></li>
-                  <li><span>Updates and fixes done</span></li>
-                  <li><span>Edit hours used of their allowance</span></li>
-                  <li><span>Traffic, once Google is linked</span></li>
-                  <li><span>One thing we suggest next</span></li>
-                </ul>
-                <p className="pb-hint">A mail with your summary and a private link to the full page. Revoke kills the link.</p>
-              </Card>
+              </div>
+            </Card>
+
+            <div className="ds-table-wrap">
+              <table className="ds-table crx-reports">
+                <thead><tr><th>Client</th><th>Status</th><th>Edit hours used</th><th>Sent</th><th aria-label="Actions" /></tr></thead>
+                <tbody>
+                  {lines.map((l) => {
+                    const r = l.report;
+                    const expandable = r !== null && r.status !== "collecting";
+                    const shown = expandable && isOpen(l);
+                    return (
+                      <Fragment key={l.key}>
+                        <tr className={shown ? "crx-open" : ""} data-href onClick={(e) => { if (!(e.target as HTMLElement).closest("a,button,input,textarea")) { if (expandable) toggle(l); else navigate(`/clients/${encodeURIComponent(l.clientId)}`); } }}>
+                          <td>
+                            <span className="ds-who"><Avatar name={l.name} />
+                              <span><b><Link className="ds-row-link" to={`/clients/${encodeURIComponent(l.clientId)}`}>{l.name}</Link></b><small>{l.sub}</small></span>
+                            </span>
+                          </td>
+                          <td><span className="crx-inline"><Chip tone={STAGE_TONE[l.stage]} dot>{stageLabel(l.stage, r?.status)}</Chip>{r?.test && <Chip tone="outline">Test</Chip>}</span></td>
+                          <td>{r ? <Hours r={r} /> : <span className="crx-dim">–</span>}</td>
+                          <td>
+                            {r?.sentOn ? (
+                              <span className="crx-next"><b>{dayLabel(r.sentOn) ?? r.sentOn}</b><small className="crx-dim">{r.status === "sent" ? (r.views === 0 ? "Not opened yet" : `Opened ${r.views} ${r.views === 1 ? "time" : "times"}`) : ""}</small></span>
+                            ) : <span className="crx-dim">{l.stage === "collecting" ? "Being written" : l.stage === "ready" ? "Waits for you" : l.stage === "none" ? "Starts on its own early in the month" : "–"}</span>}
+                          </td>
+                          <td>
+                            {l.stage === "none" && l.care ? <BuildNow c={l.care} onBuilt={load} /> : expandable ? (
+                              <span className="crx-row-actions">
+                                <button type="button" className="btn sm" aria-expanded={shown} onClick={() => toggle(l)}>
+                                  {shown ? "Hide" : r!.status === "ready" ? "Edit words" : "Details"}<Icon name={shown ? "chevron-up" : "chevron-down"} size={14} />
+                                </button>
+                              </span>
+                            ) : null}
+                          </td>
+                        </tr>
+                        {shown && r && <tr className="crx-detail"><td colSpan={5}><Detail r={r} onChanged={replace} /></td></tr>}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
-          </div>
+            <Note>A Care client with no report starts by themselves in the first days of the month; Build now makes one straight away. Each client gets a mail with your summary and a private link to the full page: uptime and health, updates and fixes, edit hours used, traffic once Google is linked, and one thing we suggest next.</Note>
+          </>
         )}
       </div>
     </div>

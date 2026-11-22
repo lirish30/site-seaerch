@@ -48,7 +48,7 @@ export default function CampaignEditor({ campaign, onChange, run, anyRunning, on
 
   const off = saving;
   return (
-    <div className="cp-editor">
+    <div className="slx-camp-editor">
       <Row>
         <Field label="Status" htmlFor={id("status")} error={errs.status}>
           <select id={id("status")} value={status} disabled={off} onChange={(e) => setStatus(e.target.value as CampaignStatus)}>
@@ -59,18 +59,18 @@ export default function CampaignEditor({ campaign, onChange, run, anyRunning, on
           <input id={id("value")} inputMode="decimal" value={value} disabled={off} autoComplete="off" onChange={(e) => { setValue(e.target.value); setErrs((x) => ({ ...x, est_job_value_usd: "" })); }} />
         </Field>
       </Row>
-      <label className="check" htmlFor={id("video")}>
+      <label className="slx-check" htmlFor={id("video")}>
         <input id={id("video")} className="cb" type="checkbox" checked={videoEmail === 1} disabled={off} aria-describedby={videoEmail === 1 ? id("video-help") : undefined} onChange={(e) => setVideoEmail(e.target.checked ? 1 : 0)} />
         {VIDEO_EMAIL_LABEL}
       </label>
-      {videoEmail === 1 && <p className="bx-muted" id={id("video-help")}>{videoEmailHelp(videoEmail)}</p>}
-      <div className="cp-actions">
+      {videoEmail === 1 && <p className="slx-hint" id={id("video-help")}>{videoEmailHelp(videoEmail)}</p>}
+      <div className="slx-actions">
         <button type="button" className="btn primary" onClick={() => void save()} disabled={off || !dirty}>{saving ? "Saving…" : "Save"}</button>
         <button type="button" className="btn" onClick={onRun} disabled={off || anyRunning || campaign.status === "archived"} aria-describedby={campaign.status === "archived" ? id("archived") : undefined}>
           {run?.starting ? "Starting searches…" : "Run searches"}
         </button>
       </div>
-      {campaign.status === "archived" && <p className="bx-muted" id={id("archived")}>Archived campaigns can't run searches.</p>}
+      {campaign.status === "archived" && <p className="slx-hint" id={id("archived")}>Archived campaigns can't run searches.</p>}
       <div className={`mb-result${result?.bad ? " bad" : ""}`} aria-live="polite" aria-atomic="true">
         {result?.lines.map((l, i) => <p key={i}>{l}</p>)}
       </div>
@@ -80,10 +80,10 @@ export default function CampaignEditor({ campaign, onChange, run, anyRunning, on
           : run?.lines.map((l, i) => <p key={i}>{l}</p>)}
       </div>
 
-      <h3 className="cp-h">Steps</h3>
-      <p className="bx-muted">Merge fields: <code>{"{Business}"}</code>, <code>{"{Name}"}</code>, <code>{"{link}"}</code>, <code>{"{problem_one}"}</code>. Each lead gets one of an email's variants.</p>
+      <h3 className="slx-camp-h">The five steps</h3>
+      <p className="slx-hint">Merge fields: <code>{"{Business}"}</code>, <code>{"{Name}"}</code>, <code>{"{link}"}</code>, <code>{"{problem_one}"}</code>. Each lead gets one of an email's variants.</p>
       {loadErr ? <Callout tone="critical" icon="alert">{loadErr}</Callout>
-        : !steps ? <p className="st-loading">Loading steps…</p>
+        : !steps ? <p className="slx-muted">Loading steps…</p>
         : steps.map((s) => <StepEditor key={s.id} campaignId={campaign.id} step={s} locked={off} onSaved={(n) => setSteps((all) => all && all.map((x) => (x.idx === n.idx ? n : x)))} />)}
     </div>
   );

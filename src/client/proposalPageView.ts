@@ -72,3 +72,41 @@ export function safeHttpsUrl(u: string): string | null {
 
 /** A `mailto:` link for a plain address, or null (no spaces, brackets, quotes or query: nothing that adds a header or a recipient). */
 export const mailtoOf = (email: string): string | null => (/^[^\s<>"'?&,;:@]+@[^\s<>"'?&,;:@]+\.[^\s<>"'?&,;:@]+$/.test(email) ? `mailto:${email}` : null);
+
+/** The headline facts of a proposal, read back from the page the server rendered (the public route sends only that page). Every value is text, never markup. */
+export interface ProposalSummary {
+  reference: string | null; provider: string | null; contactName: string | null;
+  packages: { name: string; price: string; includes: string[] }[];
+  payments: { label: string; due: string; amount: string }[];
+  recurring: { name: string; line: string }[];
+  deposit: string | null;
+}
+
+const text = (n: Element | null | undefined): string => (n?.textContent ?? "").replace(/\s+/g, " ").trim();
+/** The lines of a cell whose lines are split by <br>: its own text nodes, in order. */
+const cellLines = (td: Element | null | undefined): string[] => (td ? [...td.childNodes].filter((c) => c.nodeType === 3).map((c) => (c.textContent ?? "").trim()).filter(Boolean) : []);
+
+/**
+ * Reads the summary out of the proposal page (`renderProposalHtml`): the reference, who it is from and for, each package with its price and what it
+ * includes, the payment schedule and the deposit. `root` is the page parsed as a document (DOMParser in the browser); nothing in it runs or is shown as HTML.
+ * Anything missing comes back empty, so the page still shows the full proposal below.
+ */
+export function summaryOf(root: ParentNode): ProposalSummary {
+  const kv = (label: string): Element | null => {
+    for (const th of root.querySelectorAll(".head .kv th")) if (text(th) === label) return th.nextElementSibling;
+    return null;
+  };
+  const by = cellLines(kv("Prepared by"));
+  const packages = [...root.querySelectorAll(".pkg")].map((p) => ({ name: text(p.querySelector("h3")), price: text(p.querySelector(".price")), includes: [...p.querySelectorAll("li")].map(text).filter(Boolean) }));
+  const payments: ProposalSummary["payments"] = [];
+  const recurring: ProposalSummary["recurring"] = [];
+  for (const tr of root.querySelectorAll(".grid tbody tr")) {
+    const tds = tr.querySelectorAll("td");
+    if (tds.length >= 3) payments.push({ label: text(tds[0]), due: text(tds[1]), amount: text(tds[2]) });
+    else if (tds.length === 2) recurring.push({ name: text(tds[0]), line: text(tds[1]) });
+  }
+  return {
+    reference: text(kv("Reference")) || null, provider: by[1] || by[0] || null, contactName: cellLines(kv("Prepared for"))[0] ?? null,
+    packages, payments, recurring, deposit: text(root.querySelector(".grid tfoot td.num")) || null,
+  };
+}

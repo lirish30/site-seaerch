@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { ApiError, ladderApi } from "../../api";
 import { latestOnly, problemText } from "../../clientView";
 import { LADDER_LINK_MAX, STEP_LABEL, dueLine, isOpen, linkProblem, ordered, sendByHand, statusTone, statusWord, takesLink, type LadderRow } from "../../ladderView";
+import { Card, Empty } from "../ds";
 
 /** One step: its name, day and status, the review link box on a review request, the case study button, and Done and Skip while it is open. Every text is a React text node. */
 function Step({ row, today, busy, onRun }: { row: LadderRow; today: string; busy: boolean; onRun: (job: () => Promise<unknown>, fail: string) => Promise<boolean> }) {
@@ -81,16 +82,15 @@ export default function LadderPanel({ businessId, today }: { businessId: string;
   }
 
   if (rows === null) {
-    return failed ? <section className="cl-card lp" aria-label="After launch"><h2>After launch</h2><p className="error small" role="alert">Couldn’t load the steps. <button type="button" className="btn-plain" onClick={() => void load()}>Try again</button></p></section> : null;
+    return failed ? <Card icon="calendar" title="After launch"><p className="error small" role="alert">Couldn’t load the steps. <button type="button" className="btn-plain" onClick={() => void load()}>Try again</button></p></Card> : null;
   }
-  if (rows.length === 0) return null;
+  if (rows.length === 0) return <Card icon="calendar" title="After launch"><Empty icon="calendar" title="No after-launch steps">When a website build goes live, the review request, testimonial, thank-you, check-in and case study steps show here with their days.</Empty></Card>;
   return (
-    <section className="cl-card lp" aria-label="After launch">
-      <h2>After launch</h2>
+    <Card icon="calendar" title="After launch">
       <ul className="lp-list">
         {ordered(rows).map((r) => <Step key={r.id} row={r} today={today} busy={busy} onRun={run} />)}
       </ul>
       {error && <p className="error small" role="alert">{error}</p>}
-    </section>
+    </Card>
   );
 }

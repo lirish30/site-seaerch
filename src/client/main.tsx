@@ -16,5 +16,12 @@ import "./work.css";
 import "./clients.css";
 import "./seo.css";
 import "./polish.css";
+import "./ds.css";
+import "./screens/clients.css";
+import "./screens/work.css";
+import "./screens/money.css";
+import "./screens/sales.css";
+import "./screens/approvals.css";
+import "./screens/care.css";
 
 createRoot(document.getElementById("root")!).render(<BrowserRouter><App /></BrowserRouter>);

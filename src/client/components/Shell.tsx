@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { sectionOf, sidebarOf, stageCounts, type Section } from "../navView";
@@ -13,18 +13,24 @@ import FindSidebar from "./sidebars/FindSidebar";
 import HomeSidebar from "./sidebars/HomeSidebar";
 import SettingsSidebar from "./sidebars/SettingsSidebar";
 import WorkSidebar from "./sidebars/WorkSidebar";
+import { ClientsSidebar, MoneySidebar, SalesSidebar } from "./sidebars/SectionSidebars";
 import TimerWidget from "./TimerWidget";
 
 /** Anything that changes a lead (a bulk edit, a star, a stage) fires this so the sidebar's counts refresh. */
 export const LEADS_CHANGED = "leads:changed";
 export const announceLeadsChanged = () => window.dispatchEvent(new Event(LEADS_CHANGED));
 
-const RAIL: { section: Section; to: string; label: string; icon: IconName }[] = [
+/** The rail in three groups (Figma): your day, finding work, running it. A divider sits after the last item of each group. */
+const RAIL: { section: Section; to: string; label: string; icon: IconName; divider?: boolean }[] = [
   { section: "home", to: "/today", label: "Home", icon: "home" },
+  { section: "approvals", to: "/approvals", label: "Approvals", icon: "inbox", divider: true },
   { section: "leads", to: "/leads", label: "Leads", icon: "users" },
   { section: "find", to: "/", label: "Find", icon: "radar" },
-  { section: "outreach", to: "/outreach", label: "Outreach", icon: "mail" },
-  { section: "work", to: "/projects", label: "Projects", icon: "briefcase" },
+  { section: "outreach", to: "/outreach", label: "Outreach", icon: "mail", divider: true },
+  { section: "sales", to: "/pipeline", label: "Sales", icon: "kanban" },
+  { section: "clients", to: "/clients", label: "Clients", icon: "building" },
+  { section: "work", to: "/projects", label: "Work", icon: "briefcase" },
+  { section: "money", to: "/money", label: "Money", icon: "card" },
 ];
 
 const STAGES: { key: "new" | "reviewed" | "contacted" | "replied" | "won" | "lost"; label: string; icon: IconName }[] = [
@@ -103,8 +109,7 @@ function OutreachSidebar() {
       <SideItem to="/outreach?view=followups" icon="clock" label="Follow-ups due" count={counts?.followups} active={onQueue && view === "followups"} />
       <SideItem to="/outreach?view=contacted" icon="send" label="Contacted" count={counts?.contacted} active={onQueue && view === "contacted"} />
       <SideItem to="/outreach?view=replied" icon="inbox" label="Replied" count={counts?.replied} active={onQueue && view === "replied"} />
-      <SideItem to="/campaigns" icon="kanban" label="Campaigns" active={pathname === "/campaigns"} />
-      <SideItem to="/pipeline" icon="layout" label="Pipeline" active={pathname === "/pipeline"} />
+      <SideItem to="/studio" icon="image" label="Studio posts" active={pathname === "/studio"} />
       <div className="side-spacer" />
       <SideItem to="/settings" icon="sliders" label="Email voice" active={false} />
       <SideItem to="/settings" icon="pen" label="Signature" active={false} />
@@ -193,7 +198,18 @@ function useSidebarCollapse() {
   return { collapsed, toggle };
 }
 
-const SIDEBAR_LABEL = { leads: "Leads views", outreach: "Outreach", find: "Find", home: "Home", work: "Projects", settings: "Settings" } as const;
+const SIDEBAR_LABEL = { leads: "Leads views", outreach: "Outreach", find: "Find", home: "Home", sales: "Sales", clients: "Clients", work: "Work", money: "Money", settings: "Settings" } as const;
+
+/** How many approvals wait for you, for the count on the rail. Re-read when the page changes. */
+function usePendingApprovals(pathname: string): number {
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    let live = true;
+    api.get<{ items: unknown[] }>("/approvals?status=pending").then((r) => { if (live) setN(Array.isArray(r.items) ? r.items.length : 0); }).catch(() => {});
+    return () => { live = false; };
+  }, [pathname]);
+  return n;
+}
 
 /** Icon rail, the section's sidebar (where it has one) and the floating white content panel. */
 export default function Shell({ children }: { children: ReactNode }) {
@@ -201,14 +217,19 @@ export default function Shell({ children }: { children: ReactNode }) {
   const section = sectionOf(pathname);
   const sidebar = sidebarOf(pathname);
   const collapse = useSidebarCollapse();
+  const pending = usePendingApprovals(pathname);
   return (
     <div className={`app${sidebar && collapse.collapsed ? " sb-collapsed" : ""}`}>
       <nav className="rail" aria-label="Sections">
         <Link to="/today" className="rail-logo" aria-label="Site Search home"><LogoMark /></Link>
         {RAIL.map((r) => (
-          <NavLink key={r.section} to={r.to} className={`rail-btn${section === r.section ? " active" : ""}`} aria-label={r.label} title={r.label} aria-current={section === r.section ? "page" : undefined}>
-            <Icon name={r.icon} size={18} />
-          </NavLink>
+          <Fragment key={r.section}>
+            <NavLink to={r.to} className={`rail-btn${section === r.section ? " active" : ""}`} aria-label={r.section === "approvals" && pending ? `Approvals: ${pending} waiting` : r.label} title={r.label} aria-current={section === r.section ? "page" : undefined}>
+              <Icon name={r.icon} size={18} />
+              {r.section === "approvals" && pending > 0 && <span className="rail-count">{pending > 99 ? "99+" : pending}</span>}
+            </NavLink>
+            {r.divider && <span className="rail-div" aria-hidden="true" />}
+          </Fragment>
         ))}
         <div className="rail-spacer" />
         <TimerWidget />
@@ -221,7 +242,7 @@ export default function Shell({ children }: { children: ReactNode }) {
       {sidebar && (
         <SidebarCollapse.Provider value={collapse}>
           <div className="sb-wrap">
-            <aside className="sidebar" aria-label={SIDEBAR_LABEL[sidebar]}>{sidebar === "leads" ? <LeadsSidebar /> : sidebar === "outreach" ? <OutreachSidebar /> : sidebar === "home" ? <HomeSidebar /> : sidebar === "work" ? <WorkSidebar /> : sidebar === "settings" ? <SettingsSidebar /> : <FindSidebar />}</aside>
+            <aside className="sidebar" aria-label={SIDEBAR_LABEL[sidebar]}>{{ leads: <LeadsSidebar />, outreach: <OutreachSidebar />, home: <HomeSidebar />, sales: <SalesSidebar />, clients: <ClientsSidebar />, work: <WorkSidebar />, money: <MoneySidebar />, settings: <SettingsSidebar />, find: <FindSidebar /> }[sidebar]}</aside>
             <button type="button" className="sb-edge" tabIndex={-1} aria-hidden="true" title={collapse.collapsed ? "Expand sidebar" : "Collapse sidebar"} onClick={collapse.toggle} />
           </div>
         </SidebarCollapse.Provider>

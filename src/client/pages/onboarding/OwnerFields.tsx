@@ -26,15 +26,15 @@ export default function OwnerFields({ o, act }: { o: OwnerOnboarding; act: Act }
 
   return (
     <div>
-      <div className="field-row">
-        <label className="deal-field"><span>Welcome video link (https, anyone can open it)</span>
+      <div className="slx-field-row">
+        <label className="slx-field"><span>Welcome video link (https, anyone can open it)</span>
           <input type="url" maxLength={300} value={video} disabled={closed} placeholder="https://www.loom.com/share/…" onChange={(e) => { setVideo(e.target.value); setProblem(""); }} /></label>
-        <label className="deal-field"><span>Kickoff call</span>
+        <label className="slx-field"><span>Kickoff call</span>
           <input type="datetime-local" value={kickoff} disabled={closed} onChange={(e) => { setKickoff(e.target.value); setProblem(""); }} /></label>
       </div>
-      {o.welcomeSentAt && <p className="muted small">The welcome has gone out. A new video link shows on the client's page but is not mailed again.</p>}
-      {problem && <p className="warn small" role="alert">{problem}</p>}
-      <div className="cp-actions"><button type="button" className="btn-ghost-sm" disabled={closed} onClick={save}>Save video and kickoff</button></div>
+      {o.welcomeSentAt && <p className="slx-hint">The welcome has gone out. A new video link shows on the client's page but is not mailed again.</p>}
+      {problem && <p className="slx-error" role="alert">{problem}</p>}
+      <div className="slx-actions"><button type="button" className="btn sm" disabled={closed} onClick={save}>Save video and kickoff</button></div>
     </div>
   );
 }

@@ -3,8 +3,10 @@ import { ApiError, clientsApi } from "../../api";
 import { gradeChipLabel, problemText } from "../../clientView";
 import type { GradeView } from "../../../worker/clients/grade";
 import type { Grade } from "../../../worker/db/grade";
+import { Card, Chip, type Tone } from "../ds";
+import Icon from "../Icon";
 
-const TONE: Record<Grade, string> = { A: "positive", B: "info", C: "warning" };
+const TONE: Record<Grade, Tone> = { A: "positive", B: "neutral", C: "warning" };
 const NOTE_MAX = 300;
 
 /**
@@ -14,9 +16,9 @@ const NOTE_MAX = 300;
 export function GradeChip({ grade, compact = false }: { grade: Pick<GradeView, "grade" | "suggested">; compact?: boolean }) {
   const { letter, suggested } = gradeChipLabel(grade);
   return (
-    <span className={`badge2 ${suggested ? "outline" : TONE[letter]}`}>
-      <i className="dot" aria-hidden="true" />{compact ? <span className="sr-only">Grade </span> : "Grade "}{letter}{suggested && <span className="gr-suggested"> suggested</span>}
-    </span>
+    <Chip tone={suggested ? "outline" : TONE[letter]} title={suggested ? "Suggested by the rules; you have not set a grade" : undefined}>
+      {compact ? <span className="sr-only">Grade </span> : "Grade "}{letter}{suggested && <span className={compact ? "sr-only" : "gr-suggested"}> suggested</span>}
+    </Chip>
   );
 }
 
@@ -41,20 +43,19 @@ export default function GradePanel({ businessId, grade, onChanged }: { businessI
 
   const dirty = grade.grade !== null && note.trim() !== grade.note;
   return (
-    <section className="cl-card gr-panel" aria-label="Grade">
-      <h2>Grade</h2>
-      <p className="gr-chip"><GradeChip grade={grade} /></p>
-      <div className="seg-pills" role="group" aria-label="Set the grade">
-        {(["A", "B", "C"] as const).map((g) => <button key={g} type="button" aria-pressed={grade.grade === g} disabled={busy} onClick={() => void save(g)}>{g}</button>)}
+    <Card icon="star" title="Grade" note={<GradeChip grade={grade} />} className="clx-grade">
+      <p className="clx-help">Your own call on how good a client this is. A is a keeper, C is one to think about.</p>
+      <div className="ds-seg" role="group" aria-label="Set the grade">
+        {(["A", "B", "C"] as const).map((g) => <button key={g} type="button" aria-pressed={grade.grade === g} disabled={busy} onClick={() => void save(g)}>Grade {g}</button>)}
         <button type="button" aria-pressed={grade.grade === null} disabled={busy || grade.grade === null} onClick={() => void save(null)}>No grade</button>
       </div>
-      <label className="deal-field" htmlFor="gr-note"><span>Note</span>
+      <label className="clx-field" htmlFor="gr-note"><span>Note</span>
         <textarea id="gr-note" rows={2} maxLength={NOTE_MAX} value={note} placeholder="Why this grade (optional)" onChange={(e) => setNote(e.target.value)} />
       </label>
-      {dirty && <p><button type="button" className="btn" disabled={busy} onClick={() => void save(grade.grade)}>{busy ? "Saving…" : "Save note"}</button></p>}
+      {dirty && <p><button type="button" className="btn sm" disabled={busy} onClick={() => void save(grade.grade)}>{busy ? "Saving…" : "Save note"}</button></p>}
       {error && <p className="error small" role="alert">{error}</p>}
-      <h3 className="gr-sub">Suggested: {grade.suggested}</h3>
-      <ul className="gr-reasons">{grade.reasons.map((r) => <li key={r}>{r}</li>)}</ul>
-    </section>
+      <p className="clx-sub">The rules suggest {grade.suggested}</p>
+      <ul className="ds-reasons">{grade.reasons.map((r) => <li key={r}><Icon name="info" size={14} />{r}</li>)}</ul>
+    </Card>
   );
 }

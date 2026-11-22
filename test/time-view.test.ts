@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dayLabel, elapsedLabel, formatMinutes, parseDuration, shiftDay, varianceLabel, todayIn, weekLabel, weekSummary } from "../src/client/timeView";
+import { clockText, dayLabel, elapsedLabel, formatMinutes, parseDuration, shiftDay, varianceLabel, todayIn, weekLabel, weekSummary } from "../src/client/timeView";
 
 describe("formatMinutes", () => {
   it("formatMinutes at 65 and 0", () => {
@@ -110,5 +110,13 @@ describe("todayIn", () => {
   });
   it("falls back to the browser's zone for a zone it cannot read", () => {
     expect(todayIn("Not/AZone", new Date("2026-11-23T12:00:00Z"))).toMatch(/^2026-11-2[234]$/);
+  });
+});
+
+describe("clockText", () => {
+  it("shows a running timer as a clock", () => {
+    expect(clockText("2026-11-22T10:00:00Z", new Date("2026-11-22T10:42:18Z"))).toBe("00:42:18");
+    expect(clockText("2026-11-22T10:00:00Z", new Date("2026-11-22T09:00:00Z"))).toBe("00:00:00");
+    expect(clockText("nonsense", new Date())).toBe("");
   });
 });

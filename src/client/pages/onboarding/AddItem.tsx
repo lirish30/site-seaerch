@@ -15,18 +15,18 @@ export default function AddItem({ id, closed, act }: { id: string; closed: boole
   }, "Added. The client sees it on their page.");
 
   return (
-    <details>
+    <details className="slx-add">
       <summary>Ask for something else</summary>
-      <div className="deal-form">
-        <label className="deal-field"><span>What you need (up to 120 characters)</span><input maxLength={120} value={label} disabled={closed} onChange={(e) => setLabel(e.target.value)} /></label>
-        <label className="deal-field"><span>How to send it (up to 600 characters)</span><textarea rows={2} maxLength={600} value={instructions} disabled={closed} onChange={(e) => setInstructions(e.target.value)} /></label>
-        <div className="field-row">
-          <label className="deal-field"><span>They send</span>
+      <div className="slx-form">
+        <label className="slx-field"><span>What you need (up to 120 characters)</span><input maxLength={120} value={label} disabled={closed} onChange={(e) => setLabel(e.target.value)} /></label>
+        <label className="slx-field"><span>How to send it (up to 600 characters)</span><textarea rows={2} maxLength={600} value={instructions} disabled={closed} onChange={(e) => setInstructions(e.target.value)} /></label>
+        <div className="slx-field-row">
+          <label className="slx-field"><span>They send</span>
             <select value={kind} disabled={closed} onChange={(e) => setKind(e.target.value as "text" | "files")}><option value="text">Text</option><option value="files">Files</option></select></label>
-          <label className="deal-field"><span>Needed by</span>
+          <label className="slx-field"><span>Needed by</span>
             <select value={phase} disabled={closed} onChange={(e) => setPhase(e.target.value === "2" ? 2 : 1)}><option value="1">The first week (phase 1)</option><option value="2">The second week (phase 2)</option></select></label>
         </div>
-        <div className="cp-actions"><button type="button" className="btn-ghost-sm" disabled={closed || !label.trim()} onClick={add}>Add to the checklist</button></div>
+        <div className="slx-actions"><button type="button" className="btn sm" disabled={closed || !label.trim()} onClick={add}>Add to the checklist</button></div>
       </div>
     </details>
   );

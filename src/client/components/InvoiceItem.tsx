@@ -1,10 +1,13 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
-import { NOTHING_SENT, TONE_CLASS, type WaitingApproval } from "../billingData";
-import { invoiceKindLabel, invoiceStatusLabel } from "../billingView";
+import { NOTHING_SENT, type WaitingApproval } from "../billingData";
+import { invoiceChip, invoiceKindLabel } from "../billingView";
+import { fmtUsd2 } from "../moneyView";
 import { dollars } from "../packagesView";
 import { workError } from "../workData";
+import { Chip } from "./ds";
+import Icon from "./Icon";
 import type { InvoiceRow } from "../../worker/db/invoices";
 
 const when = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -12,14 +15,15 @@ const when = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month:
 /**
  * One invoice: what it is for, how much, its state, the links to its client and project, and what you can do. A draft can be proposed (put up for your approval: nothing is sent to the
  * client until you approve it) or discarded. A sent one shows the Stripe link to copy, and can be voided. `client` and `project` are omitted where the page is already about them.
+ * `inTable` drops the heading (the invoices table's row already shows it) so the item reads as that row's opened detail. Styles: screens/money.css (`mnx-inv`).
  */
-export default function InvoiceItem({ inv, today, client, project, onChanged }: {
-  inv: InvoiceRow; today: string; client?: { id: string; name: string }; project?: { id: string; name: string } | null; onChanged: () => Promise<void> | void;
+export default function InvoiceItem({ inv, today, client, project, onChanged, inTable = false }: {
+  inv: InvoiceRow; today: string; client?: { id: string; name: string }; project?: { id: string; name: string } | null; onChanged: () => Promise<void> | void; inTable?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const status = invoiceStatusLabel(inv, today);
+  const chip = invoiceChip(inv, today);
 
   const run = async (fn: () => Promise<void>, done?: string) => {
     setBusy(true); setError(""); setNotice("");
@@ -40,39 +44,57 @@ export default function InvoiceItem({ inv, today, client, project, onChanged }: 
     if (!inv.hostedUrl) return;
     try { await navigator.clipboard.writeText(inv.hostedUrl); setNotice("Link copied."); setError(""); } catch { setError("Could not copy: select the link and copy it by hand."); }
   };
+  const canAct = inv.status === "draft" || inv.status === "open" || inv.status === "failed";
 
   return (
-    <li className="co-item" aria-label={inv.description}>
-      <div className="co-head">
-        <b className="co-title">{inv.description}</b>
-        {inv.test && <span className="badge2 info"><i className="dot" />Test</span>}
-        <span className={`badge2 ${TONE_CLASS[status.tone]}`}><i className="dot" />{status.text}</span>
-      </div>
-      <p className="muted small bl-meta">
-        {invoiceKindLabel(inv.kind)} · {dollars(inv.amountCents)}
-        {client && <> · <Link to={`/leads/${client.id}`}>{client.name}</Link></>}
-        {project && <> · <Link to={`/projects/${project.id}`}>{project.name}</Link></>}
-      </p>
-      {inv.lines.length > 1 && <ul className="co-ul">{inv.lines.map((l, i) => <li key={i}>{l.description}: {dollars(l.amountCents)}</li>)}</ul>}
-      {inv.sentAt && <p className="muted small">Sent {when(inv.sentAt)}{inv.paidAt ? ` · paid ${when(inv.paidAt)}` : ""}</p>}
-      {inv.mismatch && <p className="warn small" role="alert">Stripe reported a payment that did not match this invoice, so it is not marked paid: {inv.mismatch}</p>}
-
-      {(inv.status === "open" || inv.status === "failed") && inv.hostedUrl && (
-        <div className="co-link">
-          <input readOnly aria-label="The client's Stripe link for this invoice" value={inv.hostedUrl} onFocus={(e) => e.currentTarget.select()} />
-          <button type="button" className="btn" onClick={() => void copy()}>Copy link</button>
+    <li className={`mnx-inv${inTable ? " in-table" : ""}`} aria-label={inv.description}>
+      {!inTable && (
+        <div className="mnx-inv-head">
+          <span className="ds-tile neutral"><Icon name="file-text" size={16} /></span>
+          <span className="mnx-inv-title">
+            <b>{inv.description}</b>
+            <small>
+              {invoiceKindLabel(inv.kind)}
+              {client && <> · <Link to={`/leads/${client.id}`}>{client.name}</Link></>}
+              {project && <> · <Link to={`/projects/${project.id}`}>{project.name}</Link></>}
+            </small>
+          </span>
+          {inv.test && <Chip tone="info" dot>Test</Chip>}
+          <Chip tone={chip.tone} dot={chip.dot}>{chip.text}</Chip>
+          <span className="mnx-mono mnx-inv-amt">{fmtUsd2(inv.amountCents)}</span>
         </div>
       )}
-      {error && <p className="warn small" role="alert">{error}</p>}
-      {notice && <p className="small" role="status">{notice}{notice === NOTHING_SENT && <> <Link to="/today">Open Home</Link></>}</p>}
+      {inTable && (
+        <p className="mnx-inv-links">
+          {invoiceKindLabel(inv.kind)}
+          {client && <> · <Link to={`/leads/${client.id}`}>Open {client.name}</Link></>}
+          {project && <> · <Link to={`/projects/${project.id}`}>Open {project.name}</Link></>}
+        </p>
+      )}
+      {inv.lines.length > 1 && (
+        <ul className="mnx-lines">{inv.lines.map((l, i) => <li key={i}><span>{l.description}</span><span className="mnx-mono">{fmtUsd2(l.amountCents)}</span></li>)}</ul>
+      )}
+      {inv.sentAt && <p className="mnx-inv-sub">Sent {when(inv.sentAt)}{inv.paidAt ? ` · paid ${when(inv.paidAt)}` : ""}</p>}
+      {!inv.sentAt && inv.paidAt && <p className="mnx-inv-sub">Paid {when(inv.paidAt)}</p>}
+      {inv.status === "draft" && <p className="mnx-inv-sub">A draft. Propose puts it up for your approval; nothing goes to the client until you approve it.</p>}
+      {inv.mismatch && <p className="mnx-warn" role="alert">Stripe reported a payment that did not match this invoice, so it is not marked paid: {inv.mismatch}</p>}
 
-      {(inv.status === "draft" || inv.status === "open" || inv.status === "failed") && (
-        <div className="wk-task-actions">
+      {(inv.status === "open" || inv.status === "failed") && inv.hostedUrl && (
+        <div className="mnx-link">
+          <input readOnly className="in" aria-label="The client's Stripe link for this invoice" value={inv.hostedUrl} onFocus={(e) => e.currentTarget.select()} />
+          <button type="button" className="btn sm" onClick={() => void copy()}><Icon name="copy" size={14} />Copy link</button>
+        </div>
+      )}
+      {error && <p className="mnx-warn" role="alert">{error}</p>}
+      {notice && <p className="mnx-notice" role="status">{notice}{notice === NOTHING_SENT && <> <Link to="/approvals">Open Approvals</Link></>}</p>}
+
+      {canAct && (
+        <div className="mnx-inv-actions">
           {inv.status === "draft" && <>
-            <button type="button" className="btn primary" disabled={busy} onClick={() => void propose()}>Propose</button>
-            <button type="button" className="btn" disabled={busy} onClick={discard}>Discard</button>
+            <button type="button" className="btn sm primary" disabled={busy} onClick={() => void propose()}><Icon name="send" size={14} />Propose for approval</button>
+            <button type="button" className="btn sm" disabled={busy} onClick={discard}>Discard draft</button>
           </>}
-          {inv.status !== "draft" && <button type="button" className="btn" disabled={busy} onClick={voidIt}>Void</button>}
+          {inv.status !== "draft" && <button type="button" className="btn sm" disabled={busy} onClick={voidIt}><Icon name="ban" size={14} />Void invoice</button>}
         </div>
       )}
     </li>

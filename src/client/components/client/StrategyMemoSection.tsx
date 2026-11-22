@@ -5,6 +5,7 @@ import { latestOnly } from "../../clientView";
 import { memoView, revokeQuestion, type MemoRow } from "../../strategyMemoView";
 import Icon from "../Icon";
 import { copyText, Say, sentence } from "./seo/seoBits";
+import { Card } from "../ds";
 
 /** The client's link in a box to select, and a button that copies it. A copy that is refused says so and leaves the link to copy by hand. */
 function LinkBox({ link }: { link: string }) {
@@ -54,8 +55,7 @@ export default function StrategyMemoSection({ businessId, tz }: { businessId: st
   const v = rows === null ? null : memoView(rows, tz);
   const latest = v?.latest ?? null;
   return (
-    <section className="cl-card" aria-label="Strategy memo">
-      <h2>Strategy memo</h2>
+    <Card icon="file-text" title="Strategy memo">
       <p className="small muted">A short plan in Claude’s words, written from what Google counted for this client. It is mailed only after you approve it.</p>
       {failed && <p className="error small" role="alert">Couldn’t load the memo. <button type="button" className="btn-plain" onClick={() => void load()}>Try again</button></p>}
       {rows === null && !failed && <p className="small muted">Loading…</p>}
@@ -89,6 +89,6 @@ export default function StrategyMemoSection({ businessId, tz }: { businessId: st
         </>
       )}
       <Say error={error} />
-    </section>
+    </Card>
   );
 }

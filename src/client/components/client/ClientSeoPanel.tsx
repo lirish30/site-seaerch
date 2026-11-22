@@ -8,6 +8,7 @@ import { Citations, NapBlock, Ranks, Snapshot } from "./seo/SeoRanks";
 import { SeoReport } from "./seo/SeoReport";
 import { Reviews } from "./seo/SeoReviews";
 import { Keywords, ProfileForm, type SiteChoice } from "./seo/SeoSetup";
+import { Card, Empty } from "../ds";
 
 /**
  * A client's Local SEO on their page: the Google listing and search terms, the 3x3 rank grids with what changed since the check before, the listing's numbers, the name, address and phone check, the directories,
@@ -33,16 +34,20 @@ export default function ClientSeoPanel({ businessId, clientName, clientAddress, 
   useEffect(() => { setData(null); setFailed(false); setOk(""); setError(""); void load(); return () => guard.cancel(); }, [load, guard]);
   const patch = (p: Partial<SeoOverview>) => setData((d) => (d ? { ...d, ...p } : d));
 
+  const noPlan = (
+    <Card icon="target" title="Local SEO">
+      <Empty icon="target" title="Local SEO is not on this client’s plan">When a client signs a Local SEO plan, its Google listing, search terms, rank checks, reviews and monthly report are set up and run from here.</Empty>
+    </Card>
+  );
   if (data === null) {
-    if (!hasPlan) return null;
+    if (!hasPlan) return noPlan;
     return (
-      <section className="cl-card sx" aria-label="Local SEO">
-        <h2>Local SEO</h2>
+      <Card icon="target" title="Local SEO">
         {failed ? <p className="error small" role="alert">Couldn’t load Local SEO. <button type="button" className="btn-plain" onClick={() => void load()}>Try again</button></p> : <p className="muted small">Loading…</p>}
-      </section>
+      </Card>
     );
   }
-  if (!hasPlan && data.profile === null) return null;
+  if (!hasPlan && data.profile === null) return noPlan;
 
   const canCheck = !!data.profile?.placeId;
   const waiting = data.reviews.filter((r) => r.replyStatus === "drafted").length + data.content.filter((c) => c.status === "drafted").length;
@@ -57,20 +62,12 @@ export default function ClientSeoPanel({ businessId, clientName, clientAddress, 
     finally { setBusy(false); }
   }
   return (
-    <section className="cl-card sx" aria-label="Local SEO">
-      <div className="sx-head">
-        <div>
-          <h2>Local SEO</h2>
-          <p className="small muted">
-            {data.profile ? profileStatusLabel(data.profile.status) : "Not set up yet"}
-            {waiting > 0 && ` · ${waiting} ${waiting === 1 ? "draft" : "drafts"} waiting for you`}
-          </p>
-        </div>
-        <div className="sx-head-actions">
-          {canCheck && <button type="button" className="btn" aria-disabled={busy} onClick={() => void baseline()}>{busy ? "Taking the baseline…" : "Take the baseline now"}</button>}
-          <button type="button" className="btn" onClick={() => void load()}>Refresh</button>
-        </div>
-      </div>
+    <Card icon="target" title="Local SEO" className="sx clx-seo"
+      note={<>{data.profile ? profileStatusLabel(data.profile.status) : "Not set up yet"}{waiting > 0 && ` · ${waiting} ${waiting === 1 ? "draft" : "drafts"} waiting for you`}</>}
+      action={<span className="ds-row">
+        {canCheck && <button type="button" className="btn sm" aria-disabled={busy} onClick={() => void baseline()}>{busy ? "Taking the baseline…" : "Take the baseline now"}</button>}
+        <button type="button" className="btn sm" onClick={() => void load()}>Refresh</button>
+      </span>}>
       {canCheck && <p className="small muted sx-help">The baseline reads the Google listing, checks the site’s name, address and phone, runs a rank check for every search term that is on, and starts the daily watch. It uses Google lookups, so it is not run on every visit.</p>}
       <Say ok={ok} error={error} />
       {failed && <p className="error small" role="alert">Couldn’t refresh just now. What you see may be out of date. <button type="button" className="btn-plain" onClick={() => void load()}>Try again</button></p>}
@@ -92,6 +89,6 @@ export default function ClientSeoPanel({ businessId, clientName, clientAddress, 
           <div id="sx-content"><SeoContent content={data.content} onChanged={(content) => patch({ content })} /></div>
         </div>
       </div>
-    </section>
+    </Card>
   );
 }

@@ -88,3 +88,12 @@ export function weekSummary(week: { days: string[]; dayTotals: number[]; total: 
   }
   return { total: week.total, daysWorked: week.dayTotals.filter((m) => m > 0).length, busiest, byProject: [...map.values()].sort((a, b) => b.minutes - a.minutes) };
 }
+
+/** A running timer as a clock, "00:42:18" (hours keep counting past 99). Empty for a start that cannot be read; a start in the future reads 00:00:00. */
+export function clockText(startedAt: string, now: Date): string {
+  const start = Date.parse(startedAt);
+  if (Number.isNaN(start)) return "";
+  const s = Math.max(0, Math.floor((now.getTime() - start) / 1000));
+  const two = (n: number) => String(n).padStart(2, "0");
+  return `${two(Math.floor(s / 3600))}:${two(Math.floor((s % 3600) / 60))}:${two(s % 60)}`;
+}

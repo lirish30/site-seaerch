@@ -1,0 +1,122 @@
+/* approvals screens: owned by the approvals agent. Uses ds.css. Figma 58:3999 (inbox) and 58:4450 (edit & approve). */
+
+.apx .apx-grow { flex:1; }
+.apx .apx-ghost { background:none; border-color:transparent; box-shadow:none; color:var(--text-2); }
+.apx .apx-ghost:hover:not(:disabled) { background:var(--bg-hover); color:var(--text); }
+.apx .apx-link { display:inline-flex; align-items:center; gap:4px; height:auto; padding:0; border:0; background:none; box-shadow:none; color:var(--text-2); font:500 12px/16px var(--font); cursor:pointer; }
+.apx .apx-link:hover { background:none; color:var(--text); text-decoration:underline; }
+
+/* ---- inbox */
+.apx-toolbar { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+.apx-toolbar .ds-seg { max-width:100%; }
+
+.apx-list ul { margin:0; padding:0; list-style:none; }
+.apx-selbar { display:flex; align-items:center; gap:16px; padding:10px 24px; border-bottom:1px solid var(--border); background:var(--signal-soft); font:500 13px/19px var(--font); color:var(--text); }
+.apx-selbar > span:first-child { display:inline-flex; align-items:center; gap:6px; }
+.apx-ghead { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:44px; padding:6px 12px 6px 24px; border-bottom:1px solid var(--border); background:var(--bg-sidebar, var(--bg-muted)); }
+.apx-ghead h2 { margin:0; font:600 11px/14px var(--font); letter-spacing:.6px; text-transform:uppercase; color:var(--text-2); }
+.apx-ghead h2 span { margin-left:4px; font-weight:500; color:var(--text-3); }
+.apx-ghint { font:400 12px/16px var(--font); color:var(--text-3); }
+.apx-ghead .apx-ghint { padding-right:12px; }
+
+.apx-row { display:flex; align-items:center; gap:14px; min-height:72px; padding:10px 24px; border-bottom:1px solid var(--border); }
+.apx-list > div:last-child .apx-row:last-child { border-bottom:0; }
+.apx-row:hover { background:var(--bg-hover); }
+.apx-row.picked { background:var(--signal-soft); }
+.apx-check { flex:none; width:16px; height:16px; margin:0; accent-color:var(--bg-inverse); cursor:pointer; }
+.apx-check-gap { flex:none; width:16px; }
+.apx-tile.neutral { background:var(--bg-muted); }
+.apx-row-main { display:flex; flex-direction:column; gap:2px; flex:1; min-width:0; height:auto; padding:0; border:0; border-radius:0; background:none; box-shadow:none; text-align:left; color:inherit; font:inherit; cursor:pointer; }
+.apx-row-main:hover { background:none; }
+.apx-row-main:focus-visible { outline:2px solid var(--signal); outline-offset:4px; border-radius:4px; }
+.apx-row-title { display:flex; align-items:baseline; gap:8px; min-width:0; }
+.apx-row-title b { font:500 14px/20px var(--font); color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.apx-row-title small { flex:none; font:400 12px/16px var(--font); color:var(--text-3); white-space:nowrap; }
+.apx-row-line { font:400 13px/19px var(--font); color:var(--text-2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.apx-row-err { display:inline-flex; align-items:center; gap:5px; font:400 12px/16px var(--font); color:var(--critical); }
+.apx-when { flex:none; min-width:64px; text-align:right; font:400 12px/16px var(--font); color:var(--text-3); white-space:nowrap; }
+.apx-chip { flex:none; display:flex; justify-content:flex-start; min-width:64px; }
+.apx-tick { width:28px; padding:0; }
+.apx-tick-gap { flex:none; width:28px; }
+
+.apx-skel { height:56px; margin:12px 24px; border-radius:8px; background:var(--bg-muted); }
+
+/* ---- edit & approve */
+.apx-reject { display:flex; flex-direction:column; gap:10px; padding:16px 20px; }
+.apx-reject label { display:flex; flex-direction:column; gap:2px; }
+.apx-reject label b { font:600 14px/20px var(--font); color:var(--text); }
+.apx-reject label small { font:400 12px/16px var(--font); color:var(--text-3); }
+.apx-formacts { display:flex; gap:8px; }
+
+.apx :where(input[type=text], input[type=email], input[type=number], textarea) {
+  width:100%; box-sizing:border-box; padding:8px 12px; border:1px solid var(--border); border-radius:8px; background:var(--bg-surface);
+  color:var(--text); font:400 14px/21px var(--font);
+}
+.apx :where(input, textarea):focus { outline:none; border-color:var(--text-3); box-shadow:0 0 0 3px var(--bg-muted); }
+.apx textarea { resize:vertical; }
+
+.apx-mail { display:flex; flex-direction:column; }
+.apx-mail-row { display:grid; grid-template-columns:68px minmax(0,1fr); align-items:center; gap:12px; min-height:46px; padding:0 18px; border-bottom:1px solid var(--border); }
+.apx-mail-row > span { font:400 12px/16px var(--font); color:var(--text-3); }
+.apx-mail-row p { margin:0; font:400 14px/21px var(--font); color:var(--text); overflow-wrap:anywhere; }
+.apx .apx-mail-row input { height:auto; margin:0; padding:12px 0; border:0; border-radius:0; box-shadow:none; background:none; }
+.apx .apx-mail-row input:focus { box-shadow:none; }
+.apx-mail-row:focus-within { background:var(--bg-hover); }
+.apx-mail-body { display:flex; flex-direction:column; gap:14px; padding:18px; }
+.apx .apx-mail-body textarea { padding:0; border:0; border-radius:0; background:none; box-shadow:none; font:400 14px/22px var(--font); resize:vertical; min-height:180px; }
+.apx-hero { display:flex; align-items:center; gap:12px; padding:10px 14px 10px 10px; border-radius:10px; background:var(--bg-muted); color:var(--text); text-decoration:none; }
+.apx-hero:hover { background:var(--bg-hover); }
+.apx-hero-thumb { display:grid; place-items:center; flex:none; width:96px; height:56px; border-radius:6px; background:var(--bg-inverse); color:var(--text-inverse); }
+.apx-hero-text { display:flex; flex-direction:column; flex:1; min-width:0; }
+.apx-hero-text b { font:500 14px/20px var(--font); }
+.apx-hero-text small { font:400 12px/16px var(--font-mono); color:var(--link, var(--info)); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.apx-foot { margin:0; font:400 12px/16px var(--font); color:var(--text-3); }
+.apx-dirty { display:flex; align-items:center; gap:8px; padding:10px 18px; border-top:1px solid var(--border); background:var(--signal-soft); font:400 13px/19px var(--font); color:var(--text); }
+.apx-dirty > span { flex:1; }
+
+.apx-fields { display:flex; flex-direction:column; gap:14px; }
+.apx-field { display:flex; flex-direction:column; gap:6px; }
+.apx-field > span { font:500 13px/19px var(--font); color:var(--text); }
+.apx-field > span small, .apx-field > small { font:400 12px/16px var(--font); color:var(--text-3); }
+.apx-sublabel { margin:16px 0 6px !important; font:600 11px/14px var(--font); letter-spacing:.6px; text-transform:uppercase; color:var(--text-3); }
+.apx-preview { margin:0; padding:14px 16px; border-radius:10px; background:var(--bg-muted); color:var(--text); font:400 13px/20px var(--font); white-space:pre-wrap; overflow-wrap:anywhere; }
+.apx .ds-card-body .ds-facts + .apx-preview { margin-top:12px; }
+.apx .apx-open { margin-top:14px; width:auto; }
+.apx .ds-card-body .apx-foot { margin-top:10px; }
+
+.apx-err { display:flex; align-items:center; gap:6px; margin:0; font:400 13px/19px var(--font); color:var(--critical); }
+.apx-bottom { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+
+.apx-raw { border:1px dashed var(--border); border-radius:10px; padding:10px 14px; font:400 13px/19px var(--font); color:var(--text-2); }
+.apx-raw summary { cursor:pointer; color:var(--text-2); font-weight:500; }
+.apx-raw[open] { display:flex; flex-direction:column; gap:10px; }
+.apx-raw p { margin:0; font-size:12px; color:var(--text-3); }
+.apx .apx-raw textarea { font:400 12px/18px var(--font-mono); }
+.apx-raw .btn { align-self:flex-start; }
+
+/* ---- narrow */
+@media (max-width: 900px) {
+  .apx-when { display:none; }
+}
+@media (max-width: 640px) {
+  .apx-row { display:grid; grid-template-columns:16px 34px minmax(0,1fr) auto 28px; align-items:center; gap:10px 12px; padding:12px 16px; }
+  .apx-check, .apx-check-gap { grid-column:1; grid-row:1; align-self:start; margin-top:9px; }
+  .apx-tile { grid-column:2; grid-row:1; align-self:start; }
+  .apx-row-main { grid-column:3 / -1; grid-row:1; }
+  .apx-row-title { flex-direction:column; gap:0; }
+  .apx-row-title b { white-space:normal; }
+  .apx-chip { grid-column:3; grid-row:2; min-width:0; }
+  .apx-review { grid-column:4; grid-row:2; }
+  .apx-tick, .apx-tick-gap { grid-column:5; grid-row:2; }
+  .apx-row-line { white-space:normal; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+  .apx-ghead { padding-left:16px; }
+  .apx-selbar { padding:10px 16px; flex-wrap:wrap; }
+  .apx-toolbar { flex-direction:column; align-items:stretch; }
+  .apx-mail-row { padding:0 14px; grid-template-columns:56px minmax(0,1fr); }
+  .apx-mail-body { padding:14px; }
+  .apx-hero-thumb { width:64px; height:44px; }
+}
+
+/* A global .lg rule (the login screen's wrapper) also matches ds Empty's `.ds-tile.lg`; undo it here so the empty state keeps its 40px tile. */
+.apx .ds-empty .ds-tile.lg { min-height:0; display:grid; gap:0; padding:0; justify-content:center; }
+.apx .ds-card-body > .apx-open { align-self:flex-start; }

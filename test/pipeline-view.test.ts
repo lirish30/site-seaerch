@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { STAGE_ORDER } from "../src/worker/db/deals";
-import { groupByStage, isStale, STAGE_LABEL, type DealCard } from "../src/client/pipelineView";
+import { boardColumns, boardFilterOf, boardSummary, cardPackage, cardStatus, groupByStage, isStale, STAGE_LABEL, type BoardDeal, type DealCard } from "../src/client/pipelineView";
 
 const card = (o: Partial<DealCard> = {}): DealCard => ({
   id: "d1", businessId: "b1", businessName: "Ace Plumbing", stage: "booked", valueCents: null, updatedAt: "2026-11-10T12:00:00.000Z", ...o,
@@ -37,5 +37,33 @@ describe("isStale", () => {
     expect(isStale(card({ stage: "won", updatedAt: "2026-01-01T00:00:00.000Z" }), now)).toBe(false);
     expect(isStale(card({ stage: "lost", updatedAt: "2026-01-01T00:00:00.000Z" }), now)).toBe(false);
     expect(isStale(card({ updatedAt: "garbage" }), now)).toBe(false);
+  });
+});
+
+describe("the board", () => {
+  const now = new Date("2026-11-22T12:00:00.000Z");
+  const d = (o: Partial<BoardDeal>): BoardDeal => ({ id: "x", businessId: "b", businessName: "Ace", stage: "booked", valueCents: null, updatedAt: "2026-11-21T12:00:00.000Z", ...o });
+  const deals = [
+    d({ id: "a", stage: "booked" }), d({ id: "b", stage: "proposal_sent", valueCents: 100000 }), d({ id: "c", stage: "won", valueCents: 50000, closedAt: "2026-11-03T00:00:00.000Z" }),
+    d({ id: "e", stage: "won", valueCents: 70000, closedAt: "2026-10-03T00:00:00.000Z" }), d({ id: "f", stage: "lost" }),
+  ];
+  it("shows the open stages and won this month, or what the sidebar filter asks for", () => {
+    expect(boardColumns(deals, "all", now).map((c) => c.key)).toEqual(["booked", "discovery_done", "recommendation_booked", "recommended", "proposal_sent", "won_month"]);
+    expect(boardColumns(deals, "all", now).at(-1)!.deals.map((x) => x.id)).toEqual(["c"]);
+    expect(boardColumns(deals, "closed", now).map((c) => c.deals.length)).toEqual([2, 1]);
+    expect(boardColumns(deals, "proposal_sent", now)[0].totalCents).toBe(100000);
+    expect(boardFilterOf("booked")).toBe("booked");
+    expect(boardFilterOf("nonsense")).toBe("all");
+  });
+  it("sums the open deals and what was won this month", () => {
+    expect(boardSummary(deals, now, (c) => String(c / 100))).toBe("2 open deals · 1000 · 500 won this month");
+  });
+  it("names the package, and says what is happening on the card", () => {
+    expect(cardPackage(d({ stage: "booked" }))).toBe("No package yet");
+    expect(cardPackage(d({ stage: "recommended", recommendedOptionId: "b", options: [{ id: "b", label: "Starter Site", recommended: true }] }))).toBe("Starter Site");
+    const viewed = { sentAt: "2026-11-20T00:00:00Z", expiresAt: null, views: 2, status: "viewed", paidAt: null, signedAt: null };
+    expect(cardStatus(d({ stage: "proposal_sent" }), { proposal: viewed }, now, "UTC").text).toBe("Viewed 2 times");
+    expect(cardStatus(d({ stage: "booked", updatedAt: "2026-11-01T00:00:00Z" }), {}, now, "UTC").tone).toBe("warning");
+    expect(cardStatus(d({ stage: "lost", lostReason: "Too dear" }), {}, now).text).toBe("Lost: Too dear");
   });
 });

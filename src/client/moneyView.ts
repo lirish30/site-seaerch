@@ -50,3 +50,33 @@ export const hoursLabel = (minutes: number): string => `${Math.round((minutes / 
 
 /** "12 days late" / "1 day late". */
 export const daysLate = (days: number): string => `${days} ${days === 1 ? "day" : "days"} late`;
+
+/** Dollars from cents with the cents always shown, for the mono columns of a table: "$2,798.80", "$0.00", "-$12.00". */
+export function fmtUsd2(cents: number): string {
+  const abs = Math.abs(Math.round(cents));
+  return `${cents < 0 && abs > 0 ? "-" : ""}$${(abs / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/** "November 2026": the month the figures were taken in, in the booking zone. */
+export function monthTitle(asOf: string, zone: string): string {
+  const d = new Date(asOf);
+  if (Number.isNaN(d.getTime())) return "";
+  try { return d.toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: zone }); }
+  catch { return d.toLocaleDateString("en-US", { month: "long", year: "numeric" }); }
+}
+
+/**
+ * The bar chart's geometry: each month's bar as a percent of the plot height, and where the goal line sits (null with no goal). The scale is the larger of the highest month and the goal,
+ * so the goal line is always on the plot. A month with nothing has a 0 bar (drawn as a hairline).
+ */
+export function chartScale(values: number[], goalCents: number): { bars: number[]; goalPct: number | null } {
+  const top = Math.max(0, goalCents, ...values);
+  if (top === 0) return { bars: values.map(() => 0), goalPct: null };
+  return { bars: values.map((v) => (v <= 0 ? 0 : Math.round((v / top) * 1000) / 10)), goalPct: goalCents > 0 ? Math.round((goalCents / top) * 1000) / 10 : null };
+}
+
+/** How many more clients like today's average one would close the gap to the goal; null when there is no gap, no client or no MRR to average. */
+export function clientsToGoal(mrrCents: number, clients: number, gapCents: number): number | null {
+  if (gapCents <= 0 || clients <= 0 || mrrCents <= 0) return null;
+  return Math.ceil(gapCents / (mrrCents / clients));
+}

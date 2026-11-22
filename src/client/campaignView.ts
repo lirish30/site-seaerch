@@ -51,3 +51,22 @@ export const VIDEO_EMAIL_LABEL = "Email 1 carries the video audit (needs a publi
 /** What switching it on means for Start: shown under the checkbox only while it is on. */
 export const videoEmailHelp = (on: 0 | 1): string =>
   on === 1 ? "Email 1 shows the lead's video as a GIF that links to its report page. A lead can start only once its latest audit has a published video." : "";
+
+/** A search as the campaigns list reads it (`GET /api/searches` rows carry the campaign that started them). */
+export interface CampaignSearch { campaign_id?: string | null; location: string; found_count: number; status: "running" | "done" | "failed"; created_at: string }
+
+/** What the list shows for a campaign from its searches: leads found, how many of its towns have been searched, whether one is running, and when it last ran. */
+export function campaignStats(c: { id: string; towns: string[] }, searches: CampaignSearch[]): { leads: number; searchedTowns: number; running: boolean; lastRunAt: string | null } {
+  const mine = searches.filter((s) => s.campaign_id === c.id);
+  const towns = new Set(c.towns.map((t) => t.trim().toLowerCase()));
+  const searched = new Set(mine.filter((s) => s.status !== "failed").map((s) => s.location.trim().toLowerCase()).filter((t) => towns.has(t)));
+  return {
+    leads: mine.reduce((n, s) => n + (s.found_count || 0), 0), searchedTowns: searched.size, running: mine.some((s) => s.status === "running"),
+    lastRunAt: mine.map((s) => s.created_at).sort().at(-1) ?? null,
+  };
+}
+
+/** "Sherwood, Tigard +3": the first towns, then how many more. */
+export function townsLine(towns: string[], show = 2): string {
+  return towns.length <= show ? towns.join(", ") : `${towns.slice(0, show).join(", ")} +${towns.length - show}`;
+}
