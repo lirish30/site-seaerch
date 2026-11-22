@@ -13,6 +13,10 @@ export interface GridRow {
   points: { pos: number | null; ok: boolean }[];
   /** How many points were measured (`ok`). */
   measured: number;
+  /** How many points showed the business at position 3 or better, or null when too few were measured for the check to say. */
+  visible: number | null;
+  /** The check before this one for the same term (its date and its own `visible`), or null when this is the first. */
+  previous: { takenOn: string; visible: number | null } | null;
   /** The booking-zone date of the check. */
   takenOn: string;
 }
@@ -31,10 +35,15 @@ export async function latestGrid(db: D1Database, businessId: string): Promise<Gr
   const checks = await rankChecksFor(db, businessId, {});
   const out: GridRow[] = [];
   for (const k of keywords) {
-    const last = checks.filter((c) => c.keywordId === k.id).at(-1);
+    const mine = checks.filter((c) => c.keywordId === k.id);
+    const last = mine.at(-1);
     if (!last) continue;
     const points = last.points.slice(0, 9).map(cleanPoint);
-    out.push({ term: k.term, town: k.town.trim() === "" ? null : k.town, points, measured: points.filter((p) => p.ok).length, takenOn: last.takenOn });
+    const before = mine.at(-2);
+    out.push({
+      term: k.term, town: k.town.trim() === "" ? null : k.town, points, measured: points.filter((p) => p.ok).length, takenOn: last.takenOn,
+      visible: visiblePoints(points), previous: before ? { takenOn: before.takenOn, visible: visiblePoints(before.points.slice(0, 9).map(cleanPoint)) } : null,
+    });
   }
   return out;
 }

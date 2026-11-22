@@ -3,8 +3,8 @@ import { sectionOf, sidebarOf } from "../src/client/navView";
 
 describe("the Projects section", () => {
   it("sectionOf maps /projects/abc and /timesheet to work and sidebarOf gives it a sidebar", () => {
-    for (const p of ["/projects", "/projects/abc", "/timesheet", "/tasks/t1", "/billing", "/money", "/care"]) expect(sectionOf(p), p).toBe("work");
-    for (const p of ["/projects", "/projects/abc", "/timesheet", "/billing", "/money", "/care"]) expect(sidebarOf(p), p).toBe("work");
+    for (const p of ["/projects", "/projects/abc", "/timesheet", "/tasks/t1", "/billing", "/money", "/care", "/seo"]) expect(sectionOf(p), p).toBe("work");
+    for (const p of ["/projects", "/projects/abc", "/timesheet", "/billing", "/money", "/care", "/seo"]) expect(sidebarOf(p), p).toBe("work");
   });
   it("does not disturb the other sections", () => {
     expect(sectionOf("/today")).toBe("home");

@@ -14,5 +14,6 @@ import "./public.css";
 import "./video.css";
 import "./work.css";
 import "./clients.css";
+import "./seo.css";
 
 createRoot(document.getElementById("root")!).render(<BrowserRouter><App /></BrowserRouter>);

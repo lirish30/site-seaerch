@@ -86,7 +86,7 @@ describe("GET /clients/:id/seo", () => {
     expect(a.profile).not.toHaveProperty("napResult");
     expect(a.nap).toEqual({ phone: "match", address: "mismatch", name: "missing", checkedPages: 3 });
     expect(a.keywords).toEqual([expect.objectContaining({ id: kw.id, term: "drain cleaning", town: "Tigard", active: true })]);
-    expect(a.latestGrid).toEqual([{ term: "drain cleaning", town: "Tigard", points: expect.any(Array), measured: 9, takenOn: "2026-12-01" }]);
+    expect(a.latestGrid).toEqual([{ term: "drain cleaning", town: "Tigard", points: expect.any(Array), measured: 9, takenOn: "2026-12-01", visible: 4, previous: { takenOn: "2026-11-15", visible: 2 } }]);
     expect(a.latestGrid[0].points).toHaveLength(9);
     expect(a.latestGrid[0].points[0]).toEqual({ pos: 2, ok: true }); // no map location on a point
     expect(a.latestGrid[0].points.filter((p: { pos: number }) => p.pos === 2)).toHaveLength(4);
