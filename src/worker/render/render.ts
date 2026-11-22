@@ -86,3 +86,16 @@ export async function htmlToPdf(binding: Fetcher, html: string, o: { format?: Pd
     await browser.close();
   }
 }
+
+/** Draws self-contained HTML to a PNG of exactly `width` x `height` pixels (one device pixel per CSS pixel), for the Studio's social images. */
+export async function htmlToPng(binding: Fetcher, html: string, o: { width: number; height: number }): Promise<Uint8Array> {
+  const browser = await puppeteer.launch(binding);
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: o.width, height: o.height, deviceScaleFactor: 1 });
+    await page.setContent(html, { waitUntil: "load" });
+    return await page.screenshot({ type: "png" }) as Uint8Array;
+  } finally {
+    await browser.close();
+  }
+}

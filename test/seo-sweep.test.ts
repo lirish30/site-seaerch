@@ -70,7 +70,7 @@ beforeEach(async () => {
   logs = vi.spyOn(console, "log").mockImplementation(() => {});
   stub();
   await resetProjectWork();
-  for (const t of ["seo_reports", "seo_content", "seo_rank_checks", "seo_gbp_snapshots", "seo_reviews", "seo_citations", "seo_keywords", "seo_profiles", "usage", "spend_caps", "billing_holds", "invoice_nudges", "invoices", "subscriptions",
+  for (const t of ["seo_reports", "seo_content", "seo_rank_checks", "seo_gbp_snapshots", "seo_reviews", "seo_citations", "seo_keywords", "seo_profiles", "usage", "spend_caps", "ladder_steps", "billing_holds", "invoice_nudges", "invoices", "subscriptions",
     "document_views", "document_signatures", "documents", "deals", "activity", "drafts", "audits", "search_results", "businesses", "suppressions"]) await env.DB.prepare(`DELETE FROM ${t}`).run();
   await env.DB.batch([env.DB.prepare(`DELETE FROM sop_template_steps`), env.DB.prepare(`DELETE FROM sop_templates`)]);
   await ensureSeedSops(env.DB);

@@ -134,6 +134,7 @@ describe("carePastDue", () => {
 describe("sortClients", () => {
   const row = (name: string, mrrCents: number, accessMissing: number): ClientRow => ({
     id: name, name, test: false, careLabel: null, mrrCents, siteCount: 1, accessMissing, openInvoiceCents: 0, held: false, nextRenewalOn: null, healthScore: null,
+    grade: { grade: null, note: "", setAt: null, suggested: "B", reasons: [] },
   });
   const rows = [row("Beta", 5000, 0), row("alpha", 12900, 3), row("Cedar", 12900, 6), row("Delta", 0, 3)];
   const names = (r: ClientRow[]) => r.map((x) => x.name);

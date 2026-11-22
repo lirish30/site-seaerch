@@ -5,6 +5,7 @@ import { useOwnerClock } from "../billingData";
 import { formatUptime, sortCare } from "../careView";
 import { latestOnly } from "../clientView";
 import { HealthChip, IncidentList, siteName, StateChip } from "../components/client/CarePanel";
+import { GradeChip } from "../components/client/GradePanel";
 import Icon from "../components/Icon";
 import type { CareRow } from "../../worker/monitoring/fleet";
 
@@ -47,7 +48,7 @@ export default function Care() {
               <li key={r.businessId} className="cl-card cr-card">
                 <div className="cr-card-head">
                   <h2 className="cr-name"><Link to={`/clients/${encodeURIComponent(r.businessId)}`}>{r.name}</Link></h2>
-                  <HealthChip health={r.health} />
+                  <span className="cr-chips"><HealthChip health={r.health} /><GradeChip grade={r.grade} /></span>
                 </div>
                 <p className="cr-meta small">
                   <span>{r.careLabel ?? <span className="muted">No Care plan</span>}</span>

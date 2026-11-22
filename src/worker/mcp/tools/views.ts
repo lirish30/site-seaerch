@@ -130,7 +130,7 @@ export function meetingView(m: Meeting, o: { transcript?: string; notes?: boolea
 /** One row of the client search: the list numbers, plus the domains of the client's live sites. */
 export const clientRowView = (r: ClientRow, domains: string[]) => ({
   id: r.id, name: r.name, careLabel: r.careLabel, mrrCents: r.mrrCents, siteCount: r.siteCount, domains, accessMissing: r.accessMissing, openInvoiceCents: r.openInvoiceCents,
-  held: r.held, nextRenewalOn: r.nextRenewalOn,
+  held: r.held, nextRenewalOn: r.nextRenewalOn, grade: r.grade.grade, suggestedGrade: r.grade.suggested,
 });
 
 /** The whole client for an agent: the owner's record with every vault name, access note, client answer and token left out. Activity is the newest 20. */
@@ -145,10 +145,12 @@ export function clientView(r: ClientRecord) {
       activatedAt: s.activatedAt, cancelledAt: s.cancelledAt,
     })),
     mrrCents: r.mrrCents, careLabel: r.careLabel, nextRenewalOn: r.nextRenewalOn, held: r.held,
+    grade: { grade: r.grade.grade, note: r.grade.note, setAt: r.grade.setAt, suggested: r.grade.suggested, reasons: r.grade.reasons },
     projects: r.projects.map(projectView),
     invoices: { openCents: r.invoices.openCents, overdueCount: r.invoices.overdueCount, paidCents: r.invoices.paidCents },
     documents: r.documents.map((d) => ({ id: d.id, dealId: d.dealId, version: d.version, status: d.status, test: d.test, reference: d.reference, sentAt: d.sentAt, signedAt: d.signedAt, paidAt: d.paidAt })),
     changeOrders: r.changeOrders.map((c) => ({ id: c.id, projectId: c.projectId, status: c.status, title: c.title, reference: c.reference, priceCents: c.priceCents, test: c.test, signedAt: c.signedAt, paidAt: c.paidAt })),
+    ladder: r.ladder.map((l) => ({ id: l.id, step: l.step, dueOn: l.dueOn, status: l.status, note: l.note, doneAt: l.doneAt })),
     activity: r.activity.slice(0, 20).map(activityView),
   };
 }

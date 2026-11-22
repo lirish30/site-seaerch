@@ -1,14 +1,16 @@
 import { Hono } from "hono";
 import { z } from "zod";
+import { gradeViewFor } from "../clients/gradeData";
 import { getClientRecord, isClient, isTestClient, listClients } from "../clients/record";
 import { logActivity } from "../db/activity";
+import { getGrades, setGrade } from "../db/grade";
 import { settleAccessItem } from "../db/onboardings";
 import {
   ACCESS_KEYS, SiteConflictError, SiteInputError, archiveSite, createSite, getSite, listAccess, setAccess, updateSite,
   type AccessKey, type AccessStatus, type Site, type SiteFields,
 } from "../db/sites";
 import type { Env } from "../env";
-import { bodyOf, NOT_FOUND, ownerOnError, type Ctx } from "../projects/http";
+import { bodyOf, invalid, NOT_FOUND, ownerOnError, type Ctx } from "../projects/http";
 import { cleanText } from "../onboarding/templates";
 import { ACCESS_LABELS, cleanVaultName, isHttpUrl, noteProblem, vaultNameProblem } from "../sites/access";
 
@@ -89,6 +91,33 @@ clientRoutes.get("/clients", async (c) => c.json({ clients: await listClients(c.
 clientRoutes.get("/clients/:id", async (c) => {
   const client = await getClientRecord(c.env.DB, c.req.param("id"), new Date());
   return client ? c.json({ client }) : c.json(NOT_FOUND, 404);
+});
+
+const GRADE_NOTE_MAX = 300;
+const GradeBody = z.object({
+  grade: z.enum(["A", "B", "C"], "The grade is A, B or C, or null for none.").nullable(),
+  note: z.string("The note must be text.").transform((s) => cleanText(s, s.length)).pipe(z.string().max(GRADE_NOTE_MAX, `The note is at most ${GRADE_NOTE_MAX} characters.`)).optional(),
+}).strict();
+
+/**
+ * Sets the owner's grade for the client (A, B or C with an optional note of at most 300 characters), or clears it with `null` (which clears the note too). Answers the grade view. The grade
+ * is the owner's word: nothing the rules suggest later changes it. A test client can be graded too. A body that is not a grade is 422; an id that is not a client is 404.
+ */
+clientRoutes.put("/clients/:id/grade", async (c) => {
+  const parsed = GradeBody.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json(invalid(parsed.error), 422);
+  const businessId = c.req.param("id");
+  if (!(await isClient(c.env.DB, businessId))) return c.json(NOT_FOUND, 404);
+  const { grade, note = "" } = parsed.data;
+  const before = (await getGrades(c.env.DB, [businessId])).get(businessId);
+  const now = new Date();
+  await setGrade(c.env.DB, businessId, grade, grade === null ? "" : note, now.toISOString());
+  // One plain line, never the note: a grade that changes says so, a note edited on its own says that, and a save that changes nothing logs nothing.
+  const line = grade === null ? (before?.grade ? `Grade cleared (was ${before.grade})` : null)
+    : before?.grade !== grade ? `Grade set to ${grade}${before?.grade ? ` (was ${before.grade})` : ""}`
+    : before.note !== note ? "Grade note updated" : null;
+  if (line) await logActivity(c.env.DB, businessId, "grade_set", line);
+  return c.json(await gradeViewFor(c.env.DB, businessId, now));
 });
 
 /** Adds a site by hand (six `needed` access items come with it). A domain the client already has on a live site is 409. */

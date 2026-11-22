@@ -14,7 +14,7 @@ const site = (over: Partial<SiteMonitoringView> = {}): SiteMonitoringView => ({
 });
 
 const row = (name: string, score: number, id = name): CareRow => ({
-  businessId: id, name, careLabel: null, mrrCents: 0, uptime30: null, sites: [], openIncidents: [],
+  businessId: id, name, careLabel: null, mrrCents: 0, uptime30: null, grade: { grade: null, note: "", setAt: null, suggested: "B", reasons: [] }, sites: [], openIncidents: [],
   health: { score, band: score >= 80 ? "good" : score >= 60 ? "watch" : "at_risk", reasons: [], hasData: true },
 });
 

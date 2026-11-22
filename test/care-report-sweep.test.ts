@@ -30,7 +30,7 @@ beforeEach(async () => {
   vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("no network in tests"));
   for (const t of ["site_incidents", "site_checks", "site_uptime_days", "care_reports", "care_page_checks", "care_runs", "care_batches", "care_updates", "helper_jobs"]) await env.DB.prepare(`DELETE FROM ${t}`).run();
   await resetProjectWork();
-  for (const t of ["billing_holds", "invoice_nudges", "invoices", "subscriptions", "document_views", "document_signatures", "documents", "deals", "activity", "drafts", "audits", "search_results", "businesses", "suppressions"])
+  for (const t of ["ladder_steps", "billing_holds", "invoice_nudges", "invoices", "subscriptions", "document_views", "document_signatures", "documents", "deals", "activity", "drafts", "audits", "search_results", "businesses", "suppressions"])
     await env.DB.prepare(`DELETE FROM ${t}`).run();
   await env.DB.batch([env.DB.prepare(`DELETE FROM sop_template_steps`), env.DB.prepare(`DELETE FROM sop_templates`)]);
   await ensureSeedSops(env.DB);

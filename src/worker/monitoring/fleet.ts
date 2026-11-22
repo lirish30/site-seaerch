@@ -1,3 +1,5 @@
+import type { GradeView } from "../clients/grade";
+import { gradeViews } from "../clients/gradeData";
 import { computeHealth, type Health } from "../clients/health";
 import { healthInputs, UPTIME_DAYS } from "../clients/healthData";
 import { careLabel, clientMrrCents, LIVE, testClientSql } from "../clients/record";
@@ -41,6 +43,8 @@ export interface CareRow {
   careLabel: string | null;
   mrrCents: number;
   health: Health;
+  /** The grade the owner set (or none) and what the rules suggest. */
+  grade: GradeView;
   /** The client's uptime over 30 days, pooled over its sites (the figure its score uses); null with no checks. */
   uptime30: number | null;
   sites: SiteMonitoringView[];
@@ -187,6 +191,7 @@ export async function careFleet(db: D1Database, now: Date): Promise<CareRow[]> {
 
   const [settings, health] = await Promise.all([getSettings(db), healthInputs(db, ids, now)]);
   const zone = zoneOf(settings);
+  const grades = await gradeViews(db, ids, now, new Map([...health].map(([id, i]) => [id, computeHealth(i)])));
 
   const sitesOf = new Map<string, Site[]>();
   const openOf = new Map<string, Incident[]>();
@@ -207,7 +212,7 @@ export async function careFleet(db: D1Database, now: Date): Promise<CareRow[]> {
     const input = health.get(r.id)!;
     const mine = subs.get(r.id) ?? [];
     return {
-      businessId: r.id, name: r.name, careLabel: careLabel(mine), mrrCents: clientMrrCents(mine), health: computeHealth(input), uptime30: input.uptime30,
+      businessId: r.id, name: r.name, careLabel: careLabel(mine), mrrCents: clientMrrCents(mine), health: computeHealth(input), grade: grades.get(r.id)!, uptime30: input.uptime30,
       sites: sites.map((s) => views.get(s.id)!),
       openIncidents: (openOf.get(r.id) ?? []).filter((i) => byId.has(i.siteId)).map((i) => incidentView(i, byId.get(i.siteId)!, now, zone)),
     };

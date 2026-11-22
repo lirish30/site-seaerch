@@ -17,6 +17,7 @@ import { setAccess } from "../src/worker/db/sites";
 import { openIncident } from "../src/worker/db/monitoring";
 import { createSingleBatch, insertRun, setRunStatus } from "../src/worker/db/careUpdates";
 import { insertReport, setSummary } from "../src/worker/db/careReports";
+import { createPost, patchPost } from "../src/worker/db/studio";
 import { markSubscription } from "../src/worker/db/subscriptions";
 import { markSent } from "../src/worker/db/changeOrders";
 import { sha256Hex, canonicalJson } from "../src/worker/documents/hash";
@@ -32,7 +33,7 @@ const SENTINELS = {
   documentToken: "DOCUMENT-TOKEN-SENTINEL", bookingCancelToken: "BOOKING-CANCEL-TOKEN-SENTINEL", onboardingToken: "ONBOARDING-TOKEN-SENTINEL",
   changeOrderToken: "CHANGE-ORDER-TOKEN-SENTINEL", hostedUrl: "https://invoice.stripe.com/i/HOSTED-URL-SENTINEL", stripeInvoice: "in_STRIPE-INVOICE-SENTINEL",
   stripeCustomer: "cus_STRIPE-CUSTOMER-SENTINEL", stripeSubscription: "sub_STRIPE-SUBSCRIPTION-SENTINEL", transcriptKey: "transcript.json",
-  reportToken: "CARE-REPORT-TOKEN-SENTINEL", sshAlias: "SSH-ALIAS-SENTINEL-host", wpPath: "/var/www/WP-PATH-SENTINEL", backupFile: "BACKUP-FILE-SENTINEL",
+  reportToken: "CARE-REPORT-TOKEN-SENTINEL", studioImageKey: "studio/STUDIO-KEY-SENTINEL/1.png", sshAlias: "SSH-ALIAS-SENTINEL-host", wpPath: "/var/www/WP-PATH-SENTINEL", backupFile: "BACKUP-FILE-SENTINEL",
   mailboxOut: env.MAILBOX_OUTREACH_PASSWORD, mailboxMain: env.MAILBOX_MAIN_PASSWORD,
 };
 const TRANSCRIPT = "TRANSCRIPT-SENTINEL";
@@ -100,6 +101,9 @@ beforeAll(async () => {
     facts: { version: 1, period: "2026-11", label: "November 2026", from: "2026-11-01T08:00:00.000Z", to: "2026-12-01T08:00:00.000Z", clientName: "Ace Plumbing", sites: [], edits: null, renewals: [], generatedAt: "2026-12-01T10:00:00.000Z", alias: SENTINELS.sshAlias, backupFile: SENTINELS.backupFile },
   });
   await setSummary(env.DB, report.id, ["collecting"], { summary: "The site was up all month.", recommendation: "Nothing to fix.", source: "claude", now: "2026-12-01T11:00:00.000Z" });
+  // A Studio post for the client, anonymous (the default), with a drawn image: its R2 key and the client's name must never reach an agent.
+  const post = await createPost(env.DB, { kind: "case_study", businessId: s.businessId, source: {}, anonymize: true }, "2026-12-05T10:00:00.000Z");
+  await patchPost(env.DB, post.id, { status: "review", copy: { headline: "A new site for a local trade", caption: "Plain words.", slides: [{ title: "Done", body: "Live." }], tags: ["site"] }, imageKeys: [SENTINELS.studioImageKey] }, "2026-12-05T10:00:00.000Z");
   // An open down incident on the client's site, so the Care tools have something to show.
   await openIncident(env.DB, { siteId: s.site!.id, businessId: s.businessId, kind: "down", detail: "HTTP 503", now: "2026-12-05T09:00:00.000Z" });
   await logActivity(env.DB, s.businessId, "note" as never, "Called Pat");
@@ -116,7 +120,7 @@ const calls = (): [string, unknown][] => [
   ["get_deal", { id: ids.dealId }], ["list_invoices", {}], ["list_invoices", { business_id: ids.businessId }], ["list_invoices", { status: "open" }],
   ["list_meetings", {}], ["list_meetings", { business_id: ids.businessId }], ["get_meeting", { id: ids.meetingId }],
   ["get_care_overview", {}], ["get_care_updates", {}], ["get_care_report", {}], ["get_care_report", { period: "2026-11" }], ["get_care_report", { period: "2026-11", clientId: ids.businessId }], ["list_incidents", {}], ["list_incidents", { open: true }], ["list_incidents", { open: false }], ["list_incidents", { clientId: ids.businessId }],
-  ["get_seo_status", {}], ["get_seo_status", { period: "2026-11", clientId: ids.businessId }],
+  ["get_seo_status", {}], ["get_seo_status", { period: "2026-11", clientId: ids.businessId }], ["list_batches", {}], ["get_studio_posts", {}], ["get_studio_posts", { status: "review" }],
   ["get_timeline", { record_type: "business", record_id: ids.businessId }], ["get_timeline", { record_type: "project", record_id: ids.projectId }],
 ];
 
@@ -130,6 +134,17 @@ describe("what no tool may say", () => {
     expect((await env.DB.prepare(`SELECT text_value FROM onboarding_items WHERE key = 'access_hosting'`).first<{ text_value: string }>())!.text_value).toBe(SENTINELS.clientAnswer);
     expect((await env.DB.prepare(`SELECT hosted_url, stripe_invoice_id FROM invoices WHERE business_id = ?`).bind(ids.businessId).first())).toEqual({ hosted_url: SENTINELS.hostedUrl, stripe_invoice_id: SENTINELS.stripeInvoice });
     expect((await env.DB.prepare(`SELECT token FROM change_orders WHERE business_id = ?`).bind(ids.businessId).first<{ token: string }>())!.token).toBe(SENTINELS.changeOrderToken);
+  });
+
+  it("get_studio_posts shows the real post, but neither its R2 key nor the client's name", async () => {
+    expect((await env.DB.prepare(`SELECT image_keys FROM studio_posts WHERE business_id = ?`).bind(ids.businessId).first<{ image_keys: string }>())!.image_keys).toContain(SENTINELS.studioImageKey);
+    const r = await tool("get_studio_posts", {});
+    const posts = JSON.parse(r.text).posts as { headline: string; slides: number; client: string | null }[];
+    expect(posts).toEqual([expect.objectContaining({ headline: "A new site for a local trade", slides: 1, client: null })]);
+    const name = (await env.DB.prepare(`SELECT name FROM businesses WHERE id = ?`).bind(ids.businessId).first<{ name: string }>())!.name;
+    expect(name.length).toBeGreaterThan(2);
+    expect(r.text).not.toContain(name);
+    expect(r.text).not.toContain(ids.businessId);
   });
 
   it("list_approvals shows the pending approvals with their client links cut to host and prefix, and no payload", async () => {

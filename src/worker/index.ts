@@ -6,6 +6,7 @@ import { passkeyRoutes } from "./routes/passkeys";
 import { searchRoutes } from "./routes/searches";
 import { leadRoutes } from "./routes/leads";
 import { settingsRoutes } from "./routes/settings";
+import { autoApproveRoutes } from "./routes/autoApprove";
 import { googleRoutes } from "./routes/google";
 import { croRoutes } from "./routes/cro";
 import { videoRoutes } from "./routes/video";
@@ -18,6 +19,8 @@ import { suppressionRoutes } from "./routes/suppressions";
 import { doNotContactRoutes } from "./routes/doNotContact";
 import { importRoutes } from "./routes/import";
 import { todayRoutes } from "./routes/today";
+import { batchRoutes } from "./routes/batches";
+import { capacityRoutes } from "./routes/capacity";
 import { outreachRoutes } from "./routes/outreach";
 import { workSampleRoutes } from "./routes/workSamples";
 import { spendRoutes } from "./routes/spend";
@@ -32,7 +35,8 @@ import { helperRoutes } from "./routes/helper";
 import { helperAdminRoutes } from "./routes/helperAdmin";
 import { packageRoutes } from "./routes/packages";
 import { dealRoutes, leadDealRoutes } from "./routes/deals";
-import { deckRoutes } from "./routes/deck";
+import { deckRoutes, kickoffDeckRoutes } from "./routes/deck";
+import { studioRoutes } from "./routes/studio";
 import { bookingRoutes } from "./routes/bookings";
 import { documentRoutes } from "./routes/documents";
 import { onboardingRoutes } from "./routes/onboarding";
@@ -44,6 +48,7 @@ import { billingRoutes } from "./routes/billing";
 import { moneyRoutes } from "./routes/money";
 import { careRoutes } from "./routes/care";
 import { seoRoutes } from "./routes/seo";
+import { ladderRoutes } from "./routes/ladder";
 import { clientRoutes } from "./routes/clients";
 import { meetingRoutes } from "./routes/meetings";
 import { stripeWebhookRoutes } from "./routes/stripeWebhook";
@@ -65,10 +70,13 @@ import "./approvals/pauseNotice";
 import "./approvals/careUpdates";
 import "./approvals/careReport";
 import "./approvals/seoReport";
+import "./approvals/studioPost";
+import "./approvals/ladderMail";
 import "./billing/milestones"; // registers the hook that drafts and proposes a milestone invoice when a project reaches one
 import "./billing/subscriptions"; // registers the hook that proposes a launch subscription when its build project is done
 import "./projects/dispatch"; // registers the hook that sends the next ready Claude step when a task changes
 import "./projects/start"; // registers the hook that starts Care when the build it waited for is done
+import "./ladder/hooks"; // registers the hook that adds the retention ladder when a build is done
 import { mcpRoute } from "./mcp/route";
 import { runScheduled } from "./schedule";
 
@@ -87,6 +95,7 @@ app.route("/api/searches", searchRoutes);
 app.route("/api/leads", leadRoutes);
 app.route("/api/leads", sequenceRoutes); // /:id/sequence/*; leadRoutes has no handler for these paths
 app.route("/api/settings", settingsRoutes);
+app.route("/api/auto-approve", autoApproveRoutes);
 app.route("/api/google", googleRoutes);
 app.route("/api/public", publicRoutes);
 app.route("/api/radar", radarRoutes);
@@ -96,8 +105,11 @@ app.route("/api/suppressions", suppressionRoutes);
 app.route("/api/do-not-contact", doNotContactRoutes);
 app.route("/api/import", importRoutes);
 app.route("/api/today", todayRoutes);
+app.route("/api/capacity", capacityRoutes);
+app.route("/api/batches", batchRoutes);
 app.route("/api/outreach", outreachRoutes);
 app.route("/api/work-samples", workSampleRoutes);
+app.route("/api/studio", studioRoutes()); // the Studio: posts, their copy, uploads and drawn images (behind requireAuth)
 app.route("/api/spend", spendRoutes);
 app.route("/api/approvals", approvalRoutes);
 app.route("/api/agent-actions", agentActionRoutes);
@@ -109,6 +121,7 @@ app.route("/api/helper", helperAdminRoutes);
 app.route("/api/packages", packageRoutes);
 app.route("/api/deals", dealRoutes);
 app.route("/api/deals", deckRoutes()); // /:id/deck.html, /:id/deck.pdf, /:id/deck/freeze
+app.route("/api/projects", kickoffDeckRoutes()); // /:id/kickoff-deck.pdf (a build project's kickoff deck)
 app.route("/api/leads", leadDealRoutes); // /:id/deal
 app.route("/api/bookings", bookingRoutes);
 app.route("/api", documentRoutes); // /deals/:id/proposal, /documents/:id/...
@@ -123,6 +136,7 @@ app.route("/api", billingRoutes); // /billing/..., /change-orders/:id/invoice, /
 app.route("/api", moneyRoutes); // /money
 app.route("/api", careRoutes); // /care, /incidents, /sites/:id/checks, /sites/:id/monitoring
 app.route("/api", seoRoutes); // /clients/:id/seo/place-search, /profile, /keywords, /citations/:directory, /nap-check
+app.route("/api", ladderRoutes); // /clients/:id/ladder, /ladder/:id/done, /ladder/:id/skip, /ladder/:id/link
 // Mounted last at /api: /api/leads/:id/cro-audit(s), /api/cro-items/:id, /api/cro-audits/:id/... (all behind requireAuth).
 app.route("/api", croRoutes);
 // Also mounted at /api: /api/leads/:id/video and /api/video-audits/:id/... (behind requireAuth).

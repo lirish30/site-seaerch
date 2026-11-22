@@ -4,6 +4,7 @@ import type { Env } from "../env";
 import { getBusiness } from "../db/businesses";
 import { upcomingBookings } from "../db/bookings";
 import { logActivity } from "../db/activity";
+import { computeCapacity } from "../capacity/compute";
 import { buildToday, isTodayKind, snoozeDetail } from "../today";
 import { buildSummary } from "../todaySummary";
 
@@ -11,7 +12,13 @@ const Snooze = z.object({ days: z.number({ error: "days must be a whole number f
 
 export const todayRoutes = new Hono<{ Bindings: Env }>();
 
-todayRoutes.get("/", async (c) => c.json({ items: await buildToday(c.env.DB, new Date()) }));
+todayRoutes.get("/", async (c) => {
+  const now = new Date();
+  // The capacity card rides along, but never stops the list: a failed read leaves `capacity` null and the client shows a retry in its place.
+  const capacityOrNull = () => computeCapacity(c.env.DB, now).catch((e) => { console.error("today: capacity failed", e); return null; });
+  const [items, capacity] = await Promise.all([buildToday(c.env.DB, now), capacityOrNull()]);
+  return c.json({ items, capacity });
+});
 
 /**
  * The confirmed calls for the Calls card: the next 7 days, and any that have started without being marked (held, cancelled or a no-show), who, when, what

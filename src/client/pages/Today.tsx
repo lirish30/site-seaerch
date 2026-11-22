@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import Icon from "../components/Icon";
 import ApprovalsCard from "../components/home/ApprovalsCard";
+import CapacityCard from "../components/home/CapacityCard";
 import CallsCard from "../components/home/CallsCard";
 import ActivityCard from "../components/home/ActivityCard";
 import HelperCard from "../components/home/HelperCard";
@@ -54,6 +55,7 @@ export default function Today() {
             onDone={(i) => void h.act(i, "done")} onSnooze={(i, d) => void h.act(i, "snooze", d)} onFullScan={(i) => void h.fullScan(i)} onRetry={h.reload} />
           </div>
           <div className="hm-side">
+            <CapacityCard capacity={h.capacity} onRetry={h.reload} />
             <PipelineCard summary={h.summary} onRetry={h.reload} />
             <SpendCard money={h.money} spend={h.spend} onRetry={h.reload} />
           </div>

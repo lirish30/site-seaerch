@@ -127,6 +127,7 @@ export const ACTIVITY_KINDS = [
   "invoice_sent", "invoice_paid", "billing_hold_placed", "site_added", "access_changed", "site_changed", "meeting_recorded",
   "site_down", "site_back", "domain_expiring", "care_updated", "care_rolled_back", "care_report_sent",
   "seo_report_sent", "seo_baseline",
+  "grade_set", "ladder_sent", "auto_approved", "studio_posted",
 ] as const;
 export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
 export interface Activity { id: string; business_id: string; kind: ActivityKind; detail: string | null; created_at: string; }

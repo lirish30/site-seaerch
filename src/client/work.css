@@ -188,3 +188,4 @@
   .mn-row .mn-track { grid-column:1 / -1; grid-row:2; }
   .mn-card { padding:14px; }
 }
+.mn-warn { color:var(--warning); }

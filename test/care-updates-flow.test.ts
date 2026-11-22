@@ -383,8 +383,9 @@ describe("care updates, end to end", () => {
     expect(board2.find((r) => r.businessId === c.businessId)!.health.score).toBe(85);
     expect(board2.find((r) => r.businessId === b.businessId)!.health.score).toBe(100);
 
-    // --- The approvals are exactly the three wave approvals and the single-site one, all decided by Logan; no mail went out; nothing else was made.
-    const all = (await env.DB.prepare(`SELECT kind, status FROM approvals ORDER BY created_at, rowid`).all<{ kind: string; status: string }>()).results;
+    // --- The approvals are exactly the three wave approvals and the single-site one, all decided by Logan; no mail went out; nothing else was made. (The daily run's ladder sweep drafts pending `ladder.mail` approvals
+    // for the builds this test seeds as done; they are left out here and nothing of them is sent.)
+    const all = (await env.DB.prepare(`SELECT kind, status FROM approvals WHERE kind <> 'ladder.mail' ORDER BY created_at, rowid`).all<{ kind: string; status: string }>()).results;
     expect(all).toEqual([1, 2, 3].map(() => ({ kind: "care.updates", status: "approved" })));
     expect(approvals.map((x) => x.payload.wave)).toEqual([1, 2, 0]);
     expect(mail.sent).toEqual([]);

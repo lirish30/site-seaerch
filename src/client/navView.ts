@@ -2,9 +2,9 @@ import { STATUSES, type LeadRow, type LeadStatus } from "./types";
 
 export type Section = "home" | "leads" | "find" | "outreach" | "work" | "settings";
 
-const isWork = (p: string) => p === "/projects" || p.startsWith("/projects/") || p === "/timesheet" || p === "/billing" || p === "/money" || p === "/care" || p.startsWith("/care/") || p === "/seo" || p.startsWith("/tasks/") || p === "/clients" || p.startsWith("/clients/");
+const isWork = (p: string) => p === "/projects" || p.startsWith("/projects/") || p === "/timesheet" || p === "/billing" || p === "/money" || p === "/batches" || p === "/studio" || p === "/care" || p.startsWith("/care/") || p === "/seo" || p.startsWith("/tasks/") || p === "/clients" || p.startsWith("/clients/");
 
-/** Which rail section a path belongs to. Today is Home; lists, Promising and a lead are Leads; New search, searches, Radar, Niche test and Import are Find; Outreach, Campaigns and the Pipeline are Outreach; projects, a task's redirect, the timesheet, Billing, Money, Care and Local SEO are Projects ("work"). */
+/** Which rail section a path belongs to. Today is Home; lists, Promising and a lead are Leads; New search, searches, Radar, Niche test and Import are Find; Outreach, Campaigns and the Pipeline are Outreach; projects, a task's redirect, the timesheet, Billing, Money, Batches, Studio, Care and Local SEO are Projects ("work"). */
 export function sectionOf(pathname: string): Section {
   if (pathname === "/today") return "home";
   if (pathname === "/leads" || pathname.startsWith("/leads/") || pathname === "/promising") return "leads";

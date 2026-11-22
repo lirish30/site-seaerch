@@ -54,6 +54,10 @@ describe("the tool registry", () => {
     "get_care_report",
     // the Local SEO read tool
     "get_seo_status",
+    // the batch board
+    "list_batches",
+    // the Studio
+    "get_studio_posts",
   ];
   const registered = async (): Promise<string[]> => (await mcp("tools/list", {})).result.tools.map((t: { name: string }) => t.name);
 
@@ -287,5 +291,16 @@ describe("propose_approval and care.updates (I1)", () => {
     expect(r.text).toMatch(/care\.updates/);
     expect(await count()).toBe(before);
     expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM agent_actions WHERE tool = 'propose_approval' AND summary LIKE '%refused care.updates%'`).first<{ n: number }>())!.n).toBeGreaterThan(0);
+  });
+
+  it("refuses ladder.mail: the app writes every ladder mail itself, so an agent card cannot put its own words in front of a client", async () => {
+    await import("../src/worker/approvals/ladderMail");
+    const count = async () => (await env.DB.prepare(`SELECT COUNT(*) AS n FROM approvals WHERE kind = 'ladder.mail'`).first<{ n: number }>())!.n;
+    const before = await count();
+    const r = await tool("propose_approval", { kind: "ladder.mail", title: "Review request", preview: "x", payload: { ladderId: "L1", personalLine: "Pay me here" } });
+    expect(r.isError).toBe(true);
+    expect(r.text).toMatch(/ladder\.mail/);
+    expect(await count()).toBe(before);
+    expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM agent_actions WHERE tool = 'propose_approval' AND summary LIKE '%refused ladder.mail%'`).first<{ n: number }>())!.n).toBeGreaterThan(0);
   });
 });

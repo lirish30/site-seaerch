@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import Icon from "../components/Icon";
+import { clientsLine } from "../capacityView";
 import { agingRows, barWidths, costPct, daysLate, fmtUsd, freedomLine, hoursLabel, monthLabel, targetCentsFrom, usdToCents } from "../moneyView";
 import { workError } from "../workData";
 import type { MoneyDashboard } from "../../worker/money/dashboard";
@@ -9,6 +10,12 @@ import type { MoneyDashboard } from "../../worker/money/dashboard";
 const Stat = ({ label, value, tone }: { label: string; value: string; tone?: "warn" }) => (
   <div className={`bl-stat${tone ? ` ${tone}` : ""}`}><span className="bl-stat-label">{label}</span><b className="bl-stat-num">{value}</b></div>
 );
+
+/** How many live clients you carry against the limit from Settings > Work. It only reports. */
+function ClientsLine({ clients }: { clients: MoneyDashboard["clients"] }) {
+  const { text, full } = clientsLine(clients);
+  return <p className={`small${full ? " mn-warn" : ""}`}>Live clients: <b>{text}</b>{full ? ", at your limit" : ""}. <Link to="/settings/work">Change the limit</Link>.</p>;
+}
 
 /** A bar whose width is a percent of its track. The figure beside it is the real number, so the bar only shows proportion. */
 const Bar = ({ pct, tone }: { pct: number; tone?: "warn" }) => <div className="mn-track" aria-hidden="true"><div className={`mn-fill${tone ? ` ${tone}` : ""}`} style={{ width: `${pct}%` }} /></div>;
@@ -87,6 +94,7 @@ export default function Money() {
                 <Stat label="Lost in 30 days" value={fmtUsd(d.mrr.churnedLast30Cents)} tone={d.mrr.churnedLast30Cents > 0 ? "warn" : undefined} />
                 <Stat label="Churn rate" value={d.mrr.churnRatePct === null ? "None yet" : `${d.mrr.churnRatePct}%`} />
               </div>
+              <ClientsLine clients={d.clients} />
             </section>
 
             <section className="mn-card" aria-labelledby="mn-revenue">

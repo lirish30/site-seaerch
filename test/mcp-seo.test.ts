@@ -32,7 +32,7 @@ describe("the tool", () => {
   it("is registered", async () => {
     const names = (await mcp("tools/list", {})).result.tools.map((t: { name: string }) => t.name);
     expect(names).toContain("get_seo_status");
-    expect(names).toHaveLength(30);
+    expect(names).toHaveLength(32);
   });
 
   it("is refused without the token, like every other tool", async () => {

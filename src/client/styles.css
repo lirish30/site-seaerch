@@ -227,7 +227,7 @@ button.tag { cursor:pointer; } button.tag:hover { border-color:var(--accent); }
 .today-item { display:flex; gap:16px; justify-content:space-between; align-items:center; flex-wrap:wrap; padding:12px 16px; }
 .today-main { min-width:0; flex:1 1 320px; } .today-reason { margin:4px 0 0; } .today-main .error { margin:4px 0 0; }
 .today-actions button { padding:6px 12px; font-size:13px; }
-.today-kind.follow_up_due { border-color:var(--bad); color:var(--bad); } .today-kind.stalled_deal, .today-kind.proposal_follow_up, .today-kind.onboarding_attention, .today-kind.project_attention, .today-kind.billing_attention, .today-kind.access_missing, .today-kind.care_edit_hours, .today-kind.seo_waiting { border-color:var(--warn); color:var(--warn); } .today-kind.site_incident { border-color:var(--bad); color:var(--bad); }
+.today-kind.follow_up_due { border-color:var(--bad); color:var(--bad); } .today-kind.stalled_deal, .today-kind.proposal_follow_up, .today-kind.onboarding_attention, .today-kind.project_attention, .today-kind.billing_attention, .today-kind.access_missing, .today-kind.care_edit_hours, .today-kind.seo_waiting, .today-kind.ladder_due { border-color:var(--warn); color:var(--warn); } .today-kind.site_incident { border-color:var(--bad); color:var(--bad); }
 .today-kind.promising_quick_scan { border-color:var(--ok); color:var(--ok); }
 
 /* ---------- Starred leads ---------- */

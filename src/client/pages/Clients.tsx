@@ -3,7 +3,8 @@ import { Link, useSearchParams } from "react-router-dom";
 import { clientsApi } from "../api";
 import { useOwnerClock } from "../billingData";
 import { bandLabel, bandOfScore } from "../careView";
-import { latestOnly, moneyLabel, renewalLabel, sortClients, type ClientSort } from "../clientView";
+import { filterByGrade, GRADE_FILTERS, isGradeFilter, latestOnly, moneyLabel, renewalLabel, sortClients, type ClientSort, type GradeFilter } from "../clientView";
+import { GradeChip } from "../components/client/GradePanel";
 import Icon from "../components/Icon";
 import type { ClientRow } from "../../worker/clients/record";
 
@@ -16,6 +17,8 @@ export default function Clients() {
   const wanted = params.get("sort");
   const sort: ClientSort = isSort(wanted) ? wanted : "name";
   const showTest = params.get("test") === "1";
+  const wantedGrade = params.get("grade");
+  const gradeFilter: GradeFilter = isGradeFilter(wantedGrade) ? wantedGrade : "all";
   const { today } = useOwnerClock();
   const [rows, setRows] = useState<ClientRow[] | null>(null);
   const [failed, setFailed] = useState(false);
@@ -32,7 +35,7 @@ export default function Clients() {
   useEffect(() => { void load(); return () => guard.cancel(); }, [load, guard]);
 
   const setParam = (key: string, value: string | null) => setParams((p) => { const n = new URLSearchParams(p); if (value === null) n.delete(key); else n.set(key, value); return n; }, { replace: true });
-  const sorted = sortClients(rows ?? [], sort);
+  const sorted = filterByGrade(sortClients(rows ?? [], sort), gradeFilter);
   const mrr = (rows ?? []).reduce((n, r) => n + r.mrrCents, 0);
   const missing = (rows ?? []).reduce((n, r) => n + r.accessMissing, 0);
   const owed = (rows ?? []).reduce((n, r) => n + r.openInvoiceCents, 0);
@@ -63,6 +66,9 @@ export default function Clients() {
           <div className="seg-pills" role="group" aria-label="Sort clients by">
             {SORTS.map(([key, label]) => <button key={key} type="button" aria-pressed={sort === key} onClick={() => setParam("sort", key === "name" ? null : key)}>{label}</button>)}
           </div>
+          <div className="seg-pills" role="group" aria-label="Show clients with grade">
+            {GRADE_FILTERS.map(([key, label]) => <button key={key} type="button" aria-pressed={gradeFilter === key} onClick={() => setParam("grade", key === "all" ? null : key)}>{key === "all" || key === "none" ? label : `Grade ${label}`}</button>)}
+          </div>
           <label className="cl-toggle">
             <input type="checkbox" className="cb" checked={showTest} aria-label="Show test clients" onChange={(e) => setParam("test", e.target.checked ? "1" : null)} />
             <span>Show test clients</span>
@@ -71,12 +77,13 @@ export default function Clients() {
 
         {rows === null && !failed && <p className="muted">Loading…</p>}
         {rows !== null && rows.length === 0 && <p className="muted">No clients yet. A lead becomes a client when you win it or start a project for it.</p>}
+        {rows !== null && rows.length > 0 && sorted.length === 0 && <p className="muted">No clients match that grade.</p>}
         {sorted.length > 0 && (
           <table className="cl-table">
             <caption className="sr-only">Clients, sorted by {SORTS.find(([k]) => k === sort)?.[1].toLowerCase()}</caption>
             <thead>
               <tr>
-                <th scope="col">Client</th><th scope="col">Care</th><th scope="col" className="num">Health</th><th scope="col" className="num">MRR</th><th scope="col" className="num">Sites</th>
+                <th scope="col">Client</th><th scope="col">Care</th><th scope="col" className="num">Health</th><th scope="col">Grade</th><th scope="col" className="num">MRR</th><th scope="col" className="num">Sites</th>
                 <th scope="col" className="num">Access missing</th><th scope="col" className="num">Open invoices</th><th scope="col">Renewal</th>
               </tr>
             </thead>
@@ -90,6 +97,7 @@ export default function Clients() {
                   </th>
                   <td data-label="Care">{r.careLabel ?? <span className="muted">None</span>}</td>
                   <td className="num" data-label="Health">{r.healthScore === null ? <span className="muted">–<span className="sr-only">No health score</span></span> : <>{r.healthScore}<span className="sr-only">, {bandLabel(bandOfScore(r.healthScore)).toLowerCase()}</span></>}</td>
+                  <td data-label="Grade"><GradeChip grade={r.grade} compact /></td>
                   <td className="num" data-label="MRR">{moneyLabel(r.mrrCents, { monthly: true })}</td>
                   <td className="num" data-label="Sites">{r.siteCount}</td>
                   <td className="num" data-label="Access missing">{r.accessMissing > 0 ? <span className="badge2 warning"><i className="dot" />{r.accessMissing} missing</span> : <span className="muted">None</span>}</td>

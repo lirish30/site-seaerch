@@ -49,7 +49,7 @@ describe("estimateVsActual", () => {
 
 describe("work config", () => {
   it("defaults are a zero cost rate, Monday and a 12-hour cap", () => {
-    expect(DEFAULT_WORK_CONFIG).toEqual({ costRateCentsPerHour: 0, weekStartsOn: 1, timerCapMinutes: 720 });
+    expect(DEFAULT_WORK_CONFIG).toEqual({ costRateCentsPerHour: 0, weekStartsOn: 1, timerCapMinutes: 720, weeklyHoursLimit: 20, clientLimit: 45 });
     expect(parseWorkConfig("")).toEqual(DEFAULT_WORK_CONFIG);
     expect(parseWorkConfig("{}")).toEqual(DEFAULT_WORK_CONFIG);
     expect(parseWorkConfig(JSON.stringify({ costRateCentsPerHour: 3500 }))).toEqual({ ...DEFAULT_WORK_CONFIG, costRateCentsPerHour: 3500 });
@@ -61,7 +61,7 @@ describe("work config", () => {
       expect(c).not.toBe(DEFAULT_WORK_CONFIG);
       c.timerCapMinutes = 1;
       c.costRateCentsPerHour = 999;
-      expect(DEFAULT_WORK_CONFIG).toEqual({ costRateCentsPerHour: 0, weekStartsOn: 1, timerCapMinutes: 720 });
+      expect(DEFAULT_WORK_CONFIG).toEqual({ costRateCentsPerHour: 0, weekStartsOn: 1, timerCapMinutes: 720, weeklyHoursLimit: 20, clientLimit: 45 });
       expect(parseWorkConfig(raw)).toEqual(DEFAULT_WORK_CONFIG);
     }
   });
@@ -89,7 +89,7 @@ describe("PUT /api/settings work_config", () => {
   it("stores a valid document, filling the defaults, and an empty one resets", async () => {
     expect((await getSettings(env.DB)).work_config).toBe("{}");
     expect((await put({ work_config: JSON.stringify({ costRateCentsPerHour: 4000, weekStartsOn: 0 }) })).status).toBe(200);
-    expect(parseWorkConfig((await getSettings(env.DB)).work_config)).toEqual({ costRateCentsPerHour: 4000, weekStartsOn: 0, timerCapMinutes: 720 });
+    expect(parseWorkConfig((await getSettings(env.DB)).work_config)).toEqual({ costRateCentsPerHour: 4000, weekStartsOn: 0, timerCapMinutes: 720, weeklyHoursLimit: 20, clientLimit: 45 });
     expect((await put({ work_config: "" })).status).toBe(200);
     expect((await getSettings(env.DB)).work_config).toBe("{}");
   });
@@ -97,7 +97,7 @@ describe("PUT /api/settings work_config", () => {
   it("refuses a bad value with a 400 and keeps what was saved", async () => {
     await put({ work_config: JSON.stringify({ costRateCentsPerHour: 2500 }) });
     const before = (await getSettings(env.DB)).work_config;
-    for (const bad of ["not json", "[]", JSON.stringify({ timerCapMinutes: 30 }), JSON.stringify({ costRateCentsPerHour: 60000 }), JSON.stringify({ weekStartsOn: 3 })]) {
+    for (const bad of ["not json", "[]", JSON.stringify({ timerCapMinutes: 30 }), JSON.stringify({ costRateCentsPerHour: 60000 }), JSON.stringify({ weekStartsOn: 3 }), JSON.stringify({ weeklyHoursLimit: 0 }), JSON.stringify({ weeklyHoursLimit: 81 }), JSON.stringify({ clientLimit: 201 }), JSON.stringify({ clientLimit: 2.5 })]) {
       const r = await put({ work_config: bad });
       expect(r.status).toBe(400);
       expect(await r.json<any>()).toMatchObject({ fields: ["work_config"] });

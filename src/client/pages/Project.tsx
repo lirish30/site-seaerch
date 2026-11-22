@@ -86,8 +86,9 @@ export default function ProjectPage() {
             {project.dealId && <Link className="small" to={`/deals/${project.dealId}`}>Deal</Link>}
           </div>
         </div>
-        {(stop.pause || stop.resume || stop.cancel) && (
+        {(project.kind === "build" || stop.pause || stop.resume || stop.cancel) && (
           <div className="header-actions">
+            {project.kind === "build" && <a className="btn" href={`/api/projects/${id}/kickoff-deck.pdf`} download>Kickoff deck</a>}
             {stop.pause && <button type="button" className="btn" disabled={busy} aria-expanded={pausing} onClick={() => setPausing((p) => !p)}>Pause</button>}
             {stop.resume && <button type="button" className="btn primary" disabled={busy} onClick={() => void patch({ status: "active" })}>Resume</button>}
             {stop.cancel && <button type="button" className="btn" disabled={busy} onClick={() => { if (window.confirm(cancelConfirm(project.name, stop.cancel!))) void patch({ status: "cancelled" }); }}>{cancelLabel(stop.cancel)}</button>}

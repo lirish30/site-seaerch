@@ -13,11 +13,13 @@ import { checkConflict } from "../conflict";
 /** The kinds the app proposes itself, with a card it builds: an agent's own title and preview over one of these could mislead the person approving it. */
 const APP_PROPOSED = ["video.publish", "proposal.send", "onboarding.welcome", "onboarding.nudge", "sop.review", "change_order.send",
   "invoice.send", "invoice.reminder", "invoice.pause_notice", "subscription.start", "subscription.term_notice", "meeting.followup",
-  "care.updates", "care.report", "seo.report"];
+  "care.updates", "care.report", "seo.report", "studio.post", "ladder.mail"];
 /** The kinds an agent may propose: all but those the app proposes itself. */
 const proposableKinds = () => registeredKinds().filter((k) => !APP_PROPOSED.includes(k));
 import { makeCtx } from "./tools/context";
 import { registerActTools } from "./tools/act";
+import { registerBatchTools } from "./tools/batches";
+import { registerStudioTools } from "./tools/studio";
 import { registerCareTools } from "./tools/care";
 import { registerCareReportTools } from "./tools/careReport";
 import { registerMoneyTools } from "./tools/money";
@@ -226,5 +228,7 @@ export function buildMcpServer(env: Env): McpServer {
   registerCareTools(server, ctx);
   registerCareReportTools(server, ctx);
   registerSeoTools(server, ctx);
+  registerBatchTools(server, ctx);
+  registerStudioTools(server, ctx);
   return server;
 }

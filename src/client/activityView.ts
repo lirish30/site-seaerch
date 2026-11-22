@@ -94,6 +94,10 @@ export function describeActivity(a: Pick<Activity, "kind" | "detail">): Activity
     case "care_rolled_back": return { icon: "ban", tone: "warning", title: "Update rolled back", detail: d, bubble: false };
     case "care_report_sent": return { icon: "mail", tone: "positive", title: "Care report sent", detail: d, bubble: false };
     case "seo_report_sent": return { icon: "mail", tone: "positive", title: "Local SEO report sent", detail: d, bubble: false };
+    case "grade_set": return { icon: "star", tone: "info", title: "Client grade set", detail: d, bubble: false };
+    case "ladder_sent": return { icon: "mail", tone: "positive", title: "Ladder step sent", detail: d, bubble: false };
+    case "auto_approved": return { icon: "check", tone: "info", title: "Auto-approved", detail: d, bubble: false };
+    case "studio_posted": return { icon: "check", tone: "positive", title: "Studio post published", detail: d, bubble: false };
     case "seo_baseline": return { icon: "target", tone: "info", title: "Local SEO baseline taken", detail: d, bubble: false };
     case "access_changed": return { icon: "key", tone: "info", title: "Access changed", detail: d, bubble: false };
     case "snoozed": return { icon: "clock", tone: "neutral", title: "Snoozed", detail: d, bubble: false };

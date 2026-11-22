@@ -30,6 +30,8 @@ export default function WorkSidebar() {
       <SideItem to="/clients" icon="users" label="Clients" active={pathname === "/clients"} />
       <SideItem to="/billing" icon="card" label="Billing" active={pathname === "/billing"} />
       <SideItem to="/money" icon="trending" label="Money" active={pathname === "/money"} />
+      <SideItem to="/batches" icon="list" label="Batches" active={pathname === "/batches"} />
+      <SideItem to="/studio" icon="image" label="Studio" active={pathname === "/studio"} />
       <SideItem to="/care" icon="shield" label="Care" active={pathname === "/care"} />
       <SideItem to="/care/reports" icon="file-text" label="Care reports" active={pathname === "/care/reports"} />
       <SideItem to="/seo" icon="pin" label="Local SEO" active={pathname === "/seo"} />

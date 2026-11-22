@@ -2,6 +2,8 @@ import type { AccessStatus, Site } from "../worker/db/sites";
 import { projectIsLive, SEO_ONBOARDING_KEY, type ProjectKind, type ProjectStatus } from "../worker/db/projects";
 import type { Tone } from "./projectView";
 import type { ClientRow } from "../worker/clients/record";
+import type { GradeView } from "../worker/clients/grade";
+import type { Grade } from "../worker/db/grade";
 import { shortDate } from "./billingView";
 
 /** Pure helpers for the owner's Clients pages. No DOM, no fetch, no clock of its own. */
@@ -100,6 +102,18 @@ export function sortClients(rows: ClientRow[], by: ClientSort): ClientRow[] {
   };
   return [...rows].sort(compare[by]);
 }
+
+/** What the grade chip shows: the grade the owner set, or the rules' suggestion marked as only a suggestion while none is set. */
+export const gradeChipLabel = (g: Pick<GradeView, "grade" | "suggested">): { letter: Grade; suggested: boolean } =>
+  g.grade ? { letter: g.grade, suggested: false } : { letter: g.suggested, suggested: true };
+
+export type GradeFilter = "all" | Grade | "none";
+export const GRADE_FILTERS: [GradeFilter, string][] = [["all", "All"], ["A", "A"], ["B", "B"], ["C", "C"], ["none", "No grade"]];
+export const isGradeFilter = (s: string | null): s is GradeFilter => GRADE_FILTERS.some(([k]) => k === s);
+
+/** The rows with this set grade, or those with none; "all" keeps everything. The suggestion does not count: only a grade the owner set. */
+export const filterByGrade = <T extends { grade: Pick<GradeView, "grade"> }>(rows: T[], by: GradeFilter): T[] =>
+  by === "all" ? rows : rows.filter((r) => (by === "none" ? r.grade.grade === null : r.grade.grade === by));
 
 const VAULT_HINT = "Type the name of the password manager item. Never the login.";
 

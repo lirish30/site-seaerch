@@ -32,5 +32,6 @@ describe("GET /api/money", () => {
     expect(d.ar.oldest[0]).toMatchObject({ businessId: s.businessId, amountCents: 100_000 });
     expect(d.freedom).toMatchObject({ targetCents: 500_000, mrrCents: 12_900 });
     expect(d.revenue.months).toHaveLength(6);
+    expect(d.clients).toEqual({ count: 1, limit: 45 });
   });
 });

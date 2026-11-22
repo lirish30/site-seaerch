@@ -1,7 +1,10 @@
 import type { PublicSubscription } from "../worker/billing/checkout";
+import type { GradeView } from "../worker/clients/grade";
 import type { ClientRecord, ClientRow } from "../worker/clients/record";
+import type { Grade } from "../worker/db/grade";
 import type { AccessItem, AccessKey, AccessStatus, Site, SiteFields } from "../worker/db/sites";
 import type { CareRow, IncidentView, SiteMonitoringView } from "../worker/monitoring/fleet";
+import type { BatchGroup } from "../worker/batches/groups";
 import type { CareRunDetail, CareUpdateView, CareUpdatesBoard } from "../worker/care/views";
 import type { CareBatch } from "../worker/db/careUpdates";
 import type { PublicReport } from "../worker/care/reportPublic";
@@ -13,6 +16,9 @@ import type { NapResult } from "../worker/seo/nap";
 import type { GridRow } from "../worker/seo/overview";
 import type { PlaceCandidate } from "../worker/seo/places";
 import type { SeoReportRow } from "../worker/seo/reportAdmin";
+import type { LadderRow } from "../worker/db/ladder";
+import type { AutoApproveState } from "../worker/routes/autoApprove";
+import type { StudioCopy, StudioPost } from "./studioView";
 export class ApiError extends Error { constructor(public status: number, message: string, public fields: string[] = [], public code = "", public body: unknown = undefined) { super(message); } }
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -36,6 +42,15 @@ async function putRaw<T>(path: string, body: Blob, headers: Record<string, strin
   return data as T;
 }
 
+/** Sends a form (a file upload) as it is: the browser sets the multipart header itself. */
+async function postForm<T>(path: string, body: FormData): Promise<T> {
+  const res = await fetch(`/api${path}`, { method: "POST", credentials: "same-origin", body });
+  if (res.status === 401) { location.href = "/login"; throw new ApiError(401, "unauthorized"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new ApiError(res.status, (data as any).error ?? `HTTP ${res.status}`);
+  return data as T;
+}
+
 export const api = {
   putRaw,
   get: <T,>(p: string) => req<T>("GET", p),
@@ -50,6 +65,8 @@ export const clientsApi = {
   /** Every client by name; `includeTest` adds the rehearsal ones (`?test=1`). */
   list: (includeTest = false) => api.get<{ clients: ClientRow[] }>(`/clients${includeTest ? "?test=1" : ""}`).then((r) => r.clients),
   get: (id: string) => api.get<{ client: ClientRecord }>(`/clients/${encodeURIComponent(id)}`).then((r) => r.client),
+  /** Sets the grade (A, B or C, with a note of at most 300 characters), or clears it with null (which clears the note too). */
+  setGrade: (id: string, grade: Grade | null, note = "") => api.put<GradeView>(`/clients/${encodeURIComponent(id)}/grade`, { grade, note }),
   /** A site added by hand (six `needed` access items come with it). A domain the client already has on a live site is a 409. */
   addSite: (id: string, fields: Partial<SiteFields> = {}) => api.post<{ site: Site; access: AccessItem[] }>(`/clients/${encodeURIComponent(id)}/sites`, fields),
   /** Only the fields given change. */
@@ -59,6 +76,25 @@ export const clientsApi = {
   /** One checklist line: a new status, the NAME of a password manager item, or the owner note. Only the keys given change; null clears. */
   setAccess: (id: string, siteId: string, key: AccessKey, patch: { status?: AccessStatus; vaultItem?: string | null; note?: string | null }) =>
     api.put<{ item: AccessItem }>(`/clients/${encodeURIComponent(id)}/sites/${encodeURIComponent(siteId)}/access/${key}`, patch).then((r) => r.item),
+};
+
+/** The Studio (Plan 15): social posts from a draft to posted. A post comes back with how many pictures it has, never where they are kept; a picture is `imageUrl`. Nothing here posts anywhere. */
+export const studioApi = {
+  list: () => api.get<{ posts: StudioPost[] }>("/studio").then((r) => r.posts),
+  create: (body: Record<string, unknown>) => api.post<StudioPost>("/studio", body),
+  write: (id: string) => api.post<StudioPost>(`/studio/${encodeURIComponent(id)}/write`),
+  upload: (id: string, slot: "before" | "after", file: File) => { const f = new FormData(); f.set("file", file); return postForm<StudioPost>(`/studio/${encodeURIComponent(id)}/upload/${slot}`, f); },
+  render: (id: string) => api.post<StudioPost>(`/studio/${encodeURIComponent(id)}/render`),
+  saveCopy: (id: string, copy: StudioCopy) => api.put<StudioPost>(`/studio/${encodeURIComponent(id)}/copy`, copy),
+  posted: (id: string) => api.post<StudioPost>(`/studio/${encodeURIComponent(id)}/posted`),
+  discard: (id: string) => api.post<StudioPost>(`/studio/${encodeURIComponent(id)}/discard`),
+  /** The picture behind the session; `v` changes when the post does, so a redrawn picture is fetched again. */
+  imageUrl: (id: string, n: number, v: string) => `/api/studio/${encodeURIComponent(id)}/image/${n}?v=${encodeURIComponent(v)}`,
+};
+
+/** The batch board (Plan 15): each recurring job's current period across live clients. Read only. */
+export const batchesApi = {
+  list: () => api.get<{ groups: BatchGroup[] }>("/batches").then((r) => r.groups),
 };
 
 /** The Care routes (Plan 11): the board, one client's incidents, and the monitoring switch. A site's address never comes back, only its domain. */
@@ -117,6 +153,23 @@ export interface SeoBoardRow {
 }
 export interface SeoProfileInput { placeId: string; trade: string; towns: string[]; gridKm: number; siteId?: string }
 export interface SeoContentEdit { title?: string; metaTitle?: string; metaDescription?: string; body?: string }
+
+/** The post-launch ladder routes (Plan 15). Nothing here sends mail: a mail goes out only when its approval is approved. */
+export const ladderApi = {
+  list: (clientId: string) => api.get<{ rows: LadderRow[] }>(`/clients/${encodeURIComponent(clientId)}/ladder`).then((r) => r.rows),
+  done: (id: string) => api.post<{ row: LadderRow }>(`/ladder/${encodeURIComponent(id)}/done`).then((r) => r.row),
+  skip: (id: string, note = "") => api.post<{ row: LadderRow }>(`/ladder/${encodeURIComponent(id)}/skip`, { note }).then((r) => r.row),
+  /** Sets the https link a step carries, or clears it with null. */
+  setLink: (id: string, link: string | null) => api.put<{ row: LadderRow }>(`/ladder/${encodeURIComponent(id)}/link`, { link }).then((r) => r.row),
+  /** Starts a case study post for the client in the Studio (Plan 15, Task 9). */
+  startCaseStudy: (businessId: string) => api.post<unknown>(`/studio`, { kind: "case_study", businessId }),
+};
+
+/** The auto-approve routes (Plan 15): which two fixed reminders may go without a click, and what went. Switching a rule answers with the whole page's data. */
+export const autoApproveApi = {
+  get: () => api.get<AutoApproveState>("/auto-approve"),
+  set: (kind: string, enabled: boolean) => api.put<AutoApproveState>(`/auto-approve/${encodeURIComponent(kind)}`, { enabled }),
+};
 
 /** The Local SEO routes (Plan 14). A refusal is an ApiError whose message is a plain sentence; nothing here ever posts or publishes anywhere. Types only come from the worker. */
 export const seoApi = {

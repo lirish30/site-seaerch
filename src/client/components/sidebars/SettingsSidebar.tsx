@@ -25,6 +25,7 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
   { slug: "booking", label: "Booking", icon: "calendar", group: "Account" },
   { slug: "documents", label: "Documents", icon: "pen", group: "Account" },
   { slug: "billing", label: "Billing", icon: "card", group: "Account" },
+  { slug: "auto-approve", label: "Auto-approve", icon: "check", group: "Account" },
 ];
 const GROUPS = ["You", "Outreach", "Lead scoring", "Projects", "Account"] as const;
 const COUNTED: [string, string][] = [["work-samples", "/work-samples"], ["services", "/services"], ["fit-profiles", "/fit-profiles"], ["suppressions", "/suppressions"]];
