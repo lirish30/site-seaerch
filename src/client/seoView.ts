@@ -113,7 +113,7 @@ export const citationLabel = (s: CitationStatus): string => CITATION[s] ?? "Unkn
 /** The four statuses a directory can be set to, in the order the buttons show them. */
 export const CITATION_STATUSES: CitationStatus[] = ["todo", "listed", "needs_fix", "not_applicable"];
 
-const NAP: Record<NapPart, string> = { match: "matches the listing", mismatch: "differs from the listing", missing: "not found on the site" };
+const NAP: Record<NapPart, string> = { match: "matches the listing", mismatch: "differs from the listing", missing: "not found on the site", unknown: "not compared (the listing has nothing to compare it with)" };
 /** One part of the name, address and phone check as a line: "Phone: matches the listing". */
 export const napPartLine = (label: string, part: NapPart): string => `${label}: ${NAP[part] ?? "not checked"}`;
 export const napTone = (part: NapPart): "positive" | "warning" | "critical" => (part === "match" ? "positive" : part === "mismatch" ? "critical" : "warning");

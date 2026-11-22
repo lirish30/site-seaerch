@@ -139,6 +139,15 @@ describe("the seo.report kind", () => {
     expect(text).toMatch(/not measured/i);
   });
 
+  it("build tells Claude a name, address or phone part that was not compared is 'not compared', never a mismatch or missing", async () => {
+    const r = await made({ ...FACTS, nap: { phone: "unknown", address: "unknown", name: "match" } });
+    const task = await claim(r.id);
+    const built = await kind().build(env, task.payload, task);
+    if ("stale" in built) throw new Error(built.stale);
+    const text = built.untrusted.map((p) => (p as { text: string }).text).join("\n");
+    expect(text).toContain("name match, address not compared (nothing on file to compare with), phone not compared (nothing on file to compare with)");
+  });
+
   it("build is stale once the report has its words, is gone, or has numbers that cannot be read", async () => {
     const r = await made();
     const task = await claim(r.id);

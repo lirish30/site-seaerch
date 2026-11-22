@@ -56,8 +56,8 @@ describe("napCheck address", () => {
     expect(napCheck([page("<p>77 North Lombard Street</p>")], north).address).toBe("match");
     expect(napCheck([page("<p>77 N Portland Blvd</p>")], north).address).toBe("missing");
   });
-  it("is missing when the expected address has no number or street to look for", () => {
-    expect(napCheck([page("<p>Main</p>")], { ...NAP, address: "Tigard, OR" }).address).toBe("missing");
+  it("is unknown (nothing to compare) when the expected address has no number or street to look for", () => {
+    expect(napCheck([page("<p>Main</p>")], { ...NAP, address: "Tigard, OR" }).address).toBe("unknown");
   });
   it("does not read a number inside a longer number", () => {
     expect(napCheck([page("<p>112345 SW Main St</p>")], NAP).address).toBe("missing");
@@ -99,5 +99,26 @@ describe("constants", () => {
     expect(parseNapResult(null)).toBeNull();
     expect(parseNapResult("not json")).toBeNull();
     expect(parseNapResult(JSON.stringify({ phone: "bad" }))).toBeNull();
+  });
+});
+
+describe("napCheck with nothing to compare", () => {
+  const SITE = page("<h1>Ace Plumbing</h1><p>12345 SW Main St</p><footer>Call (360) 555-0100</footer>");
+  it("is unknown for the phone when the listing has no phone, whatever the site shows", () => {
+    expect(napCheck([SITE], { ...NAP, phone: "" }).phone).toBe("unknown");
+    expect(napCheck([], { ...NAP, phone: "not a phone" }).phone).toBe("unknown");
+  });
+  it("is unknown for the address when the listing's address has no street number and name (a service-area business)", () => {
+    expect(napCheck([SITE], { ...NAP, address: "Portland, OR" }).address).toBe("unknown");
+    expect(napCheck([SITE], { ...NAP, address: "" }).address).toBe("unknown");
+  });
+  it("is unknown for the name when the listing has no name", () => {
+    expect(napCheck([SITE], { ...NAP, name: "  " }).name).toBe("unknown");
+  });
+  it("still compares the parts that can be compared", () => {
+    expect(napCheck([SITE], { name: "Ace Plumbing", address: "Portland, OR", phone: "" })).toEqual({ phone: "unknown", address: "unknown", name: "match", checkedPages: 1 });
+  });
+  it("reads a stored unknown part back", () => {
+    expect(parseNapResult(JSON.stringify({ phone: "unknown", address: "match", name: "match", checkedPages: 2 }))).toEqual({ phone: "unknown", address: "match", name: "match", checkedPages: 2 });
   });
 });

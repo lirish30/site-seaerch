@@ -345,6 +345,22 @@ describe("plainSeoSummary", () => {
     expect(text.startsWith("Local SEO report for November 2026.")).toBe(true);
   });
 
+  it("never tells the client about a part that was not compared, and says only what matched", () => {
+    const lean = { citations: null, content: { published: [], drafted: 0, planned: 0 } };
+    const text = plainSeoSummary(base({ ...lean, nap: { phone: "unknown", address: "unknown", name: "match" } }));
+    expect(text).not.toMatch(/phone|address|did not match|could not be found/i);
+    expect(text).toMatch(/The name on the website match the details on file/);
+    expect(plainSeoSummary(base({ ...lean, nap: { phone: "unknown", address: "unknown", name: "unknown" } }))).not.toMatch(/website/i);
+    // A part that really differs is still said, next to one that was not compared.
+    expect(plainSeoSummary(base({ ...lean, nap: { phone: "unknown", address: "mismatch", name: "match" } }))).toMatch(/address on the website did not match/);
+  });
+
+  it("stores an unknown part in the facts and shows Claude 'not compared' for it", async () => {
+    const s = await client();
+    await upsertProfile(env.DB, s.businessId, { napResult: JSON.stringify({ phone: "unknown", address: "match", name: "match", checkedPages: 2 }) }, STAMP);
+    expect((await build(s.businessId)).nap).toEqual({ phone: "unknown", address: "match", name: "match" });
+  });
+
   it("mentions the name check when a part did not match, first, and says it matches only when all do and there is room", () => {
     expect(plainSeoSummary(base())).toMatch(/address on the website did not match/i);
     expect(plainSeoSummary(base({ nap: { phone: "missing", address: "match", name: "mismatch" } }))).toMatch(/name on the website did not match.*phone could not be found/);

@@ -51,6 +51,7 @@ const plain = (report: SeoReport): string => {
   return facts.success ? plainSeoSummary(facts.data) : `Local SEO report for ${report.period}.`;
 };
 
+const napWord = (p: string) => (p === "unknown" ? "not compared (nothing on file to compare with)" : p);
 const SPOT = (p: { pos: number | null; ok: boolean }) => (!p.ok ? "not checked" : p.pos === null ? "not in the top 20" : p.pos <= 3 ? "1-3" : p.pos <= 10 ? "4-10" : "11-20");
 const known = (n: number | null, noun: string) => (n === null ? `${noun} not measured` : `${noun} ${n}`);
 
@@ -71,7 +72,7 @@ function factLines(f: SeoReportFacts): string {
   lines.push(`Reviews first seen this month: ${f.reviews.seen}; replies posted ${f.reviews.posted}; low-rated reviews still needing an answer ${f.reviews.needsYou}`);
   lines.push(`Content: published ${f.content.published.length}${f.content.published.length ? ` (${f.content.published.map((c) => `${c.kind.replace("_", " ")} "${c.title}"`).join("; ")})` : ""}; written and waiting ${f.content.drafted}; still to write ${f.content.planned}`);
   lines.push(f.citations ? `Directory listings: confirmed ${f.citations.listed}; need fixing ${f.citations.needsFix}; still to do ${f.citations.todo}` : "Directory listings: not measured");
-  lines.push(f.nap ? `Name, address and phone on the website against the details on file: name ${f.nap.name}, address ${f.nap.address}, phone ${f.nap.phone}` : "Name, address and phone check: not measured");
+  lines.push(f.nap ? `Name, address and phone on the website against the details on file: name ${napWord(f.nap.name)}, address ${napWord(f.nap.address)}, phone ${napWord(f.nap.phone)}` : "Name, address and phone check: not measured");
   return lines.join("\n");
 }
 

@@ -1,7 +1,8 @@
 // The name, address and phone check (Plan 14): do a client's own pages say what their Google listing says?
 // Pure: the pages come in as `{ url, html }` and nothing is fetched or stored here. Everything on a page is untrusted text, read and compared, never followed or echoed.
 
-export type NapPart = "match" | "mismatch" | "missing";
+/** `unknown` is "nothing to compare": the listing has no phone, no street address or no name to hold the pages against. It is never a finding about the client's site. */
+export type NapPart = "match" | "mismatch" | "missing" | "unknown";
 export interface NapResult { phone: NapPart; address: NapPart; name: NapPart; checkedPages: number }
 
 /** The directories every client's citation list starts with. */
@@ -89,9 +90,9 @@ function addressKey(address: string): { number: string; street: string } | null 
 
 /**
  * Compares what the pages say with the expected name, address and phone.
- * phone: `match` when any phone on the pages is the expected one, `mismatch` when the pages show phones and none is, `missing` when they show none.
- * address: `match` when one page has both the street number and the street's name word, else `missing`.
- * name: `match` when the name is on any page (case, spacing and entities ignored), else `missing`.
+ * phone: `match` when any phone on the pages is the expected one, `mismatch` when the pages show phones and none is, `missing` when they show none, `unknown` when the listing has no phone to compare with.
+ * address: `match` when one page has both the street number and the street's name word, else `missing`, `unknown` when the listing's address has no street number and name (a service-area business).
+ * name: `match` when the name is on any page (case, spacing and entities ignored), else `missing`, `unknown` when the listing has no name.
  */
 export function napCheck(pages: { url: string; html: string }[], nap: { name: string; address: string; phone: string }): NapResult {
   const texts = pages.map((p) => pageText(p.html));
@@ -102,18 +103,18 @@ export function napCheck(pages: { url: string; html: string }[], nap: { name: st
     for (const m of t.text.matchAll(PHONE_RE)) { const n = normalizePhone(m[0]); if (n) shown.add(n); }
     for (const h of t.telHrefs) { const n = normalizePhone(h); if (n) shown.add(n); }
   }
-  const phone: NapPart = expectedPhone !== null && shown.has(expectedPhone) ? "match" : shown.size > 0 ? "mismatch" : "missing";
+  const phone: NapPart = expectedPhone === null ? "unknown" : shown.has(expectedPhone) ? "match" : shown.size > 0 ? "mismatch" : "missing";
 
   const key = addressKey(nap.address);
-  const address: NapPart = key && texts.some((t) => { const w = new Set(tokens(t.text)); return w.has(key.number) && w.has(key.street); }) ? "match" : "missing";
+  const address: NapPart = !key ? "unknown" : texts.some((t) => { const w = new Set(tokens(t.text)); return w.has(key.number) && w.has(key.street); }) ? "match" : "missing";
 
   const name = decodeEntities(nap.name).replace(/\s+/g, " ").trim().toLowerCase();
-  const found: NapPart = name !== "" && texts.some((t) => t.text.includes(name)) ? "match" : "missing";
+  const found: NapPart = name === "" ? "unknown" : texts.some((t) => t.text.includes(name)) ? "match" : "missing";
 
   return { phone, address, name: found, checkedPages: pages.length };
 }
 
-const PARTS: readonly string[] = ["match", "mismatch", "missing"];
+const PARTS: readonly string[] = ["match", "mismatch", "missing", "unknown"];
 
 /** A result the checker stored, or null when the text is not one (nothing stored yet, or something else). */
 export function parseNapResult(s: string | null): NapResult | null {

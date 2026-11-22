@@ -13,7 +13,7 @@ import { parseNapResult } from "./nap";
 // never 0. A rank is only ever "in our check" (nine points around the business, page one of Google's own results), and nothing here says what a position will be. NOTHING a client or a stranger
 // wrote goes in beyond the client's own name and search terms: no review text, no reviewer name, no Google place id, no map location, no token, no text from the client's site.
 
-const NAP_PART = z.enum(["match", "mismatch", "missing"]);
+const NAP_PART = z.enum(["match", "mismatch", "missing", "unknown"]);
 const Count = z.number().int().min(0).max(1_000_000);
 const CONTENT_KIND = z.enum(["page", "post", "gbp_post"]);
 
@@ -220,7 +220,9 @@ export function plainSeoSummary(f: SeoReportFacts): string {
     if (total > 0) lines.push(`${f.citations.listed} of ${plural(total, "directory listing is", "directory listings are")} confirmed${f.citations.needsFix > 0 ? `, and ${f.citations.needsFix} need fixing` : ""}.`);
   }
 
-  if (f.nap && !off.length && !gone.length) lines.push("The name, address and phone on the website match the details on file.");
+  // A part that was not compared (the listing has nothing to compare it with) is never mentioned to the client.
+  const same = f.nap ? parts.filter((p) => f.nap![p] === "match") : [];
+  if (f.nap && !off.length && !gone.length && same.length > 0) lines.push(`The ${listOf(same)} on the website match the details on file.`);
 
   let text = lines[0];
   for (const line of lines.slice(1)) {

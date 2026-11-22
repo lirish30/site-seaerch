@@ -102,6 +102,7 @@ describe("words for status values", () => {
     expect(napPartLine("Phone", "match")).toBe("Phone: matches the listing");
     expect(napPartLine("Address", "mismatch")).toBe("Address: differs from the listing");
     expect(napPartLine("Name", "missing")).toBe("Name: not found on the site");
+    expect(napPartLine("Phone", "unknown")).toBe("Phone: not compared (the listing has nothing to compare it with)");
   });
   it("gives a rating in words", () => {
     expect(starsLabel(5)).toBe("5 of 5 stars");
