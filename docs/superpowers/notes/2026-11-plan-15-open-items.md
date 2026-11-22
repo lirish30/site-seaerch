@@ -71,11 +71,16 @@ During the build.
 - R10. (Task 7) The 20-a-day cap is atomic: a place is reserved with one statement before the send, so two overlapping sweeps cannot pass 20; a failed attempt counts toward the 20. `setRule` keeps its old switch-on time when a rule that is already on is switched on again (the time is the cut-off), and restamps it after an off and on.
 - R11. (Task 8, fix round 1) Long Studio copy used to clip the headline off the top of a slide. The template now starts at the top, centres short copy, clips only the tail of long copy, and caps lengths (title 60, body 140; the fifth copy slide becomes the close). Costs: the layout was never seen in a real browser.
 - R12. (Task 9) Anonymising an audit tip replaces, in order, the address, the site, the phone, the business name (case, spacing and punctuation tolerant) and each address part of four characters or more, with neutral phrases; if the whole name, or the first distinctive word of the name, is still in a finding afterwards, the whole tip is refused (a 422 with a plain sentence) rather than posted. A result from Claude that names the client of an anonymous post is refused at completion (the task stays claimed). `studio.post` is listed among the approvals Claude may propose over MCP. The shared word guards moved to `queue/wordGuards.ts` and now also refuse "best in". Costs: a business whose first word is a common word will hit the refusal more often (turn anonymity off with the client's agreement, or write the post yourself).
-- R13. (Task 3) `GET /api/today` now computes capacity too, so a capacity failure now fails the Today items the Shell and Home sidebar read; consider a try/catch. The proposal warning uses extra minutes of 0 (see call 5).
+- R13. (Task 3) `GET /api/today` now computes capacity too, so a capacity failure used to fail the Today items the Shell and Home sidebar read (fixed after the whole-branch review: a failed read now gives `capacity: null`). The proposal warning uses extra minutes of 0 (see call 5).
 - R14. (Task 10) Audit picking is a text box plus a "Post a tip" link on a lead's Website issues tab, not a dropdown across leads. The MCP answer's `slides` is the number of images drawn (0 until drawn). A post's copy edit does not redraw the pictures: the page calls `/render` after saving.
 - R15. (Task 9) Tips and the case card are built from the audit's `evidence` (the problem) and `recommendation` (the fix); findings carry no title field.
 
-Found by the flow test: none. Found by the whole-branch review: the fix wave, if any, is recorded in the commits after this file.
+Found by the flow test: none. Found by the whole-branch review, fixed in the fix wave after it (five items, each its own commit, each test first):
+1. An agent could propose a `ladder.mail` approval with its own words for a waiting step, and the next sweep would adopt it. `ladder.mail` is now one of the kinds the agent tool refuses, and the ladder sweep never adopts an approval an agent drafted: it turns it down and moves the step to `due` with a plain note ("an unexpected mail card was turned down; write this one yourself").
+2. A failed capacity read no longer fails `GET /api/today` (it answers with `capacity: null` and the Home card shows "Couldn't work out your booked hours." with Try again) or stops a proposal-send approval being made (no warning line, error logged). This closes R13.
+3. The kickoff deck's agenda only says "and what we need from you" when some part really has that block.
+4. The Studio before and after pickers start empty again after a post is made or the kind is changed, so a second post uploads its pictures. The files are not cleared from the input's own value (that would show an empty box while a file is still held); the boxes remount instead.
+5. Hygiene: the daily cron's doc comment now says the billing and onboarding sweeps may send the two auto-approved reminder kinds; the ladder sweep test for a held, test, ended or do-not-contact client now gives the do-not-contact client its own address, so each guard is tested alone (checked by weakening each guard in turn: the test then fails).
 
 ## Deferred minors (decided, not fixed), by area
 
@@ -85,7 +90,7 @@ Grade
 
 Ladder
 - `setLadderStatus` to done without `now` leaves `done_at` empty (everything in the app passes `now`). No test asserts the hook registers at module load. Two builds finished on the same day for one client collide on the unique key and waste backfill writes. The 180-day backfill cut-off is an instant, not a day.
-- A mail step held `due` for want of a contact email has no route back into the sweep (send by hand and mark it done or skip it); a missing review link does have one (save the link). The hold/test/ended sweep test is masked by a shared do-not-contact email. Today's hide rule passes no "since". A missing-email throw comes before the client block. No lateness check at approval time. The review-request wording sits near a result claim. The panel lives in `components/client/LadderPanel.tsx`, not `pages/`.
+- A mail step held `due` for want of a contact email has no route back into the sweep (send by hand and mark it done or skip it); a missing review link does have one (save the link). Today's hide rule passes no "since". A missing-email throw comes before the client block. No lateness check at approval time. The review-request wording sits near a result claim. The panel lives in `components/client/LadderPanel.tsx`, not `pages/`.
 - The December letter's card cannot show your personal line (you add it by editing the payload); the sent mail carries it. The case-study button creates the post and marks the step done as two calls, so a failure of the second leaves a post that a retry would duplicate.
 
 Auto-approve
@@ -98,14 +103,29 @@ Studio
 - Writing and discarding at the same moment: `apply` saves the copy without a status guard, so a discard that lands in the same instant could be overwritten (the approval handler still refuses a discarded post), and a stale approval card may remain after a render. A discard while a post is `writing` leaves its task queued.
 - `PUT /copy` skips the "names the business" check on an anonymous post (your own words). The residue check misses city names under four characters, the site's stem without its suffix, accented letters and personal names; its lead-word check over-blocks generic names; the "best in" refusal can catch ordinary SEO wording.
 - A partial R2 write overwrites old pictures in place; a stale delete is not best effort; the slot is validated by type in `images.ts` and at run time in the route only; `htmlToPng` has no test; the base64 helper exists twice; a class name is interpolated unescaped into the template.
-- The Studio page's file inputs keep the old file name after a post is created, so a second before and after post uploads nothing until the page is reloaded (a small real bug). No client-side image-type check beyond the `accept` attribute. A failed client list load is swallowed. The MCP name gate relies on the service's invariant, not on `agreed_at`.
+- No client-side image-type check beyond the `accept` attribute. A failed client list load is swallowed. The MCP name gate relies on the service's invariant, not on `agreed_at`.
 
 Kickoff deck
-- The fallback line (R5). The agenda sentence "what we need from you" is untrue on a deck where no step waits on the client. The bare download link gives no error feedback. Speaker notes are generic text and the PDF does not print them. No client-side test of the button.
+- The fallback line (R5). The bare download link gives no error feedback. Speaker notes are generic text and the PDF does not print them. No client-side test of the button.
 
 Tests
 - The same known flakes as before, each passing alone: `billing-flow`, `billing-sweep`, `projects-flow` (timing under full-suite load), `sites-onboarding-items` (fails when a random UUID contains "abc"), `sites-seed`, `care-routes` ("more than one chunk"), and the MCP rate-limit test beside other MCP tests.
 - The flow test pins only `Date`. A real month of daily crons, a real launch with a real review request and the first run of the auto-approve switch on a live invoice are not exercised end to end.
+
+## Whole-branch review: fix-soon, not fixed
+
+Found by the final review and left for a later pass (none stops the build from being used; each is small):
+- Applying Claude's Studio copy while a discard lands at the same moment leaves a stale `studio.post` card: `studioCopy.apply` patches the status to `review` without a `status = 'writing'` guard.
+- `PUT /api/studio/:id/copy` skips the anonymity name check, while the card still says "Anonymous".
+- The `best in` word guard also tightens `seo.report` (the word guards are shared), so ordinary SEO wording can be refused there.
+- The ladder runs after the Local SEO sweep in the daily cron, so a long SEO run could starve it; the ladder makes no outside calls and could run earlier.
+- `deleteBusiness` leaves the client's `studio_posts` rows and `studio/<id>/*` R2 objects behind.
+- A Studio post's images can be replaced after it is approved without a new approval.
+- A mail step held `due` for want of a contact email, or held at approval, has no route back into the sweep.
+- "Paid meanwhile": an auto-approved reminder whose invoice was paid logs `sent` though the handler sent nothing.
+- The onboarding test-client guard in auto-approve has no test of its own.
+- The ladder's Today hide rule passes no `since`.
+- The case-study button makes two calls (create the post, then mark the step), so a retry after the second fails can duplicate the post.
 
 ## Rollback
 The Worker can be rolled back safely onto the new schema once the migrations are applied: the code from before this plan ignores the four new tables and the grade columns and has no `/studio`, `/batches` or ladder pages. The schema itself is rolled back only through the D1 Time Travel bookmark recorded before migrating (Needs Logan, item 1). A mail already sent (a review request, an auto-approved reminder) stays in the client's inbox. The `ladder.mail` approvals the first cron drafts stay pending after a rollback; with the old Worker live they have no handler and cannot be approved, and they work again when the new Worker is back. Switching every auto-approve rule off on `/settings/auto-approve` is the quick way to stop sends without a rollback.
