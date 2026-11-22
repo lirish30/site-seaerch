@@ -387,7 +387,7 @@ describe("care reports, end to end", () => {
     // --- The client opens the link from the mail: the page has the figures, and the view is counted. The same link for B (not sent) stays a 404.
     const open = await page(tokenIn(sent.text)[0]);
     expect(open.status).toBe(200);
-    expect(Object.keys(open.json).sort()).toEqual(["clientName", "edits", "label", "recommendation", "renewals", "sentOn", "sites", "summary"]);
+    expect(Object.keys(open.json).sort()).toEqual(["clientName", "edits", "label", "recommendation", "renewals", "sentOn", "sites", "summary", "video"]);
     expect(open.json).toMatchObject({
       clientName: "Alpha Bakery", label: "November 2026", summary: A_SUMMARY, recommendation: A_REC, sentOn: "2026-12-17",
       edits: { usedMinutes: 75, allowanceMinutes: 60, state: "over", requestsDone: 1 },

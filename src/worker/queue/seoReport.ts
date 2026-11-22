@@ -4,6 +4,7 @@ import { z } from "zod";
 import { proposeSeoReportApproval } from "../approvals/seoReport";
 import { getSeoReport, setSeoSummary, setSeoTaskAndApproval, type SeoReport } from "../db/seoReports";
 import type { Env } from "../env";
+import { enqueueReportVideo } from "../report/videoJob";
 import { plainSeoSummary, SeoReportFacts } from "../seo/reportFacts";
 import { hasTrafficData } from "../traffic/facts";
 import { trafficLines } from "../traffic/lines";
@@ -107,6 +108,13 @@ async function propose(env: Env, reportId: string): Promise<void> {
   if (!report || report.status !== "ready") return;
   const approvalId = await proposeSeoReportApproval(env, report);
   if (approvalId) await setSeoTaskAndApproval(env.DB, reportId, { approvalId });
+  await queueVideo(env, reportId);
+}
+
+/** Queues the report's short video now that its words are stored (by Claude, or by the code's own summary). A video that cannot be queued is logged and never fails the report: it is an extra. */
+async function queueVideo(env: Env, reportId: string): Promise<void> {
+  try { await enqueueReportVideo(env, "seo", reportId); }
+  catch (e) { console.error("report video: could not queue it for", reportId, e); }
 }
 
 /** Puts the code-written summary on a report that is still `collecting` and proposes its approval, so a report never waits on a task nobody picks up. It has no priorities. */

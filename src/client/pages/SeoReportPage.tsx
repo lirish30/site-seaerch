@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import Icon from "../components/Icon";
+import ReportVideo from "../components/ReportVideo";
 import TrafficSection from "../components/TrafficSection";
 import { publicSeoReport } from "../api";
 import { dayLabel } from "../careReportPageView";
@@ -99,6 +100,7 @@ export default function SeoReportPage() {
             <h1>{page.label}</h1>
             {sent && <p className="rp-based">Sent {sent}</p>}
           </div>
+          {page.video && token && <ReportVideo src={`/api/public/l/${token}/video.mp4`} />}
           {v.summary && <p className="mr-text">{v.summary}</p>}
           {v.recommendation && (
             <section className="mr-suggest" aria-labelledby="sr-suggest-h">

@@ -9,6 +9,7 @@ import { careInventoryHandler } from "./handlers/careInventory.ts";
 import { careUpdateHandler } from "./handlers/careUpdate.ts";
 import { meetilySyncHandler } from "./handlers/meetilySync.ts";
 import { renderHandler } from "./handlers/render.ts";
+import { reportRenderHandler } from "./handlers/reportRender.ts";
 import { voiceSampleHandler } from "./handlers/voiceSample.ts";
 import { voiceSegmentHandler } from "./handlers/voiceSegment.ts";
 import { runLoop, type JobHandler } from "./loop.ts";
@@ -35,11 +36,11 @@ export interface CliDeps {
 const stamp = (m: string) => `${new Date().toISOString()} ${m}`;
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** The jobs this helper can do: the cloned voice for a line, a clip of the voice test, the render, the Meetily sync, the read of a site's WordPress for care updates, the daily read of TLS certificate expiry dates, and the update of a site (backup, update, page checks, rollback). */
+/** The jobs this helper can do: the cloned voice for a line, a clip of the voice test, the render, the short video of a report, the Meetily sync, the read of a site's WordPress for care updates, the daily read of TLS certificate expiry dates, and the update of a site (backup, update, page checks, rollback). */
 export function buildHandlers(cfg: Config): JobHandler[] {
   const engines = createEngines(cfg);
   const media = realMedia(cfg);
-  return [voiceSegmentHandler(engines, media), voiceSampleHandler(engines, media), renderHandler(media), meetilySyncHandler(), careInventoryHandler(), careUpdateHandler(), careCertsHandler()];
+  return [voiceSegmentHandler(engines, media), voiceSampleHandler(engines, media), renderHandler(media), reportRenderHandler(), meetilySyncHandler(), careInventoryHandler(), careUpdateHandler(), careCertsHandler()];
 }
 
 function abortableSleep(signal?: AbortSignal): (ms: number) => Promise<void> {

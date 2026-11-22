@@ -44,3 +44,14 @@ export async function finishVideo(db: D1Database, id: string, p: { videoKey: str
 export async function failVideo(db: D1Database, id: string, error: string): Promise<void> {
   await db.prepare(`UPDATE report_videos SET status = 'failed', error = ? WHERE id = ? AND status = 'queued'`).bind(error, id).run();
 }
+
+export async function getVideo(db: D1Database, id: string): Promise<ReportVideo | null> {
+  const r = await db.prepare(`SELECT * FROM report_videos WHERE id = ?`).bind(id).first<Row>();
+  return r ? toVideo(r) : null;
+}
+
+/** `failed` back to `queued` (the owner's retry), with the old error cleared; false for a video in any other state. */
+export async function resetVideo(db: D1Database, id: string): Promise<boolean> {
+  const res = await db.prepare(`UPDATE report_videos SET status = 'queued', error = '' WHERE id = ? AND status = 'failed'`).bind(id).run();
+  return (res.meta.changes ?? 0) === 1;
+}

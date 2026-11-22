@@ -106,6 +106,32 @@ describe("auth routes", () => {
     });
   });
 
+  describe.each([["Care", "m"], ["Local SEO", "l"]])("a client's %s report video (GET /api/public/<m or l>/<token>/video.mp4)", (name, letter) => {
+    const T = "abcDEF123_-".padEnd(43, "x");
+    it(`needs no cookie to read the ${name} report's video: an unknown token is a 404, not a 401`, async () => {
+      const r = await SELF.fetch(`https://x/api/public/${letter}/${T}/video.mp4`);
+      expect(r.status).toBe(404);
+      expect(await r.json()).toEqual({ error: "not found" });
+    });
+    it.each([
+      (l: string) => `/api/public/${l}/${"A".repeat(43)}/video.mp4/`,
+      (l: string) => `/api/public/${l}/${"A".repeat(43)}/video.mp4/x`,
+      (l: string) => `/api/public/${l}/${"A".repeat(43)}/video.mp4x`,
+      (l: string) => `/api/public/${l}/${"A".repeat(43)}/Video.mp4`,
+      (l: string) => `/api/public/${l}/${"A".repeat(43)}/video`,
+      (l: string) => `/api/public/${l}/${"A".repeat(43)}/poster.jpg`,
+      (l: string) => `/api/public/${l}//video.mp4`,
+      (l: string) => `/api/public/${l}/a/b/video.mp4`,
+      (l: string) => `/api/public/${l}x/${"A".repeat(43)}/video.mp4`,
+      (l: string) => `/api/public/${l.toUpperCase()}/${"A".repeat(43)}/video.mp4`,
+    ])("GET %s stays protected without a cookie", async (path) => {
+      expect((await SELF.fetch(`https://x${path(letter)}`)).status).toBe(401);
+    });
+    it.each(["POST", "PUT", "DELETE", "PATCH"])("%s on it stays protected", async (m) => {
+      expect((await SELF.fetch(`https://x/api/public/${letter}/${T}/video.mp4`, { method: m, body: "{}" })).status).toBe(401);
+    });
+  });
+
   it("the three video files need no cookie (404 for an unknown token, not 401)", async () => {
     for (const n of ["video.mp4", "poster.jpg", "preview.gif"]) expect((await SELF.fetch(`https://x/api/public/report/${"abcDEF123_-".padEnd(43, "x")}/media/${n}`)).status).toBe(404);
   });

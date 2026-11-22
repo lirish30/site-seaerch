@@ -3,6 +3,7 @@ import { proposeReportApproval } from "../approvals/careReport";
 import { plainSummary, ReportFacts } from "../care/reportFacts";
 import { getReport, setSummary, setTaskAndApproval, type CareReport } from "../db/careReports";
 import type { Env } from "../env";
+import { enqueueReportVideo } from "../report/videoJob";
 import { hasTrafficData } from "../traffic/facts";
 import { trafficLines } from "../traffic/lines";
 import { enqueueTask } from "./db";
@@ -94,6 +95,13 @@ async function propose(env: Env, reportId: string): Promise<void> {
   if (!report || report.status !== "ready") return;
   const approvalId = await proposeReportApproval(env, report);
   if (approvalId) await setTaskAndApproval(env.DB, reportId, { approvalId });
+  await queueVideo(env, reportId);
+}
+
+/** Queues the report's short video now that its words are stored (by Claude, or by the code's own summary). A video that cannot be queued is logged and never fails the report: it is an extra. */
+async function queueVideo(env: Env, reportId: string): Promise<void> {
+  try { await enqueueReportVideo(env, "care", reportId); }
+  catch (e) { console.error("report video: could not queue it for", reportId, e); }
 }
 
 /** Puts the code-written summary on a report that is still `collecting` and proposes its approval, so a report never waits on a task nobody picks up. */

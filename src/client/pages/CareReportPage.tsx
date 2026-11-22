@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import Icon from "../components/Icon";
+import ReportVideo from "../components/ReportVideo";
 import TrafficSection from "../components/TrafficSection";
 import { publicCareReport } from "../api";
 import { dayLabel, editsLine, renewalLine, siteDetails, trafficView, type PublicReport } from "../careReportPageView";
@@ -96,6 +97,7 @@ export default function CareReportPage() {
             <h1>{page.label}</h1>
             {sent && <p className="rp-based">Sent {sent}</p>}
           </div>
+          {page.video && token && <ReportVideo src={`/api/public/m/${token}/video.mp4`} />}
           {page.summary && <p className="mr-text">{page.summary}</p>}
           {page.recommendation && (
             <section className="mr-suggest" aria-labelledby="mr-suggest-h">

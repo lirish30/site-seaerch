@@ -10,7 +10,7 @@ const page = (over: Partial<PublicSeoReport> = {}): PublicSeoReport => ({
     { term: "water heater repair", town: null, points: [...nine(3).slice(0, 6), { pos: null, ok: false }, { pos: null, ok: false }, { pos: null, ok: false }], measured: 6, visible: null, previousVisible: null },
   ],
   gbp: { rating: 4.7, reviewCount: 43, reviewsGained: 3, ratingChange: 0.2 }, reviews: { seen: 3, posted: 2 },
-  content: { published: [{ kind: "page", title: "Drain cleaning in Tigard" }, { kind: "gbp_post", title: "<b>Winter</b> tips" }] }, citations: { listed: 6, needsFix: 2, todo: 4 }, sentOn: "2026-12-01",
+  content: { published: [{ kind: "page", title: "Drain cleaning in Tigard" }, { kind: "gbp_post", title: "<b>Winter</b> tips" }] }, citations: { listed: 6, needsFix: 2, todo: 4 }, video: false, sentOn: "2026-12-01",
   ...over,
 });
 const view = (over: Partial<PublicSeoReport> = {}) => { const p = page(over); return seoReportPageView(p, { summary: p.summary, recommendation: p.recommendation, priorities: p.priorities }); };

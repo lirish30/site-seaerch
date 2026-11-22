@@ -287,6 +287,8 @@
 .mr-bar-warn > span { background:var(--warning); }
 .mr-bar-over > span { background:var(--critical); }
 .mr-note { font:400 14px/21px var(--font); color:var(--text-2); }
+.mr-video { margin:0; display:flex; flex-direction:column; gap:8px; }
+.mr-video video { display:block; width:100%; max-width:480px; aspect-ratio:1 / 1; border-radius:12px; background:#000; }
 .mr-next { gap:0; }
 .mr-renewals { margin:0; padding:0; list-style:none; display:flex; flex-direction:column; }
 .mr-renewals li { display:flex; align-items:baseline; justify-content:space-between; gap:16px; padding:12px 0; border-top:1px solid var(--border); font:400 15px/22px var(--font); }

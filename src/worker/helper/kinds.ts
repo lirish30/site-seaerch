@@ -4,6 +4,9 @@ import { getVideoAudit, moveVideoStatus, setSegmentAudio } from "../db/videoAudi
 import { ShotSchema, SegmentSchema, hashText } from "../video/plan";
 import { allVoiced, productionDeps } from "../video/production";
 import { applyRender } from "../video/renderJob";
+import { applyReportVideo, failReportVideo } from "../report/videoJob";
+import { MAX_SCENES, SceneSchema } from "../report/videoScenes";
+import type { ReportKind } from "../db/reportVideos";
 import { cancelHelperJobsFor } from "./jobs";
 import { HelperRefused, registerHelperKind, type HelperKindDef } from "./registry";
 
@@ -143,3 +146,34 @@ import "../meetings/syncKind"; // registers meetily.sync; a kind that lives besi
 import "../care/inventoryKind"; // registers care.inventory
 import "../care/updateKind"; // registers care.update
 import "../care/certsKind"; // registers care.certs
+
+/** The short, silent video that goes with a Care or Local SEO report: an MP4 and its poster, made from scenes of the report's own numbers. It reads nothing from the files bucket. */
+export const REPORT_RENDER_KIND = "report.render";
+
+/** Where a report's video and poster go. Fixed by the report, never by the helper. */
+export const reportVideoKeys = (kind: ReportKind, reportId: string): { mp4: string; jpg: string } => ({
+  mp4: `report-video/${kind}/${reportId}/v1.mp4`, jpg: `report-video/${kind}/${reportId}/v1.jpg`,
+});
+
+export const ReportRenderPayload = z.object({
+  videoId: z.string().min(1),
+  scenes: z.array(SceneSchema).min(1).max(MAX_SCENES),
+  brand: z.object({ name: z.string().max(80) }),
+  /** The video, then its poster. */
+  outputs: z.tuple([z.string().regex(/^report-video\/(care|seo)\/[A-Za-z0-9_-]{1,100}\/v1\.mp4$/), z.string().regex(/^report-video\/(care|seo)\/[A-Za-z0-9_-]{1,100}\/v1\.jpg$/)]),
+});
+export type ReportRenderPayload = z.infer<typeof ReportRenderPayload>;
+export const ReportRenderResult = z.object({ videoKey: z.string().min(1), posterKey: z.string().min(1), durationMs: z.number().nonnegative() });
+export type ReportRenderResult = z.infer<typeof ReportRenderResult>;
+
+const reportRender: HelperKindDef<ReportRenderPayload, ReportRenderResult> = {
+  kind: REPORT_RENDER_KIND,
+  payload: ReportRenderPayload,
+  result: ReportRenderResult,
+  inputs: () => [],
+  outputs: (p) => [...p.outputs],
+  apply: (env, p, r) => applyReportVideo(env, p, r),
+  async onFail(env, p) { await failReportVideo(env, p.videoId, "The report video could not be made. The report itself is not affected."); },
+  async onExpire(env, p) { await failReportVideo(env, p.videoId, "Your Mac helper didn't pick up the report video in time."); },
+};
+registerHelperKind(reportRender);

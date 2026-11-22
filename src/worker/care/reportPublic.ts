@@ -3,6 +3,7 @@ import { getReportByToken, recordView } from "../db/careReports";
 import { getSettings } from "../db/settings";
 import { isClientToken } from "../documents/token";
 import type { Env } from "../env";
+import { videoKeyOf } from "../report/videoPublic";
 import { zoneOf } from "../sop/cadence";
 import { publicTraffic, type PublicTraffic } from "../traffic/public";
 import { ReportFacts } from "./reportFacts";
@@ -38,6 +39,8 @@ export interface PublicReport {
   renewals: { what: "domain" | "certificate" | "subscription_term" | "annual_renewal"; domain: string | null; on: string }[];
   /** Absent when the report has no search or visit figures (older reports, or nothing linked). */
   traffic?: PublicTraffic;
+  /** True when the report has a finished video the page can play (`GET /api/public/m/<token>/video.mp4`). Never the file's key. */
+  video: boolean;
   /** The day the report was sent, `YYYY-MM-DD` in the booking zone. */
   sentOn: string;
 }
@@ -70,6 +73,7 @@ export async function publicReport(env: Pick<Env, "DB">, token: string, now: Dat
     edits: f.edits ? { usedMinutes: f.edits.usedMinutes, allowanceMinutes: f.edits.allowanceMinutes, state: f.edits.state, requestsDone: f.edits.requestsDone } : null,
     renewals: f.renewals.map((r) => ({ what: r.what, domain: r.domain, on: r.on })),
     ...(traffic ? { traffic } : {}),
+    video: (await videoKeyOf(env.DB, "care", report)) !== null,
     sentOn: dayKey(Date.parse(report.sentAt ?? "") || now.getTime(), tz),
   };
 }

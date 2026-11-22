@@ -31,9 +31,9 @@ const BLUR_PX = 14;
 export const GSAP_URL = "https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js";
 export const GSAP_SRI = "sha384-XmJ9SoHtVOHoQUcKvFAzVXwdkKo1Ie3bhmSoIAkcdsHGaIrVJIkmozyq0FJeb/Ly";
 /** System fonts only: a render asks no web font service for anything. */
-const FONT_STACK = `-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif`;
-const RED = "#ff3b30";
-const BACKGROUND = "#0b0f19";
+export const FONT_STACK = `-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif`;
+export const RED = "#ff3b30";
+export const BACKGROUND = "#0b0f19";
 
 export type Markup =
   | { type: "circle"; x: number; y: number; r: number }
@@ -279,6 +279,83 @@ html,body{width:${FRAME_W}px;height:${FRAME_H}px;overflow:hidden;background:${BA
 ${scenes.join("\n")}
 ${endCard}
 ${audios.join("\n")}
+</div>
+<script>
+window.__timelines = window.__timelines || {};
+const tl = gsap.timeline({ paused: true });
+${tween.join("\n")}
+window.__timelines["main"] = tl;
+tl.seek(0);
+</script>
+</body>
+</html>
+`;
+  return { files: { "index.html": html }, totalMs, sceneStartsMs };
+}
+
+// --- the report video ----------------------------------------------------------------------------------------------------------------------------------------------
+
+/** The short video of a Care or Local SEO report: a square, silent page of captions. A scene's words are all the page shows. */
+export interface ReportScene { title: string; big: string; small: string }
+export const REPORT_FRAME = 1080;
+export const REPORT_SCENE_MS = 6000;
+export const REPORT_FADE_MS = 1000;
+export const MAX_REPORT_SCENES = 6;
+/** The widest the big number may be (the page is 1080 px wide), and the average width of a bold character as a fraction of its size, deliberately on the wide side. */
+const BIG_MAX_WIDTH = 920;
+const BIG_CHAR_EM = 0.62;
+const BIG_MAX_PX = 220;
+const BIG_MIN_PX = 72;
+
+/** The big number's size: the largest that fits on one line, up to 220 px. */
+const bigPx = (text: string): number => Math.max(BIG_MIN_PX, Math.min(BIG_MAX_PX, Math.floor(BIG_MAX_WIDTH / (Math.max(1, Array.from(text).length) * BIG_CHAR_EM))));
+
+/**
+ * The page for a report's video: one scene every 6 seconds, each a title, a big number and a line of small text, centred on the brand background with the sender's name small at the foot. Silent (no audio element).
+ * Every scene but the first fades in over a second (the first is there from the first frame, so the poster, a frame at 0, shows the title card) and every scene but the last fades out over its final second.
+ * Pure and deterministic. Throws for no scenes or more than 6.
+ */
+export function buildReportComposition(scenes: ReportScene[], brand: { name: string }): Composition {
+  if (scenes.length === 0) throw new Error("A report video needs at least one scene.");
+  if (scenes.length > MAX_REPORT_SCENES) throw new Error(`A report video has at most ${MAX_REPORT_SCENES} scenes, and this one has ${scenes.length}.`);
+  const totalMs = scenes.length * REPORT_SCENE_MS;
+  const sceneStartsMs = scenes.map((_, i) => i * REPORT_SCENE_MS);
+
+  const blocks = scenes.map((sc, i) =>
+    `<div class="scene clip" id="sc${i}" data-start="${sec(sceneStartsMs[i])}" data-duration="${sec(REPORT_SCENE_MS)}">`
+    + `<div class="rv-in" id="in${i}"><div class="rv-title">${esc(sc.title)}</div><div class="rv-bar"></div>`
+    + `<div class="rv-big" style="font-size:${bigPx(sc.big)}px">${esc(sc.big)}</div><div class="rv-small">${esc(sc.small)}</div></div>`
+    + `<div class="rv-brand">${esc(brand.name)}</div></div>`,
+  );
+  const tween: string[] = [];
+  scenes.forEach((_, i) => {
+    const start = sceneStartsMs[i];
+    if (i > 0) tween.push(`tl.fromTo("#in${i}", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: ${sec(REPORT_FADE_MS)}, ease: "power2.out" }, ${sec(start)});`);
+    if (i < scenes.length - 1) tween.push(`tl.to("#in${i}", { opacity: 0, duration: ${sec(REPORT_FADE_MS)}, ease: "power1.in" }, ${sec(start + REPORT_SCENE_MS - REPORT_FADE_MS)});`);
+  });
+
+  const html = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=${REPORT_FRAME}, height=${REPORT_FRAME}" />
+<script src="${GSAP_URL}" integrity="${GSAP_SRI}" crossorigin="anonymous"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:${REPORT_FRAME}px;height:${REPORT_FRAME}px;overflow:hidden;background:${BACKGROUND}}
+#root{position:relative;width:${REPORT_FRAME}px;height:${REPORT_FRAME}px;overflow:hidden;font-family:${FONT_STACK}}
+.scene{position:absolute;left:0;top:0;width:${REPORT_FRAME}px;height:${REPORT_FRAME}px;overflow:hidden;background:${BACKGROUND};display:flex;align-items:center;justify-content:center;text-align:center;color:#fff}
+.rv-in{display:flex;flex-direction:column;align-items:center;gap:28px;width:920px}
+.rv-title{font-size:44px;font-weight:600;line-height:1.2;opacity:0.85}
+.rv-bar{width:96px;height:8px;border-radius:4px;background:${RED}}
+.rv-big{font-weight:800;letter-spacing:-0.03em;line-height:1.05;white-space:nowrap}
+.rv-small{font-size:42px;font-weight:500;line-height:1.3;opacity:0.8}
+.rv-brand{position:absolute;left:0;right:0;bottom:56px;font-size:30px;font-weight:600;opacity:0.55}
+</style>
+</head>
+<body>
+<div id="root" data-composition-id="main" data-start="0" data-duration="${sec(totalMs)}" data-width="${REPORT_FRAME}" data-height="${REPORT_FRAME}">
+${blocks.join("\n")}
 </div>
 <script>
 window.__timelines = window.__timelines || {};

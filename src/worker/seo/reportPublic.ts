@@ -3,6 +3,7 @@ import { getSeoReportByToken, recordSeoView } from "../db/seoReports";
 import { getSettings } from "../db/settings";
 import { isClientToken } from "../documents/token";
 import type { Env } from "../env";
+import { videoKeyOf } from "../report/videoPublic";
 import { zoneOf } from "../sop/cadence";
 import { publicTraffic, type PublicTraffic } from "../traffic/public";
 import { SeoReportFacts } from "./reportFacts";
@@ -41,6 +42,8 @@ export interface PublicSeoReport {
   citations: { listed: number; needsFix: number; todo: number } | null;
   /** What Google counted (Plan 16), with Search Console's average position inside it and nowhere else. Absent when the report has no search or visit figures (older reports, or nothing linked). */
   traffic?: PublicTraffic;
+  /** True when the report has a finished video the page can play (`GET /api/public/l/<token>/video.mp4`). Never the file's key. */
+  video: boolean;
   /** The day the report was sent, `YYYY-MM-DD` in the booking zone. */
   sentOn: string;
 }
@@ -77,6 +80,7 @@ export async function publicSeoReport(env: Pick<Env, "DB">, token: string, now: 
     content: { published: f.content.published.map((c) => ({ kind: c.kind, title: c.title })) },
     citations: f.citations ? { listed: f.citations.listed, needsFix: f.citations.needsFix, todo: f.citations.todo } : null,
     ...(traffic ? { traffic } : {}),
+    video: (await videoKeyOf(env.DB, "seo", report)) !== null,
     sentOn: dayKey(Date.parse(report.sentAt ?? "") || now.getTime(), tz),
   };
 }
