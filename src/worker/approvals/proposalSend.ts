@@ -46,8 +46,8 @@ export async function createSendApproval(env: Env, doc: Document): Promise<Appro
   const c = doc.content;
   const base = clientBase(env);
   const mail = renderProposalMail(c, `${base ?? "(set CLIENT_LINK_BASE first)"}/p/(the link is made when you approve)`, settings);
-  // Capacity only warns: a full week never stops a proposal from going out.
-  const warning = await capacityWarning(db, new Date(), 0);
+  // Capacity only warns: a full week never stops a proposal from going out, and neither does a failed read of it.
+  const warning = await capacityWarning(db, new Date(), 0).catch((e) => { console.error("proposal send: capacity warning failed", e); return null; });
   const preview = [
     `To: ${c.header.contactName} <${c.header.contactEmail}>`, `Subject: ${mail.subject}`, "", mail.body, "",
     `Proposal ${c.header.reference}, version ${doc.version}, option ${doc.optionId.toUpperCase()}`,

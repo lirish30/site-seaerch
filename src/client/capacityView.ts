@@ -28,3 +28,11 @@ export function clientsLine(c: { count: number; limit: number }): { text: string
 
 /** What the state asks of you, or null when all is well. */
 export const stateNote = (s: Capacity["state"]): string | null => s === "over" ? "A week is full. Think before you take on more." : s === "near" ? "A week is nearly full." : null;
+
+/** The text on the card when /today could not work out the capacity (the list still loads). */
+export const CAPACITY_UNAVAILABLE = "Couldn't work out your booked hours.";
+
+/** The Home card's state from what /today sent: the capacity, or (when the worker could not work it out) the retry state. */
+export function capacityPart(c: Capacity | null): { data: Capacity | null; error: string } {
+  return c ? { data: c, error: "" } : { data: null, error: CAPACITY_UNAVAILABLE };
+}

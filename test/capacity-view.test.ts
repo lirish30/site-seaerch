@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { capacityRows, clientsLine, hoursText, stateNote, weekLabel } from "../src/client/capacityView";
+import { capacityPart, capacityRows, clientsLine, hoursText, stateNote, weekLabel } from "../src/client/capacityView";
 import { clientLimitProblem, weeklyHoursProblem } from "../src/client/settingsPagesView";
 import type { Capacity } from "../src/worker/capacity/compute";
 import { DEFAULT_WORK_CONFIG, WorkConfigSchema } from "../src/worker/time/config";
@@ -39,5 +39,14 @@ describe("capacity view", () => {
       carryOverMinutes: 0, clients: { count: 1, limit: 45 }, state: "over", sentence: "",
     };
     expect(capacityRows(c).map((r) => [r.label, r.booked, r.pct, r.over])).toEqual([["This week", "10", 50, false], ["Next week", "25", 100, true], ["Week of Dec 14", "0", 0, false], ["Week of Dec 21", "0", 0, false]]);
+  });
+});
+
+describe("capacityPart", () => {
+  const CAP_UNAVAILABLE = "Couldn't work out your booked hours.";
+  it("carries the capacity when /today has it, and shows the retry state when it came back null", () => {
+    const c = { weeks: [], carryOverMinutes: 0, clients: { count: 0, limit: 45 }, state: "ok", sentence: "x" } as unknown as Capacity;
+    expect(capacityPart(c)).toEqual({ data: c, error: "" });
+    expect(capacityPart(null)).toEqual({ data: null, error: CAP_UNAVAILABLE });
   });
 });

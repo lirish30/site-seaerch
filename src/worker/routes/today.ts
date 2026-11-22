@@ -14,7 +14,9 @@ export const todayRoutes = new Hono<{ Bindings: Env }>();
 
 todayRoutes.get("/", async (c) => {
   const now = new Date();
-  const [items, capacity] = await Promise.all([buildToday(c.env.DB, now), computeCapacity(c.env.DB, now)]);
+  // The capacity card rides along, but never stops the list: a failed read leaves `capacity` null and the client shows a retry in its place.
+  const capacityOrNull = () => computeCapacity(c.env.DB, now).catch((e) => { console.error("today: capacity failed", e); return null; });
+  const [items, capacity] = await Promise.all([buildToday(c.env.DB, now), capacityOrNull()]);
   return c.json({ items, capacity });
 });
 

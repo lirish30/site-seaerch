@@ -1,6 +1,7 @@
 import { SELF, env } from "cloudflare:test";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { dayKey } from "../src/worker/booking/slots";
+import * as capacityMod from "../src/worker/capacity/compute";
 import { createSendApproval } from "../src/worker/approvals/proposalSend";
 import { saveSettings } from "../src/worker/db/settings";
 import { insertTasks } from "../src/worker/db/tasks";
@@ -19,6 +20,7 @@ beforeEach(async () => {
   await resetProjectWork();
   await saveSettings(env.DB, { work_config: "{}" });
 });
+afterEach(() => { vi.restoreAllMocks(); });
 const get = (path: string, auth = true) => SELF.fetch(`https://x${path}`, { headers: auth ? { cookie } : {} });
 
 /** Books `minutes` of your own work, due that day. */
@@ -49,6 +51,30 @@ describe("capacity routes", () => {
     expect(body.capacity.weeks).toHaveLength(4);
     expect(body.capacity.clients).toEqual({ count: 1, limit: 45 }); // the one live project booked above
     expect(typeof body.capacity.sentence).toBe("string");
+  });
+
+  it("/api/today still answers 200 with its items and capacity null when the capacity read throws", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(capacityMod, "computeCapacity").mockRejectedValue(new Error("capacity exploded"));
+    const r = await get("/api/today");
+    expect(r.status).toBe(200);
+    const body = await r.json<any>();
+    expect(Array.isArray(body.items)).toBe(true);
+    expect(body.capacity).toBeNull();
+    expect(err).toHaveBeenCalled();
+  });
+
+  it("a proposal-send approval is still made, with no warning, when the capacity read throws", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    await readyToSend();
+    const s = await seedProposalDeal();
+    const doc = await draftProposal(env, s.dealId, { optionId: "b", edits: { scopeNotes: "A new site." }, test: false }, new Date());
+    vi.spyOn(capacityMod, "capacityWarning").mockRejectedValue(new Error("capacity exploded"));
+    const a = await createSendApproval(env, doc);
+    expect(a.kind).toBe("proposal.send");
+    expect(a.preview).toContain("countersigned as");
+    expect(a.preview).not.toContain("Heads up");
+    expect(err).toHaveBeenCalled();
   });
 
   it("a proposal-send approval preview ends with the warning sentence when next week would be over, and has none otherwise", async () => {

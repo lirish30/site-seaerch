@@ -10,6 +10,7 @@ import type { QueueStatus } from "../../queueView";
 import type { HelperStatus } from "../../helperView";
 import type { CallRow } from "../../callsView";
 import type { Capacity } from "../../../worker/capacity/compute";
+import { capacityPart } from "../../capacityView";
 
 /** One piece of the page: its data once loaded, or why it could not be. The pieces load and fail independently. */
 export interface Part<T> { data: T | null; error: string }
@@ -63,7 +64,7 @@ export function useHome() {
     const keep = <T,>(set: (f: (p: Part<T>) => Part<T>) => void) => set((p) => ({ ...p, error: "" }));
     keep(setItems); keep(setCapacity); keep(setSummary); keep(setLeads); keep(setMoney); keep(setApprovals); keep(setSpend); keep(setQueue); keep(setHelper); keep(setWatched); keep(setCalls);
     // One request carries the list and the capacity beside it, so a failure of /today shows on both.
-    run(() => api.get<{ items: TodayItem[]; capacity: Capacity }>("/today"), (r) => { setItems({ data: r.items, error: "" }); setCapacity({ data: r.capacity, error: "" }); },
+    run(() => api.get<{ items: TodayItem[]; capacity: Capacity | null }>("/today"), (r) => { setItems({ data: r.items, error: "" }); setCapacity(capacityPart(r.capacity)); },
       (m) => { setItems((p) => ({ ...p, error: m })); setCapacity((p) => ({ ...p, error: m })); }, "Couldn't load your list.");
     run(() => api.get<TodaySummary>("/today/summary"), (r) => setSummary({ data: r, error: "" }), (m) => setSummary((p) => ({ ...p, error: m })), "Couldn't load your numbers.");
     run(() => api.get<LeadRow[]>("/leads?limit=500"), (rows) => setLeads({
