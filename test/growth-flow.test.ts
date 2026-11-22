@@ -237,7 +237,7 @@ describe("growth and retain, end to end", () => {
     const lead = await seedBusiness({ name: "Pinecrest Roofing", websiteUrl: "https://pinecrest-roofing.example.com" });
     const a = await audit(lead.id, [
       finding("Pinecrest Roofing hides its phone number on a phone", { recommendation: "Show it at the top of every page.", severity: "critical" }),
-      finding("The page at pinecrest-roofing.example.com loads slowly on a phone", { code: "slow", recommendation: "Shrink the large photos." }),
+      finding("The page at pinecrest-roofing.example.com loads slowly on a phone", { code: "slow_mobile", recommendation: "Shrink the large photos." }),
     ]);
     const post = await api<{ id: string; status: string; anonymize: boolean; images: number }>("POST", "/studio", { kind: "audit_tip", auditId: a.id }, 201);
     expect(post).toMatchObject({ status: "draft", anonymize: true, images: 0 });
