@@ -1,5 +1,4 @@
 import { monthRange } from "../care/reportFacts";
-import { previousMonth } from "../care/reportSweep";
 import { testClientSql } from "../clients/record";
 import { getSettings } from "../db/settings";
 import { getSite } from "../db/sites";
@@ -12,6 +11,7 @@ import { hasTrafficScopes, type Fetch } from "../google/oauth";
 import { gscMonth, gscTotals, type Range } from "../google/searchConsole";
 import { localDay } from "../monitoring/rollup";
 import { zoneOf } from "../sop/cadence";
+import { previousMonth } from "../sop/months";
 import { TrafficFacts, shapeSearch, shapeVisits } from "./facts";
 import { SiteNotFound, ga4StreamMatchesHost, gscMatchesHost, normalizeHost } from "./link";
 import { trafficProblem } from "./problem";

@@ -8,6 +8,8 @@ import { newClientToken } from "../documents/token";
 import type { Env } from "../env";
 import { queueReport } from "../queue/careReport";
 import { periodKey, zoneOf } from "../sop/cadence";
+import { previousMonth } from "../sop/months";
+import { trafficWait } from "../traffic/pull";
 import { buildFacts, monthRange } from "./reportFacts";
 import { CARE_4, tickCare4 } from "./tasks";
 
@@ -24,11 +26,7 @@ export class CareReportRefused extends Error {
   constructor(message: string) { super(message); this.name = "CareReportRefused"; }
 }
 
-/** The month before the one `now` falls in, `YYYY-MM` (what `periodKey("monthly", …)` returns), counted in the booking zone `tz`. */
-export function previousMonth(now: Date, tz: string): string {
-  const [y, m] = periodKey("monthly", now, tz).split("-").map(Number);
-  return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`;
-}
+export { previousMonth } from "../sop/months";
 
 /**
  * Makes the client's report of `period` if it has none, queues the summary and ticks 1.1 and 1.4 on the CARE-4 task of the current month. A report that exists is returned with `created: false`, and one left without
@@ -68,7 +66,7 @@ async function candidates(env: Env, current: string, period: string, range: { to
 }
 
 /**
- * The daily start of the month's reports. `started` counts the reports made; `skipped` the clients that made none new (their facts failed, which is logged, or a report that had no summary job got one). One client's failure never
+ * The daily start of the month's reports. `started` counts the reports made; `skipped` the clients that made none new (their facts failed, which is logged, or a report that had no summary job got one, or Google's numbers of the month are still being waited for). One client's failure never
  * stops the rest, and a failed client is tried again at the next daily run.
  */
 export async function sweepReports(env: Env, now: Date): Promise<{ started: number; skipped: number }> {
@@ -80,6 +78,8 @@ export async function sweepReports(env: Env, now: Date): Promise<{ started: numb
   if (ids.length >= MAX_PER_RUN) console.log(`care reports: ${MAX_PER_RUN} clients started, the rest wait for the next run`);
   for (const businessId of ids) {
     try {
+      // A report not yet made waits for Google's numbers of the month (until the 7th); one that exists is never waited for: its facts are frozen.
+      if (!(await getReportFor(env.DB, businessId, period)) && await trafficWait(env, businessId, period, now)) { skipped++; continue; }
       if ((await begin(env, businessId, period, false, now, tz)).created) started++;
       else skipped++;
     } catch (e) {
