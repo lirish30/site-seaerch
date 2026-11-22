@@ -297,7 +297,7 @@
 .mr-foot { margin:0; font:400 13px/19px var(--font); color:var(--text-3); text-align:center; }
 .mr .btn { min-height:44px; }
 /* Local SEO report (.sr), on the same page frame as the Care report: the 3x3 grid of one search term. */
-/* Not `.rp-bar`: clients.css redefines that name as an 8px progress bar, which squashes the header of a public page. */
+/* Not `.rp-bar`: that is the shared public-page header above. */
 .sr-for { display:flex; align-items:center; min-height:28px; }
 .sr-priorities { margin:0; padding:0 0 0 22px; display:flex; flex-direction:column; gap:6px; }
 .sr-priorities li { padding-left:2px; }

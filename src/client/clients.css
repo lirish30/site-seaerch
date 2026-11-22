@@ -187,11 +187,11 @@
 .rp-missing-name { min-width:0; overflow-wrap:anywhere; }
 .rp-missing .btn { min-height:44px; }
 .rp-bar-wrap { display:flex; flex-direction:column; gap:4px; }
-.rp-bar { height:8px; border-radius:99px; background:var(--bg-muted); box-shadow:inset 0 0 0 1px var(--border); overflow:hidden; }
-.rp-bar i { display:block; height:100%; border-radius:99px; background:var(--positive); }
-.rp-bar.warn i { background:var(--warning); }
-.rp-bar.over i { background:var(--critical); }
-.rp-bar.none i { background:var(--text-3); }
+.rp-meter { height:8px; border-radius:99px; background:var(--bg-muted); box-shadow:inset 0 0 0 1px var(--border); overflow:hidden; }
+.rp-meter i { display:block; height:100%; border-radius:99px; background:var(--positive); }
+.rp-meter.warn i { background:var(--warning); }
+.rp-meter.over i { background:var(--critical); }
+.rp-meter.none i { background:var(--text-3); }
 .rp-bar-label { margin:0; color:var(--text-2); }
 .rp-bar-label b { color:var(--text); }
 .rp-bar-month { margin:0 0 6px; }
