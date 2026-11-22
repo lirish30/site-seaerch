@@ -247,7 +247,7 @@ Never run for real from the test suite (the tests use fakes). To try it once on 
 2. In Agency OS, open a client with a Care or Local SEO report whose words are ready (Claude's task done, or the plain summary) and wait for the report's job: it is queued on its own when the words are stored.
 3. `node helper/src/cli.ts once` claims it, renders (a minute or less) and uploads. Check the log for `report.render` and `done`.
 4. Approve and send the report to yourself, open its link and press play: the video shows the month and the numbers, and nothing the summary says. A report with fewer than three numbers makes no video.
-5. A failed render says why on the video's row in the database (`report_videos.error`); the report page is not affected and shows no video.
+5. A failed render marks the video failed with a fixed sentence (`report_videos.error`); the helper's own reason is in its log and in the job's `error` (`helper_jobs.error`). The report page is not affected and shows no video.
 
 Install HyperFrames once, pinned to the version this was checked with (see `docs/superpowers/notes/2026-11-hyperframes.md`):
 

@@ -1,9 +1,9 @@
 import { env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { publicReport } from "../src/worker/care/reportPublic";
-import { insertReport, markSent, setSummary, getReport, type CareReport } from "../src/worker/db/careReports";
+import { cancel, insertReport, markSent, revoke, setSummary, getReport, type CareReport } from "../src/worker/db/careReports";
 import { getVideoFor, insertVideo, finishVideo, failVideo, resetVideo } from "../src/worker/db/reportVideos";
-import { getSeoReport, insertSeoReport, markSeoSent, setSeoSummary } from "../src/worker/db/seoReports";
+import { cancelSeoReport, getSeoReport, insertSeoReport, markSeoSent, revokeSeoReport, setSeoSummary } from "../src/worker/db/seoReports";
 import { newClientToken } from "../src/worker/documents/token";
 import type { Env } from "../src/worker/env";
 import { createDevice } from "../src/worker/helper/auth";
@@ -68,20 +68,24 @@ const seoFacts = (over: Record<string, unknown> = {}) => ({
 type Kind = "care" | "seo";
 let seq = 0;
 /** A report of either kind in the given status, with its words stored the way Claude's task would have. */
-async function seed(kind: Kind, o: { status?: "collecting" | "ready" | "sent"; facts?: unknown } = {}) {
+async function seed(kind: Kind, o: { status?: "collecting" | "ready" | "sent" | "revoked" | "cancelled"; facts?: unknown } = {}) {
   const s = await seedClient();
   const token = newClientToken();
   const status = o.status ?? "sent";
   seq += 1;
   if (kind === "care") {
     const { report } = await insertReport(env.DB, { businessId: s.businessId, period: "2026-11", token, facts: o.facts ?? careFacts(), test: false, now: NOW });
-    if (status !== "collecting") await setSummary(env.DB, report.id, ["collecting"], { summary: SUMMARY, recommendation: RECOMMENDATION, source: "claude", now: NOW });
-    if (status === "sent") await markSent(env.DB, report.id, SENT_AT);
+    if (status !== "collecting" && status !== "cancelled") await setSummary(env.DB, report.id, ["collecting"], { summary: SUMMARY, recommendation: RECOMMENDATION, source: "claude", now: NOW });
+    if (status === "sent" || status === "revoked") await markSent(env.DB, report.id, SENT_AT);
+    if (status === "revoked") await revoke(env.DB, report.id, NOW);
+    if (status === "cancelled") await cancel(env.DB, report.id);
     return { id: report.id, token };
   }
   const { report } = await insertSeoReport(env.DB, { businessId: s.businessId, period: "2026-11", token, facts: o.facts ?? seoFacts(), test: false, now: NOW });
-  if (status !== "collecting") await setSeoSummary(env.DB, report.id, ["collecting"], { summary: SUMMARY, recommendation: RECOMMENDATION, priorities: PRIORITIES, source: "claude", now: NOW });
-  if (status === "sent") await markSeoSent(env.DB, report.id, SENT_AT);
+  if (status !== "collecting" && status !== "cancelled") await setSeoSummary(env.DB, report.id, ["collecting"], { summary: SUMMARY, recommendation: RECOMMENDATION, priorities: PRIORITIES, source: "claude", now: NOW });
+  if (status === "sent" || status === "revoked") await markSeoSent(env.DB, report.id, SENT_AT);
+  if (status === "revoked") await revokeSeoReport(env.DB, report.id, NOW);
+  if (status === "cancelled") await cancelSeoReport(env.DB, report.id);
   return { id: report.id, token };
 }
 
@@ -120,6 +124,33 @@ describe("buildScenes", () => {
     const visitsOnly = buildScenes("care", careFacts({ sites: [site("a.example", { uptimePercent: null, updatesTracked: false })], traffic: { ...TRAFFIC, search: null } }) as never);
     expect(visitsOnly.map((s) => s.big)).toEqual(["November 2026", "5,678", "Thank you"]);
     expect(visitsOnly.find((s) => s.big === "5,678")!.small).toContain("counted by Google");
+  });
+
+  it("the uptime scene says when a site was only watched part of the month", () => {
+    const up = (sites: unknown[]) => buildScenes("care", careFacts({ sites, traffic: null }) as never).find((x) => x.big.endsWith("%"));
+    // watched all month: the plain line
+    expect(up([site("a.example", { uptimePercent: 100, monitoredSince: "2026-10-03", coveredDays: 30 })])).toEqual({ title: "Your site stayed up", big: "100%", small: "Of the time this month, as measured by our monitoring" });
+    // watched from the 27th: four days, said so
+    const late = up([site("a.example", { uptimePercent: 100, monitoredSince: "2026-11-27", coveredDays: 4 })])!;
+    expect(late.big).toBe("100%");
+    expect(late.small).toBe("Of the time we checked this month (4 days), as measured by our monitoring");
+    // one day reads as a day
+    expect(up([site("a.example", { monitoredSince: "2026-11-30", coveredDays: 1 })])!.small).toContain("(1 day)");
+    // two sites: the lowest figure and the smaller number of days
+    const two = up([site("a.example", { uptimePercent: 99.9, monitoredSince: "2026-10-03", coveredDays: 30 }), site("b.example", { uptimePercent: 98.2, monitoredSince: "2026-11-20", coveredDays: 11 })])!;
+    expect(two.big).toBe("98.2%");
+    expect(two.small).toContain("(11 days)");
+    expect(two.small).toContain("lowest of your sites");
+    // fewer covered days than the month has, even if the first day is not after the 1st
+    expect(up([site("a.example", { monitoredSince: "2026-10-03", coveredDays: 25 })])!.small).toContain("(25 days)");
+    // not measured, or no date to tell by: no scene
+    expect(up([site("a.example", { uptimePercent: null, monitoredSince: null, coveredDays: 0 })])).toBeUndefined();
+    expect(up([site("a.example", { uptimePercent: 99.9, monitoredSince: null, coveredDays: 30 })])).toBeUndefined();
+  });
+
+  it("a rank of 0 points in the top 3 gets no scene, like every other zero", () => {
+    const zero = seoFacts({ terms: [{ term: "t", town: null, points: nine(0), measured: 9, visible: 0, previousVisible: 1 }], gbp: { rating: 4.7, reviewCount: 43, reviewsGained: 0, ratingChange: null } });
+    expect(buildScenes("seo", zero as never).map((x) => x.big)).toEqual(["November 2026", "1,234", "5,678", "Thank you"]);
   });
 
   it("buildScenes returns nothing when fewer than three scenes can be built", () => {
@@ -324,7 +355,7 @@ describe("applying a rendered video", () => {
 
 describe("the video route", () => {
   const url = (kind: Kind, token: string) => `/${kind === "care" ? "m" : "l"}/${token}/video.mp4`;
-  async function rendered(kind: Kind, status: "sent" | "ready" = "sent") {
+  async function rendered(kind: Kind, status: "sent" | "ready" | "collecting" | "revoked" | "cancelled" = "sent") {
     const r = await seed(kind, { status });
     const v = (await insertVideo(env.DB, { kind, reportId: r.id, now: NOW })).video;
     const k = reportVideoKeys(kind, r.id);
@@ -335,11 +366,18 @@ describe("the video route", () => {
 
   it("the video route is 404 for a report that is not sent and for an unrendered video", async () => {
     for (const kind of ["care", "seo"] as const) {
-      // not sent, even with a rendered video
-      const notSent = await rendered(kind, "ready");
-      const r1 = await route(url(kind, notSent.token));
-      expect(r1.status).toBe(404);
-      expect(await r1.json()).toEqual(NOT_FOUND);
+      // not sent (or no longer live), even with a rendered video: exactly the answer an unknown token gets
+      const unknown = await route(url(kind, newClientToken()));
+      const unknownBody = await unknown.text();
+      expect(unknown.status).toBe(404);
+      expect(JSON.parse(unknownBody)).toEqual(NOT_FOUND);
+      for (const status of ["collecting", "ready", "revoked", "cancelled"] as const) {
+        const notLive = await rendered(kind, status);
+        const r1 = await route(url(kind, notLive.token));
+        expect(r1.status, `${kind} ${status}`).toBe(unknown.status);
+        expect(r1.headers.get("content-type"), `${kind} ${status}`).toBe(unknown.headers.get("content-type"));
+        expect(await r1.text(), `${kind} ${status}`).toBe(unknownBody);
+      }
 
       // sent, but the video is queued / failed / discarded / missing
       for (const state of ["queued", "failed", "discarded", "none"] as const) {

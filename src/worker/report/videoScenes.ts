@@ -4,7 +4,7 @@ import type { SeoReportFacts } from "../seo/reportFacts";
 
 // The scenes of a report's short video (Plan 16): a title card, up to four numbers and an end card, built ONLY from the numbers and fixed phrases of the report's frozen facts. No word Claude wrote
 // (the summary, the recommendation, the priorities) and no text a stranger wrote (a search query, a page, a channel, a review) can reach a scene: the facts' text fields are never read except the
-// client's own name and the month's label. A number that was not measured (null) is left out, never shown as 0, and so is a count of nothing done or gained (a video has no use for "0 updates").
+// client's own name and the month's label. ONE RULE for the numbers: a null or zero count never gets a scene (it is a highlights reel, and the end card points to the full report), so nothing is shown as 0 or "0 of 9".
 
 /** The most a payload may carry, and what a scene's text may be (the helper puts it on a 1080 px square). */
 export const MAX_SCENES = 6;
@@ -21,6 +21,7 @@ export const SceneSchema: z.ZodType<Scene> = z.object({
 
 type Traffic = NonNullable<ReportFacts["traffic"]>;
 
+const daysIn = (period: string): number => new Date(Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)), 0)).getUTCDate();
 const whole = (n: number): string => n.toLocaleString("en-US");
 const sum = (xs: number[]): number => xs.reduce((a, b) => a + b, 0);
 const scene = (title: string, big: string, small: string): Scene => ({ title: title.slice(0, SCENE_LIMITS.title), big: big.slice(0, SCENE_LIMITS.big), small: small.slice(0, SCENE_LIMITS.small) });
@@ -35,10 +36,14 @@ function trafficScenes(t: Traffic | null | undefined): Scene[] {
 
 function careNumbers(f: ReportFacts): Scene[] {
   const out: Scene[] = [];
-  const measured = f.sites.filter((s) => s.uptimePercent !== null);
+  // A site is only counted when its figure and the day it was first watched are both known. Watched for less than the whole month (the way `plainSummary` tells it), the line says "of the time we checked" and the days.
+  const measured = f.sites.filter((s) => s.uptimePercent !== null && s.monitoredSince !== null);
   if (measured.length) {
     const low = Math.min(...measured.map((s) => s.uptimePercent!));
-    out.push(scene("Your site stayed up", `${low}%`, measured.length === 1 ? "Of the time this month, as measured by our monitoring" : "Of the time this month at the lowest of your sites, as measured by our monitoring"));
+    const partial = measured.some((s) => s.monitoredSince! > `${f.period}-01` || s.coveredDays < daysIn(f.period));
+    const days = Math.min(...measured.map((s) => s.coveredDays));
+    const when = partial ? `we checked this month (${days} ${days === 1 ? "day" : "days"})` : "this month";
+    out.push(scene("Your site stayed up", `${low}%`, `Of the time ${when}${measured.length === 1 ? ", as measured by our monitoring" : " at the lowest of your sites, as measured by our monitoring"}`));
   }
   // An update run is what measured the update and backup numbers: a site none covered says nothing about them.
   const tracked = f.sites.filter((s) => s.updatesTracked === true);
@@ -53,7 +58,8 @@ function seoNumbers(f: SeoReportFacts): Scene[] {
   const out: Scene[] = [];
   const shown = f.rankAsOf === null ? [] : f.terms.filter((t) => t.visible !== null);
   const measured = sum(shown.map((t) => t.measured));
-  if (shown.length && measured > 0) out.push(scene("Where you show on Google", `${sum(shown.map((t) => t.visible!))} of ${measured}`, "points in the top 3 in our check"));
+  const visible = sum(shown.map((t) => t.visible!));
+  if (shown.length && measured > 0 && visible > 0) out.push(scene("Where you show on Google", `${visible} of ${measured}`, "points in the top 3 in our check"));
   if (f.gbp.reviewsGained !== null && f.gbp.reviewsGained > 0) out.push(scene("New reviews", whole(f.gbp.reviewsGained), "New reviews on your Google profile since the last check"));
   return [...out, ...trafficScenes(f.traffic)];
 }
