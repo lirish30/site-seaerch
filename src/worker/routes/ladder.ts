@@ -57,7 +57,8 @@ ladderRoutes.put("/ladder/:id/link", async (c) => {
   // A drafted step's mail was made with the link it had: changing it now would leave the card saying one thing and the mail another.
   if (row.status !== "waiting" && row.status !== "due") return c.json({ error: `This step is ${row.status}, so its link can no longer be changed.` }, 409);
   await setLadderLink(c.env.DB, id, body.link);
-  // A review request that was held back only for want of a link goes back in line for the next sweep.
-  if (row.status === "due" && row.step === "review_request" && body.link) await moveLadder(c.env.DB, id, ["due"], "waiting", { note: "" });
+  // A review request that was held back only for want of a link goes back in line for the next sweep. One that already had a mail drafted (held or turned down since) does not: its approval is decided and a new one
+  // would not be made, so it stays `due` for the owner to mail by hand.
+  if (row.status === "due" && row.step === "review_request" && body.link && !row.approvalId) await moveLadder(c.env.DB, id, ["due"], "waiting", { note: "" });
   return c.json({ row: (await getLadderRow(c.env.DB, id)) as LadderRow });
 });

@@ -39,9 +39,12 @@ async function liveClientIds(db: D1Database): Promise<string[]> {
 }
 
 /** The approval already made for a step (in any state), or null: a crash between making it and marking the step leaves one behind. */
-async function approvalFor(db: D1Database, ladderId: string): Promise<string | null> {
-  return (await db.prepare(`SELECT id FROM approvals WHERE kind = ? AND json_extract(payload, '$.ladderId') = ? ORDER BY created_at, id LIMIT 1`).bind(LADDER_MAIL_KIND, ladderId).first<{ id: string }>())?.id ?? null;
+async function approvalFor(db: D1Database, ladderId: string): Promise<{ id: string; status: string } | null> {
+  return await db.prepare(`SELECT id, status FROM approvals WHERE kind = ? AND json_extract(payload, '$.ladderId') = ? ORDER BY created_at, id LIMIT 1`).bind(LADDER_MAIL_KIND, ladderId).first<{ id: string; status: string }>();
 }
+
+/** The note a step gets when its mail was turned down in the inbox. */
+export const TURNED_DOWN = "the mail was turned down in Approvals";
 
 /**
  * The daily ladder sweep (Plan 15), in this order: adds the steps of any build whose hook never ran; from 1 December on, adds this year's December letter for each live real client (once); skips any waiting step that is
@@ -55,6 +58,9 @@ export async function sweepLadder(env: Env, now: Date): Promise<{ filled: number
   const nowIso = now.toISOString();
   const out = { filled: 0, drafted: 0, due: 0, skipped: 0, held: 0 };
   out.filled += await backfillLadder(env, now);
+
+  // A mail the owner turned down in the inbox leaves its step `drafted` behind a decided approval: one statement puts those steps in front of the owner (Today), to be mailed by hand and marked done, or skipped.
+  out.due += (await db.prepare(`UPDATE ladder_steps SET status = 'due', note = ? WHERE status = 'drafted' AND approval_id IN (SELECT id FROM approvals WHERE status = 'rejected')`).bind(TURNED_DOWN).run()).meta.changes ?? 0;
 
   const settings = await getSettings(db);
   const today = calendarDateIn(now, zoneOf(settings));
@@ -100,9 +106,16 @@ export async function sweepLadder(env: Env, now: Date): Promise<{ filled: number
       preview: [`To: ${who.contactName ? `${who.contactName} <${who.to}>` : who.to}`, `Subject: ${mail.subject}`, "", mail.body, "", "Nothing is mailed until you approve. If the step is skipped or the client goes on hold first, approving sends nothing."].join("\n"),
       payload: { ladderId: row.id }, record_type: "business", record_id: row.businessId, drafted_by: "logan",
     }, "ladderId", row.id);
-    const approvalId = made?.id ?? (await approvalFor(db, row.id));
-    if (!approvalId) continue;
-    if (await moveLadder(db, row.id, ["waiting"], "drafted", { approvalId }) && made) out.drafted++;
+    // An approval left behind by a crash (made, but the step never marked) is taken over only while it is still pending. A decided one is never reused (the once-only key would not make a new one): the step goes to
+    // the owner instead of sitting `drafted` behind an approval that nobody can act on.
+    const existing = made ? null : await approvalFor(db, row.id);
+    if (!made && !existing) continue;
+    if (existing && existing.status !== "pending") {
+      const note = existing.status === "rejected" ? TURNED_DOWN : "the mail was already approved";
+      if (await moveLadder(db, row.id, ["waiting"], "due", { approvalId: existing.id, note })) out.due++;
+      continue;
+    }
+    if (await moveLadder(db, row.id, ["waiting"], "drafted", { approvalId: made?.id ?? existing!.id }) && made) out.drafted++;
   }
   return out;
 }

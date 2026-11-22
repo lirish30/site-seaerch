@@ -1,5 +1,6 @@
 import { env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { approve, reject } from "../src/worker/approvals/decide";
 import { addDoNotContact } from "../src/worker/db/doNotContact";
 import { placeHold } from "../src/worker/db/holds";
 import { insertLadderRows, listLadder, type LadderStep } from "../src/worker/db/ladder";
@@ -204,6 +205,39 @@ describe("sweepLadder", () => {
     expect(r.filled).toBe(5);
     expect((await listLadder(env.DB, s.businessId)).map((x) => [x.step, x.status])).toEqual([["review_request", "due"], ["testimonial", "waiting"], ["thank_you", "waiting"], ["check_in", "waiting"], ["case_study", "waiting"]]);
     expect(r.due).toBe(1); // no review link yet
+  });
+
+  it("a mail turned down in the inbox: the next sweep puts the drafted step in front of the owner as due, makes no new approval and sends nothing; running it again changes nothing", async () => {
+    const s = await seedClient();
+    const id = await row(s, "check_in", "2026-11-22");
+    expect((await sweepLadder(e, NOW)).drafted).toBe(1);
+    const mail = await readyToSend();
+    const [a] = await approvals();
+    expect(await reject(env.DB, a.id)).toBe(true);
+    expect((await rowOf(s, id)).status).toBe("drafted"); // nothing moves it until the sweep
+    expect(await sweepLadder(e, NOW)).toEqual({ filled: 0, drafted: 0, due: 1, skipped: 0, held: 0 });
+    expect(await rowOf(s, id)).toMatchObject({ status: "due", note: "the mail was turned down in Approvals", approvalId: a.id });
+    expect(await sweepLadder(e, NOW)).toEqual({ filled: 0, drafted: 0, due: 0, skipped: 0, held: 0 });
+    expect(await approvals()).toHaveLength(1);
+    expect(mail.sent).toHaveLength(0);
+    expect(await approve(e, a.id)).toMatchObject({ ok: false, status: 409 });
+  });
+
+  it("a waiting step whose approval was already decided is never taken over: it goes due, not drafted; a pending one left by a crash is", async () => {
+    const turnedDown = await seedClient(), approved = await seedClient(), crashed = await seedClient();
+    const ids = [await row(turnedDown, "check_in", "2026-11-22"), await row(approved, "check_in", "2026-11-22"), await row(crashed, "check_in", "2026-11-22")];
+    expect((await sweepLadder(e, NOW)).drafted).toBe(3);
+    const made = await approvals();
+    // The three steps are put back to waiting, as a crash between the approval and the step's move (or a hold lifted later) would leave them.
+    await env.DB.prepare(`UPDATE approvals SET status = 'rejected' WHERE id = ?`).bind(made[0].id).run();
+    await env.DB.prepare(`UPDATE approvals SET status = 'approved' WHERE id = ?`).bind(made[1].id).run();
+    await env.DB.prepare(`UPDATE ladder_steps SET status = 'waiting' WHERE id IN (?, ?, ?)`).bind(...ids).run();
+    expect(await sweepLadder(e, NOW)).toEqual({ filled: 0, drafted: 0, due: 2, skipped: 0, held: 0 });
+    expect(await rowOf(turnedDown, ids[0])).toMatchObject({ status: "due", note: "the mail was turned down in Approvals", approvalId: made[0].id });
+    expect(await rowOf(approved, ids[1])).toMatchObject({ status: "due", note: "the mail was already approved", approvalId: made[1].id });
+    expect(await rowOf(crashed, ids[2])).toMatchObject({ status: "drafted", approvalId: made[2].id });
+    expect(await approvals()).toHaveLength(3);
+    expect(await sweepLadder(e, NOW)).toEqual({ filled: 0, drafted: 0, due: 0, skipped: 0, held: 0 });
   });
 
   it("is part of the daily cron and sends nothing", async () => {

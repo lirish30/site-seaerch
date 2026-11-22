@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { STEP_LABEL, dueLine, isOpen, linkProblem, ordered, statusTone, statusWord, takesLink, type LadderRow } from "../src/client/ladderView";
+import { STEP_LABEL, dueLine, isOpen, linkProblem, ordered, statusTone, statusWord, takesLink, sendByHand, type LadderRow } from "../src/client/ladderView";
 
 const row = (o: Partial<LadderRow>): LadderRow => ({ id: "r", businessId: "b", projectId: null, step: "check_in", dueOn: "2026-12-22", status: "waiting", approvalId: null, link: null, note: "", createdAt: "", doneAt: null, ...o });
 
@@ -18,6 +18,10 @@ describe("ladder view", () => {
     expect(takesLink(row({ step: "review_request", status: "waiting" }))).toBe(true);
     expect(takesLink(row({ step: "review_request", status: "drafted" }))).toBe(false);
     expect(takesLink(row({ step: "check_in", status: "waiting" }))).toBe(false);
+    expect(takesLink(row({ step: "review_request", status: "due", approvalId: "a1" }))).toBe(false); // its mail was already drafted and decided
+    expect(sendByHand(row({ step: "check_in", status: "due", approvalId: "a1" }))).toBe(true);
+    expect(sendByHand(row({ step: "check_in", status: "due" }))).toBe(false);
+    expect(sendByHand(row({ step: "thank_you", status: "due", approvalId: "a1" }))).toBe(false);
   });
   it("shows the day, and says past due only for a step still open and not drafted", () => {
     expect(dueLine(row({ dueOn: "2026-12-22" }), "2026-12-01")).toBe("22 Dec 2026");

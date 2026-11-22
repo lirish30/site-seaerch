@@ -25,8 +25,11 @@ export function dueLine(r: Pick<LadderRow, "dueOn" | "status">, today: string): 
   return isOpen(r) && r.status !== "drafted" && r.dueOn < today ? `${d} (past due)` : d;
 }
 
-/** Whether the owner can type a link on this step: a review request that has not been drafted yet. */
-export const takesLink = (r: Pick<LadderRow, "step" | "status">): boolean => r.step === "review_request" && (r.status === "waiting" || r.status === "due");
+/** Whether the owner can type a link on this step: a review request that has not had a mail drafted yet. */
+export const takesLink = (r: Pick<LadderRow, "step" | "status" | "approvalId">): boolean => r.step === "review_request" && (r.status === "waiting" || r.status === "due") && !r.approvalId;
+
+/** True for a mail step whose draft was held, turned down or already approved: it is the owner's to send by hand and mark done. */
+export const sendByHand = (r: Pick<LadderRow, "step" | "status" | "approvalId">): boolean => r.status === "due" && !!r.approvalId && !["thank_you", "case_study"].includes(r.step);
 
 /** What is wrong with a typed review link, in plain words, or null when it is empty (clears it) or fine. */
 export function linkProblem(raw: string): string | null {

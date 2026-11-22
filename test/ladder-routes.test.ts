@@ -1,6 +1,7 @@
 import { SELF, env } from "cloudflare:test";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { approve } from "../src/worker/approvals/decide";
+import { placeHold } from "../src/worker/db/holds";
 import { insertLadderRows, listLadder, setLadderStatus, type LadderStep } from "../src/worker/db/ladder";
 import type { Env } from "../src/worker/env";
 import { sweepLadder } from "../src/worker/ladder/sweep";
@@ -94,6 +95,28 @@ describe("ladder routes", () => {
     expect(((await r.json()) as any).row).toMatchObject({ status: "waiting", note: "", link: "https://g.page/r/abc" });
     expect((await sweepLadder(env as Env, new Date("2026-11-22T18:00:00.000Z"))).drafted).toBe(1);
     expect((await call("PUT", `/api/ladder/${s.ladderId}/link`, { link: "https://g.page/r/other" })).status).toBe(409);
+  });
+
+  it("a review request held at approval time stays due when its link is saved, and the sweep never makes it drafted behind the decided approval", async () => {
+    const s = await seedClient({ invoice: { cents: 5000 } });
+    await insertLadderRows(env.DB, [{ businessId: s.businessId, projectId: s.project!.id, step: "review_request", dueOn: "2026-11-22" }], "2026-11-01T00:00:00.000Z");
+    const id = (await listLadder(env.DB, s.businessId))[0].id;
+    const NOW = new Date("2026-11-22T18:00:00.000Z");
+    expect((await call("PUT", `/api/ladder/${id}/link`, { link: "https://g.page/r/abc" })).status).toBe(200);
+    expect((await sweepLadder(env as Env, NOW)).drafted).toBe(1);
+    const mail = await readyToSend();
+    expect(await placeHold(env.DB, { businessId: s.businessId, invoiceId: s.invoice!.id, now: NOW.toISOString() })).toBe(true);
+    const approvalId = (await listLadder(env.DB, s.businessId))[0].approvalId!;
+    expect(await approve(env as Env, approvalId)).toEqual({ ok: true });
+    expect((await listLadder(env.DB, s.businessId))[0]).toMatchObject({ status: "due", approvalId });
+
+    const saved = await call("PUT", `/api/ladder/${id}/link`, { link: "https://g.page/r/new" });
+    expect(((await saved.json()) as any).row).toMatchObject({ status: "due", link: "https://g.page/r/new" }); // not back to waiting
+    await env.DB.prepare(`UPDATE billing_holds SET lifted_at = ?, lifted_by = 'manual'`).bind(NOW.toISOString()).run();
+    expect(await sweepLadder(env as Env, NOW)).toEqual({ filled: 0, drafted: 0, due: 0, skipped: 0, held: 0 });
+    expect((await listLadder(env.DB, s.businessId))[0].status).toBe("due");
+    expect(mail.sent).toHaveLength(0);
+    expect((await call("POST", `/api/ladder/${id}/done`)).status).toBe(200); // the owner can still close it by hand
   });
 
   it("the client read shows the rows: the route, the owner's record and the get_client tool", async () => {

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiError, ladderApi } from "../../api";
 import { latestOnly, problemText } from "../../clientView";
-import { LADDER_LINK_MAX, STEP_LABEL, dueLine, isOpen, linkProblem, ordered, statusTone, statusWord, takesLink, type LadderRow } from "../../ladderView";
+import { LADDER_LINK_MAX, STEP_LABEL, dueLine, isOpen, linkProblem, ordered, sendByHand, statusTone, statusWord, takesLink, type LadderRow } from "../../ladderView";
 
 /** One step: its name, day and status, the review link box on a review request, the case study button, and Done and Skip while it is open. Every text is a React text node. */
 function Step({ row, today, busy, onRun }: { row: LadderRow; today: string; busy: boolean; onRun: (job: () => Promise<unknown>, fail: string) => Promise<void> }) {
@@ -28,6 +28,7 @@ function Step({ row, today, busy, onRun }: { row: LadderRow; today: string; busy
       </div>
       {row.note && <p className="small lp-note">{row.note}</p>}
       {row.status === "drafted" && <p className="small muted">The mail is drafted. Read it and send it from Approvals on <Link to="/today">Home</Link>.</p>}
+      {sendByHand(row) && <p className="small muted">This one will not be drafted again. Send it yourself if you still want it to go, then mark it done, or skip it.</p>}
       {takesLink(row) && (
         <div className="lp-link">
           <label className="deal-field" htmlFor={`lp-link-${row.id}`}><span>Google review link</span>
