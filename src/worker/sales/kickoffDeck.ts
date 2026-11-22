@@ -23,6 +23,13 @@ export function buildKickoffDeck(i: KickoffInput): DeckSlide[] {
     p.steps.push(s);
   }
   const you = i.yourName.trim();
+  const parts = phases.map((p) => ({
+    p,
+    ours: p.steps.filter((s) => s.status !== "waiting_client").flatMap((s) => sentenceOf(s) ?? []),
+    theirs: p.steps.filter((s) => s.status === "waiting_client").flatMap((s) => sentenceOf(s) ?? []),
+  }));
+  // Only promise what the deck shows: most decks have no step waiting on the client.
+  const anyNeeds = parts.some((x) => x.theirs.length > 0);
   const slides: DeckSlide[] = [
     {
       key: "title", title: i.clientName,
@@ -34,14 +41,12 @@ export function buildKickoffDeck(i: KickoffInput): DeckSlide[] {
       blocks: [
         text("Kickoff", "eyebrow"),
         { type: "list", numbered: true, items: phases.map((p) => ({ text: p.title })) },
-        text("In each part you will see what we do and what we need from you.", "fine"),
+        text(anyNeeds ? "In each part you will see what we do and what we need from you." : "In each part you will see what we do.", "fine"),
       ],
       speakerNote: "Walk the parts in order. Say that we will tell them before anything needs them, and that they can ask about any part at any time.",
     },
   ];
-  for (const p of phases) {
-    const ours = p.steps.filter((s) => s.status !== "waiting_client").flatMap((s) => sentenceOf(s) ?? []);
-    const theirs = p.steps.filter((s) => s.status === "waiting_client").flatMap((s) => sentenceOf(s) ?? []);
+  for (const { p, ours, theirs } of parts) {
     const blocks: DeckBlock[] = [];
     if (ours.length) blocks.push({ type: "list", heading: "What we do", items: ours.map((t) => ({ text: t })) });
     if (theirs.length) blocks.push({ type: "list", heading: "What we need from you", items: theirs.map((t) => ({ text: t })) });

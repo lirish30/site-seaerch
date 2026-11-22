@@ -68,6 +68,16 @@ describe("buildKickoffDeck", () => {
     expect(listOf(slides[2], "What we need from you")).toEqual(["Send us your logo."]);
   });
 
+  it("the agenda promises \"what we need from you\" only when some part has such a block", () => {
+    const need = "In each part you will see what we do and what we need from you.";
+    const withNeed = deck([step({ clientSummary: "We design the homepage." }), step({ clientSummary: "Send us your logo.", status: "waiting_client" })]);
+    expect(textOf([withNeed[1]])).toContain(need);
+    const without = deck([step({ clientSummary: "We design the homepage." }), step({ clientSummary: null, status: "waiting_client" })]);
+    expect(textOf([without[1]])).not.toContain("what we need from you");
+    expect(textOf([without[1]])).toContain("In each part you will see what we do.");
+    expect(without.slice(2).every((sl) => listOf(sl, "What we need from you") === null)).toBe(true);
+  });
+
   it("carries no date", () => {
     expect(textOf(deck([step({ clientSummary: "We design the homepage." })]))).not.toMatch(/\b(20\d\d|Jan(uary)?|Feb(ruary)?|Mar(ch)?|Apr(il)?|Jun(e)?|Jul(y)?|Aug(ust)?|Sep(tember)?|Oct(ober)?|Nov(ember)?|Dec(ember)?)\b/);
   });
