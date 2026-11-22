@@ -3,10 +3,11 @@ import { Link } from "react-router-dom";
 import { careApi } from "../api";
 import { useOwnerClock } from "../billingData";
 import { formatUptime, sortCare } from "../careView";
-import { latestOnly } from "../clientView";
+import { latestOnly, moneyLabel } from "../clientView";
 import { HealthChip, IncidentList, siteName, StateChip } from "../components/client/CarePanel";
 import { GradeChip } from "../components/client/GradePanel";
 import Icon from "../components/Icon";
+import { EmptyState, StatRow } from "../components/PageBits";
 import type { CareRow } from "../../worker/monitoring/fleet";
 
 /** Care: one card per client with live Care or a site switched on by hand, worst health first. Plain words; a site shows its domain, never its address. */
@@ -38,12 +39,33 @@ export default function Care() {
           <button type="button" className="btn" onClick={() => void load()}><Icon name="refresh" size={16} />Refresh</button>
         </div>
       </header>
-      <div className="cl-body">
+      <div className="pb-page">
         {failed && <p className="error" role="alert">Couldn’t load the Care board{rows ? ". What you see may be out of date" : ""}. <button type="button" className="btn" onClick={() => void load()}>Try again</button></p>}
         {rows === null && !failed && <p className="muted">Loading…</p>}
-        {rows !== null && rows.length === 0 && <p className="muted">Nobody is on Care yet. A client shows here once they have a Care plan, or when you switch monitoring on for one of their sites.</p>}
+        {rows !== null && rows.length === 0 && (
+          <EmptyState icon="shield" title="Nobody is on Care yet"
+            steps={[
+              { title: "Sell Care", text: "A signed proposal with a Care plan puts the client here.", to: "/pipeline" },
+              { title: "Or watch a site by hand", text: "Switch monitoring on for any client's site from their page.", to: "/clients" },
+              { title: "Then it runs itself", text: "Uptime checks, open incidents and a health score, worst site first." },
+            ]}>
+            Care is the board of every looked-after site: is it up, is anything broken, who needs you first.
+          </EmptyState>
+        )}
+        {rows !== null && rows.length > 0 && (() => {
+          const onCare = rows.filter((r) => r.careLabel !== null);
+          const ups = rows.map((r) => r.uptime30).filter((u): u is number => u !== null);
+          const incidents = rows.reduce((n, r) => n + r.openIncidents.length, 0);
+          const watch = rows.filter((r) => r.health.hasData && r.health.band !== "good").length;
+          return <StatRow stats={[
+            { label: "On Care", icon: "shield", value: onCare.length, sub: `${moneyLabel(onCare.reduce((n, r) => n + r.mrrCents, 0))} a month` },
+            { label: "Uptime, 30 days", icon: "gauge", value: ups.length ? formatUptime(Math.min(...ups)) : "—", sub: ups.length ? (ups.length > 1 ? "the lowest client" : "across their sites") : "No checks yet" },
+            { label: "Open incidents", icon: "alert", value: incidents, sub: incidents ? "Fix these first" : "Nothing broken", tone: incidents ? "warning" : "positive" },
+            { label: "Need a look", icon: "eye", value: watch, sub: watch ? "Health under 80" : "Every client healthy", tone: watch ? "warning" : "positive" },
+          ]} />;
+        })()}
         {rows !== null && rows.length > 0 && (
-          <ul className="cr-board">
+          <ul className="cr-board care-grid">
             {rows.map((r) => (
               <li key={r.businessId} className="cl-card cr-card">
                 <div className="cr-card-head">

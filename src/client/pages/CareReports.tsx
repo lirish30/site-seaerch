@@ -3,8 +3,10 @@ import { Link } from "react-router-dom";
 import { ApiError, careApi } from "../api";
 import { dayLabel } from "../careReportPageView";
 import { ledgerBar, statusChip, statusTone, type ReportRow } from "../careReportsView";
-import { latestOnly } from "../clientView";
+import { latestOnly, moneyLabel } from "../clientView";
+import { formatUptime } from "../careView";
 import Icon from "../components/Icon";
+import { Card, EmptyState, Meter, StatRow } from "../components/PageBits";
 import { LedgerBar } from "../components/client/CareEditHours";
 import { periodLabel } from "../../worker/sop/cadence";
 import type { CareRow } from "../../worker/monitoring/fleet";
@@ -128,9 +130,10 @@ function Missing({ c, onBuilt }: { c: CareRow; onBuilt: () => Promise<void> }) {
     finally { setBusy(false); }
   }
   return (
-    <li className="rp-missing">
-      <span className="rp-missing-name"><Link to={`/clients/${encodeURIComponent(c.businessId)}`}>{c.name}</Link></span>
-      <button type="button" className="btn" aria-disabled={busy} onClick={() => void build()}>Build now</button>
+    <li className="crp-row">
+      <span className="crp-name"><Link to={`/clients/${encodeURIComponent(c.businessId)}`}>{c.name}</Link><small>{c.careLabel ?? "Care"} · {c.uptime30 === null ? "no uptime checks yet" : `uptime ${formatUptime(c.uptime30)} over 30 days`}{c.openIncidents.length ? ` · ${c.openIncidents.length} open incident${c.openIncidents.length === 1 ? "" : "s"}` : ""}</small></span>
+      <span className={`badge2 ${!c.health.hasData ? "outline" : c.health.band === "good" ? "positive" : c.health.band === "watch" ? "warning" : "critical"}`}><i className="dot" aria-hidden="true" />{c.health.hasData ? `Health ${c.health.score}` : "No health yet"}</span>
+      <button type="button" className="btn" aria-disabled={busy} onClick={() => void build()}>{busy ? "Starting…" : "Build now"}</button>
       {error && <p className="error small" role="alert">{error}</p>}
     </li>
   );
@@ -156,12 +159,20 @@ export default function CareReports() {
   const replace = (next: ReportRow) => setReports((rs) => rs && rs.map((r) => (r.id === next.id ? next : r)));
   const withReport = new Set((reports ?? []).map((r) => r.clientId));
   const missing = (fleet ?? []).filter((c) => !withReport.has(c.businessId) && c.careLabel !== null);
+  const list = reports ?? [];
+  const live = list.filter((r) => r.status !== "revoked" && r.status !== "cancelled");
+  const count = (st: ReportRow["status"]) => list.filter((r) => r.status === st).length;
+  const ready = count("ready"), sent = count("sent"), collecting = count("collecting");
+  const opened = list.filter((r) => r.status === "sent" && r.views > 0).length;
+  const due = live.length + missing.length;
+  const careMrr = (fleet ?? []).filter((c) => c.careLabel !== null).reduce((n, c) => n + c.mrrCents, 0);
+  const loaded = reports !== null;
   return (
     <div className="cl cr">
       <header className="page-header">
         <div>
           <h1>Care reports</h1>
-          <p>{period ? `${periodLabel("monthly", period)}. ` : ""}The monthly report each Care client gets. A report goes out only after you approve it on Today.</p>
+          <p>{period ? `${periodLabel("monthly", period)}. ` : ""}The monthly proof each Care client gets that their site was looked after. Nothing goes out until you approve it on Today.</p>
         </div>
         <div className="header-actions">
           <Link className="btn" to="/care">Health</Link>
@@ -169,17 +180,59 @@ export default function CareReports() {
           <button type="button" className="btn" onClick={() => void load()}><Icon name="refresh" size={16} />Refresh</button>
         </div>
       </header>
-      <div className="cl-body">
+      <div className="pb-page">
         {failed && <p className="error" role="alert">Couldn’t load the reports{reports ? ". What you see may be out of date" : ""}. <button type="button" className="btn" onClick={() => void load()}>Try again</button></p>}
-        {reports === null && !failed && <p className="muted">Loading…</p>}
-        {reports !== null && reports.length === 0 && missing.length === 0 && <p className="muted">No report for this month yet. Reports start by themselves in the first days of the month.</p>}
-        {reports !== null && reports.length > 0 && <ul className="cr-board">{reports.map((r) => <ReportCard key={r.id} r={r} onChanged={replace} />)}</ul>}
-        {missing.length > 0 && (
-          <section className="cl-card rp-missing-card" aria-label="Clients with no report yet">
-            <h2>No report yet</h2>
-            <p className="muted small">These clients are on Care but have no report for this month. Build now makes it straight away instead of waiting for the daily start.</p>
-            <ul className="rp-missing-list">{missing.map((c) => <Missing key={c.businessId} c={c} onBuilt={load} />)}</ul>
-          </section>
+        {!loaded && !failed && <p className="muted">Loading…</p>}
+        {loaded && (
+          <StatRow stats={[
+            { label: "Reports this month", icon: "file-text", value: <>{sent}<small>of {due} sent</small></>, sub: <Meter value={sent} max={Math.max(1, due)} label={`${sent} of ${due} sent`} /> },
+            { label: "Waiting for your OK", icon: "check", value: ready, sub: ready ? <Link to="/today">Approve on Today</Link> : "Nothing to approve", tone: ready ? "warning" : "" },
+            { label: "Opened by clients", icon: "eye", value: sent ? `${opened} of ${sent}` : "—", sub: sent ? (opened < sent ? "A nudge on your next call helps" : "Every sent report was read") : "Shows once a report is sent" },
+            { label: "Care revenue", icon: "trending", value: moneyLabel(careMrr), sub: "a month, the work these reports prove" },
+          ]} label="This month's reports" />
+        )}
+        {loaded && list.length === 0 && missing.length === 0 && (
+          <EmptyState icon="file-text" title="No Care clients to report on yet"
+            steps={[
+              { title: "Put a client on Care", text: "Care starts from a signed proposal or the client's Billing. Their sites are then watched every day.", to: "/clients" },
+              { title: "The report builds itself", text: "Early each month the uptime, updates, edit hours and traffic are collected and Claude writes the summary." },
+              { title: "You read, tweak, approve", text: "Edit the words here, then approve it on Today. Only then is it mailed with a private link." },
+            ]}>
+            Each month every Care client gets a short report: how their site did, what was done and what's next.
+          </EmptyState>
+        )}
+        {loaded && (list.length > 0 || missing.length > 0) && (
+          <div className="pb-cols">
+            <div className="pb-side">
+              {missing.length > 0 && (
+                <Card icon="clock" title="Not started" note={`${missing.length} client${missing.length === 1 ? "" : "s"}`} flush>
+                  <p className="pb-hint" style={{ padding: "12px 18px 0" }}>On Care but no report for this month yet. They start by themselves in the first days of the month; Build now makes one straight away.</p>
+                  <ul className="rp-missing-list" style={{ listStyle: "none", margin: 0, padding: 0 }}>{missing.map((c) => <Missing key={c.businessId} c={c} onBuilt={load} />)}</ul>
+                </Card>
+              )}
+              {list.length > 0 && <ul className="cr-board">{list.map((r) => <ReportCard key={r.id} r={r} onChanged={replace} />)}</ul>}
+            </div>
+            <div className="pb-side">
+              <Card icon="list" title="This month" note={period ? periodLabel("monthly", period) : undefined}>
+                <ul className="pb-rows">
+                  <li><span>Not started</span><b>{missing.length}</b></li>
+                  <li><span>Collecting numbers</span><b>{collecting}</b></li>
+                  <li><span>Ready for your OK</span><b>{ready}</b></li>
+                  <li><span>Sent</span><b>{sent}</b></li>
+                </ul>
+              </Card>
+              <Card icon="info" title="What the client gets">
+                <ul className="pb-rows">
+                  <li><span>Uptime and site health</span></li>
+                  <li><span>Updates and fixes done</span></li>
+                  <li><span>Edit hours used of their allowance</span></li>
+                  <li><span>Traffic, once Google is linked</span></li>
+                  <li><span>One thing we suggest next</span></li>
+                </ul>
+                <p className="pb-hint">A mail with your summary and a private link to the full page. Revoke kills the link.</p>
+              </Card>
+            </div>
+          </div>
         )}
       </div>
     </div>

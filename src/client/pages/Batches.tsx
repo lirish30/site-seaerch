@@ -6,6 +6,7 @@ import { checklistText, donePercent, dueText, isLate, progressLine, statusTone, 
 import { latestOnly } from "../clientView";
 import { GradeChip } from "../components/client/GradePanel";
 import Icon from "../components/Icon";
+import { EmptyState, StatRow } from "../components/PageBits";
 import type { BatchGroup } from "../../worker/batches/groups";
 
 /** One recurring job for one period: the progress, then each client's task (grade A first), and the button that opens the first one still to do. Read only: the work itself happens on each task. */
@@ -77,10 +78,31 @@ export default function Batches() {
           <button type="button" className="btn" onClick={() => void load()}><Icon name="refresh" size={16} />Refresh</button>
         </div>
       </header>
-      <div className="cl-body">
+      <div className="pb-page">
         {failed && <p className="error" role="alert">Couldn’t load the batches{groups ? ". What you see may be out of date" : ""}. <button type="button" className="btn" onClick={() => void load()}>Try again</button></p>}
         {groups === null && !failed && <p className="muted">Loading…</p>}
-        {groups !== null && groups.length === 0 && <p className="muted">Nothing is due in a batch right now. A job shows here once a recurring task has been made for a live client.</p>}
+        {groups !== null && groups.length === 0 && (
+          <EmptyState icon="list" title="Nothing due in a batch right now"
+            steps={[
+              { title: "A client goes live", text: "Care, Local SEO and other monthly plans each come with recurring jobs.", to: "/clients" },
+              { title: "Jobs are made on schedule", text: "Each SOP step with a cadence makes one task per client per week or month.", to: "/settings/sops" },
+              { title: "Do them in one sitting", text: "The same job for every client lands here as one card, best grade first." },
+            ]}>
+            Batches group the same recurring job across all your clients, so you do it once in a row instead of client by client.
+          </EmptyState>
+        )}
+        {groups !== null && groups.length > 0 && (() => {
+          const tasks = groups.reduce((n, g) => n + g.tasks.length, 0);
+          const left = groups.reduce((n, g) => n + g.open, 0);
+          const late = groups.filter((g) => isLate(g, today)).length;
+          const held = groups.reduce((n, g) => n + g.tasks.filter((t) => t.held).length, 0);
+          return <StatRow stats={[
+            { label: "Jobs due", icon: "list", value: groups.length, sub: `${tasks} client task${tasks === 1 ? "" : "s"} in all` },
+            { label: "Left to do", icon: "clock", value: left, sub: left ? `${Math.round(((tasks - left) / Math.max(1, tasks)) * 100)}% done` : "All done", tone: left ? "" : "positive" },
+            { label: "Late", icon: "alert", value: late, sub: late ? "Past the due day: start with these" : "Nothing past due", tone: late ? "warning" : "positive" },
+            { label: "On hold", icon: "ban", value: held, sub: held ? "Unpaid clients, skipped until paid" : "Everyone is paid up" },
+          ]} />;
+        })()}
         {groups !== null && groups.length > 0 && <ul className="cr-board">{groups.map((g) => <Card key={`${g.templateKey}:${g.period}`} g={g} today={today} />)}</ul>}
       </div>
     </div>

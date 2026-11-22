@@ -15,5 +15,6 @@ import "./video.css";
 import "./work.css";
 import "./clients.css";
 import "./seo.css";
+import "./polish.css";
 
 createRoot(document.getElementById("root")!).render(<BrowserRouter><App /></BrowserRouter>);

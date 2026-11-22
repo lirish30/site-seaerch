@@ -67,3 +67,24 @@ export function parseDuration(text: string): number | null {
   else if ((m = s.match(/^(\d+)\s*(?:m|min|mins|minutes)?$/))) minutes = Number(m[1]);
   return minutes !== null && minutes >= 1 && minutes <= 1440 ? minutes : null;
 }
+
+/** Today as a calendar date in a time zone ("2026-11-22"); falls back to the browser's zone for a zone it cannot read. */
+export function todayIn(tz: string, now: Date = new Date()): string {
+  try { return new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(now); }
+  catch { return new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(now); }
+}
+
+export interface WeekSummary { total: number; daysWorked: number; busiest: { day: string; minutes: number } | null; byProject: { projectId: string; name: string; minutes: number }[] }
+
+/** What the week adds up to: the total, how many days had any time, the busiest day and time per project (most first). */
+export function weekSummary(week: { days: string[]; dayTotals: number[]; total: number; rows: { projectId: string; projectName: string; total: number }[] }): WeekSummary {
+  let busiest: WeekSummary["busiest"] = null;
+  week.dayTotals.forEach((m, i) => { if (m > 0 && (!busiest || m > busiest.minutes)) busiest = { day: week.days[i], minutes: m }; });
+  const map = new Map<string, { projectId: string; name: string; minutes: number }>();
+  for (const r of week.rows) {
+    const p = map.get(r.projectId) ?? { projectId: r.projectId, name: r.projectName, minutes: 0 };
+    p.minutes += r.total;
+    map.set(r.projectId, p);
+  }
+  return { total: week.total, daysWorked: week.dayTotals.filter((m) => m > 0).length, busiest, byProject: [...map.values()].sort((a, b) => b.minutes - a.minutes) };
+}

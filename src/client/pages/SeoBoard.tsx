@@ -4,6 +4,7 @@ import { seoApi, type SeoBoardRow } from "../api";
 import { statusTone } from "../careReportsView";
 import { latestOnly } from "../clientView";
 import Icon from "../components/Icon";
+import { EmptyState } from "../components/PageBits";
 import { boardReportLine, reportChip } from "../seoView";
 import { periodLabel } from "../../worker/sop/cadence";
 import { sentence } from "../components/client/seo/seoBits";
@@ -69,10 +70,20 @@ export default function SeoBoard() {
           <button type="button" className="btn" onClick={() => void load()}><Icon name="refresh" size={16} />Refresh</button>
         </div>
       </header>
-      <div className="cl-body">
+      <div className="pb-page">
         {failed && <p className="error" role="alert">Couldn’t load the board{rows ? ". What you see may be out of date" : ""}. <button type="button" className="btn" onClick={() => void load()}>Try again</button></p>}
         {rows === null && !failed && <p className="muted">Loading…</p>}
-        {rows !== null && rows.length === 0 && <p className="muted">No client has the Local SEO watch on yet. Set a client up from their page: pick the Google listing, add search terms, then take the baseline.</p>}
+        {rows !== null && rows.length === 0 && (
+          <EmptyState icon="pin" title="No client has the Local SEO watch on yet"
+            steps={[
+              { title: "Open a client", text: "The Local SEO panel is on each client's page.", to: "/clients" },
+              { title: "Pick the Google listing", text: "Then add the search terms people use to find them." },
+              { title: "Take the baseline", text: "A 3 × 3 map rank grid, the name-address-phone check and 12 directories, saved as the starting point." },
+              { title: "It watches itself", text: "Weekly listing and review checks; a monthly report waits on Today for your OK." },
+            ]}>
+            Local SEO tracks where a client shows up on Google Maps for the searches that bring them work, and proves it every month.
+          </EmptyState>
+        )}
         {rows !== null && rows.length > 0 && <ul className="cr-board">{rows.map((r) => <Row key={r.clientId} r={r} period={period} onBuilt={load} />)}</ul>}
       </div>
     </div>
