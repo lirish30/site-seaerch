@@ -115,7 +115,7 @@ export default function SeoReportPage() {
         <section className="mr-section" aria-labelledby="sr-where-h">
           <h2 id="sr-where-h" className="mr-h">Where you showed on Google{v.rankLine ? `, ${v.rankLine}` : ""}</h2>
           <p className="mr-note">{v.gridNote}</p>
-          {v.terms.length === 0 && <div className="rp-card"><p className="mr-note">No search terms are being checked yet.</p></div>}
+          {v.hasGrids && v.terms.length === 0 && <div className="rp-card"><p className="mr-note">No search terms are being checked yet.</p></div>}
           {v.terms.map((t, i) => (
             <article key={`${t.heading}-${i}`} className="rp-card mr-site">
               <h3>{t.heading}</h3>

@@ -70,11 +70,13 @@ describe("seoReportPageView", () => {
     expect(v.gridNote).toMatch(/nine points/);
   });
 
-  it("with no check date it says there was no check, and shows no grid note about a date", () => {
+  it("with no check date it says there was no check and draws no grid at all", () => {
     const v = view({ rankAsOf: null, previousRankAsOf: null, terms: [{ term: "t", town: null, points: Array(9).fill({ pos: null, ok: false }), measured: 0, visible: null, previousVisible: null }] });
     expect(v.rankLine).toBeNull();
     expect(v.gridNote).toMatch(/no rank check/i);
-    expect(v.terms[0].rows.flat().every((c) => c === "not checked")).toBe(true);
+    expect(v.hasGrids).toBe(false);
+    expect(v.terms).toEqual([]);
+    expect(view().hasGrids).toBe(true);
   });
 
   it("a first report shows no movement text; a later one compares only what was measured both times", () => {

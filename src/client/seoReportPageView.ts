@@ -47,6 +47,8 @@ export interface SeoReportView {
   /** The sentence that says what the grids are and which check they show. */
   gridNote: string;
   firstCheck: boolean;
+  /** Whether there was a rank check to draw: with none, `terms` is empty and the page draws no grid (it says there is none). */
+  hasGrids: boolean;
   terms: SeoTermView[];
   profile: { label: string; value: string }[];
   content: { titles: { kind: string; title: string }[]; line: string };
@@ -84,7 +86,8 @@ export function seoReportPageView(facts: SeoFacts, words: SeoWords): SeoReportVi
       ? `Each grid shows our check from ${asOf}: Google was searched from nine points around the business, and each cell says where the business showed in the results from that point. The top left is the north-west.`
       : "There was no rank check for this report, so there are no grids to show.",
     firstCheck: facts.rankAsOf !== null && facts.previousRankAsOf === null,
-    terms: facts.terms.map((t) => termView(t, facts.previousRankAsOf)),
+    hasGrids: facts.rankAsOf !== null,
+    terms: facts.rankAsOf === null ? [] : facts.terms.map((t) => termView(t, facts.previousRankAsOf)),
     profile,
     content: {
       titles: published.map((c) => ({ kind: KIND_LABEL[c.kind] ?? "Page", title: c.title })),
