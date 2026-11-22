@@ -307,7 +307,7 @@ describe("growth and retain, end to end", () => {
     }
     expect(mail.sent.map((m) => m.to)).toEqual(["pat@ace.test", "pat@ace.test", "pat@ace.test"]); // the review request, reminder 1 and the last reminder: each one's own approval
     expectFiniteNumbers(cap);
-    expect(await mcp("tools/list", {}).then((j) => j.result.tools.length)).toBe(32);
+    expect(await mcp("tools/list", {}).then((j) => j.result.tools.length)).toBe(33);
     expect(errors).toEqual([]);
   });
 });

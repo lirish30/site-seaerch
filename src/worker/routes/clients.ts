@@ -12,6 +12,7 @@ import {
 import type { Env } from "../env";
 import { bodyOf, invalid, NOT_FOUND, ownerOnError, type Ctx } from "../projects/http";
 import { cleanText } from "../onboarding/templates";
+import { clientTraffic } from "../traffic/panel";
 import { ACCESS_LABELS, cleanVaultName, isHttpUrl, noteProblem, vaultNameProblem } from "../sites/access";
 
 /** Mounted at /api (behind requireAuth): /clients, /clients/:id, /clients/:id/sites, /sites/:id, /sites/:id/access/:key (and the same site routes under /clients/:id/sites/:siteId). */
@@ -91,6 +92,12 @@ clientRoutes.get("/clients", async (c) => c.json({ clients: await listClients(c.
 clientRoutes.get("/clients/:id", async (c) => {
   const client = await getClientRecord(c.env.DB, c.req.param("id"), new Date());
   return client ? c.json({ client }) : c.json(NOT_FOUND, 404);
+});
+
+/** The owner's Traffic panel: the Google connection and each site's linked properties and last six pulled months (see `clientTraffic`). An id that is not a client is 404. */
+clientRoutes.get("/clients/:id/traffic", async (c) => {
+  const traffic = await clientTraffic(c.env, c.req.param("id"), new Date());
+  return traffic ? c.json(traffic) : c.json(NOT_FOUND, 404);
 });
 
 const GRADE_NOTE_MAX = 300;

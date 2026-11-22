@@ -17,6 +17,9 @@ import type { GridRow } from "../worker/seo/overview";
 import type { PlaceCandidate } from "../worker/seo/places";
 import type { SeoReportRow } from "../worker/seo/reportAdmin";
 import type { LadderRow } from "../worker/db/ladder";
+import type { SiteLink, TrafficStatus } from "../worker/db/traffic";
+import type { Candidates } from "../worker/traffic/link";
+import type { ClientTraffic } from "../worker/traffic/panel";
 import type { AutoApproveState } from "../worker/routes/autoApprove";
 import type { StudioCopy, StudioPost } from "./studioView";
 export class ApiError extends Error { constructor(public status: number, message: string, public fields: string[] = [], public code = "", public body: unknown = undefined) { super(message); } }
@@ -153,6 +156,18 @@ export interface SeoBoardRow {
 }
 export interface SeoProfileInput { placeId: string; trade: string; towns: string[]; gridKm: number; siteId?: string }
 export interface SeoContentEdit { title?: string; metaTitle?: string; metaDescription?: string; body?: string }
+
+/** The owner's Traffic panel routes (Plan 16): what is linked and pulled for a client's sites, and finding, linking and pulling. Google is only read, never written to. */
+export const trafficApi = {
+  get: (clientId: string) => api.get<ClientTraffic>(`/clients/${encodeURIComponent(clientId)}/traffic`),
+  /** The Search Console entries and Analytics properties of the connected Google account that belong to the site. Nothing is linked. */
+  find: (siteId: string) => api.post<Candidates>(`/traffic/site/${encodeURIComponent(siteId)}/find`),
+  link: (siteId: string, body: { gscProperty?: string | null; ga4Property?: string | null }) => api.put<SiteLink>(`/traffic/site/${encodeURIComponent(siteId)}/link`, body),
+  /** Removes both links; the months already pulled stay (the server answers 204). */
+  unlink: (siteId: string) => api.del<unknown>(`/traffic/site/${encodeURIComponent(siteId)}/link`),
+  /** Pulls a finished month now. The answer is the month's status and its plain sentence. */
+  pull: (siteId: string, period: string) => api.post<{ status: TrafficStatus; error: string }>(`/traffic/site/${encodeURIComponent(siteId)}/pull`, { period }),
+};
 
 /** The post-launch ladder routes (Plan 15). Nothing here sends mail: a mail goes out only when its approval is approved. */
 export const ladderApi = {
