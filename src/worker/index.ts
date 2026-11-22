@@ -48,6 +48,7 @@ import { billingRoutes } from "./routes/billing";
 import { moneyRoutes } from "./routes/money";
 import { careRoutes } from "./routes/care";
 import { seoRoutes } from "./routes/seo";
+import { trafficRoutes } from "./routes/traffic";
 import { ladderRoutes } from "./routes/ladder";
 import { clientRoutes } from "./routes/clients";
 import { meetingRoutes } from "./routes/meetings";
@@ -136,6 +137,7 @@ app.route("/api", billingRoutes); // /billing/..., /change-orders/:id/invoice, /
 app.route("/api", moneyRoutes); // /money
 app.route("/api", careRoutes); // /care, /incidents, /sites/:id/checks, /sites/:id/monitoring
 app.route("/api", seoRoutes); // /clients/:id/seo/place-search, /profile, /keywords, /citations/:directory, /nap-check
+app.route("/api/traffic", trafficRoutes); // /site/:siteId/find, /site/:siteId/link (owner only, behind requireAuth)
 app.route("/api", ladderRoutes); // /clients/:id/ladder, /ladder/:id/done, /ladder/:id/skip, /ladder/:id/link
 // Mounted last at /api: /api/leads/:id/cro-audit(s), /api/cro-items/:id, /api/cro-audits/:id/... (all behind requireAuth).
 app.route("/api", croRoutes);
