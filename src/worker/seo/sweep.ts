@@ -1,6 +1,7 @@
 import { monthRange } from "../care/reportFacts";
 import { previousMonth } from "../care/reportSweep";
 import { testClientSql } from "../clients/record";
+import { logActivityOnce } from "../db/activity";
 import { holdFreeSql } from "../db/holds";
 import { liveProjectSql } from "../db/projects";
 import { getProfile, listContent, listKeywords, rankChecksFor, upsertProfile, type RankCheck, type SeoProfile } from "../db/seo";
@@ -225,7 +226,12 @@ export async function sweepSeo(env: Env, now: Date): Promise<SeoSweepResult> {
     if (go && plan.watch) {
       used++;
       try {
-        if ((await watchReviews(env, businessId, now)).snapshot) out.watched++;
+        const watch = await watchReviews(env, businessId, now);
+        if (watch.snapshot) out.watched++;
+        // Google shows at most five reviews, not always the newest: a review count that rose by more than the reviews we could read is said on the client's timeline, once for each watch.
+        if (watch.unseen > 0) {
+          await logActivityOnce(env.DB, businessId, "note", `Local SEO watch ${today}: the Google listing has ${watch.unseen} more ${watch.unseen === 1 ? "review" : "reviews"} than Google shows us. Check the profile.`);
+        }
       } catch (e) {
         console.error("seo sweep: could not watch a client's reviews", msg(e));
       }

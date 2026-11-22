@@ -4,6 +4,7 @@ import worker from "../src/worker/index";
 import { placeHold } from "../src/worker/db/holds";
 import { addCadence } from "../src/worker/db/projects";
 import { ensureSeedSops } from "../src/worker/db/sops";
+import { listActivity } from "../src/worker/db/activity";
 import { addKeyword, getProfile, listContent, rankChecksFor, setContent, snapshotsFor, upsertProfile, upsertRankCheck, type ProfileStatus } from "../src/worker/db/seo";
 import { setSpendCap } from "../src/worker/db/spendCaps";
 import { getSeoReportFor, listSeoReports } from "../src/worker/db/seoReports";
@@ -300,6 +301,22 @@ describe("sweepSeo", () => {
     expect(await jobs("seo.content")).toHaveLength(5);
     await sweepSeo(e, at(NOW, 16));
     expect(await jobs("seo.content")).toHaveLength(5);
+  });
+
+  it("says on the client's timeline when the listing gained reviews that Google did not show us, once for each watch", async () => {
+    const s = await seoClient({ keywords: 1 });
+    await generateRecurring(e, NOW);
+    const notes = async () => (await listActivity(env.DB, s.businessId)).filter((a) => a.kind === "note").map((a) => a.detail);
+    await sweepSeo(e, NOW); // the first watch has nothing earlier to compare with
+    expect(await notes()).toEqual([]);
+    details = (id) => jsonRes({ ...place(id), userRatingCount: 83 }); // 3 more reviews, none of them shown
+    await sweepSeo(e, at(NOW, 7));
+    expect(await notes()).toEqual(["Local SEO watch 2026-12-08: the Google listing has 3 more reviews than Google shows us. Check the profile."]);
+    await sweepSeo(e, at(NOW, 7)); // the same day again: no watch, no second line
+    expect(await notes()).toHaveLength(1);
+    details = (id) => jsonRes({ ...place(id), userRatingCount: 84 });
+    await sweepSeo(e, at(NOW, 14));
+    expect((await notes()).at(0)).toBe("Local SEO watch 2026-12-15: the Google listing has 1 more review than Google shows us. Check the profile.");
   });
 
   it("ticks 1.1 when a usable check arrives after the slots were made", async () => {
