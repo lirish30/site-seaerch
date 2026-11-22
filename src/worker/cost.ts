@@ -5,7 +5,7 @@ import { BRIGHTDATA_PAGE_SIZE } from "./listings/brightdata";
 // beyond its free monthly allowance; listingPerRequest is the dearer of the two listing providers, used for spend-cap estimates.
 // browserPerRender: ~20s of Browser Rendering at $0.09/browser-hour. Claude work runs on the user's subscription via the task
 // queue, so it has no price here; usage rows recorded under the claude services before that move are still read as they were.
-export const PRICES = { brightdataPerRequest: 0.0015, placesPerRequest: 0.035, listingPerRequest: 0.035, pagespeedPerCall: 0, browserPerRender: 0.0005 };
+export const PRICES = { brightdataPerRequest: 0.0015, placesPerRequest: 0.035, placesIdsPerRequest: 0.005, placesDetailsPerRequest: 0.025, listingPerRequest: 0.035, pagespeedPerCall: 0, browserPerRender: 0.0005 };
 
 /** What one lead costs once its listing is fetched: the browser render (review and draft are Claude work, which is free). */
 export const PER_LEAD_COST = PRICES.browserPerRender;
