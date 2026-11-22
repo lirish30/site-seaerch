@@ -17,6 +17,8 @@ import { previousMonth } from "../src/worker/care/reportSweep";
 import { DAILY_CRON, runScheduled } from "../src/worker/schedule";
 import * as contentMod from "../src/worker/seo/content";
 import { plainSeoSummary, type SeoReportFacts } from "../src/worker/seo/reportFacts";
+import { runBaseline } from "../src/worker/seo/baseline";
+import { setupProfile } from "../src/worker/seo/profile";
 import { MAX_CLIENTS_PER_RUN, MAX_PLACES_CALLS_PER_RUN, MAX_PULL_DAYS_PER_MONTH, SeoReportRefused, WATCH_EVERY_DAYS, startSeoReport, sweepSeo } from "../src/worker/seo/sweep";
 import { zoneOf } from "../src/worker/sop/cadence";
 import { getSettings } from "../src/worker/db/settings";
@@ -317,6 +319,31 @@ describe("sweepSeo", () => {
     details = (id) => jsonRes({ ...place(id), userRatingCount: 84 });
     await sweepSeo(e, at(NOW, 14));
     expect((await notes()).at(0)).toBe("Local SEO watch 2026-12-15: the Google listing has 1 more review than Google shows us. Check the profile.");
+  });
+
+  it("pauses a client whose Google place is gone or changed: nothing more is pulled, watched or reported for it, and picking the place again and taking the baseline switches it back on", async () => {
+    for (const [name, answer] of [["gone", () => jsonRes({ error: { message: "not found" } }, 404)], ["moved", () => jsonRes({ ...place("ChIJace"), id: "ChIJ-NEW" })]] as const) {
+      const s = await seoClient({ keywords: 2 });
+      await generateRecurring(e, NOW);
+      await check(s, "2026-12-01"); // a usable check is there, so a report would start
+      details = answer;
+      urls = [];
+      expect(await sweepSeo(e, NOW), name).toMatchObject({ clients: 1, watched: 0, ranked: 0, reports: 0 });
+      expect(await getProfile(env.DB, s.businessId), name).toMatchObject({ status: "paused", lastWatchOn: "2026-12-01" });
+      expect(searchCalls(), name).toBe(0);
+      expect(await reports(), name).toEqual([]);
+      expect(detailsCalls(), name).toBe(1);
+      // The next days: nothing, and no more paid calls.
+      expect(await sweepSeo(e, at(NOW, 1)), name).toMatchObject({ clients: 0 });
+      expect(detailsCalls(), name).toBe(1);
+      // Picked again and taken a baseline of, the client is active again.
+      details = (id) => jsonRes(place(id));
+      await setupProfile(e, s.businessId, { placeId: "ChIJace", trade: "plumber", towns: ["Tigard"], gridKm: 3 }, at(NOW, 2).toISOString());
+      expect((await getProfile(env.DB, s.businessId))!.status, name).toBe("paused");
+      await runBaseline(e, s.businessId, at(NOW, 2));
+      expect((await getProfile(env.DB, s.businessId))!.status, name).toBe("active");
+      await env.DB.prepare(`DELETE FROM seo_profiles WHERE business_id = ?`).bind(s.businessId).run(); // the next case starts from its own client
+    }
   });
 
   it("ticks 1.1 when a usable check arrives after the slots were made", async () => {

@@ -223,10 +223,12 @@ export async function sweepSeo(env: Env, now: Date): Promise<SeoSweepResult> {
     if (!go && !(plan.reportOpen && plan.usable) && !plan.slotsDue && !plan.tickDue) continue; // nothing this client can have done today
     out.clients++;
 
+    let halted = false; // the watch found the client's Google place gone or changed: the client is paused, and nothing more is done for it today
     if (go && plan.watch) {
       used++;
       try {
         const watch = await watchReviews(env, businessId, now);
+        if (watch.paused) halted = true;
         if (watch.snapshot) out.watched++;
         // Google shows at most five reviews, not always the newest: a review count that rose by more than the reviews we could read is said on the client's timeline, once for each watch.
         if (watch.unseen > 0) {
@@ -237,6 +239,7 @@ export async function sweepSeo(env: Env, now: Date): Promise<SeoSweepResult> {
       }
     }
 
+    if (halted) continue;
     let pulled = false;
     if (go && plan.pull) {
       const calls = { n: 0 };

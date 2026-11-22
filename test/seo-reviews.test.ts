@@ -1,7 +1,8 @@
 import { createExecutionContext, env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import worker from "../src/worker/index";
-import { getProfile, getReview, listReviews, snapshotsFor, upsertReviews, upsertSnapshot } from "../src/worker/db/seo";
+import { listActivity } from "../src/worker/db/activity";
+import { getProfile, getReview, upsertProfile, listReviews, snapshotsFor, upsertReviews, upsertSnapshot } from "../src/worker/db/seo";
 import type { Env } from "../src/worker/env";
 import { buildBundle } from "../src/worker/queue/bundle";
 import { completeTask, expireOldTasks, finishClaudeTask, getTask } from "../src/worker/queue/db";
@@ -155,13 +156,29 @@ describe("watchReviews", () => {
     expect(await watchReviews(e, v.businessId, NOW)).toMatchObject({ unseen: 0 });
   });
 
-  it("changes nothing for a place Google no longer knows", async () => {
+  it("pauses the client, once, for a place Google no longer knows, and does not repeat the paid call the next day", async () => {
     const s = await ready();
+    await upsertProfile(env.DB, s.businessId, { status: "active" }, NOW.toISOString());
     answer = () => new Response("{}", { status: 404 });
-    expect(await watchReviews(e, s.businessId, NOW)).toEqual({ snapshot: null, inserted: 0, unseen: 0, queued: false });
+    expect(await watchReviews(e, s.businessId, NOW)).toEqual({ snapshot: null, inserted: 0, unseen: 0, queued: false, paused: true });
     expect(await snapshotsFor(env.DB, s.businessId, {})).toEqual([]);
-    expect((await getProfile(env.DB, s.businessId))!.lastWatchOn).toBeNull();
+    expect(await getProfile(env.DB, s.businessId)).toMatchObject({ status: "paused", lastWatchOn: DAY });
     expect(await tasks()).toEqual([]);
+    await watchReviews(e, s.businessId, NOW);
+    const notes = (await listActivity(env.DB, s.businessId)).filter((a) => a.kind === "note").map((a) => a.detail);
+    expect(notes).toEqual(["Local SEO paused: Google no longer knows this place: pick it again."]);
+  });
+
+  it("pauses the client, once, for a place that Google now lists under a different id, without storing its reviews", async () => {
+    const s = await ready();
+    await upsertProfile(env.DB, s.businessId, { status: "active" }, NOW.toISOString());
+    answer = () => jsonRes({ ...place([raw(1, 5)]), id: "ChIJ-MOVED" });
+    expect(await watchReviews(e, s.businessId, NOW)).toEqual({ snapshot: null, inserted: 0, unseen: 0, queued: false, paused: true });
+    expect(await listReviews(env.DB, s.businessId)).toEqual([]);
+    expect(await getProfile(env.DB, s.businessId)).toMatchObject({ status: "paused", lastWatchOn: DAY, placeId: "ChIJace" });
+    const notes = (await listActivity(env.DB, s.businessId)).filter((a) => a.kind === "note").map((a) => a.detail);
+    expect(notes).toEqual(["Local SEO paused: Google now lists this place under a different id: pick it again."]);
+    expect(notes.join(" ")).not.toContain("ChIJ");
   });
 
   it("leaves the rows and the queue alone when Places fails, and says so in a plain sentence without the key", async () => {
