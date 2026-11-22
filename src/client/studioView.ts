@@ -73,3 +73,6 @@ export function copyEdit(f: CopyEditForm): StudioCopy {
 
 /** The download name for slide `n` (1-based) of a post. */
 export const imageName = (p: Pick<StudioPost, "id">, n: number): string => `post-${p.id.slice(0, 8)}-${n}.png`;
+
+/** The React key of a picture box. Bumping `epoch` (after a post is made, or when the kind changes) remounts the box empty, so a file input never keeps showing the last file or ignores picking it again. */
+export const pickerKey = (slot: "before" | "after", epoch: number): string => `${slot}-${epoch}`;

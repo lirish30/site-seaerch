@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { captionWithTags, copyEdit, newPostBody, nextAction, statusLabel } from "../src/client/studioView";
+import { captionWithTags, copyEdit, newPostBody, nextAction, pickerKey, statusLabel } from "../src/client/studioView";
 import type { StudioStatus } from "../src/worker/db/studio";
 
 const post = (status: StudioStatus) => ({ id: "p1", kind: "audit_tip" as const, status, businessId: null, source: {}, anonymize: true, agreedAt: null, copy: {}, images: 0, claudeTaskId: null, approvalId: null, postedOn: null, createdAt: "", updatedAt: "" });
@@ -40,5 +40,11 @@ describe("studio view", () => {
     expect(copyEdit({ headline: " H ", caption: " C ", slides: [{ title: " T ", body: " B " }, { title: " ", body: "" }], tagText: "#plumber, boise  #roofing" })).toEqual({
       headline: "H", caption: "C", slides: [{ title: "T", body: "B" }], tags: ["plumber", "boise", "roofing"],
     });
+  });
+
+  it("a picture box gets a new key each time the form is reset, so it remounts empty and the same file can be picked again", () => {
+    expect(pickerKey("before", 0)).toBe(pickerKey("before", 0));
+    expect(pickerKey("before", 1)).not.toBe(pickerKey("before", 0));
+    expect(pickerKey("after", 0)).not.toBe(pickerKey("before", 0));
   });
 });

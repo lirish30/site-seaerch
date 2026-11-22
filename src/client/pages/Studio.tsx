@@ -3,7 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { ApiError, clientsApi, studioApi } from "../api";
 import { latestOnly } from "../clientView";
 import Icon from "../components/Icon";
-import { KIND_LABEL, captionWithTags, copyEdit, copyOf, imageName, isOpen, nextAction, newPostBody, statusLabel, statusTone, type StudioKind, type StudioPost } from "../studioView";
+import { KIND_LABEL, captionWithTags, copyEdit, copyOf, imageName, isOpen, nextAction, newPostBody, pickerKey, statusLabel, statusTone, type StudioKind, type StudioPost } from "../studioView";
 import type { ClientRow } from "../../worker/clients/record";
 
 const sentence = (e: unknown, fallback: string): string => (e instanceof ApiError ? e.message : fallback);
@@ -30,6 +30,7 @@ function NewPost({ clients, initialAudit, onMade }: { clients: ClientRow[]; init
   const [agreed, setAgreed] = useState(false);
   const [before, setBefore] = useState<File | null>(null);
   const [after, setAfter] = useState<File | null>(null);
+  const [pickerEpoch, setPickerEpoch] = useState(0); // bumped to remount the two picture boxes empty (a file input cannot be cleared by state)
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => { if (initialAudit) { setKind("audit_tip"); setAuditId(initialAudit); } }, [initialAudit]);
@@ -47,7 +48,7 @@ function NewPost({ clients, initialAudit, onMade }: { clients: ClientRow[]; init
     try {
       post = await studioApi.create(made.body);
       for (const [slot, file] of picked) if (file) await studioApi.upload(post.id, slot, file);
-      setAuditId(""); setBefore(null); setAfter(null); setAnonymous(true); setAgreed(false);
+      setAuditId(""); setBefore(null); setAfter(null); setPickerEpoch((n) => n + 1); setAnonymous(true); setAgreed(false);
     } catch (err) {
       setError(post ? `The post was made, but a picture did not upload: ${sentence(err, "try again from the post")}` : sentence(err, "Couldn’t make the post. Try again."));
     } finally {
@@ -61,7 +62,7 @@ function NewPost({ clients, initialAudit, onMade }: { clients: ClientRow[]; init
       <h2>New post</h2>
       <div className="cl-fields">
         <label className="deal-field"><span>Kind of post</span>
-          <select value={kind} onChange={(e) => { setKind(e.target.value as StudioKind); setError(""); }}>
+          <select value={kind} onChange={(e) => { setKind(e.target.value as StudioKind); setBefore(null); setAfter(null); setPickerEpoch((n) => n + 1); setError(""); }}>
             {(Object.keys(KIND_LABEL) as StudioKind[]).map((k) => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}
           </select>
         </label>
@@ -80,8 +81,8 @@ function NewPost({ clients, initialAudit, onMade }: { clients: ClientRow[]; init
           </label>
         )}
         {kind === "before_after" && <>
-          <PicturePicker label="Before picture" onPick={setBefore} />
-          <PicturePicker label="After picture" onPick={setAfter} />
+          <PicturePicker key={pickerKey("before", pickerEpoch)} label="Before picture" onPick={setBefore} />
+          <PicturePicker key={pickerKey("after", pickerEpoch)} label="After picture" onPick={setAfter} />
         </>}
         <div className="deal-field wide st-consent">
           <label className="st-check"><input className="cb" type="checkbox" checked={agreed} onChange={(e) => { setAgreed(e.target.checked); if (!e.target.checked) setAnonymous(true); }} />The client agreed to be named</label>
