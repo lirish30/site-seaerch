@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { isClient, todayKey } from "../clients/record";
-import { addKeyword, listCitations, listKeywords, setCitation, setKeywordActive, type CitationStatus } from "../db/seo";
+import { addKeyword, getReview, listCitations, listKeywords, setCitation, setKeywordActive, setReviewDraft, setReviewStatus, type CitationStatus, type SeoReview } from "../db/seo";
 import { getSettings } from "../db/settings";
 import type { Env } from "../env";
 import { bodyOf, NOT_FOUND, ownerOnError, type Ctx } from "../projects/http";
@@ -11,10 +11,12 @@ import { CITATION_DIRECTORIES, parseNapResult } from "../seo/nap";
 import { findPlaces } from "../seo/places";
 import { CREDENTIAL_REFUSED, MAX_TEXT, MIN_TEXT, SeoRefusal, placesRefusal, runNapCheck, setupProfile, tidy } from "../seo/profile";
 import { looksLikeCredential } from "../onboarding/templates";
+import { replyText } from "../queue/seoReviewReply";
 
 /**
  * Mounted at /api (behind requireAuth), all under /clients/:id/seo (the owner's local SEO setup for one client; a test client is allowed):
  * POST /place-search, PUT /profile, POST /keywords, DELETE /keywords/:keywordId, PUT /citations/:directory, POST /nap-check, POST /baseline, POST /rank-check.
+ * And, for a review of a client's listing, PUT /seo/reviews/:id/draft, POST /seo/reviews/:id/posted and POST /seo/reviews/:id/skip. The app never posts a reply to Google: "posted" is Logan saying he did.
  * Places data, site text and business names are untrusted: nothing from the request body sets a location, and neither the Places key nor anything a remote service said is ever returned.
  */
 export const seoRoutes = new Hono<{ Bindings: Env }>();
@@ -149,4 +151,49 @@ seoRoutes.post("/clients/:id/seo/rank-check", async (c) => {
   const id = await clientId(c);
   if (id instanceof Response) return id;
   return c.json(await runRankGrid(c.env, id, new Date()));
+});
+
+/** The review, or the 404 to send back when it does not exist or its business is not a client. */
+async function reviewOf(c: Ctx): Promise<SeoReview | Response> {
+  const review = await getReview(c.env.DB, c.req.param("id") ?? "");
+  return review && (await isClient(c.env.DB, review.businessId)) ? review : c.json(NOT_FOUND, 404);
+}
+
+const DraftBody = z.object({ draft: z.string() });
+
+/**
+ * Saves Logan's own words as the reply and marks it `drafted`, from `new`, `drafting` (his words win over Claude's) or `drafted`. The same text rules as Claude's drafts hold:
+ * 1 to 700 characters, with no link, email address, phone number, dollar amount, offer, markdown or run of blank lines.
+ */
+seoRoutes.put("/seo/reviews/:id/draft", async (c) => {
+  const review = await reviewOf(c);
+  if (review instanceof Response) return review;
+  const body = await bodyOf(c, DraftBody);
+  if (body instanceof Response) return body;
+  const parsed = replyText.safeParse(body.draft);
+  if (!parsed.success) throw new SeoRefusal(parsed.error.issues[0]?.message ?? "That reply can't be used.");
+  if (!(await setReviewDraft(c.env.DB, review.id, ["new", "drafting", "drafted"], { draft: parsed.data, status: "drafted" }))) {
+    throw new SeoRefusal(`This review is already ${review.replyStatus}, so its reply can't be changed.`, 409);
+  }
+  return c.json({ review: await getReview(c.env.DB, review.id) });
+});
+
+/** Logan says he posted the drafted reply on Google. Only a drafted reply can be marked posted. */
+seoRoutes.post("/seo/reviews/:id/posted", async (c) => {
+  const review = await reviewOf(c);
+  if (review instanceof Response) return review;
+  if (!(await setReviewStatus(c.env.DB, review.id, ["drafted"], "posted"))) {
+    throw new SeoRefusal(review.replyStatus === "posted" ? "This reply is already marked as posted." : "Only a drafted reply can be marked as posted. Write or approve a draft first.", 409);
+  }
+  return c.json({ review: await getReview(c.env.DB, review.id) });
+});
+
+/** Logan chooses not to reply to this review. A review he has already posted a reply to can't be skipped. */
+seoRoutes.post("/seo/reviews/:id/skip", async (c) => {
+  const review = await reviewOf(c);
+  if (review instanceof Response) return review;
+  if (!(await setReviewStatus(c.env.DB, review.id, ["new", "drafting", "drafted"], "skipped"))) {
+    throw new SeoRefusal(`This review is already ${review.replyStatus}.`, 409);
+  }
+  return c.json({ review: await getReview(c.env.DB, review.id) });
 });

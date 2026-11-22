@@ -229,6 +229,19 @@ export async function setReviewDraft(
   return changed(res);
 }
 
+/** One review by id, or null. */
+export async function getReview(db: D1Database, id: string): Promise<SeoReview | null> {
+  const r = await db.prepare(`SELECT * FROM seo_reviews WHERE id = ?`).bind(id).first<ReviewRow>();
+  return r ? toReview(r) : null;
+}
+
+/** Moves a review to `status` while it is in one of the `from` states, leaving its draft as it is. One statement; false when the review was in none of them. */
+export async function setReviewStatus(db: D1Database, id: string, from: ReplyStatus[], status: ReplyStatus): Promise<boolean> {
+  if (from.length === 0) return false;
+  const res = await db.prepare(`UPDATE seo_reviews SET reply_status = ? WHERE id = ? AND reply_status IN (${marks(from.length)})`).bind(status, id, ...from).run();
+  return changed(res);
+}
+
 // --- content --------------------------------------------------------------------------------------------------------------------------------------------------------
 
 interface ContentRow {
