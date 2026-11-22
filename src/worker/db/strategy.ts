@@ -89,3 +89,8 @@ export async function revokeMemo(db: D1Database, id: string, now: string): Promi
 export async function countMemoView(db: D1Database, id: string, now: string): Promise<void> {
   await db.prepare(`UPDATE strategy_memos SET view_count = view_count + 1, first_viewed_at = COALESCE(first_viewed_at, ?) WHERE id = ?`).bind(now, id).run();
 }
+
+/** Undoes `markMemoSent` for a memo whose mail did not go out: `sent` to `ready` again (clearing `sent_at`), so the approval can be approved once more. False when it was not `sent`. */
+export async function unmarkMemoSent(db: D1Database, id: string): Promise<boolean> {
+  return changed(await db.prepare(`UPDATE strategy_memos SET status = 'ready', sent_at = NULL WHERE id = ? AND status = 'sent'`).bind(id).run());
+}

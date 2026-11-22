@@ -71,6 +71,7 @@ import "./approvals/pauseNotice";
 import "./approvals/careUpdates";
 import "./approvals/careReport";
 import "./approvals/seoReport";
+import "./approvals/strategyMemo";
 import "./approvals/studioPost";
 import "./approvals/ladderMail";
 import "./billing/milestones"; // registers the hook that drafts and proposes a milestone invoice when a project reaches one

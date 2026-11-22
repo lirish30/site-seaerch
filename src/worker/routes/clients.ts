@@ -3,6 +3,7 @@ import { z } from "zod";
 import { gradeViewFor } from "../clients/gradeData";
 import { getClientRecord, isClient, isTestClient, listClients } from "../clients/record";
 import { logActivity } from "../db/activity";
+import { getBusiness } from "../db/businesses";
 import { getGrades, setGrade } from "../db/grade";
 import { settleAccessItem } from "../db/onboardings";
 import {
@@ -12,6 +13,8 @@ import {
 import type { Env } from "../env";
 import { bodyOf, invalid, NOT_FOUND, ownerOnError, type Ctx } from "../projects/http";
 import { cleanText } from "../onboarding/templates";
+import { MemoRefused } from "../strategy/facts";
+import { startStrategyMemo } from "../strategy/start";
 import { clientTraffic } from "../traffic/panel";
 import { ACCESS_LABELS, cleanVaultName, isHttpUrl, noteProblem, vaultNameProblem } from "../sites/access";
 
@@ -98,6 +101,22 @@ clientRoutes.get("/clients/:id", async (c) => {
 clientRoutes.get("/clients/:id/traffic", async (c) => {
   const traffic = await clientTraffic(c.env, c.req.param("id"), new Date());
   return traffic ? c.json(traffic) : c.json(NOT_FOUND, 404);
+});
+
+/**
+ * Starts the client's strategy memo by hand (Plan 16): the facts are frozen into a memo and Claude is asked for the words. 201 with `{ memoId, status, created: true }`, or 200 with the memo already open for the
+ * client (`created: false`). No token is sent. 404 for a business that does not exist; 409 with a plain sentence for a lead or for a client with nothing measured yet.
+ */
+clientRoutes.post("/clients/:id/strategy-memo", async (c) => {
+  const businessId = c.req.param("id");
+  if (!(await getBusiness(c.env.DB, businessId))) return c.json(NOT_FOUND, 404);
+  try {
+    const { memo, created } = await startStrategyMemo(c.env, businessId, { now: new Date() });
+    return c.json({ memoId: memo.id, status: memo.status, created }, created ? 201 : 200);
+  } catch (e) {
+    if (e instanceof MemoRefused) return c.json({ error: e.message }, 409);
+    throw e;
+  }
 });
 
 const GRADE_NOTE_MAX = 300;
