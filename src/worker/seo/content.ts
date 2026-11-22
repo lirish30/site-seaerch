@@ -46,7 +46,7 @@ function briefFor(kind: ContentKind, term: string, town: string): string {
 
 /**
  * Plans the month's content for the client (`period` is `YYYY-MM`) and queues Claude's draft of each slot, which then goes `drafting`. Every new slot takes the active keyword that has the fewest
- * pieces in the period so far (a piece that is already there counts), ties by keyword order. Safe to run again: a slot that is there is left as it is, and one that is still `planned` with no task
+ * pieces so far, over every month of the client's content (a piece that is already there counts, a rejected one does not), ties by keyword order. Safe to run again: a slot that is there is left as it is, and one that is still `planned` with no task
  * gets its draft queued, so a crash half way through is finished by the next call. A client with no live plan, or with no active keyword, gets no new slots. Returns the period's rows.
  */
 export async function ensureSlots(env: Env, businessId: string, period: string, now: Date): Promise<ContentItem[]> {
@@ -54,10 +54,12 @@ export async function ensureSlots(env: Env, businessId: string, period: string, 
   const plan = await planFor(env.DB, businessId);
   if (!plan) return [];
   const keywords = await listKeywords(env.DB, businessId, { activeOnly: true });
-  const there = await listContent(env.DB, { businessId, period });
+  const all = await listContent(env.DB, { businessId });
+  const there = all.filter((i) => i.period === period);
 
+  // Coverage is counted over every month, so a keyword that was left out this month is first in line the next. A rejected piece never covered its keyword.
   const counts = new Map<string, number>();
-  for (const i of there) if (i.keywordId) counts.set(i.keywordId, (counts.get(i.keywordId) ?? 0) + 1);
+  for (const i of all) if (i.keywordId && i.status !== "rejected") counts.set(i.keywordId, (counts.get(i.keywordId) ?? 0) + 1);
 
   for (const { kind, slot } of specs(plan)) {
     if (there.some((i) => i.kind === kind && i.slot === slot) || !keywords.length) continue;

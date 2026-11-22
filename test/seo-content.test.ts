@@ -125,7 +125,7 @@ describe("ensureSlots", () => {
     expect(a.items.find((i) => i.kind === "gbp_post")!.keywordId).toBe(a.kws[2].id);
     const g = await planned("local_seo_growth");
     expect(g.kws.map((k) => count(g.items, k.id))).toEqual([2, 2, 2]);
-    // Four keywords, three slots: the first three each get one and the last none.
+    // Four keywords, three slots in the first month: the first three each get one and the last none (the next month starts with the last, see below).
     const four = await planned("local_seo", [["a one", ""], ["b two", ""], ["c three", ""], ["d four", ""]]);
     expect(four.kws.map((k) => count(four.items, k.id))).toEqual([1, 1, 1, 0]);
   });
@@ -143,6 +143,25 @@ describe("ensureSlots", () => {
     expect(again.find((i) => i.kind === "gbp_post" && i.slot === 2)!.keywordId).not.toBe(a.id);
     expect(again.find((i) => i.kind === "gbp_post" && i.slot === 2)!.keywordId).not.toBe(b.id);
     for (const i of first.filter((x) => !(x.kind === "gbp_post" && x.slot === 2))) expect(again.find((x) => x.id === i.id)!.keywordId).toBe(i.keywordId);
+  });
+
+  it("spreads over the months: 5 keywords and 3 slots a month cover 1-3, then 4, 5 and 1, and a rejected piece does not count as coverage", async () => {
+    const s = await seedClient({ subs: [sub("local_seo")] });
+    const kws = await keywords(s.businessId, [["k one", ""], ["k two", ""], ["k three", ""], ["k four", ""], ["k five", ""]]);
+    const covered = (items: ContentItem[]) => new Set(items.map((i) => kws.findIndex((k) => k.id === i.keywordId) + 1));
+    const m1 = await ensureSlots(e, s.businessId, "2026-12", NOW);
+    expect(covered(m1)).toEqual(new Set([1, 2, 3]));
+    const m2 = await ensureSlots(e, s.businessId, "2027-01", NOW);
+    expect(covered(m2)).toEqual(new Set([4, 5, 1]));
+    // Running a month again re-assigns nothing.
+    expect((await ensureSlots(e, s.businessId, "2027-01", NOW)).map((i) => i.keywordId)).toEqual(m2.map((i) => i.keywordId));
+    // A rejected piece covered nothing: reject keyword 2's piece and it is first in line again.
+    const two = m1.find((i) => i.keywordId === kws[1].id)!;
+    await env.DB.prepare(`UPDATE seo_content SET status = 'rejected' WHERE id = ?`).bind(two.id).run();
+    const m3 = await ensureSlots(e, s.businessId, "2027-02", NOW);
+    const picked = m3.map((i) => kws.findIndex((k) => k.id === i.keywordId) + 1);
+    expect(m3.find((i) => i.kind === "page")!.keywordId).toBe(kws[1].id);
+    expect(picked).not.toContain(1); // keyword 1 already has two pieces, the others at most one
   });
 
   it("writes the brief for each kind, and leaves the town out of the page brief when the keyword has none", async () => {
