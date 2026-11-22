@@ -39,10 +39,10 @@ export default function Pipeline() {
         return (
           <div className="pb-page pl-top">
             <StatRow stats={[
-              { label: "Open deals", icon: "kanban", value: open.length, sub: open.length ? `${open.filter((d) => d.stage === "proposal_sent").length} with a proposal out` : "None in play" },
-              { label: "Open value", icon: "trending", value: dollars(value), sub: open.some((d) => d.valueCents === null) ? "Some deals have no value set" : "What's on the table" },
-              { label: "Gone quiet", icon: "clock", value: stale, sub: stale ? "No update in 7 days: follow up" : "Every deal is moving", tone: stale ? "warning" : "positive" },
-              { label: "Win rate", icon: "check", value: won + lost ? `${Math.round((won / (won + lost)) * 100)}%` : "—", sub: won + lost ? `${won} won · ${lost} lost` : "Shows after the first close" },
+              { label: "Open deals", value: open.length, sub: open.length ? `${open.filter((d) => d.stage === "proposal_sent").length} with a proposal out` : "None in play" },
+              { label: "Open value", value: dollars(value), sub: open.some((d) => d.valueCents === null) ? "Some deals have no value set" : "What's on the table" },
+              { label: "Gone quiet", value: stale, sub: stale ? "No update in 7 days: follow up" : "Every deal is moving", tone: stale ? "warning" : "positive" },
+              { label: "Win rate", value: won + lost ? `${Math.round((won / (won + lost)) * 100)}%` : "—", sub: won + lost ? `${won} won · ${lost} lost` : "Shows after the first close" },
             ]} />
             {deals.length === 0 && (
               <EmptyState icon="kanban" title="No deals yet"

@@ -4,18 +4,18 @@ import Icon, { type IconName } from "./Icon";
 
 /** The building blocks the newer pages share with Home, so every page reads the same way: a row of headline numbers, cards with a titled header, and empty states that say what will show up and how to get it there. */
 
-export interface Stat { label: string; icon: IconName; value: ReactNode; sub?: ReactNode; tone?: "positive" | "warning" | "" }
+export interface Stat { label: string; value: ReactNode; sub?: ReactNode; tone?: "positive" | "warning" | "" }
 
-/** The headline numbers at the top of a page (Home's KPI cards). Three or four is the sweet spot. */
+/** The headline numbers at the top of a page: one card split into cells, like the lead page's scorecard. A small uppercase label, the number, one line saying what it means. */
 export function StatRow({ stats, label = "Key numbers" }: { stats: Stat[]; label?: string }) {
   return (
-    <section className={`hm-kpis pb-stats n${stats.length}`} aria-label={label}>
+    <section className="pb-strip" aria-label={label} style={{ gridTemplateColumns: `repeat(${stats.length}, minmax(0, 1fr))` }}>
       {stats.map((s) => (
-        <article key={s.label} className="hm-kpi">
-          <h3><Icon name={s.icon} size={16} />{s.label}</h3>
-          <p className="hm-kpi-num">{s.value}</p>
-          {s.sub !== undefined && <p className={`hm-kpi-sub ${s.tone ?? ""}`}>{s.sub}</p>}
-        </article>
+        <div key={s.label} className="pb-cell">
+          <p className="kicker">{s.label}</p>
+          <p className="pb-num">{s.value}</p>
+          {s.sub !== undefined && <div className={`pb-sub ${s.tone ?? ""}`}>{s.sub}</div>}
+        </div>
       ))}
     </section>
   );

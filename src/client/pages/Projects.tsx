@@ -60,10 +60,10 @@ export default function Projects() {
         {rows !== null && !lead && (() => {
           const c = bucketCounts(rows);
           return <StatRow stats={[
-            { label: "Active", icon: "briefcase", value: c.active, sub: c.active ? "Projects being worked" : "None running" },
-            { label: "Steps on you", icon: "user", value: mineCount, sub: mineCount ? "Open them from each card" : "Nothing waiting on you", tone: mineCount ? "warning" : "positive" },
-            { label: "Waiting on client", icon: "clock", value: c.waiting, sub: c.waiting ? "Gone quiet on onboarding" : "Nobody is holding you up", tone: c.waiting ? "warning" : "" },
-            { label: "Done", icon: "check", value: c.done, sub: c.paused ? `${c.paused} paused` : "Finished or cancelled" },
+            { label: "Active", value: c.active, sub: c.active ? "Projects being worked" : "None running" },
+            { label: "Steps on you", value: mineCount, sub: mineCount ? "Open them from each card" : "Nothing waiting on you", tone: mineCount ? "warning" : "positive" },
+            { label: "Waiting on client", value: c.waiting, sub: c.waiting ? "Gone quiet on onboarding" : "Nobody is holding you up", tone: c.waiting ? "warning" : "" },
+            { label: "Done", value: c.done, sub: c.paused ? `${c.paused} paused` : "Finished or cancelled" },
           ]} />;
         })()}
         {rows !== null && shown.length === 0 && (view === "active" && !lead ? (
@@ -73,7 +73,7 @@ export default function Projects() {
               { title: "The deposit is paid", text: "The project starts by itself with every task from the SOP." },
               { title: "You and Claude work it", text: "Your steps show here as Next for you; Claude's run from the queue." },
             ]}>
-            {v.empty}
+            A project starts by itself when a client's deposit is paid.
           </EmptyState>
         ) : <EmptyState icon={view === "done" ? "check" : view === "paused" ? "ban" : "clock"} title={v.empty} />)}
         <ul className="wk-cards">
