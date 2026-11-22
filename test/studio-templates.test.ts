@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { slidesFor, renderSlideHtml, STUDIO_SIZE, type StudioCopy } from "../src/worker/studio/templates";
+import { slidesFor, renderSlideHtml, clip, BODY_MAX, STUDIO_SIZE, TITLE_MAX, type StudioCopy } from "../src/worker/studio/templates";
 import { STUDIO_BRAND } from "../src/worker/studio/brand";
 
 const copy = (n: number, over: Partial<StudioCopy> = {}): StudioCopy => ({
@@ -75,5 +75,59 @@ describe("studio templates", () => {
   it("the brand placeholders are plain strings with system fonts only", () => {
     for (const v of Object.values(STUDIO_BRAND)) expect(typeof v).toBe("string");
     expect(STUDIO_BRAND.headingFont + STUDIO_BRAND.bodyFont).not.toMatch(/https?:|url\(/);
+  });
+
+  it("the css is overflow-safe: top-anchored slide, auto-margin wrapper, wrapping and line clamps", () => {
+    const html = renderSlideHtml({ kind: "tip", title: "t", body: "b" });
+    expect(html).toMatch(/\.slide\{[^}]*justify-content:flex-start/);
+    expect(html).not.toMatch(/justify-content:center/);
+    expect(html).toMatch(/\.fit\{[^}]*margin:auto 0/);
+    expect(html).toMatch(/h1,p\{[^}]*overflow-wrap:anywhere/);
+    expect(html).toMatch(/h1,p\{[^}]*min-width:0/);
+    expect(html).toMatch(/-webkit-line-clamp:\d/);
+    expect(html).toMatch(/\.slide\{[^}]*overflow:hidden/);
+    // the image row shrinks instead of pushing text out
+    expect(html).toMatch(/\.pair\{[^}]*flex:1;min-height:0/);
+    expect(html).toMatch(/object-fit:cover/);
+  });
+
+  it("a 400-character title and a 2,000-character body come out capped with an ellipsis", () => {
+    const long = copy(2, { headline: "H".repeat(400) });
+    long.slides = [{ title: "T ".repeat(200), body: "word ".repeat(400) }, { title: "ok", body: "ok" }];
+    for (const kind of ["audit_tip", "before_after", "case_study"] as const) {
+      for (const s of slidesFor(kind, long, { before: JPG, after: PNG })) {
+        expect(Array.from(s.title).length, `${kind} ${s.kind} title`).toBeLessThanOrEqual(TITLE_MAX);
+        if (kind !== "case_study") expect(Array.from(s.body).length, `${kind} ${s.kind} body`).toBeLessThanOrEqual(BODY_MAX);
+      }
+    }
+    const tip = slidesFor("audit_tip", long, {})[1];
+    expect(tip.title.endsWith("\u2026")).toBe(true);
+    expect(tip.body.endsWith("\u2026")).toBe(true);
+    expect(slidesFor("audit_tip", long, {})[0].title).toBe(`${"H".repeat(TITLE_MAX - 1)}\u2026`);
+    // short text is left alone
+    expect(slidesFor("audit_tip", long, {})[2]).toMatchObject({ title: "ok", body: "ok" });
+    // a case card's sections are each capped
+    const card = slidesFor("case_study", long, {})[0];
+    for (const para of card.body.split("\n\n")) expect(Array.from(para).length).toBeLessThanOrEqual(TITLE_MAX + 2 + BODY_MAX);
+  });
+
+  it("an unbroken 200-character token is still capped, and renderSlideHtml caps a slide that was not built by slidesFor", () => {
+    const token = "x".repeat(200);
+    const s = slidesFor("audit_tip", copy(1, { slides: [{ title: token, body: token }] }), {})[1];
+    expect(s.title).toBe(`${"x".repeat(TITLE_MAX - 1)}\u2026`);
+    expect(s.body).toBe(`${"x".repeat(BODY_MAX - 1)}\u2026`);
+    const html = renderSlideHtml({ kind: "tip", title: token, body: token });
+    expect(html).toContain(`<h1>${"x".repeat(TITLE_MAX - 1)}\u2026</h1>`);
+    expect(html).toContain(`<p>${"x".repeat(BODY_MAX - 1)}\u2026</p>`);
+    expect(html).not.toContain("x".repeat(BODY_MAX + 1));
+    // no more than three paragraphs, each capped
+    const many = renderSlideHtml({ kind: "case", title: "t", body: Array.from({ length: 6 }, (_, i) => `p${i}`).join("\n\n") });
+    expect(many.match(/<p>/g)).toHaveLength(3);
+  });
+
+  it("clip cuts by whole characters and leaves short text alone", () => {
+    expect(clip("  hello  ", 10)).toBe("hello");
+    expect(clip("abcdef", 4)).toBe("abc\u2026");
+    expect(clip("\u{1F600}".repeat(5), 3)).toBe("\u{1F600}\u{1F600}\u2026");
   });
 });
