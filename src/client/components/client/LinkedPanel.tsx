@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { moneyLabel, projectStatusLabel, renewalLabel } from "../../clientView";
 import { statusLabel as changeOrderStatus } from "../../changeOrderView";
+import { projectIsLive } from "../../../worker/db/projects";
 import type { Tone } from "../../projectView";
 import { shortDate } from "../../billingView";
 import type { ClientRecord } from "../../../worker/clients/record";
@@ -11,7 +12,7 @@ const upper = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 /** Everything else that belongs to this client, as short lists that link out: projects, invoices, documents, change orders, open tasks and the next renewal. */
 export default function LinkedPanel({ client, today }: { client: ClientRecord; today: string }) {
   const id = client.business.id;
-  const live = client.projects.filter((p) => p.status === "active" || p.status === "paused" || (p.status === "done" && p.kind === "care_onboarding"));
+  const live = client.projects.filter((p) => p.status === "active" || p.status === "paused" || (p.status === "done" && projectIsLive(p)));
   const openTasks = live.reduce((n, p) => n + p.openTasks, 0);
   const documents = client.documents;
   const orders = client.changeOrders;

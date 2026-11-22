@@ -103,8 +103,9 @@ describe("profitLines", () => {
 });
 
 describe("project state and buckets", () => {
-  const base = { status: "active" as const, kind: "build" as const, waitingOnClient: false };
-  const care = { kind: "care_onboarding" as const, waitingOnClient: false };
+  const base = { status: "active" as const, kind: "build" as const, templateKey: null, waitingOnClient: false };
+  const care = { kind: "care_onboarding" as const, templateKey: null, waitingOnClient: false };
+  const seo = { kind: "custom" as const, templateKey: "SEO-0", waitingOnClient: false };
   it("labels each state", () => {
     expect(projectState(base)).toEqual({ label: "Active", tone: "neutral" });
     expect(projectState({ ...base, waitingOnClient: true })).toEqual({ label: "Waiting on client", tone: "muted" });
@@ -120,6 +121,16 @@ describe("project state and buckets", () => {
     expect(projectBucket({ ...care, status: "cancelled" })).toBe("done");
     expect(projectState({ ...care, status: "cancelled" })).toEqual({ label: "Cancelled", tone: "muted" });
   });
+  it("a finished SEO-0 project is live too, and says Local SEO is running, never Care", () => {
+    expect(projectState({ ...seo, status: "done" })).toEqual({ label: "Local SEO running", tone: "good" });
+    expect(projectBucket({ ...seo, status: "done" })).toBe("active");
+    expect(projectState({ ...seo, status: "cancelled" })).toEqual({ label: "Cancelled", tone: "muted" });
+    expect(projectBucket({ ...seo, status: "cancelled" })).toBe("done");
+    // a done hand-made custom project, and a done build, stay plain Done
+    expect(projectState({ ...base, kind: "custom", status: "done" })).toEqual({ label: "Done", tone: "good" });
+    expect(projectBucket({ ...base, kind: "custom", status: "done" })).toBe("done");
+    expect(projectState({ ...base, status: "done" })).toEqual({ label: "Done", tone: "good" });
+  });
   it("buckets for the sidebar: waiting is its own, cancelled sits with done, a live Care project counts as active", () => {
     const rows = [base, { ...base, waitingOnClient: true }, { ...base, status: "paused" as const }, { ...base, status: "done" as const }, { ...base, status: "cancelled" as const }, base, { ...care, status: "done" as const }];
     expect(rows.map(projectBucket)).toEqual(["active", "waiting", "paused", "done", "done", "active", "active"]);
@@ -131,7 +142,7 @@ describe("project state and buckets", () => {
 });
 
 describe("stop controls and what a project still takes", () => {
-  const p = (status: "active" | "paused" | "done" | "cancelled", kind: "build" | "care_onboarding" = "build") => ({ status, kind });
+  const p = (status: "active" | "paused" | "done" | "cancelled", kind: "build" | "care_onboarding" | "custom" = "build", templateKey: string | null = null) => ({ status, kind, templateKey });
   it("an active project can be paused or cancelled, a paused one resumed or cancelled", () => {
     expect(stopControls(p("active"))).toEqual({ pause: true, resume: false, cancel: "project" });
     expect(stopControls(p("paused"))).toEqual({ pause: false, resume: true, cancel: "project" });
@@ -141,6 +152,24 @@ describe("stop controls and what a project still takes", () => {
     expect(cancelLabel("care")).toMatch(/Care/);
     expect(cancelConfirm("Ace: Care onboarding", "care")).toMatch(/stops? .*Care/i);
     expect(cancelLabel("project")).toBe("Cancel project");
+  });
+  it("a finished SEO-0 project can only be cancelled, and says it stops Local SEO and leaves Care alone", () => {
+    const seo = p("done", "custom", "SEO-0");
+    expect(stopControls(seo)).toEqual({ pause: false, resume: false, cancel: "seo" });
+    expect(cancelLabel("seo")).toBe("Stop Local SEO (cancel project)");
+    expect(cancelLabel("seo")).not.toMatch(/Care/);
+    expect(cancelConfirm("Ace: Local SEO onboarding", "seo")).toMatch(/stops this client's monthly Local SEO tasks/);
+    expect(cancelConfirm("Ace: Local SEO onboarding", "seo")).toMatch(/does not touch Care/);
+    expect(cancelConfirm("Ace: Local SEO onboarding", "seo").replace("does not touch Care", "")).not.toMatch(/Care/);
+    expect(stepsEditable(seo)).toBe(true);
+    // an active or paused SEO-0 is cancelled like any project; a cancelled one has no controls
+    expect(stopControls(p("active", "custom", "SEO-0"))).toEqual({ pause: true, resume: false, cancel: "project" });
+    expect(stopControls(p("cancelled", "custom", "SEO-0"))).toEqual({ pause: false, resume: false, cancel: null });
+  });
+  it("a finished hand-made custom project and a finished build keep no stop controls and cannot be edited", () => {
+    expect(stopControls(p("done", "custom"))).toEqual({ pause: false, resume: false, cancel: null });
+    expect(stepsEditable(p("done", "custom"))).toBe(false);
+    expect(stopControls(p("done", "build", "BUILD"))).toEqual({ pause: false, resume: false, cancel: null });
   });
   it("a finished build and a cancelled project have no stop controls", () => {
     expect(stopControls(p("done"))).toEqual({ pause: false, resume: false, cancel: null });
@@ -158,7 +187,7 @@ describe("stop controls and what a project still takes", () => {
 });
 
 describe("the project list for a lead", () => {
-  const row = (id: string, businessId: string, status: "active" | "done" | "cancelled" = "active", kind: "build" | "care_onboarding" = "build") => ({ id, businessId, status, kind, waitingOnClient: false });
+  const row = (id: string, businessId: string, status: "active" | "done" | "cancelled" = "active", kind: "build" | "care_onboarding" = "build") => ({ id, businessId, status, kind, templateKey: null, waitingOnClient: false });
   const rows = [row("1", "a"), row("2", "a", "done"), row("3", "b"), row("4", "a", "cancelled", "care_onboarding")];
   it("filters to one lead and then shows every one of its projects whatever the state", () => {
     expect(visibleProjects(rows, { view: "active", businessId: "a" }).map((r) => r.id)).toEqual(["1", "2", "4"]);

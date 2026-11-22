@@ -69,7 +69,7 @@ export default function ProjectPage() {
   if (!data) return <div className="wk"><p className="muted wk-body">Loading…</p></div>;
 
   const { project, tasks } = data;
-  const state = projectState({ status: project.status, kind: project.kind, waitingOnClient: data.waitingOnClient });
+  const state = projectState({ status: project.status, kind: project.kind, templateKey: project.templateKey, waitingOnClient: data.waitingOnClient });
   const progress = projectProgress(tasks);
   const stop = stopControls(project);
   return (

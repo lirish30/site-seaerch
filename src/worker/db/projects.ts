@@ -85,7 +85,7 @@ export const SEO_ONBOARDING_KEY = "SEO-0";
  * recurring tasks start only once they are done, and `done` is final), so they must keep generating, dispatching and being worked. A paused or cancelled project, and a finished
  * build or quick fix, are not live. Test projects are not told apart here; callers that exclude them say so themselves.
  */
-export const projectIsLive = (p: { status: ProjectStatus; kind: ProjectKind; templateKey?: string | null }): boolean =>
+export const projectIsLive = (p: { status: ProjectStatus; kind: ProjectKind; templateKey: string | null }): boolean =>
   p.status === "active" || (p.status === "done" && (p.kind === "care_onboarding" || p.templateKey === SEO_ONBOARDING_KEY));
 
 /** The same rule as `projectIsLive`, as SQL for a projects table with this alias. */
