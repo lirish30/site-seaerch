@@ -275,6 +275,11 @@ describe("the seo.review_reply result", () => {
     expect(SeoReviewReplyResult.parse({ replies: [reply("r1", "  hello  ")] }).replies[0].reply).toBe("hello");
   });
 
+  it("refuses an offer of free work but not the stock phrases 'feel free' and 'hassle-free'", () => {
+    for (const ok of ["Please feel free to call us and we will talk it through.", "We aim for a hassle-free visit every time.", "Carefree is how we like our customers to feel."]) expect(replyProblem(ok), ok).toBeNull();
+    for (const bad of ["We will send a free estimate.", "It would be a free repair for you.", "Come back for free.", "A complimentary visit is on us.", "There is no charge for the call-out.", "Free of charge, of course.", "We offer a free quote.", "Some free work for you."]) expect(replyProblem(bad), bad).toMatch(/offer/);
+  });
+
   it("refuses a bad reply through the queue and leaves the task claimed and the reviews drafting", async () => {
     const { task, rows } = await watched();
     for (const bad of ["see https://x.co", "mail jo@x.co", "call 503-555-0147", "it was $50", "we will refund you", "this is **bold**"]) {
@@ -359,6 +364,16 @@ describe("a task nobody finishes", () => {
     const w = await watchReviews(e, businessId, new Date("2026-12-20T18:00:00.000Z"));
     expect(w).toMatchObject({ inserted: 0, queued: true });
     expect((await tasks()).map((t) => t.status)).toEqual(["expired", "pending"]);
+  });
+
+  it("leaves the reviews a newer task has taken when an old task's expiry comes late", async () => {
+    const { businessId, rows } = await watched();
+    await env.DB.prepare(`UPDATE claude_tasks SET created_at = '2020-01-01T00:00:00.000Z' WHERE kind = ?`).bind(SEO_REVIEW_REPLY_KIND).run();
+    await env.DB.prepare(`UPDATE seo_reviews SET claude_task_id = 'a-newer-task' WHERE business_id = ?`).bind(businessId).run(); // the reviews now belong to another task
+    await expireOldTasks(env, new Date());
+    expect((await tasks())[0].status).toBe("expired");
+    expect((await listReviews(env.DB, businessId)).map((x) => x.replyStatus)).toEqual(["drafting", "drafting", "drafting"]);
+    expect(rows).toHaveLength(3);
   });
 
   it("returns them to new when the task fails, but leaves a review that has moved on", async () => {

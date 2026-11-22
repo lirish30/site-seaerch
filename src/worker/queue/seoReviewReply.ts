@@ -25,7 +25,7 @@ const EMAIL = /@/;
 // A ten-digit number in any of the usual shapes, a seven-digit one with a dash, and any long run of digits.
 const PHONE = /(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}|\b\d{3}[\s.-]\d{4}\b|\d{7,}/;
 const MONEY = /\$\s?\d|\b\d[\d,.]*\s*(?:dollars?|bucks|usd)\b/i;
-const OFFER = /refund|compensat|\bfree\b|discount|guarantee/i;
+const OFFER = /refund|compensat|free (?:of charge|service|repair|estimate|quote|work)|for free|complimentary|no charge|discount|guarantee/i;
 const MARKDOWN = /[`#*_]{2}|[`*]|\]\(|^\s*(?:#|[-*]\s)/m;
 const BLANK_LINES = /(?:\r?\n){3,}/;
 
@@ -113,8 +113,8 @@ const seoReviewReply: TaskKindDef<SeoReviewReplyPayload, SeoReviewReplyResult> =
     return { log: { summary: `drafted ${drafted} review ${drafted === 1 ? "reply" : "replies"}`, recordType: SEO_REVIEW_TARGET, recordId: p.reviewIds[0] } };
   },
 
-  /** Nobody picked the task up: the reviews go back to `new`, so the next watch queues them again. */
-  async onExpire(env, p) { await release(env, p); },
+  /** Nobody picked the task up: the reviews it was drafting go back to `new`, so the next watch queues them again (an old task's late expiry leaves the reviews a newer task has taken). */
+  async onExpire(env, p, task) { await release(env, p, task?.id); },
   /** The task was given up on: same as an expiry, for the reviews that still belong to this task. */
   async onFail(env, p, _error, task) { await release(env, p, task.id); },
 };
