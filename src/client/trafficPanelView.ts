@@ -83,3 +83,34 @@ export function foundLine(c: Candidates): string {
   if (c.gsc.length === 0 && c.ga4.length === 0) return "Nothing found for this site. Ask the client to add the connected Google account as a viewer, then look again.";
   return "Choose what to link.";
 }
+
+/** The panel is for a client that has at least one live site. */
+export const showPanel = (data: Pick<ClientTraffic, "sites">): boolean => data.sites.length > 0;
+
+/** What a site is called on the panel. */
+export const siteName = (s: Pick<PanelSite, "domain">): string => s.domain ?? "This site";
+
+type Site = Pick<PanelSite, "domain" | "gscProperty" | "ga4Property">;
+
+/** A site with no domain cannot be matched to a Google property: the panel says to set it first. */
+export const needsDomain = (s: Pick<PanelSite, "domain">): boolean => !s.domain;
+
+/** Looking for properties needs the site's domain (a property is matched to it) and nothing else running. */
+export const canFind = (s: Pick<PanelSite, "domain">, busy: boolean): boolean => !busy && !needsDomain(s);
+
+/** Pulling needs a linked property, a month to ask for, and nothing else running. */
+export const canPull = (s: Site, busy: boolean, period: string | null): boolean => !busy && hasLink(s) && period !== null;
+
+/** Unlinking needs something linked and nothing else running. */
+export const canUnlink = (s: Site, busy: boolean): boolean => !busy && hasLink(s);
+
+/** Linking needs a chosen property (the body `linkBody` made) and nothing else running. */
+export const canLink = (body: ReturnType<typeof linkBody>, busy: boolean): boolean => !busy && body !== null;
+
+/** The question asked before a site is unlinked. */
+export const unlinkQuestion = (s: Pick<PanelSite, "domain">): string => `Unlink ${siteName(s)} from Google? The months already pulled stay.`;
+
+/** How the result of "Pull last month now" is shown: a month that was read in full is a plain line; anything else is a problem and says why. */
+export function pullResult(r: { status: TrafficStatus; error: string }): { text: string; tone: "ok" | "error" } {
+  return r.status === "ok" ? { text: "Pulled last month.", tone: "ok" } : { text: r.error || "Last month could not be read.", tone: "error" };
+}

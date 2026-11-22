@@ -100,6 +100,29 @@ describe("get_traffic", () => {
     expect(out.clients[1].sites[0].error).toBe("Google says the connected Google account can't read this one. Ask the client to add the connected Google account as a viewer, then it will be tried again tomorrow.");
   });
 
+  it("words out an address in a stored sentence whatever the Google connection is now: disconnected, another account, or another case", async () => {
+    const sentence = (who: string) => `Google says ${who} can't read this one. Ask the client to add ${who} as a viewer, then it will be tried again tomorrow.`;
+    const worded = "Google says the connected Google account can't read this one. Ask the client to add the connected Google account as a viewer, then it will be tried again tomorrow.";
+    await linked("Ace Plumbing", { status: "failed", error: sentence("old.owner@x.test"), facts: facts({}) });
+    await linked("Bay Roofing", { status: "failed", error: sentence("Me@X.Test"), facts: facts({}) });
+    const never = await linked("Cedar Dental", { facts: null });
+    await env.DB.prepare(`UPDATE site_analytics SET last_error = ? WHERE site_id = ?`).bind(sentence("old.owner@x.test"), never.site!.id).run();
+    // Disconnected: no auth row at all.
+    await env.DB.prepare(`DELETE FROM google_auth`).run();
+    const gone = await tool("get_traffic", {});
+    expect(JSON.parse(gone.text).clients.map((c: any) => c.sites[0].error)).toEqual([worded, worded, worded]);
+    // Reconnected as another account: the stored address is not the current one.
+    await saveGoogleAuth(env.DB, "new.account@y.test", await encryptSecret(env.SESSION_SECRET, "refresh-2"), "openid email");
+    const other = await tool("get_traffic", {});
+    expect(JSON.parse(other.text).clients.map((c: any) => c.sites[0].error)).toEqual([worded, worded, worded]);
+    for (const leak of ["old.owner@x.test", "Me@X.Test", "@x.test", "new.account@y.test", "@"]) expect(gone.text + other.text).not.toContain(leak);
+  });
+
+  it("keeps the full stop after an address that ends a sentence", async () => {
+    await linked("Ace Plumbing", { status: "failed", error: "Ask the client to add Me@X.Test.", facts: facts({}) });
+    expect((await ok<Answer>("get_traffic", {})).clients[0].sites[0].error).toBe("Ask the client to add the connected Google account.");
+  });
+
   it("leaves out test clients and clients with no linked site, and returns no property id, token, query, page path or channel", async () => {
     await linked("Ace Plumbing");
     await linked("Rehearsal Co", { test: true });

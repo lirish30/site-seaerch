@@ -1,7 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { clientSql, testClientSql } from "../../clients/record";
-import { getGoogleAuth } from "../../db/google";
 import { getSettings } from "../../db/settings";
 import { linksForBusiness, monthsFor, type TrafficMonth } from "../../db/traffic";
 import { zoneOf } from "../../sop/cadence";
@@ -9,10 +8,13 @@ import { previousMonth } from "../../sop/months";
 import { trafficFor } from "../../traffic/forClient";
 import type { ToolCtx } from "./context";
 
+/** An email address in a sentence (up to the next space, without the punctuation that ends a sentence). */
+const ADDRESS = /[^\s@]+@[^\s@]*[^\s@.,;:!?)]/g;
+
 /**
  * The traffic tool, read only: per real client with a site linked to Google, the month's numbers as Google counted them (the sites merged, as the reports merge them) and each site's status with the plain sentence
  * for why a month could not be read in full. The answer is built field by field: counts only (the search queries, page paths and channel names are written by strangers and are left out), never a Google property
- * id, a token, anything Google said, or the connected account's address. A rehearsal client is left out. An agent sends only a month and a client id, and nothing it sends is echoed.
+ * id, a token, anything Google said, or an email address (any address in a sentence is worded out, whatever account it was, whether or not Google is still connected). A rehearsal client is left out. An agent sends only a month and a client id, and nothing it sends is echoed.
  */
 export function registerTrafficTools(server: McpServer, ctx: ToolCtx): void {
   const { db, log, text } = ctx;
@@ -29,9 +31,8 @@ export function registerTrafficTools(server: McpServer, ctx: ToolCtx): void {
          AND EXISTS (SELECT 1 FROM site_analytics a JOIN sites s ON s.id = a.site_id WHERE s.business_id = b.id AND s.archived_at IS NULL AND (a.gsc_property IS NOT NULL OR a.ga4_property IS NOT NULL))
        ORDER BY LOWER(b.name), b.id`,
     ).bind(...(clientId === undefined ? [] : [clientId])).all<{ id: string; name: string }>()).results;
-    // A month's sentence names the connected Google account; an agent is told "the connected Google account" and never the address.
-    const email = (await getGoogleAuth(db))?.email ?? null;
-    const plain = (s: string) => (email ? s.split(email).join("the connected Google account") : s);
+    // A stored sentence can name the Google account that was connected when it was written (maybe another one, maybe none now): any address in it is worded out.
+    const plain = (s: string) => s.replace(ADDRESS, "the connected Google account");
     const rows = await Promise.all(clients.map(async (b) => {
       const t = await trafficFor(db, b.id, month);
       const pulled = new Map<string, TrafficMonth>((await monthsFor(db, b.id, month)).map((m) => [m.siteId, m]));

@@ -3,15 +3,18 @@ import { Link } from "react-router-dom";
 import { ApiError, trafficApi } from "../../api";
 import { latestOnly, problemText } from "../../clientView";
 import {
-  accessLine, analyticsAccessLine, foundLine, hasLink, lastMonthOf, linkBody, linkedLines, monthRows,
+  accessLine, analyticsAccessLine, canFind, canLink, canPull, canUnlink, foundLine, hasLink, lastMonthOf, linkBody, linkedLines, monthRows, needsDomain, pullResult, showPanel, siteName, unlinkQuestion,
   type Candidates, type ClientTraffic, type PanelSite,
 } from "../../trafficPanelView";
 import type { AccessKey, AccessStatus } from "../../../worker/db/sites";
 
+/** A sentence a job wants shown after it ran, and whether it is good news or a problem. */
+type Said = { text: string; tone: "ok" | "error" };
+
 /** One site: what is linked, the buttons that find, link, unlink and pull, and the months already pulled. Every text is a React text node. */
 function SiteTraffic({ site, today, accessItems, busy, onRun }: {
   site: PanelSite; today: string; accessItems: { key: AccessKey; status: AccessStatus }[]; busy: boolean;
-  onRun: (job: () => Promise<string | void>, fail: string) => Promise<boolean>;
+  onRun: (job: () => Promise<Said | void>, fail: string) => Promise<boolean>;
 }) {
   const [found, setFound] = useState<Candidates | null>(null);
   const [gsc, setGsc] = useState("");
@@ -22,25 +25,18 @@ function SiteTraffic({ site, today, accessItems, busy, onRun }: {
   const body = linkBody({ gsc, ga4 });
   const last = lastMonthOf(today);
   const analytics = analyticsAccessLine(accessItems);
-  const name = site.domain ?? "This site";
+  const name = siteName(site);
   return (
     <li className="tp-site">
       <h3 className="tp-name">{name}</h3>
-      {site.domain === null && <p className="muted small">Set the site’s domain first; a Google property can only be linked to a site with a domain.</p>}
+      {needsDomain(site) && <p className="muted small">Set the site’s domain first; a Google property can only be linked to a site with a domain.</p>}
       {lines.length === 0 ? <p className="muted small">Nothing linked yet.</p> : <ul className="tp-linked">{lines.map((l) => <li key={l} className="small">{l}</li>)}</ul>}
       {analytics && <p className="muted small">{analytics}</p>}
       {site.lastError && <p className="error small" role="status">{site.lastError}</p>}
       <div className="tp-actions">
-        <button type="button" className="btn" disabled={busy || site.domain === null} onClick={() => void onRun(async () => { setFound(await trafficApi.find(site.siteId)); setGsc(""); setGa4(""); }, "Couldn’t look for properties.")}>Find properties</button>
-        {hasLink(site) && last && (
-          <button type="button" className="btn" disabled={busy} onClick={() => void onRun(async () => {
-            const r = await trafficApi.pull(site.siteId, last);
-            return r.status === "ok" ? "Pulled last month." : r.error || "Last month could not be read.";
-          }, "Couldn’t pull last month.")}>Pull last month now</button>
-        )}
-        {hasLink(site) && (
-          <button type="button" className="btn" disabled={busy} onClick={() => { if (window.confirm(`Unlink ${name} from Google? The months already pulled stay.`)) void onRun(async () => { await trafficApi.unlink(site.siteId); setFound(null); }, "Couldn’t unlink."); }}>Unlink</button>
-        )}
+        <button type="button" className="btn" disabled={!canFind(site, busy)} onClick={() => void onRun(async () => { setFound(await trafficApi.find(site.siteId)); setGsc(""); setGa4(""); }, "Couldn’t look for properties.")}>Find properties</button>
+        <button type="button" className="btn" disabled={!canPull(site, busy, last)} onClick={() => void onRun(async () => pullResult(await trafficApi.pull(site.siteId, last!)), "Couldn’t pull last month.")}>Pull last month now</button>
+        <button type="button" className="btn" disabled={!canUnlink(site, busy)} onClick={() => { if (window.confirm(unlinkQuestion(site))) void onRun(async () => { await trafficApi.unlink(site.siteId); setFound(null); }, "Couldn’t unlink."); }}>Unlink</button>
       </div>
       {found && (
         <div className="tp-found">
@@ -62,7 +58,7 @@ function SiteTraffic({ site, today, accessItems, busy, onRun }: {
             </label>
           )}
           {(found.gsc.length > 0 || found.ga4.length > 0) && (
-            <button type="button" className="btn" disabled={busy || !body} onClick={() => void onRun(async () => { await trafficApi.link(site.siteId, body!); setFound(null); return "Linked."; }, "Couldn’t link.")}>Link</button>
+            <button type="button" className="btn" disabled={!canLink(body, busy)} onClick={() => void onRun(async () => { await trafficApi.link(site.siteId, body!); setFound(null); return { text: "Linked.", tone: "ok" as const }; }, "Couldn’t link.")}>Link</button>
           )}
         </div>
       )}
@@ -97,7 +93,7 @@ export default function TrafficPanel({ businessId, clientName, today, access }: 
   const [failed, setFailed] = useState(false);
   const [guard] = useState(latestOnly);
   const [busy, setBusy] = useState(false);
-  const [ok, setOk] = useState("");
+  const [said, setSaid] = useState<Said | null>(null);
   const [error, setError] = useState("");
   const load = useCallback(async () => {
     const ticket = guard.next();
@@ -106,13 +102,13 @@ export default function TrafficPanel({ businessId, clientName, today, access }: 
       if (guard.isLatest(ticket)) { setData(next); setFailed(false); }
     } catch { if (guard.isLatest(ticket)) setFailed(true); }
   }, [businessId, guard]);
-  useEffect(() => { setData(null); setFailed(false); setOk(""); setError(""); void load(); return () => guard.cancel(); }, [load, guard]);
+  useEffect(() => { setData(null); setFailed(false); setSaid(null); setError(""); void load(); return () => guard.cancel(); }, [load, guard]);
 
-  /** Runs one change and reloads; true when it worked. A sentence it returns is shown as the result. */
-  async function run(job: () => Promise<string | void>, fail: string): Promise<boolean> {
+  /** Runs one change and reloads; true when it worked. A result it returns is shown, as a problem when it is one. */
+  async function run(job: () => Promise<Said | void>, fail: string): Promise<boolean> {
     if (busy) return false;
-    setBusy(true); setOk(""); setError("");
-    try { const said = await job(); if (said) setOk(said); await load(); return true; }
+    setBusy(true); setSaid(null); setError("");
+    try { const r = await job(); if (r) setSaid(r); await load(); return true; }
     catch (e) { setError(e instanceof ApiError ? problemText(e, fail) : fail); return false; }
     finally { setBusy(false); }
   }
@@ -125,7 +121,7 @@ export default function TrafficPanel({ businessId, clientName, today, access }: 
       </section>
     );
   }
-  if (data.sites.length === 0) return null;
+  if (!showPanel(data)) return null;
   return (
     <section className="cl-card tp" aria-label="Traffic">
       <h2>Traffic</h2>
@@ -133,7 +129,7 @@ export default function TrafficPanel({ businessId, clientName, today, access }: 
       <ul className="tp-sites">
         {data.sites.map((s) => <SiteTraffic key={s.siteId} site={s} today={today} accessItems={access[s.siteId] ?? []} busy={busy} onRun={run} />)}
       </ul>
-      {ok && <p className="small" role="status">{ok}</p>}
+      {said && (said.tone === "ok" ? <p className="small" role="status">{said.text}</p> : <p className="error small" role="alert">{said.text}</p>)}
       {error && <p className="error small" role="alert">{error}</p>}
     </section>
   );

@@ -60,8 +60,8 @@ describe("GET /api/clients/:id/traffic", () => {
     expect(site.months[2]).toMatchObject({ status: "failed", error: "Google no longer accepts the connection. Reconnect Google in Settings." });
     // Nothing else of the stored facts is sent: not the queries, the pages, nor a token.
     const text = JSON.stringify(body);
-    for (const leak of ["plumber near me", "/a", "refresh-1", "refresh_token"]) expect(text).not.toContain(`"${leak}"`);
-    expect(text).not.toContain("plumber near me");
+    for (const leak of ["plumber near me", "refresh-1", "refresh_token"]) expect(text).not.toContain(leak);
+    expect(text).not.toContain('"/a"');
     expect(site.months.every((m: any) => Object.keys(m).sort().join() === "error,period,pulledAt,search,status,visits")).toBe(true);
   });
 

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { accessLine, analyticsAccessLine, foundLine, hasLink, lastMonthOf, linkBody, linkedLines, monthRows, periodLabel } from "../src/client/trafficPanelView";
+import {
+  accessLine, analyticsAccessLine, canFind, canLink, canPull, canUnlink, foundLine, hasLink, lastMonthOf, linkBody, linkedLines, monthRows, needsDomain, periodLabel, pullResult, showPanel, siteName, unlinkQuestion,
+} from "../src/client/trafficPanelView";
 
 describe("accessLine", () => {
   it("names the client and the connected account when Google is connected with both scopes", () => {
@@ -67,5 +69,64 @@ describe("analyticsAccessLine and foundLine", () => {
   it("says so when nothing was found for the site", () => {
     expect(foundLine({ gsc: [], ga4: [], email: "me@x.test" })).toContain("Nothing found");
     expect(foundLine({ gsc: [{ siteUrl: "sc-domain:ace.com", label: "ace.com" }], ga4: [], email: null })).toBe("Choose what to link.");
+  });
+});
+
+describe("what the buttons may do", () => {
+  const linked = { domain: "ace.com", gscProperty: "sc-domain:ace.com", ga4Property: null };
+  const bare = { domain: "ace.com", gscProperty: null, ga4Property: null };
+  const noDomain = { domain: null, gscProperty: null, ga4Property: null };
+
+  it("everything is off while something else is running", () => {
+    expect(canFind(linked, true)).toBe(false);
+    expect(canPull(linked, true, "2026-11")).toBe(false);
+    expect(canUnlink(linked, true)).toBe(false);
+    expect(canLink({ gscProperty: "sc-domain:ace.com" }, true)).toBe(false);
+  });
+
+  it("with nothing running, a linked site with a domain can find, pull and unlink", () => {
+    expect(canFind(linked, false)).toBe(true);
+    expect(canPull(linked, false, "2026-11")).toBe(true);
+    expect(canUnlink(linked, false)).toBe(true);
+  });
+
+  it("a site with no domain cannot find (an empty domain is no domain either)", () => {
+    expect(needsDomain(noDomain)).toBe(true);
+    expect(needsDomain({ ...noDomain, domain: "" })).toBe(true);
+    expect(needsDomain(bare)).toBe(false);
+    expect(canFind(noDomain, false)).toBe(false);
+    expect(canFind({ ...noDomain, domain: "" }, false)).toBe(false);
+    expect(canFind(bare, false)).toBe(true);
+  });
+
+  it("a site with nothing linked cannot pull or unlink, and a pull needs a month", () => {
+    expect(canPull(bare, false, "2026-11")).toBe(false);
+    expect(canUnlink(bare, false)).toBe(false);
+    expect(canPull(linked, false, null)).toBe(false);
+  });
+
+  it("an empty choice cannot be linked", () => {
+    expect(canLink(linkBody({ gsc: "", ga4: "" }), false)).toBe(false);
+    expect(canLink(linkBody({ gsc: "", ga4: "123456789" }), false)).toBe(true);
+  });
+
+  it("the panel is hidden for a client with no sites", () => {
+    expect(showPanel({ sites: [] })).toBe(false);
+    expect(showPanel({ sites: [{ siteId: "s", domain: null, gscProperty: null, ga4Property: null, lastError: "", months: [] }] })).toBe(true);
+  });
+
+  it("names the site and asks before unlinking it", () => {
+    expect(siteName(bare)).toBe("ace.com");
+    expect(siteName(noDomain)).toBe("This site");
+    expect(unlinkQuestion(bare)).toBe("Unlink ace.com from Google? The months already pulled stay.");
+  });
+});
+
+describe("pullResult", () => {
+  it("is plain news for a month read in full and a problem for anything else", () => {
+    expect(pullResult({ status: "ok", error: "" })).toEqual({ text: "Pulled last month.", tone: "ok" });
+    expect(pullResult({ status: "ok", error: "an old sentence" }).tone).toBe("ok");
+    expect(pullResult({ status: "partial", error: "Google did not answer." })).toEqual({ text: "Google did not answer.", tone: "error" });
+    expect(pullResult({ status: "failed", error: "" })).toEqual({ text: "Last month could not be read.", tone: "error" });
   });
 });
