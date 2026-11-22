@@ -1,4 +1,6 @@
 import { env } from "cloudflare:test";
+import { saveGoogleAuth } from "../src/worker/db/google";
+import { encryptSecret } from "../src/worker/google/crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildFacts, plainSummary, ReportFacts } from "../src/worker/care/reportFacts";
 import { publicReport } from "../src/worker/care/reportPublic";
@@ -150,6 +152,12 @@ describe("buildFacts: traffic", () => {
 });
 
 describe("the report sweep and the traffic wait", () => {
+  // A report only waits for Google when Google is connected with the traffic scopes.
+  beforeEach(async () => {
+    await env.DB.prepare(`DELETE FROM google_auth`).run();
+    await saveGoogleAuth(env.DB, "me@x.test", await encryptSecret(env.SESSION_SECRET, "refresh-1"), "openid email https://www.googleapis.com/auth/webmasters.readonly https://www.googleapis.com/auth/analytics.readonly");
+  });
+
   it("sweepReports leaves a client whose traffic is still waiting and counts it skipped; startReport by hand builds without traffic", async () => {
     const s = await careClient();
     await linked(s.site!.id); // linked, nothing pulled yet, day 2: the report waits
@@ -184,7 +192,7 @@ describe("the report sweep and the traffic wait", () => {
     const before = (await getReportFor(env.DB, s.businessId, PERIOD))!;
     await markSent(env.DB, before.id, "2026-12-03T10:00:00.000Z");
     // Google gives other numbers on a later pull, and the sweep runs again.
-    await saveTrafficMonth(env.DB, { siteId: s.site!.id, period: PERIOD, status: "ok", facts: traffic({ search: search({ clicks: 999 }) }), force: true }, "2026-12-05T10:00:00.000Z");
+    await saveTrafficMonth(env.DB, { siteId: s.site!.id, period: PERIOD, status: "ok", facts: traffic({ search: search({ clicks: 999 }) }) }, "2026-12-05T10:00:00.000Z");
     expect(await sweepReports(e, LATE)).toEqual({ started: 0, skipped: 0 });
     await startReport(e, s.businessId, { test: false, now: LATE });
     const after = (await getReport(env.DB, before.id))!;

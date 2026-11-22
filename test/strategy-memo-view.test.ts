@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dayInZone, memoView, revokeQuestion, type MemoRow } from "../src/client/strategyMemoView";
+import { dayInZone, memoView, revokeQuestion, trafficMonthLine, type MemoRow } from "../src/client/strategyMemoView";
 
 // The owner's Strategy memo section (Plan 16, Task 10): which button shows when, and what the status says. Plain values in, plain text out.
 const TZ = "America/Los_Angeles";
@@ -91,5 +91,15 @@ describe("revokeQuestion", () => {
   it("says what happens: a sent memo's link stops working even for the client, a ready memo is dropped before anything is mailed", () => {
     expect(revokeQuestion(sent())).toMatch(/link will stop working, even for the client who has it/);
     expect(revokeQuestion(row({ status: "ready" }))).toMatch(/nothing is mailed/i);
+  });
+});
+
+describe("trafficMonthLine (M5)", () => {
+  it("names the month the memo's figures are for, in Google's own month", () => {
+    expect(trafficMonthLine("2026-11")).toBe("Figures are for November 2026, counted by Google's own month.");
+    expect(trafficMonthLine("2026-09")).toBe("Figures are for September 2026, counted by Google's own month.");
+  });
+  it("is null when there is no month to name", () => {
+    for (const bad of [null, undefined, "", "2026-13", "nov", "2026-1"]) expect(trafficMonthLine(bad), String(bad)).toBeNull();
   });
 });

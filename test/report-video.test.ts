@@ -143,6 +143,16 @@ describe("buildScenes", () => {
     expect(two.small).toContain("lowest of your sites");
     // fewer covered days than the month has, even if the first day is not after the 1st
     expect(up([site("a.example", { monitoredSince: "2026-10-03", coveredDays: 25 })])!.small).toContain("(25 days)");
+    // M4: the figure and the days come from the SAME site, the lowest one: a full-month site at 98.2 beside a newer, higher one says "this month", not the newer one's days
+    const same = up([site("a.example", { uptimePercent: 98.2, monitoredSince: "2026-10-03", coveredDays: 30 }), site("b.example", { uptimePercent: 99.9, monitoredSince: "2026-11-20", coveredDays: 11 })])!;
+    expect(same.big).toBe("98.2%");
+    expect(same.small).toBe("Of the time this month at the lowest of your sites, as measured by our monitoring");
+    // a tie on the figure takes the site watched for fewer days
+    const tie = up([site("a.example", { uptimePercent: 99, monitoredSince: "2026-10-03", coveredDays: 30 }), site("b.example", { uptimePercent: 99, monitoredSince: "2026-11-20", coveredDays: 11 })])!;
+    expect(tie.small).toContain("(11 days)");
+    // M3: a measured 0% is a zero, and a zero never gets a scene (the next numbers come in instead)
+    expect(up([site("a.example", { uptimePercent: 0, monitoredSince: "2026-10-03", coveredDays: 30 })])).toBeUndefined();
+    expect(up([site("a.example", { uptimePercent: 0 }), site("b.example", { uptimePercent: 99.9 })])).toBeUndefined();
     // not measured, or no date to tell by: no scene
     expect(up([site("a.example", { uptimePercent: null, monitoredSince: null, coveredDays: 0 })])).toBeUndefined();
     expect(up([site("a.example", { uptimePercent: 99.9, monitoredSince: null, coveredDays: 30 })])).toBeUndefined();

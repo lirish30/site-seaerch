@@ -21,8 +21,9 @@ googleRoutes.get("/connect", async (c) => {
   const nonce = crypto.randomUUID();
   // Lax (not Strict) so the cookie survives Google's redirect back to us; it only binds the state to this browser.
   setCookie(c, NONCE_COOKIE, nonce, { httpOnly: true, secure: true, sameSite: "Lax", path: "/api/google", maxAge: 600 });
-  // ?profile=1 adds the Business Profile permission to the consent; the plain connect never asks for it.
-  return c.redirect(authUrl(client, await signState(c.env.SESSION_SECRET, nonce, Date.now()), { profile: c.req.query("profile") === "1" }));
+  // ?profile=1 adds the Business Profile permission to the consent; the plain connect asks for it only when the stored connection already has it (a reconnect must not drop a permission that was granted).
+  const profile = c.req.query("profile") === "1" || hasProfileScope((await getGoogleAuth(c.env.DB))?.scope);
+  return c.redirect(authUrl(client, await signState(c.env.SESSION_SECRET, nonce, Date.now()), { profile }));
 });
 
 // Public (see auth.ts): Strict session cookies aren't sent on Google's cross-site redirect, so this route is

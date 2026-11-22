@@ -1,8 +1,8 @@
 import { env, SELF } from "cloudflare:test";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { gscMonth, gscTotals, listGscSites } from "../src/worker/google/searchConsole";
 import { ga4Hosts, ga4Month, listGa4Properties } from "../src/worker/google/analytics";
-import { GoogleApiError, google } from "../src/worker/google/api";
+import { GoogleApiError, google, timedFetch } from "../src/worker/google/api";
 import { SCOPES, TRAFFIC_SCOPES, authUrl, hasTrafficScopes } from "../src/worker/google/oauth";
 import { trafficProblem } from "../src/worker/traffic/problem";
 import { saveGoogleAuth } from "../src/worker/db/google";
@@ -133,7 +133,20 @@ describe("Analytics", () => {
     const { f } = fake((c) => Response.json(c.body.dimensions?.length
       ? { dimensionHeaders: [{ name: "sessionDefaultChannelGroup" }, { name: "dateRange" }], metricHeaders: [{ name: "sessions" }] }
       : { dimensionHeaders: [{ name: "dateRange" }], metricHeaders: [{ name: "sessions" }, { name: "totalUsers" }, { name: "keyEvents" }] }));
-    expect(await ga4Month(f, "t", "1", OCT, SEP)).toEqual({ sessions: 0, users: 0, keyEvents: 0, organic: 0, channels: [], previous: { sessions: 0, organic: 0 } });
+    expect(await ga4Month(f, "t", "1", OCT, SEP)).toEqual({ sessions: 0, users: 0, keyEvents: 0, organic: 0, channels: [], previous: { sessions: null, organic: null } });
+  });
+
+  it("ga4Month with no date_range_1 row says the previous month was never measured (null), and a date_range_1 row of 0 is a real 0 (I5)", async () => {
+    const answer = (prev: boolean) => fake((c) => Response.json(c.body.dimensions?.length
+      ? { dimensionHeaders: [{ name: "sessionDefaultChannelGroup" }, { name: "dateRange" }], metricHeaders: [{ name: "sessions" }],
+        rows: [{ dimensionValues: [{ value: "Organic Search" }, { value: "date_range_0" }], metricValues: [num(5)] }] }
+      : { dimensionHeaders: [{ name: "dateRange" }], metricHeaders: [{ name: "sessions" }, { name: "totalUsers" }, { name: "keyEvents" }],
+        rows: [
+          { dimensionValues: [{ value: "date_range_0" }], metricValues: [num(5), num(4), num(1)] },
+          ...(prev ? [{ dimensionValues: [{ value: "date_range_1" }], metricValues: [num(0), num(0), num(0)] }] : []),
+        ] }));
+    expect((await ga4Month(answer(false).f, "t", "1", OCT, SEP)).previous).toEqual({ sessions: null, organic: null });
+    expect((await ga4Month(answer(true).f, "t", "1", OCT, SEP)).previous).toEqual({ sessions: 0, organic: 0 });
   });
 
   it("listGa4Properties flattens accountSummaries to id and name", async () => {
@@ -169,6 +182,33 @@ describe("GoogleApiError", () => {
   });
 });
 
+describe("GoogleApiError reason (I4)", () => {
+  const failWith = (body: unknown) => google(fake(() => Response.json(body, { status: 403 })).f, "t", "https://x/y").catch((x: unknown) => x) as Promise<GoogleApiError>;
+
+  it("carries the machine reason from errors[].reason, then details[].reason, then error.status, and never the message", async () => {
+    expect((await failWith({ error: { status: "PERMISSION_DENIED", message: "secret words", errors: [{ reason: "accessNotConfigured", message: "x" }] } })).reason).toBe("accessNotConfigured");
+    expect((await failWith({ error: { status: "PERMISSION_DENIED", message: "secret words", details: [{ "@type": "t", reason: "SERVICE_DISABLED" }] } })).reason).toBe("SERVICE_DISABLED");
+    expect((await failWith({ error: { status: "PERMISSION_DENIED", message: "secret words" } })).reason).toBe("PERMISSION_DENIED");
+    const none = await failWith({ error: { message: "secret words" } });
+    expect(none.reason).toBeUndefined();
+    // A "reason" that is not a plain machine word is not carried.
+    expect((await failWith({ error: { errors: [{ reason: "Mail me at a@b.test $5 now" }] } })).reason).toBeUndefined();
+  });
+});
+
+describe("timedFetch (I3)", () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it("calls fetch with the same url and init plus an abort signal", async () => {
+    const seen: { url: string; init?: RequestInit }[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => { seen.push({ url, init }); return new Response("{}"); }));
+    await timedFetch("https://x/y", { method: "POST", body: "b" });
+    expect(seen[0].url).toBe("https://x/y");
+    expect(seen[0].init).toMatchObject({ method: "POST", body: "b" });
+    expect(seen[0].init!.signal).toBeInstanceOf(AbortSignal);
+  });
+});
+
 describe("trafficProblem", () => {
   const err = (status: number) => new GoogleApiError(status, `Google API ${status}: some body text`);
 
@@ -187,6 +227,26 @@ describe("trafficProblem", () => {
 
   it("trafficProblem 429 and 500 say Google did not answer and it will be tried again tomorrow", () => {
     for (const status of [429, 500, 503]) expect(trafficProblem(err(status), { email: null })).toMatch(/Google did not answer.*tried again tomorrow/i);
+  });
+
+  it("a disabled API says to turn it on for the Google Cloud project, by source, and a plain 403 still says viewer (I4)", () => {
+    const off = (reason: string) => new GoogleApiError(403, "Google API 403: x", reason);
+    const ask = (reason: string, which?: "search" | "analytics" | "profile") => trafficProblem(off(reason), { email: "pat@agency.test", which });
+    for (const reason of ["SERVICE_DISABLED", "accessNotConfigured", "API_NOT_ENABLED"]) {
+      expect(ask(reason, "search")).toBe("Turn on the Google Search Console API for your Google Cloud project, then try again.");
+      expect(ask(reason, "analytics")).toBe("Turn on the Google Analytics Data and Admin APIs for your Google Cloud project, then try again.");
+      expect(ask(reason, "profile")).toBe("Turn on the Google My Business API for your Google Cloud project, then try again.");
+    }
+    expect(trafficProblem(off("PERMISSION_DENIED"), { email: "pat@agency.test", which: "search" })).toMatch(/viewer/);
+    expect(trafficProblem(new GoogleApiError(403, "x"), { email: null })).toMatch(/viewer/);
+    expect(trafficProblem(off("PERMISSION_DENIED"), { email: null, which: "profile" })).toMatch(/Business Profile API access/);
+  });
+
+  it("a timeout or abort is Google not answering, never a reconnect (I3)", () => {
+    for (const name of ["TimeoutError", "AbortError"]) {
+      const s = trafficProblem(new DOMException("The operation timed out", name), { email: "a@b.test" });
+      expect(s).toBe("Google did not answer. It will be tried again tomorrow.");
+    }
   });
 
   it("never repeats an error body", () => {

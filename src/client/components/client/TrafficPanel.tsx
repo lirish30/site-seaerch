@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { ApiError, trafficApi } from "../../api";
 import { latestOnly, problemText } from "../../clientView";
 import {
-  PROFILE_CONNECT_PATH, PROFILE_HELP, accessLine, analyticsAccessLine, canClearLocation, canFind, canLink, canPull, canSaveLocation, canUnlink, foundLine, hasLink, lastMonthOf, linkBody, linkedLines, locationBody, locationProblem,
+  PROFILE_CONNECT_PATH, PROFILE_HELP, accessLine, analyticsAccessLine, canClearLocation, canFind, canLink, canPull, canSaveLocation, canUnlink, foundLine, ga4IdProblem, hasLink, lastMonthOf, linkBody, linkedLines, locationBody, locationProblem,
   monthRows, needsDomain, profileNote, pullResult, showPanel, siteName, unlinkQuestion,
   type Candidates, type ClientTraffic, type PanelSite,
 } from "../../trafficPanelView";
@@ -20,11 +20,13 @@ function SiteTraffic({ site, today, accessItems, busy, hasProfileScope, profileM
   const [found, setFound] = useState<Candidates | null>(null);
   const [gsc, setGsc] = useState("");
   const [ga4, setGa4] = useState("");
+  const [ga4Typed, setGa4Typed] = useState("");
   const [location, setLocation] = useState("");
-  useEffect(() => { setFound(null); setGsc(""); setGa4(""); setLocation(""); }, [site.siteId]);
+  useEffect(() => { setFound(null); setGsc(""); setGa4(""); setGa4Typed(""); setLocation(""); }, [site.siteId]);
   const lines = linkedLines(site);
   const rows = monthRows(site.months);
-  const body = linkBody({ gsc, ga4 });
+  const body = linkBody({ gsc, ga4, ga4Typed });
+  const ga4Problem = ga4IdProblem(ga4Typed);
   const last = lastMonthOf(today);
   const analytics = analyticsAccessLine(accessItems);
   const name = siteName(site);
@@ -37,7 +39,7 @@ function SiteTraffic({ site, today, accessItems, busy, hasProfileScope, profileM
       {analytics && <p className="muted small">{analytics}</p>}
       {site.lastError && <p className="error small" role="status">{site.lastError}</p>}
       <div className="tp-actions">
-        <button type="button" className="btn" disabled={!canFind(site, busy)} onClick={() => void onRun(async () => { setFound(await trafficApi.find(site.siteId)); setGsc(""); setGa4(""); }, "Couldn’t look for properties.")}>Find properties</button>
+        <button type="button" className="btn" disabled={!canFind(site, busy)} onClick={() => void onRun(async () => { setFound(await trafficApi.find(site.siteId)); setGsc(""); setGa4(""); setGa4Typed(""); }, "Couldn’t look for properties.")}>Find properties</button>
         <button type="button" className="btn" disabled={!canPull(site, busy, last)} onClick={() => void onRun(async () => pullResult(await trafficApi.pull(site.siteId, last!)), "Couldn’t pull last month.")}>Pull last month now</button>
         <button type="button" className="btn" disabled={!canUnlink(site, busy)} onClick={() => { if (window.confirm(unlinkQuestion(site))) void onRun(async () => { await trafficApi.unlink(site.siteId); setFound(null); }, "Couldn’t unlink."); }}>Unlink</button>
       </div>
@@ -60,9 +62,11 @@ function SiteTraffic({ site, today, accessItems, busy, hasProfileScope, profileM
               </select>
             </label>
           )}
-          {(found.gsc.length > 0 || found.ga4.length > 0) && (
-            <button type="button" className="btn" disabled={!canLink(body, busy)} onClick={() => void onRun(async () => { await trafficApi.link(site.siteId, body!); setFound(null); return { text: "Linked.", tone: "ok" as const }; }, "Couldn’t link.")}>Link</button>
-          )}
+          <label className="deal-field" htmlFor={`tp-ga4-typed-${site.siteId}`}><span>Or paste a Google Analytics property id</span>
+            <input id={`tp-ga4-typed-${site.siteId}`} type="text" inputMode="numeric" value={ga4Typed} placeholder="412345678" autoComplete="off" spellCheck={false} onChange={(e) => setGa4Typed(e.target.value)} />
+          </label>
+          {ga4Problem && <p className="error small" role="status">{ga4Problem}</p>}
+          <button type="button" className="btn" disabled={!canLink(body, busy)} onClick={() => void onRun(async () => { await trafficApi.link(site.siteId, body!); setFound(null); setGa4Typed(""); return { text: "Linked.", tone: "ok" as const }; }, "Couldn’t link.")}>Link</button>
         </div>
       )}
       <div className="tp-location">

@@ -69,17 +69,17 @@ export async function getTrafficMonth(db: D1Database, siteId: string, period: st
 }
 
 /**
- * Saves a month's pull. A second pull of the same month replaces the row and counts one more attempt, except that a complete (`ok`) row is only replaced by another `ok` or when `force` is set:
- * a later failed or partial pull never throws away good facts. One statement, so racing pulls cannot undo each other.
+ * Saves a month's pull. A second pull of the same month replaces the row and counts one more attempt, except that a complete (`ok`) row is only ever replaced by another `ok` one (even a manual,
+ * forced pull cannot swap good facts for a worse result): a later failed or partial pull never throws away good facts. One statement, so racing pulls cannot undo each other.
  */
 export async function saveTrafficMonth(
-  db: D1Database, m: { siteId: string; period: string; status: TrafficStatus; facts: unknown; error?: string; force?: boolean }, now: string,
+  db: D1Database, m: { siteId: string; period: string; status: TrafficStatus; facts: unknown; error?: string }, now: string,
 ): Promise<void> {
   await db.prepare(
     `INSERT INTO traffic_months (site_id, period, status, facts, pulled_at, attempts, error) VALUES (?, ?, ?, ?, ?, 1, ?)
      ON CONFLICT (site_id, period) DO UPDATE SET status = excluded.status, facts = excluded.facts, pulled_at = excluded.pulled_at, attempts = traffic_months.attempts + 1, error = excluded.error
-     WHERE traffic_months.status <> 'ok' OR excluded.status = 'ok' OR ? = 1`,
-  ).bind(m.siteId, m.period, m.status, JSON.stringify(m.facts ?? null), now, m.error ?? "", m.force ? 1 : 0).run();
+     WHERE traffic_months.status <> 'ok' OR excluded.status = 'ok'`,
+  ).bind(m.siteId, m.period, m.status, JSON.stringify(m.facts ?? null), now, m.error ?? "").run();
 }
 
 /** The month's pulls of a client's linked sites that are not archived, oldest site first. A site with no row for the month is not in the list. */

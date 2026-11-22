@@ -25,7 +25,7 @@ export const hasTrafficScopes = (scope: string | null | undefined): boolean => {
 /** True only when the Business Profile permission was granted (it is a separate, optional consent). NULL, and anything stored before Task 11, is false. */
 export const hasProfileScope = (scope: string | null | undefined): boolean => (scope ?? "").split(/\s+/).includes(PROFILE_SCOPE);
 
-const AUTH_URL ="https://accounts.google.com/o/oauth2/v2/auth";
+const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const STATE_TTL_MS = 10 * 60 * 1000;
 

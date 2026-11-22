@@ -1,4 +1,5 @@
 import type { MemoRow } from "../worker/strategy/admin";
+import { periodLabel } from "../worker/sop/cadence";
 import { dayLabel } from "./careReportPageView";
 
 /**
@@ -66,4 +67,10 @@ export function revokeQuestion(m: Pick<MemoRow, "status">): string {
   return m.status === "sent"
     ? "Take this memo back? Its link will stop working, even for the client who has it."
     : "Take this memo back? Its approval is dropped and nothing is mailed.";
+}
+
+/** The line above the memo's search and visits figures: which month they are for (they can be up to three months old when the memo is sent), in words. Null when the period cannot be read as a month. */
+export function trafficMonthLine(period: string | null | undefined): string | null {
+  if (!period || !/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) return null;
+  return `Figures are for ${periodLabel("monthly", period)}, counted by Google's own month.`;
 }

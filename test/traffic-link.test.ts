@@ -123,14 +123,15 @@ describe("findCandidates", () => {
     await expect(linkSite(e, siteId, { gscProperty: "https://example.com./" }, NOW, f)).rejects.toThrow(LinkRefused);
   });
 
-  it("lists a GA4 property only when a web stream host matches and stops after 40 stream lookups", async () => {
+  it("lists a GA4 property only when EVERY web stream host is the site's (a property that also measures another site, or has only app streams, is not offered) and stops after 40 stream lookups", async () => {
     await connect();
     const siteId = await siteOn("example.com");
     const props = Array.from({ length: 45 }, (_, i) => ({ id: String(10000 + i), name: `P${i}` }));
     const streams: Record<string, string[]> = { "10000": ["other.org"], "10001": ["www.example.com"], "10002": [], "10003": ["a.org", "example.com"], "10044": ["example.com"] };
     const g = google({ props, streams });
     const c = await findCandidates(e, siteId, g.f);
-    expect(c.ga4).toEqual([{ id: "10001", name: "P1" }, { id: "10003", name: "P3" }]);
+    // 10003 also measures a.org: a shared property would carry another business's traffic, so it is not offered.
+    expect(c.ga4).toEqual([{ id: "10001", name: "P1" }]);
     expect(g.streamCalls()).toBe(MAX_GA4_STREAM_LOOKUPS);
     expect(MAX_GA4_STREAM_LOOKUPS).toBe(40);
   });
@@ -191,6 +192,28 @@ describe("linkSite", () => {
     expect(err).toBeInstanceOf(LinkRefused);
     expect(err.message).toBe("That property is for another site.");
     expect(g.streamCalls()).toBe(1);
+    expect(await getLink(env.DB, siteId)).toBeNull();
+  });
+
+  it("refuses a ga4 property that also measures another site, with exactly that sentence, and links nothing", async () => {
+    await connect();
+    const siteId = await siteOn("client.com");
+    const g = google({ streams: { "12345": ["brand.com", "client.com"], "23456": ["client.com", "www.client.com", "CLIENT.com:443"] } });
+    const err = await linkSite(e, siteId, { ga4Property: "12345" }, T, g.f).catch((x) => x);
+    expect(err).toBeInstanceOf(LinkRefused);
+    expect(err.message).toBe("That property also measures another site.");
+    expect(await getLink(env.DB, siteId)).toBeNull();
+    // Every stream on the site's own host (any spelling of it) is fine.
+    expect((await linkSite(e, siteId, { ga4Property: "23456" }, T, g.f)).ga4Property).toBe("23456");
+  });
+
+  it("refuses a ga4 property that has only app streams (no web stream host)", async () => {
+    await connect();
+    const siteId = await siteOn("client.com");
+    const f = async (url: string) => url.includes("/dataStreams")
+      ? Response.json({ dataStreams: [{ type: "ANDROID_APP_DATA_STREAM" }, { type: "IOS_APP_DATA_STREAM" }] })
+      : Response.json({ access_token: "tok", expires_in: 3600 });
+    await expect(linkSite(e, siteId, { ga4Property: "12345" }, T, f)).rejects.toThrow("That property has no website data stream.");
     expect(await getLink(env.DB, siteId)).toBeNull();
   });
 

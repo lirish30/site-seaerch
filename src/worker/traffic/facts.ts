@@ -140,8 +140,8 @@ export function shapeVisits(r: Ga4Month): Visits {
     users: count(r.users),
     organic: count(r.organic),
     keyEvents: r.keyEvents == null ? null : count(r.keyEvents),
-    previousSessions: count(r.previous.sessions),
-    previousOrganic: count(r.previous.organic),
+    previousSessions: r.previous.sessions === null ? null : count(r.previous.sessions),
+    previousOrganic: r.previous.organic === null ? null : count(r.previous.organic),
     channels: channels.sort((a, b) => b.sessions - a.sessions).slice(0, TOP_CHANNELS),
   };
 }
@@ -207,12 +207,12 @@ export function mergeTraffic(period: string, parts: TrafficFacts[]): TrafficFact
 
 const n = (x: number, one: string, many: string) => `${x.toLocaleString("en-US")} ${x === 1 ? one : many}`;
 
-/** One short sentence for each block that is not null, every one saying who counted. Nothing about a block that is null, nothing about what the numbers led to, and no query or page (the page shows those). */
-export function plainTraffic(t: TrafficFacts): string[] {
+/** One short sentence for each block that is not null, every one saying who counted. Nothing about a block that is null, nothing about what the numbers led to, and no query or page (the page shows those). `positionWording` names Search Console's average position where it could be taken for another one (Local SEO has its own rank check). */
+export function plainTraffic(t: TrafficFacts, o: { positionWording?: string } = {}): string[] {
   const out: string[] = [];
   if (t.search) {
     const s = t.search;
-    const pos = s.position == null ? "" : `, at an average position of ${s.position}`;
+    const pos = s.position == null ? "" : `, at an ${o.positionWording ? `${o.positionWording} of` : "average position of"} ${s.position}`;
     out.push(`In Google's search results, counted by Google, your site was shown ${n(s.impressions, "time", "times")} and clicked ${n(s.clicks, "time", "times")}${pos}.`);
   }
   if (t.visits) {

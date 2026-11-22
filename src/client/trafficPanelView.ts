@@ -70,14 +70,26 @@ export function analyticsAccessLine(access: { key: AccessKey; status: AccessStat
   return item ? `Analytics access on the checklist: ${accessWords(item.status)}` : null;
 }
 
-/** What the owner picked from the found properties: `""` for none. */
-export interface Choice { gsc: string; ga4: string }
+/** What the owner picked from the found properties (`""` for none), and the Analytics property id typed in instead (for a property past the first 40 that "Find properties" reads). */
+export interface Choice { gsc: string; ga4: string; ga4Typed?: string }
 
-/** The body of the link call for a choice, or null when nothing is chosen. A key is only sent for something that was chosen, so one source can be added without touching the other. */
+/** The form of an Analytics property id: 5 to 15 digits (the same rule the server checks). */
+const GA4_ID = /^\d{5,15}$/;
+
+/** Why a typed Analytics property id cannot be used, once something was typed; null for a blank field or a good id. */
+export const ga4IdProblem = (raw: string): string | null => (raw.trim() === "" || GA4_ID.test(raw.trim()) ? null : "That is not an Analytics property id. It is 5 to 15 digits.");
+
+/**
+ * The body of the link call for a choice, or null when nothing is chosen. A key is only sent for something that was chosen, so one source can be added without touching the other. A typed Analytics id wins over the
+ * one picked from the list; a typed id that is not 5 to 15 digits sends nothing at all until it is fixed (it is never swapped for the list's choice behind the owner's back).
+ */
 export function linkBody(c: Choice): { gscProperty?: string; ga4Property?: string } | null {
+  const typed = (c.ga4Typed ?? "").trim();
+  if (typed !== "" && !GA4_ID.test(typed)) return null;
   const body: { gscProperty?: string; ga4Property?: string } = {};
   if (c.gsc) body.gscProperty = c.gsc;
-  if (c.ga4) body.ga4Property = c.ga4;
+  const ga4 = typed !== "" ? typed : c.ga4;
+  if (ga4) body.ga4Property = ga4;
   return body.gscProperty || body.ga4Property ? body : null;
 }
 

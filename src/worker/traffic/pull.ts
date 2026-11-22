@@ -1,12 +1,13 @@
 import { monthRange } from "../care/reportFacts";
 import { testClientSql } from "../clients/record";
+import { getGoogleAuth } from "../db/google";
 import { getSettings } from "../db/settings";
 import { getSite } from "../db/sites";
 import { getLink, getTrafficMonth, saveTrafficMonth, setLinkError, type SiteLink, type TrafficStatus } from "../db/traffic";
 import type { Env } from "../env";
 import { GoogleNotConnected, googleAccess } from "../google/access";
 import { ga4Hosts, ga4Month } from "../google/analytics";
-import { GoogleApiError } from "../google/api";
+import { GoogleApiError, timedFetch } from "../google/api";
 import { gbpMonth } from "../google/businessProfile";
 import { hasProfileScope, hasTrafficScopes, TRAFFIC_SCOPES, type Fetch } from "../google/oauth";
 import { gscMonth, gscTotals, type Range } from "../google/searchConsole";
@@ -14,7 +15,7 @@ import { localDay } from "../monitoring/rollup";
 import { zoneOf } from "../sop/cadence";
 import { previousMonth } from "../sop/months";
 import { TrafficFacts, shapeProfile, shapeSearch, shapeVisits } from "./facts";
-import { SiteNotFound, ga4StreamMatchesHost, gscMatchesHost, normalizeHost } from "./link";
+import { SiteNotFound, ga4OnlyMeasures, gscMatchesHost, normalizeHost } from "./link";
 import { isGbpLocation } from "./location";
 import { trafficProblem } from "./problem";
 
@@ -76,11 +77,11 @@ interface Outcome { status: TrafficStatus; error: string; /** The connection is 
  * Reads one month of a site from the Google properties linked to it and saves it. Before any Google call the link is checked again against the site's domain (a property that is not on the site's own host is never
  * read; Analytics costs one stream lookup; a Business Profile location has no host and is checked for its form). Each linked source is tried on its own: all read is `ok`, some `partial`, none `failed` (a source that is not
  * linked is null in the facts and does not make a month partial). A Business Profile location needs the Business Profile permission on the connection, and without it that source alone fails.
- * A later `failed` or `partial` pull never replaces an `ok` row unless `force`, and (unless `force`) keeps, for each linked source this pull could not read, what an earlier `failed` or `partial` pull of the month already read:
+ * A later `failed` or `partial` pull never replaces an `ok` row, not even with `force` (a forced pull only replaces an `ok` row with another `ok` one), and (unless `force`) keeps, for each linked source this pull could not read, what an earlier `failed` or `partial` pull of the month already read:
  * the status is worked out from the merged facts. The link's error is set to this pull's plain sentence, or cleared. A site that is unknown or archived throws `SiteNotFound`.
  */
 async function pull(env: Env, siteId: string, period: string, o: { now: Date; force?: boolean; f?: Fetch; access?: Access }): Promise<Outcome> {
-  const f = o.f ?? fetch;
+  const f = o.f ?? timedFetch;
   const site = await getSite(env.DB, siteId);
   if (!site || site.archivedAt) throw new SiteNotFound("not found");
   const link = await getLink(env.DB, siteId);
@@ -100,7 +101,7 @@ async function pull(env: Env, siteId: string, period: string, o: { now: Date; fo
   const errors: string[] = [];
   const say = (sentence: string) => { if (!errors.includes(sentence)) errors.push(sentence); };
   let dead = false;
-  const fail = (e: unknown, email: string | null, which?: "profile") => {
+  const fail = (e: unknown, email: string | null, which?: "search" | "analytics" | "profile") => {
     dead ||= isDead(e);
     say(e instanceof ScopesMissing ? NEEDS_SCOPES : trafficProblem(e, { email, which }));
   };
@@ -127,14 +128,14 @@ async function pull(env: Env, siteId: string, period: string, o: { now: Date; fo
       try {
         const m = await gscMonth(f, token, link.gscProperty!, cur);
         search = shapeSearch(m, await gscTotals(f, token, link.gscProperty!, prev));
-      } catch (e) { fail(e, email); }
+      } catch (e) { fail(e, email, "search"); }
     }
     if (token && ga4Maybe && !dead) {
       try {
         const streams = await ga4Hosts(f, token, link.ga4Property!);
-        if (streams.some((h) => ga4StreamMatchesHost(h, host))) visits = shapeVisits(await ga4Month(f, token, link.ga4Property!, cur, prev));
+        if (ga4OnlyMeasures(streams, host)) visits = shapeVisits(await ga4Month(f, token, link.ga4Property!, cur, prev));
         else say(NO_MATCH);
-      } catch (e) { fail(e, email); }
+      } catch (e) { fail(e, email, "analytics"); }
     }
     // Business Profile is the one source with its own permission: without it only this source fails, the others are read as usual.
     if (token && gbpOk && !dead) {
@@ -157,12 +158,12 @@ async function pull(env: Env, siteId: string, period: string, o: { now: Date; fo
   const status: TrafficStatus = read === 0 ? "failed" : read === (gscLinked ? 1 : 0) + (ga4Linked ? 1 : 0) + (gbpLinked ? 1 : 0) ? "ok" : "partial";
   const facts = TrafficFacts.parse({ version: 1, period, search, visits, profile });
   const error = errors.join(" ");
-  await saveTrafficMonth(env.DB, { siteId, period, status, facts, error, force: o.force }, now);
+  await saveTrafficMonth(env.DB, { siteId, period, status, facts, error }, now);
   await setLinkError(env.DB, siteId, error, now);
   return { status, error, dead };
 }
 
-/** The pull of one site and month (see `pull`): what the pull made of it, which is not always what the row holds (an `ok` row is kept against a worse pull unless `force`). */
+/** The pull of one site and month (see `pull`): what the pull made of it, which is not always what the row holds (an `ok` row is kept against a worse pull, forced or not). */
 export async function pullMonth(env: Env, siteId: string, period: string, o: { now: Date; force?: boolean; f?: Fetch; access?: { token: string; email?: string | null; scope?: string | null } }): Promise<{ status: TrafficStatus; error: string }> {
   // A token handed in without its scopes is taken to carry the traffic scopes (the caller vouches for it) and not the Business Profile one.
   const { status, error } = await pull(env, siteId, period, { ...o, access: o.access && { token: o.access.token, email: o.access.email ?? null, scope: o.access.scope ?? TRAFFIC_SCOPES.join(" ") } });
@@ -187,7 +188,7 @@ const readable = (done: string): string =>
  * tried comes first), at most `MAX_SITES_PER_RUN`. It starts no new site once `TRAFFIC_WALL_MS` have passed, and stops the whole run at the first dead connection (one call, not forty). A site that throws is a failed read of that site,
  * saved with a plain sentence. `skipped` counts the sites it was going to pull and did not touch. Sends nothing.
  */
-export async function sweepTraffic(env: Env, now: Date, f: Fetch = fetch): Promise<{ pulled: number; failed: number; skipped: number }> {
+export async function sweepTraffic(env: Env, now: Date, f: Fetch = timedFetch): Promise<{ pulled: number; failed: number; skipped: number }> {
   const out = { pulled: 0, failed: 0, skipped: 0 };
   const tz = zoneOf(await getSettings(env.DB));
   if (dayOfMonth(now, tz) < PULL_FROM_DAY) return out;
@@ -218,11 +219,14 @@ export async function sweepTraffic(env: Env, now: Date, f: Fetch = fetch): Promi
 
 /**
  * True while a client's report should wait for Google's numbers of `period`: the client is real and has a live, real site with a Search Console property, an Analytics property or a Business Profile location whose month is neither `ok` nor `partial`
- * and has had fewer than `MAX_PULL_ATTEMPTS` tries, and it is before the `REPORT_WAIT_UNTIL_DAY`th (booking zone). A month never tried has no attempts. False for a rehearsal client.
+ * and has had fewer than `MAX_PULL_ATTEMPTS` tries, and it is before the `REPORT_WAIT_UNTIL_DAY`th (booking zone), and Google is connected with the traffic scopes (a connection that cannot pull is not waited for). A month never tried has no attempts. False for a rehearsal client.
  */
 export async function trafficWait(env: Env, businessId: string, period: string, now: Date): Promise<boolean> {
   const tz = zoneOf(await getSettings(env.DB));
   if (dayOfMonth(now, tz) >= REPORT_WAIT_UNTIL_DAY) return false;
+  // A dead connection cannot pull: waiting for the 7th would only delay the report.
+  const auth = await getGoogleAuth(env.DB);
+  if (!auth || !hasTrafficScopes(auth.scope)) return false;
   const row = await env.DB.prepare(
     `SELECT 1 AS x ${readable("t.status IN ('ok', 'partial') OR t.attempts >= ?")} AND s.business_id = ? LIMIT 1`,
   ).bind(period, MAX_PULL_ATTEMPTS, businessId).first();

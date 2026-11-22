@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { trafficLines } from "../src/worker/traffic/lines";
 import {
   TrafficFacts, cleanPath, cleanQuery, mergeTraffic, plainTraffic, shapeSearch, shapeVisits,
 } from "../src/worker/traffic/facts";
@@ -66,6 +67,19 @@ describe("shapeSearch and shapeVisits", () => {
   });
 });
 
+describe("shapeVisits previous figures (I5)", () => {
+  const base = { sessions: 100, users: 80, keyEvents: null, organic: 40, channels: [] };
+  it("passes a previous month that was never measured through as null, and keeps a measured 0 as 0", () => {
+    expect(shapeVisits({ ...base, previous: { sessions: null, organic: null } })).toMatchObject({ previousSessions: null, previousOrganic: null });
+    expect(shapeVisits({ ...base, previous: { sessions: 0, organic: 0 } })).toMatchObject({ previousSessions: 0, previousOrganic: 0 });
+  });
+  it("a null previous shows no comparison in Claude's lines, and a 0 does", () => {
+    const line = (previousSessions: number | null) => trafficLines(facts({ visits: visits({ previousSessions, previousOrganic: previousSessions }) }))[1];
+    expect(line(null)).not.toContain("last month");
+    expect(line(0)).toContain("(last month 0)");
+  });
+});
+
 describe("mergeTraffic", () => {
   const q = (query: string, clicks: number) => ({ query, clicks, impressions: clicks * 10 });
   it("mergeTraffic of two sites sums clicks, weights position by impressions and keeps the top 5 queries by clicks", () => {
@@ -111,6 +125,14 @@ describe("mergeTraffic", () => {
     const p = (calls: number, previousCalls: number | null) => facts({ profile: { calls, directions: 2, websiteClicks: 3, previousCalls } });
     const m = mergeTraffic("2026-10", [p(900_000, 1), p(900_000, 2)])!;
     expect(m.profile).toMatchObject({ calls: 1_000_000, directions: 4, websiteClicks: 6, previousCalls: 3 });
+  });
+});
+
+describe("plainTraffic position wording (M6)", () => {
+  it("keeps the default words, and says whose position it is when the caller names them (Local SEO has its own rank check)", () => {
+    expect(plainTraffic(facts({ search: search({ position: 7.3 }) }))[0]).toContain("at an average position of 7.3.");
+    expect(plainTraffic(facts({ search: search({ position: 7.3 }) }), { positionWording: "average position in Google Search" })[0]).toContain("at an average position in Google Search of 7.3.");
+    expect(plainTraffic(facts({ search: search({ position: null }) }), { positionWording: "average position in Google Search" })[0]).not.toContain("position");
   });
 });
 

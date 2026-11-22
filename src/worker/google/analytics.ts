@@ -51,10 +51,11 @@ const report = (f: Fetch, token: string, id: string, cur: Range, prev: Range, bo
 export interface Ga4Month {
   sessions: number; users: number; keyEvents: number | null; organic: number;
   channels: { channel: string; sessions: number }[];
-  previous: { sessions: number; organic: number };
+  /** The month before; null when Google returned no row for that range (a property that was not measuring then, never a measured zero). */
+  previous: { sessions: number | null; organic: number | null };
 }
 
-/** One month of a GA4 property next to the month before. `keyEvents` is null when Google's answer carries no such metric (never 0). A property with no rows is a real zero. */
+/** One month of a GA4 property next to the month before. `keyEvents` is null when Google's answer carries no such metric (never 0). A property with no rows is a real zero this month; no row for the month before is `null`, not 0. */
 export async function ga4Month(f: Fetch, token: string, id: string, cur: Range, prev: Range): Promise<Ga4Month> {
   const totals = await report(f, token, id, cur, prev, { metrics: [{ name: "sessions" }, { name: "totalUsers" }, { name: "keyEvents" }] });
   const byChannel = await report(f, token, id, cur, prev, {
@@ -75,10 +76,11 @@ export async function ga4Month(f: Fetch, token: string, id: string, cur: Range, 
     .map((r) => ({ channel: r.dimensionValues?.[0]?.value ?? "", sessions: Number(r.metricValues?.[0]?.value ?? 0) }))
     .sort((a, b) => b.sessions - a.sessions);
   const organic = (range: 0 | 1) => channels(range).find((c) => c.channel === ORGANIC)?.sessions ?? 0;
+  const hadPrevious = !!totals.rows?.some((r) => r.dimensionValues?.at(-1)?.value === "date_range_1");
 
   return {
     sessions: at(0, "sessions") ?? 0, users: at(0, "totalUsers") ?? 0, keyEvents: at(0, "keyEvents"), organic: organic(0),
     channels: channels(0),
-    previous: { sessions: at(1, "sessions") ?? 0, organic: organic(1) },
+    previous: hadPrevious ? { sessions: at(1, "sessions") ?? 0, organic: organic(1) } : { sessions: null, organic: null },
   };
 }

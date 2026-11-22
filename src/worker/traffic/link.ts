@@ -2,7 +2,7 @@ import { logActivity } from "../db/activity";
 import { getSite, type Site } from "../db/sites";
 import { deleteLink, getLink, saveLink, type SiteLink } from "../db/traffic";
 import type { Env } from "../env";
-import { GoogleApiError } from "../google/api";
+import { GoogleApiError, timedFetch } from "../google/api";
 import { googleAccess } from "../google/access";
 import { ga4Hosts, listGa4Properties } from "../google/analytics";
 import { getGoogleAuth } from "../db/google";
@@ -54,7 +54,12 @@ const GA4_ID = /^\d{5,15}$/;
 
 /** The two forms Search Console names a property in. A trailing dot on the host is refused, in find and in link alike (Google never names one that way). */
 const isSearchConsoleProperty = (p: string) => DOMAIN_PROPERTY.test(p) || PREFIX_PROPERTY.test(p);
-const streamsMatch = (hosts: string[], siteHost: string) => hosts.some((h) => ga4StreamMatchesHost(h, siteHost));
+
+/**
+ * An Analytics property belongs to a site only when it has at least one web stream AND EVERY web stream is on the site's host. The Analytics report reads the whole property with no stream filter, so a property
+ * that also measures another business (a franchisor's or an agency's shared one) would put that business's traffic into this client's report. Find, link and the daily pull's re-check all use this one rule.
+ */
+export const ga4OnlyMeasures = (hosts: string[], siteHost: string): boolean => hosts.length > 0 && hosts.every((h) => ga4StreamMatchesHost(h, siteHost));
 
 /** The live site and its host (`""` when it has no domain), or SiteNotFound. */
 async function liveSite(env: Env, siteId: string): Promise<{ site: Site; host: string }> {
@@ -74,7 +79,7 @@ async function trafficAccess(env: Env, f: Fetch) {
 }
 
 /** The Search Console entries and Analytics properties the connected account can see that belong to the site: nothing is linked here. */
-export async function findCandidates(env: Env, siteId: string, f: Fetch = fetch): Promise<Candidates> {
+export async function findCandidates(env: Env, siteId: string, f: Fetch = timedFetch): Promise<Candidates> {
   const { host } = await liveSite(env, siteId);
   needHost(host);
   const { token, email } = await trafficAccess(env, f);
@@ -84,7 +89,7 @@ export async function findCandidates(env: Env, siteId: string, f: Fetch = fetch)
   const looked = props.slice(0, MAX_GA4_STREAM_LOOKUPS);
   const streams = await Promise.all(looked.map((p) =>
     ga4Hosts(f, token, p.id).catch((e) => { if (e instanceof GoogleApiError) return [] as string[]; throw e; })));
-  return { gsc, ga4: looked.filter((_, i) => streamsMatch(streams[i], host)), email };
+  return { gsc, ga4: looked.filter((_, i) => ga4OnlyMeasures(streams[i], host)), email };
 }
 
 /**
@@ -93,7 +98,7 @@ export async function findCandidates(env: Env, siteId: string, f: Fetch = fetch)
  * name alone; an Analytics id costs one call to read its streams. A Business Profile location (`locations/<digits>`) has no host to compare, so it is checked for its form only, and linking one needs
  * the Business Profile permission on the connection (clearing it needs nothing). A change is logged on the client's timeline.
  */
-export async function linkSite(env: Env, siteId: string, p: { gscProperty?: string | null; ga4Property?: string | null; gbpLocation?: string | null }, now: Date, f: Fetch = fetch): Promise<SiteLink> {
+export async function linkSite(env: Env, siteId: string, p: { gscProperty?: string | null; ga4Property?: string | null; gbpLocation?: string | null }, now: Date, f: Fetch = timedFetch): Promise<SiteLink> {
   const { site, host } = await liveSite(env, siteId);
   const current = await getLink(env.DB, siteId);
   const { gscProperty, ga4Property, gbpLocation } = p;
@@ -107,7 +112,8 @@ export async function linkSite(env: Env, siteId: string, p: { gscProperty?: stri
     const { token } = await trafficAccess(env, f);
     const hosts = await ga4Hosts(f, token, ga4Property);
     if (hosts.length === 0 && current?.ga4Property !== ga4Property) throw new LinkRefused("That property has no website data stream.");
-    if (hosts.length > 0 && !streamsMatch(hosts, host)) throw new LinkRefused("That property is for another site.");
+    if (hosts.length > 0 && !hosts.some((h) => ga4StreamMatchesHost(h, host))) throw new LinkRefused("That property is for another site.");
+    if (hosts.length > 0 && !ga4OnlyMeasures(hosts, host)) throw new LinkRefused("That property also measures another site.");
   }
   if (typeof gbpLocation === "string") {
     if (!isGbpLocation(gbpLocation)) throw new LinkRefused("That is not a Business Profile location id. It looks like locations/1234567890.");

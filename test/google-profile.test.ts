@@ -137,6 +137,18 @@ describe("the Business Profile permission", () => {
   });
 });
 
+describe("reconnecting keeps a Business Profile permission already granted (M7)", () => {
+  const scopeOf = async (path: string) => new URL((await googleRoutes.request(path, {}, e)).headers.get("location")!).searchParams.get("scope")!;
+  it("the plain connect asks for business.manage when the stored connection has it, and not when it does not", async () => {
+    await env.DB.prepare(`DELETE FROM google_auth`).run();
+    await saveGoogleAuth(env.DB, "me@x.test", "sealed", SCOPE);
+    expect(await scopeOf("/connect")).not.toContain("business.manage");
+    await saveGoogleAuth(env.DB, "me@x.test", "sealed", SCOPE_WITH_PROFILE);
+    expect(await scopeOf("/connect")).toBe(`${SCOPES.join(" ")} ${PROFILE_SCOPE}`);
+    await env.DB.prepare(`DELETE FROM google_auth`).run();
+  });
+});
+
 async function connect(scope: string) {
   await env.DB.prepare(`DELETE FROM google_auth`).run();
   await saveGoogleAuth(env.DB, "me@x.test", await encryptSecret(env.SESSION_SECRET, "refresh-1"), scope);

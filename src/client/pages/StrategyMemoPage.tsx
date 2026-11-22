@@ -5,6 +5,7 @@ import TrafficSection from "../components/TrafficSection";
 import { publicStrategyMemo } from "../api";
 import { dayLabel } from "../careReportPageView";
 import { isReportToken } from "../reportView";
+import { trafficMonthLine } from "../strategyMemoView";
 import { trafficView } from "../trafficView";
 import type { PublicMemo } from "../../worker/strategy/public";
 
@@ -81,6 +82,7 @@ export default function StrategyMemoPage() {
   if (load === "gone" || !page) return <Notice icon="link" title="This link isn't available"><p>It may have expired or been turned off. Reply to the email you got and we'll sort it out.</p></Notice>;
 
   const prepared = dayLabel(page.sentAt);
+  const monthLine = trafficMonthLine(page.traffic?.period);
   const traffic = trafficView(page.traffic ? { search: page.traffic.search, visits: page.traffic.visits } : undefined, { positionLabel: "Average position in Google Search" });
 
   return (
@@ -118,6 +120,7 @@ export default function StrategyMemoPage() {
           </div>
         </section>
 
+        {traffic && monthLine && <p className="mr-note">{monthLine}</p>}
         {traffic && <TrafficSection view={traffic} />}
 
         <p className="mr-foot">Reply to the email this came with if you have a question.</p>

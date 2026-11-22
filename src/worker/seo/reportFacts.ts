@@ -232,7 +232,7 @@ export function plainSeoSummary(f: SeoReportFacts): string {
   if (f.nap && !off.length && !gone.length && same.length > 0) lines.push(`The ${listOf(same)} on the website match the details on file.`);
 
   // Last, so what Google counted never pushes out a sentence about the rank check or the listing.
-  if (hasTrafficData(f.traffic)) lines.push(...plainTraffic(f.traffic));
+  if (hasTrafficData(f.traffic)) lines.push(...plainTraffic(f.traffic, { positionWording: "average position in Google Search" }));
 
   let text = lines[0];
   for (const line of lines.slice(1)) {

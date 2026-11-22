@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  PROFILE_CONNECT_PATH, PROFILE_HELP, accessLine, analyticsAccessLine, canClearLocation, canFind, canLink, canPull, canSaveLocation, canUnlink, foundLine, hasLink, lastMonthOf, linkBody, linkedLines, locationBody, locationProblem,
+  PROFILE_CONNECT_PATH, PROFILE_HELP, accessLine, analyticsAccessLine, canClearLocation, canFind, canLink, canPull, canSaveLocation, canUnlink, foundLine, ga4IdProblem, hasLink, lastMonthOf, linkBody, linkedLines, locationBody, locationProblem,
   monthRows, needsDomain, periodLabel, profileNote, pullResult, showPanel, siteName, unlinkQuestion,
 } from "../src/client/trafficPanelView";
 
@@ -38,6 +38,28 @@ describe("linkedLines, hasLink and linkBody", () => {
     expect(linkBody({ gsc: "sc-domain:ace.com", ga4: "" })).toEqual({ gscProperty: "sc-domain:ace.com" });
     expect(linkBody({ gsc: "", ga4: "123456789" })).toEqual({ ga4Property: "123456789" });
     expect(linkBody({ gsc: "a", ga4: "1" })).toEqual({ gscProperty: "a", ga4Property: "1" });
+  });
+});
+
+describe("a typed Analytics property id (I2)", () => {
+  it("sends the typed id as ga4Property, and it wins over the select", () => {
+    expect(linkBody({ gsc: "", ga4: "", ga4Typed: "  412345678 " })).toEqual({ ga4Property: "412345678" });
+    expect(linkBody({ gsc: "", ga4: "123456789", ga4Typed: "412345678" })).toEqual({ ga4Property: "412345678" });
+    expect(linkBody({ gsc: "sc-domain:ace.com", ga4: "", ga4Typed: "12345" })).toEqual({ gscProperty: "sc-domain:ace.com", ga4Property: "12345" });
+    expect(linkBody({ gsc: "", ga4: "123456789", ga4Typed: "" })).toEqual({ ga4Property: "123456789" });
+    expect(linkBody({ gsc: "", ga4: "123456789", ga4Typed: "   " })).toEqual({ ga4Property: "123456789" });
+  });
+  it("takes 5 to 15 digits and nothing else; a typed id that is not one sends nothing at all (not the select either)", () => {
+    for (const bad of ["1234", "1234567890123456", "properties/12345", "12a45", "12 345", "-12345"]) {
+      expect(ga4IdProblem(bad), bad).toBe("That is not an Analytics property id. It is 5 to 15 digits.");
+      expect(linkBody({ gsc: "sc-domain:ace.com", ga4: "123456789", ga4Typed: bad }), bad).toBeNull();
+      expect(canLink(linkBody({ gsc: "", ga4: "123456789", ga4Typed: bad }), false), bad).toBe(false);
+    }
+    for (const good of ["12345", "123456789012345", " 12345 ", ""]) expect(ga4IdProblem(good), good).toBeNull();
+  });
+  it("a typed id enables the Link button, and nothing runs while busy", () => {
+    expect(canLink(linkBody({ gsc: "", ga4: "", ga4Typed: "412345678" }), false)).toBe(true);
+    expect(canLink(linkBody({ gsc: "", ga4: "", ga4Typed: "412345678" }), true)).toBe(false);
   });
 });
 

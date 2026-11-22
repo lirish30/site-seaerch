@@ -39,11 +39,14 @@ function careNumbers(f: ReportFacts): Scene[] {
   // A site is only counted when its figure and the day it was first watched are both known. Watched for less than the whole month (the way `plainSummary` tells it), the line says "of the time we checked" and the days.
   const measured = f.sites.filter((s) => s.uptimePercent !== null && s.monitoredSince !== null);
   if (measured.length) {
-    const low = Math.min(...measured.map((s) => s.uptimePercent!));
-    const partial = measured.some((s) => s.monitoredSince! > `${f.period}-01` || s.coveredDays < daysIn(f.period));
-    const days = Math.min(...measured.map((s) => s.coveredDays));
-    const when = partial ? `we checked this month (${days} ${days === 1 ? "day" : "days"})` : "this month";
-    out.push(scene("Your site stayed up", `${low}%`, `Of the time ${when}${measured.length === 1 ? ", as measured by our monitoring" : " at the lowest of your sites, as measured by our monitoring"}`));
+    // The figure and its day count come from one site: the lowest percentage (a tie takes the site watched for fewer days). A zero never gets a scene.
+    const low = measured.reduce((a, b) => (b.uptimePercent! < a.uptimePercent! || (b.uptimePercent === a.uptimePercent && b.coveredDays < a.coveredDays) ? b : a));
+    if (low.uptimePercent! > 0) {
+      const partial = low.monitoredSince! > `${f.period}-01` || low.coveredDays < daysIn(f.period);
+      const days = low.coveredDays;
+      const when = partial ? `we checked this month (${days} ${days === 1 ? "day" : "days"})` : "this month";
+      out.push(scene("Your site stayed up", `${low.uptimePercent}%`, `Of the time ${when}${measured.length === 1 ? ", as measured by our monitoring" : " at the lowest of your sites, as measured by our monitoring"}`));
+    }
   }
   // An update run is what measured the update and backup numbers: a site none covered says nothing about them.
   const tracked = f.sites.filter((s) => s.updatesTracked === true);

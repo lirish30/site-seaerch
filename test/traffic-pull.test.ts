@@ -227,6 +227,29 @@ describe("pullMonth", () => {
     expect(g.reads().some((c) => c.url.includes(":runReport"))).toBe(false);
   });
 
+  it("an Analytics property that ALSO measures another site fails that source alone and reads no report", async () => {
+    const s = await linked({ domain: "ace.test", ga4: "123" });
+    const g = google({ streams: { "123": ["brand.test", "ace.test"] } });
+    const r = await pullMonth(e, s.siteId, PERIOD, { now: NOW, f: g.f });
+    expect(r).toEqual({ status: "partial", error: "This property no longer matches the site's domain. Link it again." });
+    expect(((await month(s.siteId))!.facts as any).visits).toBeNull();
+    expect(g.reads().some((c) => c.url.includes(":runReport"))).toBe(false);
+  });
+
+  it("an Analytics property with no web stream fails that source and reads no report", async () => {
+    const s = await linked({ domain: "ace.test", ga4: "123" });
+    const g = google({ streams: { "123": [] } });
+    const r = await pullMonth(e, s.siteId, PERIOD, { now: NOW, f: g.f });
+    expect(r.error).toBe("This property no longer matches the site's domain. Link it again.");
+    expect(g.reads().some((c) => c.url.includes(":runReport"))).toBe(false);
+  });
+
+  it("an Analytics property whose every stream is the site's host is still read", async () => {
+    const s = await linked({ domain: "ace.test", ga4: "123" });
+    const g = google({ streams: { "123": ["ace.test", "www.ace.test"] } });
+    expect((await pullMonth(e, s.siteId, PERIOD, { now: NOW, f: g.f })).status).toBe("ok");
+  });
+
   it("a site with nothing linked is failed with its sentence, no call and nothing saved", async () => {
     const s = await linked({ domain: "ace.test", gsc: null });
     const g = google();
@@ -235,7 +258,7 @@ describe("pullMonth", () => {
     expect(await month(s.siteId)).toBeNull();
   });
 
-  it("a later failed pull keeps the ok row; force replaces it", async () => {
+  it("a later failed pull keeps the ok row, and so does a forced failed one (R15); a forced ok pull replaces it", async () => {
     const s = await linked({ domain: "ace.test" });
     await pullMonth(e, s.siteId, PERIOD, { now: NOW, f: google().f });
     const good = await month(s.siteId);
@@ -246,9 +269,22 @@ describe("pullMonth", () => {
     expect(r.status).toBe("failed");
     expect(await month(s.siteId)).toEqual(good);
 
+    // The owner's "Pull last month now" gets the failure sentence, and the good month stays with its facts.
     const forced = await pullMonth(e, s.siteId, PERIOD, { now: later, force: true, f: google({ gscStatus: 500 }).f });
-    expect(forced.status).toBe("failed");
-    expect(await month(s.siteId)).toMatchObject({ status: "failed", facts: frame, pulledAt: later.toISOString(), attempts: 2 });
+    expect(forced).toEqual({ status: "failed", error: "Google did not answer. It will be tried again tomorrow." });
+    expect(await month(s.siteId)).toEqual(good);
+
+    const replaced = await pullMonth(e, s.siteId, PERIOD, { now: later, force: true, f: google().f });
+    expect(replaced.status).toBe("ok");
+    expect(await month(s.siteId)).toMatchObject({ status: "ok", facts: (good!.facts as any), pulledAt: later.toISOString(), attempts: 2 });
+  });
+
+  it("a forced pull still replaces a failed row fully", async () => {
+    const s = await linked({ domain: "ace.test" });
+    await pullMonth(e, s.siteId, PERIOD, { now: NOW, f: google({ gscStatus: 500 }).f });
+    expect((await month(s.siteId))!.status).toBe("failed");
+    expect((await pullMonth(e, s.siteId, PERIOD, { now: NOW, force: true, f: google().f })).status).toBe("ok");
+    expect(await month(s.siteId)).toMatchObject({ status: "ok", attempts: 2 });
   });
 
   it("a linked property with an empty Search Console answer saves ok with clicks 0 and impressions 0", async () => {
@@ -352,6 +388,30 @@ describe("sweepTraffic", () => {
     const rows = await Promise.all(sites.map((s) => month(s.siteId)));
     expect(rows.filter(Boolean)).toHaveLength(1);
     expect(rows.find(Boolean)!.status).toBe("failed");
+  });
+
+  it("a Google call that times out fails that site with the 'did not answer' sentence and does not end the run (I3)", async () => {
+    const sites = [await linked(), await linked()];
+    const g = google();
+    let thrown = false;
+    const f = async (url: string, init?: RequestInit) => {
+      if (url.includes("/searchAnalytics/query") && !thrown) { thrown = true; throw new DOMException("The operation timed out.", "TimeoutError"); }
+      return g.f(url, init);
+    };
+    expect(await sweepTraffic(e, NOW, f)).toEqual({ pulled: 1, failed: 1, skipped: 0 });
+    const rows = await Promise.all(sites.map((s) => month(s.siteId)));
+    expect(rows.map((r) => r!.status).sort()).toEqual(["failed", "ok"]);
+    expect(rows.find((r) => r!.status === "failed")!.error).toBe("Google did not answer. It will be tried again tomorrow.");
+  });
+
+  it("pullMonth's default fetch gives every Google call a timeout signal (I3)", async () => {
+    await linked({ domain: "ace.test", ga4: "123" });
+    const g = google({ streams: { "123": ["ace.test"] } });
+    const signals: (AbortSignal | null | undefined)[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => { signals.push(init?.signal); return g.f(url, init); }));
+    expect(await sweepTraffic(e, NOW)).toMatchObject({ pulled: 1 });
+    expect(signals.length).toBeGreaterThan(3);
+    expect(signals.every((x) => x instanceof AbortSignal)).toBe(true);
   });
 
   it("sweepTraffic asks Google for one token for the whole run", async () => {
@@ -508,6 +568,17 @@ describe("trafficWait", () => {
     expect(await trafficWait(e, rehearsal.businessId, PERIOD, SECOND)).toBe(false);
   });
 
+  it("does not wait when Google is not connected or the traffic scopes were not granted (a dead connection cannot pull)", async () => {
+    const s = await linked({ domain: "ace.test" });
+    expect(await trafficWait(e, s.businessId, PERIOD, SECOND)).toBe(true);
+    await saveGoogleAuth(env.DB, "me@x.test", await encryptSecret(env.SESSION_SECRET, "refresh-1"), "openid email https://www.googleapis.com/auth/webmasters.readonly");
+    expect(await trafficWait(e, s.businessId, PERIOD, SECOND)).toBe(false);
+    await env.DB.prepare(`DELETE FROM google_auth`).run();
+    expect(await trafficWait(e, s.businessId, PERIOD, SECOND)).toBe(false);
+    await connect();
+    expect(await trafficWait(e, s.businessId, PERIOD, SECOND)).toBe(true);
+  });
+
   it("a partial month ends the wait, a failed one does not until it has had 5 attempts", async () => {
     const s = await linked({ domain: "ace.test" });
     await saveTrafficMonth(env.DB, { siteId: s.siteId, period: PERIOD, status: "failed", facts: frame, error: "x" }, NOW.toISOString());
@@ -566,6 +637,17 @@ describe("POST /api/traffic/site/:siteId/pull", () => {
     expect(await r.json()).toEqual({ status: "ok", error: "" });
     // Forced: the ok row it found was replaced by this pull.
     expect(((await month(s.siteId))!.facts as any).search.clicks).toBe(40);
+  });
+
+  it("a Google call that times out is 200 with the 'did not answer' sentence on a pull and 502 with it on find (I3)", async () => {
+    const s = await linked({ domain: "ace.test" });
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new DOMException("The operation timed out.", "TimeoutError"); }));
+    const r = await call(s.siteId, { period: PERIOD });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ status: "failed", error: "Google did not answer. It will be tried again tomorrow." });
+    const found = await worker.fetch(new Request(`https://x/api/traffic/site/${s.siteId}/find`, { method: "POST", headers: { cookie } }), e, ctx());
+    expect(found.status).toBe(502);
+    expect(await found.json()).toEqual({ error: "Google did not answer. It will be tried again tomorrow." });
   });
 
   it("a failed pull is 200 with its sentence", async () => {

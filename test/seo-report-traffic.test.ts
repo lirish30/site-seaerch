@@ -1,4 +1,6 @@
 import { env } from "cloudflare:test";
+import { saveGoogleAuth } from "../src/worker/db/google";
+import { encryptSecret } from "../src/worker/google/crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { trafficView } from "../src/client/trafficView";
 import { seoReportPageView } from "../src/client/seoReportPageView";
@@ -82,7 +84,7 @@ const FROZEN = {
 };
 /** What `plainSeoSummary` said of FROZEN before this plan, word for word. */
 const FROZEN_SUMMARY = "Local SEO report for November 2026. In our check on December 1, the business showed in the top 3 at 2 of 9 checked points across 1 search term. This is the first check, so nothing to compare yet. The Google profile shows 43 reviews, rated 4.7 out of 5.";
-const TRAFFIC_SENTENCES = " In Google's search results, counted by Google, your site was shown 900 times and clicked 40 times, at an average position of 7.3. Your site had 100 visits from 80 people, counted by Google, and 60 of the visits came from search.";
+const TRAFFIC_SENTENCES = " In Google's search results, counted by Google, your site was shown 900 times and clicked 40 times, at an average position in Google Search of 7.3. Your site had 100 visits from 80 people, counted by Google, and 60 of the visits came from search.";
 
 async function sentReport(facts: unknown) {
   const s = await seedClient();
@@ -176,6 +178,12 @@ describe("buildSeoFacts: traffic", () => {
 });
 
 describe("the sweep and the traffic wait", () => {
+  // A report only waits for Google when Google is connected with the traffic scopes.
+  beforeEach(async () => {
+    await env.DB.prepare(`DELETE FROM google_auth`).run();
+    await saveGoogleAuth(env.DB, "me@x.test", await encryptSecret(env.SESSION_SECRET, "refresh-1"), "openid email https://www.googleapis.com/auth/webmasters.readonly https://www.googleapis.com/auth/analytics.readonly");
+  });
+
   it("the sweep leaves a waiting client and counts it, a start by hand does not wait", async () => {
     const s = await seoClient();
     await generateRecurring(e, NOW);
@@ -225,7 +233,7 @@ describe("the sweep and the traffic wait", () => {
     const before = (await getSeoReportFor(env.DB, s.businessId, PERIOD))!;
     expect(SeoReportFacts.parse(before.facts).traffic!.search!.clicks).toBe(40);
     // Google gives other numbers on a later pull, and the sweep and a start by hand run again.
-    await saveTrafficMonth(env.DB, { siteId: s.site!.id, period: PERIOD, status: "ok", facts: traffic({ search: search({ clicks: 999 }) }), force: true }, "2026-12-05T10:00:00.000Z");
+    await saveTrafficMonth(env.DB, { siteId: s.site!.id, period: PERIOD, status: "ok", facts: traffic({ search: search({ clicks: 999 }) }) }, "2026-12-05T10:00:00.000Z");
     expect(await sweepSeo(e, LATE)).toMatchObject({ reports: 0 });
     await startSeoReport(e, s.businessId, PERIOD, { test: false, now: LATE });
     const after = (await getSeoReport(env.DB, before.id))!;

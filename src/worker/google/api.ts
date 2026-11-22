@@ -2,15 +2,26 @@ import type { Fetch } from "./oauth";
 
 const te = new TextEncoder();
 
-/** Google answered with a non-2xx status. `status` is what callers branch on; the message text is what it has always been. */
+/** Google answered with a non-2xx status. `status` is what callers branch on; the message text is what it has always been. `reason` is Google's machine word for why (`SERVICE_DISABLED`, `accessNotConfigured`, ...), never its message. */
 export class GoogleApiError extends Error {
-  constructor(public status: number, message: string) { super(message); this.name = "GoogleApiError"; }
+  constructor(public status: number, message: string, public reason?: string) { super(message); this.name = "GoogleApiError"; }
+}
+
+/** `fetch` with a 20 second limit: a Google call that stalls fails with a TimeoutError instead of holding the whole run. The default `Fetch` of every traffic call. */
+export const timedFetch: Fetch = (url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(20_000) });
+
+/** Google's machine reason in an error body: the first `errors[].reason`, else the first `details[].reason`, else `error.status`; only when it is a plain word (the message text is never carried). */
+function reasonOf(json: any): string | undefined {
+  const e = json?.error;
+  const first = (xs: unknown) => (Array.isArray(xs) ? xs.map((x: any) => x?.reason).find((r) => typeof r === "string" && r !== "") : undefined);
+  const r = first(e?.errors) ?? first(e?.details) ?? e?.status;
+  return typeof r === "string" && /^[A-Za-z0-9_.-]{1,80}$/.test(r) ? r : undefined;
 }
 
 export async function google<T>(f: Fetch, token: string, url: string, init: RequestInit = {}): Promise<T> {
   const res = await f(url, { ...init, headers: { authorization: `Bearer ${token}`, ...(init.headers ?? {}) } });
   const json = await res.json<any>().catch(() => ({}));
-  if (!res.ok) throw new GoogleApiError(res.status, `Google API ${res.status}: ${json.error?.message ?? "request failed"}`);
+  if (!res.ok) throw new GoogleApiError(res.status, `Google API ${res.status}: ${json.error?.message ?? "request failed"}`, reasonOf(json));
   return json as T;
 }
 

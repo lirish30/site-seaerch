@@ -50,12 +50,15 @@ describe("traffic months", () => {
     expect(await getTrafficMonth(env.DB, siteId, "2026-11")).toEqual({ siteId, period: "2026-11", status: "ok", facts: facts(7), pulledAt: T1, attempts: 2, error: "" });
   });
 
-  it("saveTrafficMonth with force replaces an ok row", async () => {
+  it("saveTrafficMonth replaces an ok row with another ok one and never with a partial or failed one, even when force is asked for (R15)", async () => {
     const s = await seedClient();
     const siteId = s.site!.id;
     await saveTrafficMonth(env.DB, { siteId, period: "2026-11", status: "ok", facts: facts(10) }, T0);
-    await saveTrafficMonth(env.DB, { siteId, period: "2026-11", status: "partial", facts: facts(12), error: "ga4 down", force: true }, T1);
-    expect(await getTrafficMonth(env.DB, siteId, "2026-11")).toEqual({ siteId, period: "2026-11", status: "partial", facts: facts(12), pulledAt: T1, attempts: 2, error: "ga4 down" });
+    for (const status of ["partial", "failed"] as const)
+      await saveTrafficMonth(env.DB, { siteId, period: "2026-11", status, facts: facts(12), error: "ga4 down", force: true } as any, T1);
+    expect(await getTrafficMonth(env.DB, siteId, "2026-11")).toEqual({ siteId, period: "2026-11", status: "ok", facts: facts(10), pulledAt: T0, attempts: 1, error: "" });
+    await saveTrafficMonth(env.DB, { siteId, period: "2026-11", status: "ok", facts: facts(12) }, T1);
+    expect(await getTrafficMonth(env.DB, siteId, "2026-11")).toEqual({ siteId, period: "2026-11", status: "ok", facts: facts(12), pulledAt: T1, attempts: 2, error: "" });
     expect(await getTrafficMonth(env.DB, siteId, "2026-10")).toBeNull();
   });
 
