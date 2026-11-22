@@ -7,8 +7,10 @@ import { renderSlideHtml, slidesFor, STUDIO_SIZE, type StudioCopy } from "./temp
 
 /** A refusal with a plain sentence the route can show as it is (422). */
 export class StudioUploadError extends Error {}
-/** The post cannot be drawn yet; the message says why in a plain sentence (422, or 501 when the browser is not set up). */
+/** The post cannot be drawn yet; the message says why in a plain sentence (422). */
 export class StudioRenderError extends Error {}
+/** There is no browser binding to draw with: the route answers 501, like the deck PDF, rather than 422 (nothing the person can fix in the post). */
+export class StudioBrowserMissingError extends StudioRenderError {}
 
 export const MAX_UPLOAD_BYTES = 1024 * 1024;
 const TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
@@ -68,7 +70,7 @@ function readCopy(v: unknown): StudioCopy | null {
  * `png` is the renderer (tests hand in a fake).
  */
 export async function renderPostImages(env: Env, postId: string, png: typeof htmlToPng = htmlToPng): Promise<string[]> {
-  if (!env.BROWSER) throw new StudioRenderError("Images cannot be drawn here because the browser binding is not set up.");
+  if (!env.BROWSER) throw new StudioBrowserMissingError("Images cannot be drawn here because the browser binding is not set up.");
   const post = await getPost(env.DB, postId);
   if (!post) throw new StudioRenderError("That post does not exist.");
   const copy = readCopy(post.copy);

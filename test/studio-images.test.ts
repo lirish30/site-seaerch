@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { createPost, getPost, patchPost } from "../src/worker/db/studio";
-import { StudioUploadError, renderPostImages, storeUpload } from "../src/worker/studio/images";
+import { StudioBrowserMissingError, StudioRenderError, StudioUploadError, renderPostImages, storeUpload } from "../src/worker/studio/images";
 
 const T0 = "2026-12-01T10:00:00.000Z";
 const BROWSER = { marker: "browser" } as unknown as Fetcher;
@@ -60,6 +60,10 @@ describe("renderPostImages", () => {
     await env.RAW.put(old[0], new Uint8Array([9]));
     const f = fakePng();
     await expect(renderPostImages({ ...env, BROWSER: undefined } as typeof env, post.id, f.png)).rejects.toThrow(/browser/i);
+    // the routes answer this one 501 (nothing to fix in the post), the other render errors 422
+    const err = await renderPostImages({ ...env, BROWSER: undefined } as typeof env, post.id, f.png).catch((e) => e);
+    expect(err).toBeInstanceOf(StudioBrowserMissingError);
+    expect(err).toBeInstanceOf(StudioRenderError);
     await expect(renderPostImages({ ...env, BROWSER: undefined } as typeof env, post.id, f.png)).rejects.toThrow(/^[A-Z][^<>{}]*\.$/);
     expect(f.calls).toHaveLength(0);
     expect((await getPost(env.DB, post.id))!.imageKeys).toEqual(old);

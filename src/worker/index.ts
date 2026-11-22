@@ -36,6 +36,7 @@ import { helperAdminRoutes } from "./routes/helperAdmin";
 import { packageRoutes } from "./routes/packages";
 import { dealRoutes, leadDealRoutes } from "./routes/deals";
 import { deckRoutes } from "./routes/deck";
+import { studioRoutes } from "./routes/studio";
 import { bookingRoutes } from "./routes/bookings";
 import { documentRoutes } from "./routes/documents";
 import { onboardingRoutes } from "./routes/onboarding";
@@ -69,6 +70,7 @@ import "./approvals/pauseNotice";
 import "./approvals/careUpdates";
 import "./approvals/careReport";
 import "./approvals/seoReport";
+import "./approvals/studioPost";
 import "./approvals/ladderMail";
 import "./billing/milestones"; // registers the hook that drafts and proposes a milestone invoice when a project reaches one
 import "./billing/subscriptions"; // registers the hook that proposes a launch subscription when its build project is done
@@ -107,6 +109,7 @@ app.route("/api/capacity", capacityRoutes);
 app.route("/api/batches", batchRoutes);
 app.route("/api/outreach", outreachRoutes);
 app.route("/api/work-samples", workSampleRoutes);
+app.route("/api/studio", studioRoutes()); // the Studio: posts, their copy, uploads and drawn images (behind requireAuth)
 app.route("/api/spend", spendRoutes);
 app.route("/api/approvals", approvalRoutes);
 app.route("/api/agent-actions", agentActionRoutes);
