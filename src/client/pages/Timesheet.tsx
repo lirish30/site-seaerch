@@ -1,21 +1,31 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
+import { Card, Chip, Empty, Meter, Note, PageHeader, Stat, Stats } from "../components/ds";
 import Icon from "../components/Icon";
+import { TimerBanner } from "../components/TaskRow";
+import { decimalHours, statusChip } from "../projectView";
 import { dayLabel, formatMinutes, parseDuration, shiftDay, todayIn, weekLabel, weekSummary } from "../timeView";
-import { Card, EmptyState, Meter, StatRow, type Stat } from "../components/PageBits";
 import type { Capacity } from "../../worker/capacity/compute";
-import { TIMER_CHANGED, workError, type MyTasks, type Week } from "../workData";
+import { TIMER_CHANGED, workError, type MyTasks, type ProjectDetail, type ProjectRow, type RunningEntry, type Week } from "../workData";
 
 interface Option { taskId: string; label: string; project: string }
+interface ProjectInfo { status: { label: string; tone: "neutral" | "outline" | "positive" | "warning" | "critical" | "info" | "signal" } | null; est: Map<string, number> }
 
-/** The week as a grid: a row for each task with time in it, a column for each day, totals on the right and below. Add time by hand underneath (or tap a cell to start it there). */
+/**
+ * The week as a grid: tasks grouped by client and project, a soft chip for each day's time (today's column tinted), totals on the right and below.
+ * Add time opens a small form at the top (tapping a day cell opens it on that task and day). A running timer shows as a banner with Stop.
+ */
 export default function Timesheet() {
   // null is "this week": the server picks today in your time zone.
   const [of, setOf] = useState<string | null>(null);
   const [week, setWeek] = useState<Week | null>(null);
   const [mine, setMine] = useState<Option[]>([]);
+  const [running, setRunning] = useState<RunningEntry | null>(null);
+  const [projects, setProjects] = useState<ProjectRow[]>([]);
+  const [info, setInfo] = useState<Map<string, ProjectInfo>>(new Map());
   const [failed, setFailed] = useState(false);
+  const [adding, setAdding] = useState(false);
   const [taskId, setTaskId] = useState("");
   const [day, setDay] = useState("");
   const [length, setLength] = useState("");
@@ -26,10 +36,12 @@ export default function Timesheet() {
   const lengthBox = useRef<HTMLInputElement>(null);
   const [capacity, setCapacity] = useState<Capacity | null>(null);
   useEffect(() => { api.get<{ capacity: Capacity | null }>("/today").then((r) => setCapacity(r.capacity)).catch(() => setCapacity(null)); }, []);
+  useEffect(() => { api.get<{ projects: ProjectRow[] }>("/projects").then((r) => setProjects(r.projects)).catch(() => setProjects([])); }, []);
 
   const load = useCallback(() => {
     setFailed(false);
     api.get<Week>(`/time/week${of ? `?of=${of}` : ""}`).then((w) => { setWeek(w); setDay((d) => (w.days.includes(d) ? d : w.days[0])); }).catch(() => setFailed(true));
+    api.get<{ entry: RunningEntry | null }>("/time/running").then((r) => setRunning(r.entry)).catch(() => setRunning(null));
   }, [of]);
   useEffect(() => {
     load();
@@ -39,6 +51,30 @@ export default function Timesheet() {
   useEffect(() => {
     api.get<MyTasks>("/me/tasks").then((r) => setMine(r.projects.flatMap((p) => p.tasks.map((t) => ({ taskId: t.id, label: t.title, project: p.projectName }))))).catch(() => setMine([]));
   }, []);
+
+  // Each project in the week, read once: its client, whether it is paused, and the estimate of each task (for the Est. column).
+  const projectIds = [...new Set((week?.rows ?? []).map((r) => r.projectId))].sort().join(",");
+  useEffect(() => {
+    if (!projectIds) return;
+    let live = true;
+    const ids = projectIds.split(",").filter((id) => !info.has(id));
+    Promise.all(ids.map((id) => api.get<ProjectDetail>(`/projects/${id}`).then((d) => [id, d] as const).catch(() => null))).then((list) => {
+      if (!live) return;
+      setInfo((old) => {
+        const next = new Map(old);
+        for (const x of list) {
+          if (!x) continue;
+          const [id, d] = x;
+          const s = statusChip({ ...d.project, waitingOnClient: d.waitingOnClient });
+          next.set(id, { status: d.project.status === "paused" || d.project.status === "cancelled" ? s : null, est: new Map(d.tasks.map((t) => [t.id, t.estMinutes])) });
+        }
+        return next;
+      });
+    });
+    return () => { live = false; };
+    // info is read only to skip projects already loaded.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectIds]);
 
   // The tasks you can add time to: the ones already in this week's grid, then your open ones.
   const options: Option[] = [];
@@ -58,26 +94,31 @@ export default function Timesheet() {
     } catch (e) { setError(workError(e, "Couldn’t add the time")); }
     finally { setBusy(false); }
   };
-  const pick = (id: string, d: string) => { setTaskId(id); setDay(d); lengthBox.current?.focus(); };
+  const openAdd = () => { setAdding(true); setNotice(""); setError(""); setTimeout(() => lengthBox.current?.focus(), 0); };
+  const pick = (id: string, d: string) => { setTaskId(id); setDay(d); openAdd(); };
 
   const today = week ? todayIn(week.tz) : "";
   const sum = week ? weekSummary(week) : null;
   const thisWeek = week?.days.includes(today) ?? false;
   const capWeek = capacity?.weeks.find((w) => week?.days.includes(w.monday)) ?? null;
   const limit = capWeek?.limitMinutes ?? 0;
-  const stats: Stat[] = sum && week ? [
-    { label: "Logged", value: formatMinutes(sum.total),
-      sub: limit ? <><Meter value={sum.total} max={limit} label={`${formatMinutes(sum.total)} of ${formatMinutes(limit)}`} /><span className="pb-hint">of your {Math.round(limit / 60)} h week{capWeek ? ` · ${formatMinutes(capWeek.bookedMinutes)} booked` : ""}</span></> : thisWeek ? "So far this week" : "That week" },
-    { label: "Days worked", value: <>{sum.daysWorked}<small>of 7</small></>, sub: sum.daysWorked ? `${formatMinutes(Math.round(sum.total / sum.daysWorked))} a day on average` : "Nothing logged yet" },
-    { label: "Busiest day", value: sum.busiest ? `${dayLabel(sum.busiest.day).weekday} ${dayLabel(sum.busiest.day).date}` : "—", sub: sum.busiest ? formatMinutes(sum.busiest.minutes) : "No time logged" },
-    { label: "Most time on", value: sum.byProject[0] ? `${Math.round((sum.byProject[0].minutes / Math.max(1, sum.total)) * 100)}%` : "—", sub: sum.byProject[0]?.name ?? "No project yet" },
-  ] : [];
-  const peak = Math.max(1, ...(week?.dayTotals ?? [0]));
+  const todayIndex = week ? week.days.indexOf(today) : -1;
+  const clientOf = (projectId: string) => projects.find((p) => p.id === projectId)?.businessName ?? "";
 
-  const addForm = (
-    <Card icon="plus" title="Add time" className="ts-add" note={taskId ? undefined : "Or tap a cell in the grid"}>
-      <div className="wk-inline">
-        <label className="deal-field wide"><span>Task</span>
+  // Rows grouped by project (the server sorts them by project, then task).
+  const groups: { projectId: string; name: string; rows: Week["rows"] }[] = [];
+  for (const r of week?.rows ?? []) {
+    const g = groups.find((x) => x.projectId === r.projectId);
+    if (g) g.rows.push(r); else groups.push({ projectId: r.projectId, name: r.projectName, rows: [r] });
+  }
+  const estOf = (r: Week["rows"][number]) => info.get(r.projectId)?.est.get(r.taskId) ?? null;
+  const hasEst = (week?.rows ?? []).some((r) => (estOf(r) ?? 0) > 0);
+  const estTotal = (week?.rows ?? []).reduce((n, r) => n + (estOf(r) ?? 0), 0);
+
+  const addPanel = adding && (
+    <Card icon="plus" title="Add time" note="Or tap a day in the grid" action={<button type="button" className="ds-icon-btn" aria-label="Close" onClick={() => setAdding(false)}><Icon name="x" size={14} /></button>}>
+      <form className="wk-inline wkx-add-time" onSubmit={(e) => { e.preventDefault(); void add(); }}>
+        <label className="deal-field wkx-grow2"><span>Task</span>
           <select value={taskId} onChange={(e) => setTaskId(e.target.value)}>
             <option value="">Choose a task</option>
             {[...byProject.entries()].map(([project, list]) => <optgroup key={project} label={project}>{list.map((o) => <option key={o.taskId} value={o.taskId}>{o.label}</option>)}</optgroup>)}
@@ -86,108 +127,123 @@ export default function Timesheet() {
           <select value={day} onChange={(e) => setDay(e.target.value)}>{(week?.days ?? []).map((d) => { const l = dayLabel(d); return <option key={d} value={d}>{l.weekday} {l.date}{d === today ? " (today)" : ""}</option>; })}</select></label>
         <label className="deal-field"><span>How long</span>
           <input ref={lengthBox} value={length} placeholder="1:30, 90m or 1.5h" onChange={(e) => setLength(e.target.value)} aria-invalid={length.trim() !== "" && minutes === null} /></label>
-        <label className="deal-field wide"><span>Note (optional)</span><input value={note} maxLength={500} placeholder="What you did" onChange={(e) => setNote(e.target.value)} /></label>
-        <button type="button" className="btn primary" disabled={busy || !taskId || minutes === null || !day} onClick={() => void add()}>{minutes ? `Add ${formatMinutes(minutes)}` : "Add time"}</button>
-      </div>
+        <label className="deal-field wkx-grow2"><span>Note (optional)</span><input value={note} maxLength={500} placeholder="What you did" onChange={(e) => setNote(e.target.value)} /></label>
+        <button type="submit" className="btn primary" disabled={busy || !taskId || minutes === null || !day}>{minutes ? `Add ${formatMinutes(minutes)}` : "Add time"}</button>
+      </form>
       {error && <p className="warn small" role="alert">{error}</p>}
       {notice && <p className="small" role="status">{notice}</p>}
-      <p className="pb-hint">{options.length === 0 ? "No open tasks to log against. Tasks come from your projects." : "Future days and locked tasks are refused. The timer on any task logs here by itself."}</p>
+      <p className="wkx-card-foot">{options.length === 0 ? "No open tasks to log against. Tasks come from your projects." : "Future days and locked tasks are refused. A timer on any task logs here by itself."}</p>
     </Card>
   );
 
+  const sub = week ? [`Week of ${weekLabel(week.days)}`, `${decimalHours(week.total)} hours ${thisWeek ? "so far" : "logged"}`, thisWeek ? "this week" : null].filter(Boolean).join(" · ") : failed ? "" : "Loading…";
+
   return (
-    <div className="wk">
-      <header className="page-header">
-        <div>
-          <h1>Timesheet</h1>
-          <p>{week ? `${weekLabel(week.days)}${thisWeek ? " · this week" : ""}. Where your hours went, by task and day.` : "Loading…"}</p>
-        </div>
-        <div className="header-actions">
-          <button type="button" className="btn" aria-label="Previous week" disabled={!week} onClick={() => week && setOf(shiftDay(week.days[0], -7))}><Icon name="chevron-left" size={16} />Previous</button>
-          <button type="button" className="btn" disabled={of === null} onClick={() => setOf(null)}>This week</button>
-          <button type="button" className="btn" aria-label="Next week" disabled={!week} onClick={() => week && setOf(shiftDay(week.days[0], 7))}>Next<Icon name="chevron-right" size={16} /></button>
-        </div>
-      </header>
-      <div className="pb-page">
-        {failed && <p className="error" role="alert">Couldn’t load the week. <button type="button" className="btn" onClick={load}>Try again</button></p>}
-        {!failed && !week && <p className="muted">Loading…</p>}
+    <div className="ds-page wkx">
+      <PageHeader title="Timesheet" sub={sub}
+        actions={<>
+          <span className="wkx-week-nav">
+            <button type="button" className="ds-icon-btn wkx-icon-32" aria-label="Previous week" title="Previous week" disabled={!week} onClick={() => week && setOf(shiftDay(week.days[0], -7))}><Icon name="chevron-left" size={16} /></button>
+            <button type="button" className="ds-icon-btn wkx-icon-32" aria-label="Next week" title="Next week" disabled={!week} onClick={() => week && setOf(shiftDay(week.days[0], 7))}><Icon name="chevron-right" size={16} /></button>
+          </span>
+          {of !== null && <button type="button" className="btn" onClick={() => setOf(null)}>This week</button>}
+          <button type="button" className="btn primary" aria-expanded={adding} onClick={() => (adding ? setAdding(false) : openAdd())}><Icon name="plus" size={16} />Add time</button>
+        </>} />
+      <div className="ds-body">
+        {running && <TimerBanner entry={running} onStopped={load} />}
+        {failed && <p className="error" role="alert">Couldn’t load the week. <button type="button" className="btn sm" onClick={load}>Try again</button></p>}
+        {addPanel}
         {week && sum && (
           <>
-            <StatRow stats={stats} label="This week in numbers" />
-            <div className="pb-cols">
-              <div className="pb-side">
-                {week.rows.length === 0 ? (
-                  <EmptyState icon="clock" title={thisWeek ? "No time logged this week" : "No time logged that week"}
-                    steps={[
-                      { title: "Start a timer", text: "Every task on a project has Start timer. Stop it and the time lands here.", to: "/projects" },
-                      { title: "Or add it by hand", text: "Pick the task and day in Add time, then type 1:30, 90m or 1.5h." },
-                      { title: "See the profit", text: "Logged time feeds each project's Profit tab, so you know what a job really paid per hour." },
-                    ]}>
-                    Hours you log show up as a grid of tasks by day.
-                  </EmptyState>
-                ) : (
-                  <Card icon="grid" title="Tasks by day" note={`${week.rows.length} task${week.rows.length === 1 ? "" : "s"} · ${sum.byProject.length} project${sum.byProject.length === 1 ? "" : "s"}`} flush className="ts-grid-card">
-                    <div className="wk-scroll">
-                      <table className="wk-grid">
-                        <thead>
-                          <tr>
-                            <th scope="col" className="wk-task-col">Task</th>
-                            {week.days.map((d) => { const l = dayLabel(d); return <th key={d} scope="col" className={`num${d === today ? " today" : ""}`}>{l.weekday}<br />{l.date}</th>; })}
-                            <th scope="col" className="num">Total</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {week.rows.map((r) => (
+            <Stats label="This week in numbers">
+              <Stat icon="clock" label={thisWeek ? "Hours this week" : "Hours that week"} value={decimalHours(sum.total)}
+                sub={thisWeek && todayIndex >= 0 ? `${dayLabel(today).weekday}: ${decimalHours(week.dayTotals[todayIndex])} so far` : sum.daysWorked ? `Across ${sum.daysWorked} ${sum.daysWorked === 1 ? "day" : "days"}` : "Nothing logged"} />
+              <Stat icon="calendar" label="Days worked" value={<>{sum.daysWorked}<small className="wkx-of"> of 7</small></>}
+                sub={sum.daysWorked ? `${decimalHours(Math.round(sum.total / sum.daysWorked))} hours a day on average` : "Nothing logged yet"} />
+              {limit > 0 ? (
+                <Stat icon="gauge" label="Capacity" value={`${Math.round((sum.total / limit) * 100)}%`}
+                  sub={`${decimalHours(sum.total)} of the ${Math.round(limit / 60)} hours you set${capWeek ? ` · ${decimalHours(capWeek.bookedMinutes)} booked` : ""}`} tone={sum.total >= limit ? "warning" : undefined} />
+              ) : (
+                <Stat icon="trending" label="Busiest day" value={sum.busiest ? `${dayLabel(sum.busiest.day).weekday} ${dayLabel(sum.busiest.day).date}` : "None yet"} sub={sum.busiest ? `${decimalHours(sum.busiest.minutes)} hours` : "No time logged"} />
+              )}
+            </Stats>
+
+            {week.rows.length === 0 ? (
+              <div className="ds-card">
+                <Empty icon="clock" title={thisWeek ? "No time logged this week" : "No time logged that week"} action={<button type="button" className="btn primary" onClick={openAdd}><Icon name="plus" size={16} />Add time</button>}>
+                  Start a timer from any task's More menu on a project, or add time by hand. Each task shows here as a row with a cell for each day.
+                </Empty>
+              </div>
+            ) : (
+              <div className="wkx-sheet-wrap">
+                <table className="wkx-sheet">
+                  <thead>
+                    <tr>
+                      <th scope="col" className="wkx-sheet-task">Task</th>
+                      {hasEst && <th scope="col" className="wkx-est">Est.</th>}
+                      {week.days.map((d) => { const l = dayLabel(d); return <th key={d} scope="col" className={`wkx-day${d === today ? " today" : ""}`}>{l.weekday} {l.date}</th>; })}
+                      <th scope="col" className="wkx-total">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {groups.map((g) => {
+                      const st = info.get(g.projectId)?.status ?? null;
+                      const client = clientOf(g.projectId);
+                      return [
+                        <tr key={`g-${g.projectId}`} className="wkx-sheet-group">
+                          <th scope="rowgroup" colSpan={week.days.length + (hasEst ? 3 : 2)}>
+                            <Link to={`/projects/${g.projectId}`}>{client ? `${client} · ` : ""}{g.name}</Link>
+                            {st && <Chip tone={st.tone} dot>{st.label}</Chip>}
+                          </th>
+                        </tr>,
+                        ...g.rows.map((r) => {
+                          const est = estOf(r);
+                          return (
                             <tr key={r.taskId}>
-                              <th scope="row" className="wk-task-col"><Link to={`/projects/${r.projectId}?task=${r.taskId}`}>{r.title}</Link><small>{r.projectName}</small></th>
-                              {r.minutes.map((m, i) => (
-                                <td key={week.days[i]} className={`num${week.days[i] === today ? " today" : ""}`}>
-                                  <button type="button" className={`wk-cell${m ? " has" : ""}`} aria-label={`${r.title}, ${dayLabel(week.days[i]).weekday} ${dayLabel(week.days[i]).date}: ${m ? formatMinutes(m) : "no time"}. Add time`} onClick={() => pick(r.taskId, week.days[i])}>{m ? formatMinutes(m) : "·"}</button>
-                                </td>
-                              ))}
-                              <td className="num"><b>{formatMinutes(r.total)}</b></td>
+                              <th scope="row" className="wkx-sheet-task"><Link to={`/projects/${r.projectId}?task=${r.taskId}`}>{r.title}</Link></th>
+                              {hasEst && <td className="wkx-est">{est ? decimalHours(est) : "–"}</td>}
+                              {r.minutes.map((m, i) => {
+                                const d = week.days[i];
+                                const l = dayLabel(d);
+                                return (
+                                  <td key={d} className={`wkx-day${d === today ? " today" : ""}`}>
+                                    <button type="button" className={`wkx-cell${m ? " has" : ""}`} aria-label={`${r.title}, ${l.weekday} ${l.date}: ${m ? formatMinutes(m) : "no time"}. Add time`} title={m ? formatMinutes(m) : "Add time"} onClick={() => pick(r.taskId, d)}>
+                                      {m ? decimalHours(m) : <Icon name="plus" size={12} />}
+                                    </button>
+                                  </td>
+                                );
+                              })}
+                              <td className="wkx-total">{decimalHours(r.total)}</td>
                             </tr>
-                          ))}
-                        </tbody>
-                        <tfoot>
-                          <tr>
-                            <th scope="row" className="wk-task-col">Day total</th>
-                            {week.dayTotals.map((m, i) => <td key={week.days[i]} className={`num${week.days[i] === today ? " today" : ""}`}>{m ? formatMinutes(m) : "·"}</td>)}
-                            <td className="num"><b>{formatMinutes(week.total)}</b></td>
-                          </tr>
-                        </tfoot>
-                      </table>
-                    </div>
-                  </Card>
-                )}
-                {sum.byProject.length > 0 && (
-                  <Card icon="briefcase" title="By project" note="Share of the week">
-                    <ul className="pb-rows">
-                      {sum.byProject.map((p) => (
-                        <li key={p.projectId}>
-                          <Link to={`/projects/${p.projectId}`}>{p.name}</Link>
-                          <Meter value={p.minutes} max={sum.total} />
-                          <b>{formatMinutes(p.minutes)}</b>
-                        </li>
-                      ))}
-                    </ul>
-                  </Card>
-                )}
+                          );
+                        }),
+                      ];
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <th scope="row" className="wkx-sheet-task">Day total</th>
+                      {hasEst && <td className="wkx-est">{decimalHours(estTotal)}</td>}
+                      {week.dayTotals.map((m, i) => <td key={week.days[i]} className={`wkx-day${week.days[i] === today ? " today" : ""}`}>{m ? decimalHours(m) : ""}</td>)}
+                      <td className="wkx-total big">{decimalHours(week.total)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
               </div>
-              <div className="pb-side">
-                {week.total > 0 && <Card icon="calendar" title="The week" note={formatMinutes(week.total)}>
-                  <div className="ts-days" role="img" aria-label={week.days.map((d, i) => `${dayLabel(d).weekday} ${formatMinutes(week.dayTotals[i])}`).join(", ")}>
-                    {week.days.map((d, i) => (
-                      <span key={d} className={`ts-day${d === today ? " today" : ""}${week.dayTotals[i] ? "" : " zero"}`}>
-                        <i style={{ height: `${Math.max(4, Math.round((week.dayTotals[i] / peak) * 64))}px` }} />
-                        {dayLabel(d).weekday.slice(0, 2)}
-                      </span>
-                    ))}
-                  </div>
-                </Card>}
-                {addForm}
-              </div>
-            </div>
+            )}
+
+            {sum.byProject.length > 1 && (
+              <Card icon="briefcase" title="By project" note="Share of the week" flush>
+                {sum.byProject.map((p) => (
+                  <Link key={p.projectId} to={`/projects/${p.projectId}`} className="wkx-share">
+                    <span className="ds-link-text"><b>{p.name}</b><small>{clientOf(p.projectId)}</small></span>
+                    <Meter value={p.minutes} max={sum.total} tone="signal" width={140} />
+                    <span className="wkx-money">{decimalHours(p.minutes)} h</span>
+                  </Link>
+                ))}
+              </Card>
+            )}
+            <Note>Hours are shown as decimals (1.5 is an hour and a half). Billable time feeds each project's hourly invoices and its Profit tab; Est. is each task's estimate for the whole task.</Note>
           </>
         )}
       </div>

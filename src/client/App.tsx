@@ -60,6 +60,7 @@ import Sops from "./pages/settings/Sops";
 import Work from "./pages/settings/Work";
 import AutoApprove from "./pages/settings/AutoApprove";
 import Clients from "./pages/Clients";
+import Approvals from "./pages/Approvals";
 import ClientPage from "./pages/Client";
 import Shell from "./components/Shell";
 
@@ -83,6 +84,7 @@ export default function App() {
             <Route path="/searches" element={<SearchHistory />} />
             <Route path="/searches/:id" element={<SearchDetail />} />
             <Route path="/today" element={<Today />} />
+            <Route path="/approvals" element={<Approvals />} />
             <Route path="/leads" element={<AllLeads />} />
             <Route path="/leads/:id" element={<LeadDetail />} />
             <Route path="/leads/:id/video" element={<VideoEditor />} />

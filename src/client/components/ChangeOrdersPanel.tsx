@@ -3,12 +3,14 @@ import { Link } from "react-router-dom";
 import { api } from "../api";
 import { careRateHint, hoursText, linesOf, listProblem, parseDaysInput, parseHoursInput, pricePreview, signedRecord, statusLabel, statusTone, voidable } from "../changeOrderView";
 import { dollars, parseDollars, type Package } from "../packagesView";
-import { canTakeChangeOrder, type Tone } from "../projectView";
+import { canTakeChangeOrder, type ChipTone, type Tone } from "../projectView";
+import { Chip, Empty, Facts } from "./ds";
+import Icon from "./Icon";
 import { workError } from "../workData";
 import type { OwnerChangeOrder } from "../../worker/changeorders/service";
 import type { ProjectStatus } from "../../worker/db/projects";
 
-const TONE: Record<Tone, string> = { neutral: "outline", good: "positive", warn: "warning", muted: "" };
+const TONE: Record<Tone, ChipTone> = { neutral: "outline", good: "positive", warn: "warning", muted: "neutral" };
 const when = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
 
 /** The standard hourly rate and the Care client's rate, from the package catalog (the change-order rate defaults to the first). */
@@ -42,22 +44,24 @@ function Card({ co, onChanged }: { co: OwnerChangeOrder; onChanged: () => Promis
   };
 
   return (
-    <li className="co-item" aria-label={c.title}>
-      <div className="co-head">
-        <b className="co-title">{c.title}</b>
-        {co.test && <span className="badge2 info"><i className="dot" />Test</span>}
-        <span className={`badge2 ${TONE[statusTone(co.status, paid)]}`}><i className="dot" />{statusLabel(co.status, paid)}</span>
-      </div>
-      <p className="muted small">{c.reference}</p>
-      <dl className="co-facts">
-        <dt>Price</dt><dd>{dollars(c.priceCents)}</dd>
-        <dt>Hours</dt><dd>{hoursText(c.hours)} at {dollars(c.rateCents)} an hour</dd>
-        {c.scheduleImpactDays !== null && <><dt>Schedule</dt><dd>{c.scheduleImpactDays === 0 ? "No change to the schedule" : `Adds ${c.scheduleImpactDays} ${c.scheduleImpactDays === 1 ? "day" : "days"}`}</dd></>}
-      </dl>
-      {c.summary && <><p className="wk-sub">What is changing</p><p className="wk-text">{c.summary}</p></>}
-      {c.reason && <><p className="wk-sub">Why it is outside the scope</p><p className="wk-text">{c.reason}</p></>}
-      {c.deliverables.length > 0 && <><p className="wk-sub">Becomes tasks</p><ul className="co-ul">{c.deliverables.map((d, i) => <li key={i}>{d}</li>)}</ul></>}
-      {c.notIncluded.length > 0 && <><p className="wk-sub">Not included</p><ul className="co-ul">{c.notIncluded.map((d, i) => <li key={i}>{d}</li>)}</ul></>}
+    <li className="ds-card wkx-co" aria-label={c.title}>
+      <header className="ds-card-head">
+        <Icon name="pen" size={16} />
+        <h2>{c.title}</h2>
+        {co.test && <Chip tone="info">Test</Chip>}
+        <Chip tone={TONE[statusTone(co.status, paid)]} dot>{statusLabel(co.status, paid)}</Chip>
+      </header>
+      <div className="ds-card-body">
+      <Facts rows={[
+        { label: "Reference", value: c.reference },
+        { label: "Price", value: dollars(c.priceCents) },
+        { label: "Hours", value: `${hoursText(c.hours)} at ${dollars(c.rateCents)} an hour` },
+        ...(c.scheduleImpactDays !== null ? [{ label: "Schedule", value: c.scheduleImpactDays === 0 ? "No change to the schedule" : `Adds ${c.scheduleImpactDays} ${c.scheduleImpactDays === 1 ? "day" : "days"}` }] : []),
+      ]} />
+      {c.summary && <><p className="wkx-label">What is changing</p><p className="wk-text">{c.summary}</p></>}
+      {c.reason && <><p className="wkx-label">Why it is outside the scope</p><p className="wk-text">{c.reason}</p></>}
+      {c.deliverables.length > 0 && <><p className="wkx-label">Becomes tasks</p><ul className="co-ul">{c.deliverables.map((d, i) => <li key={i}>{d}</li>)}</ul></>}
+      {c.notIncluded.length > 0 && <><p className="wkx-label">Not included</p><ul className="co-ul">{c.notIncluded.map((d, i) => <li key={i}>{d}</li>)}</ul></>}
 
       {record && (
         <div className="co-signed" role="group" aria-label="Signed record">
@@ -81,7 +85,7 @@ function Card({ co, onChanged }: { co: OwnerChangeOrder; onChanged: () => Promis
       {error && <p className="warn small" role="alert">{error}</p>}
       {notice && <p className="small" role="status">{notice}{notice.startsWith("Waiting for your approval") && <> <Link to="/">Open the approvals inbox</Link></>}</p>}
 
-      <div className="wk-task-actions">
+      <div className="wkx-actions">
         {co.status === "draft" && <button type="button" className="btn primary" disabled={busy} onClick={() => void send()}>Send for approval</button>}
         {co.status === "signed" && !paid && <button type="button" className="btn primary" disabled={busy} onClick={markPaid}>Mark paid (outside Stripe)</button>}
         {voidable(co.status) && <button type="button" className="btn" disabled={busy} aria-expanded={voiding} onClick={() => setVoiding((v) => !v)}>Void</button>}
@@ -93,6 +97,7 @@ function Card({ co, onChanged }: { co: OwnerChangeOrder; onChanged: () => Promis
           <button type="button" className="btn primary" disabled={busy || reason.trim().length < 3} onClick={() => void voidIt()}>Void this change order</button>
         </div>
       )}
+      </div>
     </li>
   );
 }
@@ -138,7 +143,7 @@ function NewForm({ projectId, rates, onDone, onCancel }: { projectId: string; ra
   };
 
   return (
-    <form className="co-form" aria-label="New change order" onSubmit={(e) => { e.preventDefault(); void create(); }}>
+    <form className="co-form wkx-co-form" aria-label="New change order" onSubmit={(e) => { e.preventDefault(); void create(); }}>
       <label className="deal-field"><span>Title</span><input value={title} maxLength={120} onChange={(e) => setTitle(e.target.value)} /></label>
       <label className="deal-field"><span>What is changing <small>{summary.length} / 1500</small></span><textarea rows={3} value={summary} maxLength={1500} onChange={(e) => setSummary(e.target.value)} /></label>
       <label className="deal-field"><span>Why it is outside the scope <small>{reason.length} / 600</small></span><textarea rows={2} value={reason} maxLength={600} onChange={(e) => setReason(e.target.value)} /></label>
@@ -154,7 +159,7 @@ function NewForm({ projectId, rates, onDone, onCancel }: { projectId: string; ra
       <label className="deal-field"><span>What is not included (one per line)</span><textarea rows={3} value={notIncluded} onChange={(e) => setNotIncluded(e.target.value)} /></label>
       <label className="deal-field"><span>What gets delivered (one per line; each becomes a task, locked until the order is signed and paid)</span><textarea rows={3} value={deliverables} onChange={(e) => setDeliverables(e.target.value)} /></label>
       {error && <p className="warn small" role="alert">{error}</p>}
-      <div className="wk-task-actions">
+      <div className="wkx-actions">
         <button type="submit" className="btn primary" disabled={busy || !!problem}>{busy ? "Saving…" : "Save the draft"}</button>
         <button type="button" className="btn" disabled={busy} onClick={onCancel}>Cancel</button>
       </div>
@@ -182,14 +187,18 @@ export default function ChangeOrdersPanel({ projectId, changeOrders, projectStat
   const open = canTakeChangeOrder(projectStatus);
 
   return (
-    <section className="co" aria-label="Change orders">
-      <div className="wk-task-actions">
-        {open && !adding && <button type="button" className="btn primary" onClick={() => setAdding(true)}>New change order</button>}
-        {!open && <p className="muted small">This project is {projectStatus}, so it cannot take a new change order.</p>}
+    <section className="wkx-co-panel" aria-label="Change orders">
+      <div className="ds-section-head">
+        <h2>{changeOrders.length ? `${changeOrders.length} change ${changeOrders.length === 1 ? "order" : "orders"}` : "Change orders"}</h2>
+        {open && !adding && changeOrders.length > 0 && <button type="button" className="btn primary" onClick={() => setAdding(true)}><Icon name="plus" size={16} />New change order</button>}
       </div>
-      {adding && <NewForm projectId={projectId} rates={rates} onCancel={() => setAdding(false)} onDone={async () => { setAdding(false); await onChanged(); }} />}
-      {changeOrders.length === 0 && !adding && <p className="muted">No change orders on this project.</p>}
-      <ul className="co-list">{changeOrders.map((co) => <Card key={co.id} co={co} onChanged={onChanged} />)}</ul>
+      {!open && <p className="muted small">This project is {projectStatus}, so it cannot take a new change order.</p>}
+      {adding && <div className="ds-card"><header className="ds-card-head"><Icon name="plus" size={16} /><h2>New change order</h2><span className="ds-card-note">Saved as a draft</span></header><div className="ds-card-body"><NewForm projectId={projectId} rates={rates} onCancel={() => setAdding(false)} onDone={async () => { setAdding(false); await onChanged(); }} /></div></div>}
+      {changeOrders.length === 0 && !adding && (
+        <div className="ds-card"><Empty icon="pen" title="No change orders on this project" action={open ? <button type="button" className="btn primary" onClick={() => setAdding(true)}><Icon name="plus" size={16} />New change order</button> : undefined}>
+          When the client asks for something outside the scope, write it up here. It is priced, signed by the client and paid before its tasks unlock.</Empty></div>
+      )}
+      <ul className="wkx-co-list">{changeOrders.map((co) => <Card key={co.id} co={co} onChanged={onChanged} />)}</ul>
     </section>
   );
 }

@@ -15,6 +15,27 @@ export const statusChip = (s: Status): string => CHIP[s] ?? "Unknown";
 /** The chip's tone: a ready one waits on Logan (amber), a sent one is done (green), a taken-back one is red. */
 export const statusTone = (s: Status): "" | "positive" | "warning" | "critical" => TONE[s] ?? "";
 
+/** Where a client's report for the month stands, in the order the month moves: no report yet, collecting, ready for Logan's OK, sent, opened by the client. Revoked and cancelled are "off". */
+export type MonthStage = "none" | "collecting" | "ready" | "sent" | "opened" | "off";
+export const MONTH_STAGES: { stage: Exclude<MonthStage, "off">; label: string; hint: string }[] = [
+  { stage: "none", label: "Not started", hint: "No report yet" },
+  { stage: "collecting", label: "Collecting", hint: "Numbers and words" },
+  { stage: "ready", label: "Ready for your OK", hint: "Approve on Today" },
+  { stage: "sent", label: "Sent", hint: "Not opened yet" },
+  { stage: "opened", label: "Opened", hint: "The client read it" },
+];
+/** The stage of one report; a client with no report (null) has not started. */
+export function monthStage(r: Pick<ReportRow, "status" | "views"> | null): MonthStage {
+  if (!r) return "none";
+  if (r.status === "sent") return r.views > 0 ? "opened" : "sent";
+  return r.status === "collecting" || r.status === "ready" ? r.status : "off";
+}
+/** The stage in words for a chip: the five stages above, and the report's own word for one taken back or cancelled. */
+export function stageLabel(stage: MonthStage, status?: Status): string {
+  if (stage === "off") return status ? statusChip(status) : "Taken back";
+  return MONTH_STAGES.find((s) => s.stage === stage)?.label ?? "Unknown";
+}
+
 export interface LedgerBar {
   /** Green below 80%, amber from 80% up to the allowance, red over it; `none` when there is no allowance and no time used. */
   tone: "ok" | "warn" | "over" | "none";

@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
-import { ownerBadge, phaseGroups, stepsEditable } from "../projectView";
+import { ownerChip, phaseGroups, stepsEditable } from "../projectView";
+import { Card, Chip, Empty } from "./ds";
+import Icon from "./Icon";
 import { diffDetails, diffSummary, parseEstimate, stepsFromTaskRows, templateProblems } from "../sopView";
 import { formatMinutes } from "../timeView";
 import { announceProjectsChanged, workError, type ProjectDetail } from "../workData";
@@ -67,7 +69,7 @@ function StepEdit({ task, others, onChanged }: { task: Task; others: Task[]; onC
             <li key={o.id}>
               <label className="sp-check">
                 <input type="checkbox" checked={requires.includes(o.stepKey!)} onChange={(e) => { setRequires(e.target.checked ? [...requires, o.stepKey!] : requires.filter((r) => r !== o.stepKey)); setSaved(false); }} />
-                <span><span className="wk-key">{o.stepKey}</span> {o.title}</span>
+                <span><span className="wkx-key">{o.stepKey}</span> {o.title}</span>
               </label>
             </li>
           ))}
@@ -76,7 +78,7 @@ function StepEdit({ task, others, onChanged }: { task: Task; others: Task[]; onC
       {minutes === null && <p className="warn small" role="alert">Estimate: use minutes or hours up to 10 hours, like 45m or 1h 30m.</p>}
       {error && <p className="warn small" role="alert">{error}</p>}
       {saved && !changed && <p className="small" role="status">Saved for this project. The template is unchanged until you save it as the template.</p>}
-      <div className="wk-task-actions">
+      <div className="wkx-actions">
         <button type="button" className="btn primary" disabled={busy || !changed || minutes === null || !title.trim()} onClick={() => void save()}>{busy ? "Saving…" : "Save this step"}</button>
         <button type="button" className="btn" disabled={busy} onClick={remove}>Remove step</button>
       </div>
@@ -123,56 +125,65 @@ export default function ProjectSopTab({ data, onChanged }: { data: ProjectDetail
   };
 
   const unchanged = !!preview && preview.summary.length === 1 && preview.summary[0] === "no change to the steps";
+  const behind = !!template && project.templateVersion !== null && template.version > project.templateVersion;
   return (
-    <section aria-label="SOP">
-      <p>{template
-        ? <>Started from <b>{template.name}</b>, version {project.templateVersion ?? "?"}.{project.templateVersion !== null && template.version > project.templateVersion ? ` The template is now on version ${template.version}; this project keeps its own copy.` : ""}</>
-        : "This project was made by hand. It has no template."}</p>
-      <p className="muted small">This is this client’s own copy of the plan: the tasks. Changes you make to a step here affect this project only.</p>
-
-      {template && editable && (
-        <div className="wk-task-actions">
-          <button type="button" className="btn" disabled={busy || !!preview} onClick={() => void review()}>Save as template</button>
-        </div>
-      )}
-      {error && <p className="warn small" role="alert">{error}</p>}
-      {notice && <p className="small" role="status">{notice} <Link to="/settings/sops">Open SOPs</Link></p>}
-      {preview && (
-        <div className="sp-confirm" role="group" aria-label="Save as template">
-          <p><b>Save this project’s {stepsFromTaskRows(data.tasks).length} steps as version {preview.template.version + 1} of {preview.template.name}?</b></p>
-          <p>Compared with the template as it is now: {preview.summary.join(", ")}.</p>
-          {preview.details.length > 0 && <ul className="co-ul">{preview.details.map((d) => <li key={d}>{d}</li>)}</ul>}
-          <p>This changes the template for every future project, not the ones running.</p>
-          {preview.problems.length > 0 && <div className="sp-problems" role="alert"><p><b>The template could not be saved with these steps:</b></p><ul>{preview.problems.map((p) => <li key={p}>{p}</li>)}</ul></div>}
-          <div className="wk-task-actions">
-            <button type="button" className="btn primary" disabled={busy || preview.problems.length > 0 || unchanged} onClick={() => void push()}>{busy ? "Saving…" : `Save as version ${preview.template.version + 1}`}</button>
-            <button type="button" className="btn" disabled={busy} onClick={() => setPreview(null)}>Cancel</button>
+    <section aria-label="SOP" className="wkx-sop">
+      <Card icon="file-text" title={template ? `From the ${template.name} SOP` : "Made by hand"} note={template ? `Version ${project.templateVersion ?? "?"}${behind ? ` · template is on ${template.version}` : ""}` : undefined}
+        action={template && editable ? <button type="button" className="btn sm" disabled={busy || !!preview} onClick={() => void review()}>Save as template</button> : undefined}>
+        <p>{template
+          ? <>These are this client’s own copy of the plan. Changing a step here changes this project only.{behind ? " The template has moved on since this project started; this project keeps its own steps." : ""}</>
+          : "This project was made by hand, so it has no template. Its steps are the tasks you added."}</p>
+        {template && editable && <p className="wkx-card-foot">Save as template shows you what would change before it offers this project’s steps as the template’s next version.</p>}
+        {error && <p className="warn small" role="alert">{error}</p>}
+        {notice && <p className="small" role="status">{notice} <Link to="/settings/sops">Open SOPs</Link></p>}
+        {preview && (
+          <div className="sp-confirm" role="group" aria-label="Save as template">
+            <p><b>Save this project’s {stepsFromTaskRows(data.tasks).length} steps as version {preview.template.version + 1} of {preview.template.name}?</b></p>
+            <p>Compared with the template as it is now: {preview.summary.join(", ")}.</p>
+            {preview.details.length > 0 && <ul className="co-ul">{preview.details.map((d) => <li key={d}>{d}</li>)}</ul>}
+            <p>This changes the template for every future project, not the ones running.</p>
+            {preview.problems.length > 0 && <div className="sp-problems" role="alert"><p><b>The template could not be saved with these steps:</b></p><ul>{preview.problems.map((p) => <li key={p}>{p}</li>)}</ul></div>}
+            <div className="wkx-actions">
+              <button type="button" className="btn primary" disabled={busy || preview.problems.length > 0 || unchanged} onClick={() => void push()}>{busy ? "Saving…" : `Save as version ${preview.template.version + 1}`}</button>
+              <button type="button" className="btn" disabled={busy} onClick={() => setPreview(null)}>Cancel</button>
+            </div>
+            {unchanged && <p className="muted small">Nothing differs from the template, so there is nothing to save.</p>}
           </div>
-          {unchanged && <p className="muted small">Nothing differs from the template, so there is nothing to save.</p>}
+        )}
+      </Card>
+
+      {groups.length === 0 ? (
+        <div className="ds-card"><Empty icon="list" title="No SOP steps on this project">Steps come from the SOP the package names. Tasks you add by hand show on the Tasks tab, not here.</Empty></div>
+      ) : (
+        <div className="wkx-phases">
+          {groups.map((g, i) => (
+            <section key={g.phaseKey} className="wkx-phase open" aria-label={g.title}>
+              <div className="wkx-phase-head static"><b>{i + 1} · {g.title}</b><span className="ds-grow" /><small>{g.total} {g.total === 1 ? "step" : "steps"}</small></div>
+              <ul className="wkx-tasks">
+                {g.tasks.map((t) => {
+                  const o = ownerChip({ owner: t.owner, status: "todo" });
+                  return (
+                    <li key={t.id} className="wkx-task">
+                      <details className="wkx-step">
+                        <summary>
+                          {t.stepKey && <span className="wkx-key">{t.stepKey}</span>}
+                          <span className="wkx-step-title">{t.title}</span>
+                          <Chip tone={o.tone}>{o.label}</Chip>
+                          <span className="wkx-task-time">{t.estMinutes > 0 ? formatMinutes(t.estMinutes) : "–"}</span>
+                          <Icon name="chevron-down" size={14} className="wkx-step-chev" />
+                        </summary>
+                        {editable
+                          ? <StepEdit key={`${t.id}:${t.updatedAt}`} task={t} others={steps.filter((o) => o.id !== t.id && o.stepKey)} onChanged={onChanged} />
+                          : <div className="sp-fields"><p className="muted small">This project is {project.status}, so its steps cannot be edited.</p></div>}
+                      </details>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          ))}
         </div>
       )}
-
-      {groups.map((g) => (
-        <div key={g.phaseKey} className="wk-phase">
-          <h3>{g.title}<span className="wk-count">{g.total} {g.total === 1 ? "step" : "steps"}</span></h3>
-          <ul className="wk-list">
-            {g.tasks.map((t) => (
-              <li key={t.id} className="sp-step">
-                <details>
-                  <summary>
-                    <span className="wk-row-main">{t.stepKey && <b className="wk-key">{t.stepKey}</b>} <span className="sp-step-title">{t.title}</span></span>
-                    <span className="badge2">{ownerBadge(t.owner)}</span>
-                    <span className="muted small">{t.estMinutes > 0 ? formatMinutes(t.estMinutes) : "no estimate"}</span>
-                  </summary>
-                  {editable
-                    ? <StepEdit key={`${t.id}:${t.updatedAt}`} task={t} others={steps.filter((o) => o.id !== t.id && o.stepKey)} onChanged={onChanged} />
-                    : <div className="sp-fields"><p className="muted small">This project is {project.status}, so its steps cannot be edited.</p></div>}
-                </details>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))}
     </section>
   );
 }

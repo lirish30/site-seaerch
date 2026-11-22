@@ -1,5 +1,5 @@
 import { BillingConfigSchema, DEFAULT_BILLING_CONFIG, type BillingConfig as BillingTerms } from "../worker/billing/config";
-import { calendarDateIn, calendarDaysBetween } from "../worker/billing/dates";
+import { addDays, calendarDateIn, calendarDaysBetween } from "../worker/billing/dates";
 import type { Hold } from "../worker/db/holds";
 import type { InvoiceKind, InvoiceRow } from "../worker/db/invoices";
 import type { Subscription } from "../worker/db/subscriptions";
@@ -64,6 +64,85 @@ export function groupInvoices<R extends InvoiceDates>(rows: R[], today: string):
 
 const KIND: Record<InvoiceKind, string> = { deposit: "Deposit", milestone: "Milestone", change_order: "Change order", hourly: "Hours", subscription: "Subscription", early_exit: "Early exit" };
 export const invoiceKindLabel = (k: InvoiceKind): string => KIND[k];
+
+// ---- the invoices table ----
+
+export type InvoiceSeg = "drafts" | "sent" | "overdue" | "paid" | "closed";
+
+/** Which tab of the invoices table a row sits under: a failed payment counts as overdue, void and written off are closed. */
+export function invoiceSeg(i: InvoiceDates, today: string): InvoiceSeg {
+  switch (i.status) {
+    case "draft": return "drafts";
+    case "paid": return "paid";
+    case "void": case "uncollectible": return "closed";
+    case "failed": return "overdue";
+    case "open": return daysOverdue(i, today) > 0 ? "overdue" : "sent";
+  }
+}
+
+export type ChipTone = "neutral" | "outline" | "positive" | "critical";
+
+/** The short status chip in the table: Draft, Sent, "3 days late", Payment failed, Paid, Voided, Written off. A live state carries a dot. */
+export function invoiceChip(i: InvoiceDates, today: string): { text: string; tone: ChipTone; dot: boolean } {
+  switch (i.status) {
+    case "draft": return { text: "Draft", tone: "neutral", dot: false };
+    case "paid": return { text: "Paid", tone: "positive", dot: true };
+    case "void": return { text: "Voided", tone: "neutral", dot: false };
+    case "uncollectible": return { text: "Written off", tone: "neutral", dot: false };
+    case "failed": return { text: "Payment failed", tone: "critical", dot: true };
+    case "open": {
+      const late = daysOverdue(i, today);
+      return late > 0 ? { text: `${plural(late, "day")} late`, tone: "critical", dot: true } : { text: "Sent", tone: "outline", dot: true };
+    }
+  }
+}
+
+/** The day the client's tasks pause if an invoice stays unpaid: its base date plus the pause days from Settings > Billing. Null with no date to count from. */
+export const pauseOn = (i: Pick<InvoiceRow, "dueOn" | "failedOn">, terms: Pick<BillingTerms, "pauseAfterDays">): string | null => {
+  const base = baseOf(i);
+  return base ? addDays(base, terms.pauseAfterDays) : null;
+};
+
+/** A reminder raised for an invoice: its step on the ladder, and whether it waits for you (pending), went out (approved) or was turned down (rejected). */
+export interface ReminderRecord { invoiceId: string; step: number; status: "pending" | "approved" | "rejected" }
+export const REMINDER_APPROVAL_KIND = "invoice.reminder";
+
+/** The reminders among the approvals list (`GET /api/approvals`): approvals of the reminder kind whose payload names an invoice and a step. */
+export function remindersFrom(approvals: { kind: string; status: string; payload: unknown }[]): ReminderRecord[] {
+  const out: ReminderRecord[] = [];
+  for (const a of approvals) {
+    if (a.kind !== REMINDER_APPROVAL_KIND) continue;
+    const p = a.payload as { invoiceId?: unknown; step?: unknown } | null;
+    if (!p || typeof p.invoiceId !== "string" || typeof p.step !== "number") continue;
+    if (a.status !== "pending" && a.status !== "approved" && a.status !== "rejected") continue;
+    out.push({ invoiceId: p.invoiceId, step: p.step, status: a.status });
+  }
+  return out;
+}
+
+/** The reminder that waits for you on an invoice (the highest pending step), or null. */
+export const pendingReminder = (invoiceId: string, reminders: ReminderRecord[]): ReminderRecord | null =>
+  reminders.filter((r) => r.invoiceId === invoiceId && r.status === "pending").sort((a, b) => b.step - a.step)[0] ?? null;
+
+/**
+ * The reminders column, in a few words: "Not sent yet" for a draft, "Paid 3 Nov", "Reminder 2 waiting for you", "1 sent, next 28 Nov", "Next on 28 Nov", or "All reminders raised".
+ * The schedule is the reminder days from Settings > Billing counted from the invoice's base date.
+ */
+export function reminderNote(i: Pick<InvoiceRow, "id" | "status" | "dueOn" | "failedOn" | "paidAt">, today: string, terms: Pick<BillingTerms, "reminderOffsets">, reminders: ReminderRecord[]): string {
+  if (i.status === "draft") return "Not sent yet";
+  if (i.status === "paid") return i.paidAt ? `Paid ${shortDate(i.paidAt.slice(0, 10))}` : "Paid";
+  if (i.status === "void" || i.status === "uncollectible") return "No reminders";
+  const mine = reminders.filter((r) => r.invoiceId === i.id);
+  const waiting = pendingReminder(i.id, reminders);
+  if (waiting) return `Reminder ${waiting.step} waiting for you`;
+  const sent = mine.filter((r) => r.status === "approved").length;
+  const base = baseOf(i);
+  if (!base) return sent ? `${sent} sent` : "No due date";
+  const raised = Math.max(0, ...mine.map((r) => r.step));
+  const next = terms.reminderOffsets.map((o, n) => ({ step: n + 1, on: addDays(base, o) })).find((x) => x.step > raised && x.on >= today);
+  if (next) return sent ? `${sent} sent, next ${shortDate(next.on)}` : `Next on ${shortDate(next.on)}`;
+  return sent ? `${sent} sent, all raised` : "All reminders raised";
+}
 
 // ---- subscriptions ----
 

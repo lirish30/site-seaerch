@@ -48,3 +48,19 @@ describe("editHoursLine", () => {
     expect(editHoursLine(null)).toBe("");
   });
 });
+
+describe("monthStage / stageLabel", () => {
+  it("places each report on the month's path", async () => {
+    const { monthStage, stageLabel, MONTH_STAGES } = await import("../src/client/careReportsView");
+    expect(monthStage(null)).toBe("none");
+    expect(monthStage({ status: "collecting", views: 0 })).toBe("collecting");
+    expect(monthStage({ status: "ready", views: 0 })).toBe("ready");
+    expect(monthStage({ status: "sent", views: 0 })).toBe("sent");
+    expect(monthStage({ status: "sent", views: 3 })).toBe("opened");
+    expect(monthStage({ status: "revoked", views: 3 })).toBe("off");
+    expect(MONTH_STAGES.map((s) => s.label)).toEqual(["Not started", "Collecting", "Ready for your OK", "Sent", "Opened"]);
+    expect(stageLabel("ready")).toBe("Ready for your OK");
+    expect(stageLabel("off", "revoked")).toBe("Taken back");
+    expect(stageLabel("off", "cancelled")).toBe("Cancelled");
+  });
+});

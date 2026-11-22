@@ -5,6 +5,7 @@ import { shortDate } from "../../billingView";
 import { runLabel, whyLabel } from "../../careUpdatesView";
 import { bandTone, formatUptime, healthChipText, incidentLine, siteStateLabel } from "../../careView";
 import CareEditHours from "./CareEditHours";
+import { Card } from "../ds";
 import type { CareSiteView } from "../../../worker/care/views";
 import type { Health } from "../../../worker/clients/health";
 import type { Site } from "../../../worker/db/sites";
@@ -117,9 +118,7 @@ export default function CarePanel({ businessId, health, sites, zone, onChanged }
   useEffect(() => { setIncidents(null); void load(); }, [load]);
   const changed = async () => { await Promise.all([onChanged(), load()]); };
   return (
-    <section className="cl-card cr-panel" aria-label="Care">
-      <h2>Care</h2>
-      <p className="cr-health"><HealthChip health={health} /></p>
+    <Card icon="shield" title="Care" note={<HealthChip health={health} />} className="clx-care">
       {health.reasons.length > 0
         ? <ul className="cr-reasons">{health.reasons.map((r) => <li key={r}>{r}</li>)}</ul>
         : <p className="muted small">Nothing is pulling this score down.</p>}
@@ -136,6 +135,6 @@ export default function CarePanel({ businessId, health, sites, zone, onChanged }
       {failed && <p className="error small" role="alert">Couldn’t load the incidents. <button type="button" className="btn-plain" onClick={() => void load()}>Try again</button></p>}
       {!failed && incidents === null && <p className="muted small">Loading…</p>}
       {incidents !== null && <IncidentList incidents={incidents.slice(0, 5)} now={new Date()} zone={zone} empty="No incidents yet." />}
-    </section>
+    </Card>
   );
 }

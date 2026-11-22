@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  blockedText, bucketCounts, canTakeChangeOrder, cancelConfirm, cancelLabel, dealProjects, stepsEditable, stopControls, visibleProjects, startOffers, listProgress, timeEstimate, timeRows, kindLabel, milestoneChips, ownerBadge, phaseGroups, profitLines, projectBucket, projectProgress, projectState, taskState,
+  blockedText, bucketCounts, decimalHours, groupByClient, kindChip, pagerOf, sinceLabel, statusChip, canTakeChangeOrder, cancelConfirm, cancelLabel, dealProjects, stepsEditable, stopControls, visibleProjects, startOffers, listProgress, timeEstimate, timeRows, kindLabel, milestoneChips, ownerBadge, phaseGroups, profitLines, projectBucket, projectProgress, projectState, taskState,
 } from "../src/client/projectView";
 import type { Task } from "../src/worker/db/tasks";
 
@@ -258,5 +258,37 @@ describe("startOffers", () => {
     expect(startOffers({ stage: "proposal" }, [doc("signed", false), doc("signed", true)], []).canStartTest).toBe(false);
     expect(startOffers({ stage: "proposal" }, [doc("sent", true)], []).canStartTest).toBe(false);
     expect(startOffers({ stage: "proposal" }, [], []).canStartTest).toBe(false);
+  });
+});
+
+describe("Work screen helpers", () => {
+  const base = { status: "active" as const, kind: "build" as const, templateKey: null, waitingOnClient: false, pausedReason: null };
+  it("names the kind chip, with a live Care setup as Monthly", () => {
+    expect(kindChip(base).label).toBe("Build");
+    expect(kindChip({ ...base, kind: "care_onboarding", templateKey: "CARE-0" }).key).toBe("onboarding");
+    expect(kindChip({ ...base, kind: "care_onboarding", status: "done", templateKey: "CARE-0" }).key).toBe("monthly");
+  });
+  it("says why a project is paused and when it waits on the client", () => {
+    expect(statusChip({ ...base, status: "paused", pausedReason: "Invoice overdue" })).toEqual({ label: "Paused · Invoice overdue", tone: "critical" });
+    expect(statusChip({ ...base, waitingOnClient: true }).label).toBe("Waiting on client");
+    expect(statusChip(base).label).toBe("On track");
+  });
+  it("groups rows by client name", () => {
+    const g = groupByClient([{ businessId: "b", businessName: "Zed", name: "x" }, { businessId: "a", businessName: "Acme", name: "y" }, { businessId: "a", businessName: "Acme", name: "b" }]);
+    expect(g.map((x) => x.name)).toEqual(["Acme", "Zed"]);
+    expect(g[0].rows.map((r) => r.name)).toEqual(["b", "y"]);
+  });
+  it("says when something changed in plain words", () => {
+    const now = new Date("2026-11-22T20:00:00Z");
+    expect(sinceLabel("2026-11-22T19:30:00Z", now)).toBe("30 m ago");
+    expect(sinceLabel("2026-11-22T17:00:00Z", now)).toBe("3 h ago");
+    expect(sinceLabel("2026-11-21T10:00:00Z", now)).toBe("Yesterday");
+    expect(sinceLabel("2026-11-14T10:00:00Z", now)).toBe("Nov 14");
+  });
+  it("finds the pager neighbours and the hours as decimals", () => {
+    expect(pagerOf([{ id: "a" }, { id: "b" }, { id: "c" }], "b")).toEqual({ index: 2, total: 3, prev: { id: "a" }, next: { id: "c" } });
+    expect(pagerOf([{ id: "a" }], "z")).toBeNull();
+    expect(decimalHours(90)).toBe("1.5");
+    expect(decimalHours(40)).toBe("0.7");
   });
 });

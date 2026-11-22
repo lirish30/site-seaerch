@@ -190,3 +190,114 @@ export function startOffers(deal: { stage: string }, docs: { status: string; tes
   const latestSigned = docs.find((d) => d.status === "signed");
   return { canStart: deal.stage === "won", canStartTest: !!latestSigned && latestSigned.test };
 }
+
+/* ---------- The Figma Work screens (Projects list, Project page, Timesheet) ---------- */
+
+/** The design system's chip tones (components/ds.tsx). */
+export type ChipTone = "neutral" | "outline" | "positive" | "warning" | "critical" | "info" | "signal";
+export type KindKey = "build" | "monthly" | "onboarding" | "quick_fix" | "custom";
+
+/**
+ * The type chip on a project row. A finished Care or Local SEO setup is the client's ongoing monthly service, so it reads Monthly; one still being set up reads Onboarding.
+ * Build is the one Signal chip; a quick fix is Info, custom work is neutral.
+ */
+export function kindChip(p: { status: ProjectStatus; kind: ProjectKind; templateKey: string | null }): { key: KindKey; label: string; tone: ChipTone } {
+  switch (p.kind) {
+    case "build": return { key: "build", label: "Build", tone: "signal" };
+    case "care_onboarding": return p.status === "done" && projectIsLive(p) ? { key: "monthly", label: "Monthly", tone: "neutral" } : { key: "onboarding", label: "Onboarding", tone: "outline" };
+    case "quick_fix": return { key: "quick_fix", label: "Quick fix", tone: "info" };
+    case "custom": return { key: "custom", label: "Custom", tone: "neutral" };
+  }
+}
+
+/** The order and plural label of each kind in the list's segmented control. */
+export const KIND_ORDER: { key: KindKey; label: string }[] = [
+  { key: "build", label: "Build" }, { key: "monthly", label: "Monthly" }, { key: "onboarding", label: "Onboarding" }, { key: "quick_fix", label: "Quick fixes" }, { key: "custom", label: "Custom" },
+];
+
+/** The status chip on a project row: On track, Waiting on client, Paused · why, a running service, Done or Cancelled. */
+export function statusChip(p: StateOf & { pausedReason: string | null }): { label: string; tone: ChipTone } {
+  if (p.status === "paused") return { label: p.pausedReason ? `Paused · ${p.pausedReason}` : "Paused", tone: "critical" };
+  if (p.status === "cancelled") return { label: "Cancelled", tone: "neutral" };
+  if (p.status === "done") return projectIsLive(p) ? { label: projectState(p).label, tone: "positive" } : { label: "Done", tone: "neutral" };
+  return p.waitingOnClient ? { label: "Waiting on client", tone: "warning" } : { label: "On track", tone: "positive" };
+}
+
+/** Rows grouped by client, clients by name and each client's projects by name. */
+export function groupByClient<T extends { businessId: string; businessName: string; name: string }>(rows: T[]): { businessId: string; name: string; rows: T[] }[] {
+  const map = new Map<string, { businessId: string; name: string; rows: T[] }>();
+  for (const r of rows) {
+    const g = map.get(r.businessId) ?? { businessId: r.businessId, name: r.businessName, rows: [] };
+    g.rows.push(r);
+    map.set(r.businessId, g);
+  }
+  const byName = (a: string, b: string) => a.localeCompare(b, "en", { sensitivity: "base" });
+  return [...map.values()].sort((a, b) => byName(a.name, b.name) || a.businessId.localeCompare(b.businessId)).map((g) => ({ ...g, rows: [...g.rows].sort((a, b) => byName(a.name, b.name)) }));
+}
+
+/** When something last changed, said plainly: "Just now", "25 m ago", "2 h ago", "Yesterday", then "Nov 14" (with the year when it is not this year). */
+export function sinceLabel(iso: string, now: Date): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return "";
+  const minutes = Math.floor((now.getTime() - t) / 60_000);
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes} m ago`;
+  if (minutes < 24 * 60) return `${Math.floor(minutes / 60)} h ago`;
+  if (minutes < 48 * 60) return "Yesterday";
+  const d = new Date(t);
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", ...(d.getFullYear() !== now.getFullYear() ? { year: "numeric" } : {}) });
+}
+
+/** "Nov 20" from a calendar date (`YYYY-MM-DD`), read with no time zone. */
+export function shortDate(day: string): string {
+  const [y, m, d] = day.slice(0, 10).split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+}
+
+/** A phase's chip: Done when every task is closed, In progress once one is started or done, Waiting on client when that is all that is moving, else none. */
+export function phaseState(g: Pick<PhaseGroup, "tasks" | "done" | "total">): { label: string; tone: ChipTone } | null {
+  if (g.total > 0 && g.done === g.total) return { label: "Done", tone: "positive" };
+  if (g.done > 0 || g.tasks.some((t) => t.status === "in_progress" || t.status === "in_review")) return { label: "In progress", tone: "warning" };
+  if (g.tasks.some((t) => t.status === "waiting_client")) return { label: "Waiting on client", tone: "warning" };
+  return null;
+}
+
+/** The phase to open first on the Tasks tab: the first one with work still open (or none when all are closed). */
+export function currentPhase(groups: Pick<PhaseGroup, "phaseKey" | "done" | "total">[]): string | null {
+  return groups.find((g) => g.done < g.total)?.phaseKey ?? null;
+}
+
+/** Who a task is with, as its chip: a task waiting on the client says so; otherwise Logan, Claude, or "Claude drafts · you approve". */
+export function ownerChip(t: Pick<Task, "owner" | "status">): { label: string; tone: ChipTone } {
+  if (t.status === "waiting_client") return { label: "Waiting on client", tone: "warning" };
+  return t.owner === "claude" ? { label: "Claude", tone: "signal" } : t.owner === "claude_drafts" ? { label: "Claude drafts · you approve", tone: "info" } : { label: "Logan", tone: "neutral" };
+}
+
+/** A task's state chip, only when it says something the row does not already: in progress, in review, blocked, locked, skipped. */
+export function taskFlag(t: Task, all: Task[]): { label: string; tone: ChipTone } | null {
+  const s = taskState(t, all);
+  if (t.status === "in_progress") return { label: "In progress", tone: "outline" };
+  if (t.status === "in_review") return { label: "In review", tone: "warning" };
+  if (t.status === "locked") return { label: "Locked", tone: "warning" };
+  if (t.status === "skipped") return { label: "Skipped", tone: "neutral" };
+  if (s.blockedBy.length) return { label: "Blocked", tone: "outline" };
+  return null;
+}
+
+/** Time logged per phase, phases in task order, only those with time. */
+export function minutesByPhase(tasks: Task[], minutes: Record<string, number>): { phaseKey: string; title: string; minutes: number }[] {
+  return phaseGroups(tasks).map((g) => ({ phaseKey: g.phaseKey, title: g.title, minutes: g.tasks.reduce((n, t) => n + (minutes[t.id] ?? 0), 0) })).filter((p) => p.minutes > 0);
+}
+
+/** The whole plan's estimate: every task that is not skipped. */
+export const totalEstimate = (tasks: Pick<Task, "status" | "estMinutes">[]): number => tasks.filter((t) => t.status !== "skipped").reduce((n, t) => n + t.estMinutes, 0);
+
+/** Minutes as hours with one decimal, the way the timesheet shows them: 90 -> "1.5", 40 -> "0.7". */
+export const decimalHours = (minutes: number): string => (Math.max(0, minutes) / 60).toFixed(1);
+
+/** The previous and next project in a list and where this one sits in it ("3 of 9"), or null when it is not in the list. */
+export function pagerOf<T extends { id: string }>(list: T[], id: string): { index: number; total: number; prev: T | null; next: T | null } | null {
+  const i = list.findIndex((p) => p.id === id);
+  if (i < 0) return null;
+  return { index: i + 1, total: list.length, prev: list[i - 1] ?? null, next: list[i + 1] ?? null };
+}

@@ -5,7 +5,7 @@ import { bucketCounts, type Bucket } from "../../projectView";
 import { PROJECTS_CHANGED, type ProjectRow } from "../../workData";
 import { SideItem, SideLabel, SideTitle } from "./parts";
 
-/** Projects: the lists by state (with counts) and the timesheet, then Clients, Money and Marketing groups. The counts reload when a project is paused, resumed or cancelled, and when you move to another page. */
+/** Work: the project lists by state (with counts), then the timesheet and batches. The counts reload when a project is paused, resumed or cancelled, and when you move to another page. */
 export default function WorkSidebar() {
   const { pathname, search } = useLocation();
   const [counts, setCounts] = useState<Record<Bucket, number> | null>(null);
@@ -21,23 +21,14 @@ export default function WorkSidebar() {
   const view = params.get("view") ?? "active";
   return (
     <>
-      <SideTitle title="Projects" />
+      <SideTitle title="Work" />
       <SideItem to="/projects" icon="briefcase" label="Active" count={counts?.active} active={onList && view !== "waiting" && view !== "paused" && view !== "done"} />
       <SideItem to="/projects?view=waiting" icon="clock" label="Waiting on client" count={counts?.waiting} active={onList && view === "waiting"} />
       <SideItem to="/projects?view=paused" icon="ban" label="Paused" count={counts?.paused} active={onList && view === "paused"} />
       <SideItem to="/projects?view=done" icon="check" label="Done" count={counts?.done} active={onList && view === "done"} />
-      <SideItem to="/timesheet" icon="calendar" label="Timesheet" active={pathname === "/timesheet"} />
-      <SideItem to="/batches" icon="list" label="Batches" active={pathname === "/batches"} />
-      <SideLabel>Clients</SideLabel>
-      <SideItem to="/clients" icon="users" label="All clients" active={pathname === "/clients"} />
-      <SideItem to="/care" icon="shield" label="Care" active={pathname === "/care"} />
-      <SideItem to="/care/reports" icon="file-text" label="Care reports" active={pathname === "/care/reports"} />
-      <SideItem to="/seo" icon="pin" label="Local SEO" active={pathname === "/seo"} />
-      <SideLabel>Money</SideLabel>
-      <SideItem to="/money" icon="trending" label="Money" active={pathname === "/money"} />
-      <SideItem to="/billing" icon="card" label="Billing" active={pathname === "/billing"} />
-      <SideLabel>Marketing</SideLabel>
-      <SideItem to="/studio" icon="image" label="Studio" active={pathname === "/studio"} />
+      <SideLabel>My work</SideLabel>
+      <SideItem to="/timesheet" icon="clock" label="Timesheet" active={pathname === "/timesheet"} />
+      <SideItem to="/batches" icon="grid" label="Batches" active={pathname === "/batches"} />
       <div className="side-spacer" />
       <div className="side-gap" aria-hidden="true" />
     </>

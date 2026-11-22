@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
+import { Banner, Card, Chip, Empty, Note } from "../components/ds";
+import Icon from "../components/Icon";
 import { PLAN_FOR_DELAYS, silenceNote, stageLabel, stageTone, welcomeLine } from "../onboardingView";
 import { SILENCE_DAYS } from "../../worker/onboarding/schedule";
 import type { OnboardingState } from "../../worker/onboarding/owner";
@@ -29,57 +31,74 @@ export default function OnboardingTab({ dealId, data, onReload }: { dealId: stri
     finally { setBusy(false); }
   };
 
-  if (!data) return <p className="muted">Loading…</p>;
+  if (!data) return <p className="slx-muted">Loading the onboarding…</p>;
   const { onboarding: o } = data;
+  const messages = <>
+    {error && <Banner tone="critical" title="That didn’t work">{error}</Banner>}
+    {notice && <Banner tone="positive" title={notice} />}
+  </>;
 
   if (!o) {
     return (
-      <section className="deal-form" aria-label="Onboarding">
-        <p className="muted small">{PLAN_FOR_DELAYS}</p>
-        {data.canStart
-          ? <p>The deposit is paid and no onboarding has started. It normally starts by itself; this is the retry.</p>
-          : <p className="muted">No onboarding yet. It starts by itself when the client's deposit is paid.</p>}
-        {error && <p className="warn small" role="alert">{error}</p>}
-        <div className="cp-actions">
-          {data.canStart && <button type="button" className="btn" disabled={busy} onClick={() => act(() => api.post(`/deals/${dealId}/onboarding/start`))}>Start the onboarding</button>}
-          {data.canStartTest && <button type="button" className="btn-ghost-sm" disabled={busy} onClick={() => act(() => api.post(`/deals/${dealId}/onboarding/test`))}>Start a test onboarding</button>}
+      <>
+        {messages}
+        <div className="ds-card">
+          <Empty icon="inbox" title={data.canStart ? "The deposit is paid, but no onboarding started" : "No onboarding yet"}
+            action={(data.canStart || data.canStartTest) && (
+              <div className="slx-actions">
+                {data.canStart && <button type="button" className="btn primary" disabled={busy} onClick={() => act(() => api.post(`/deals/${dealId}/onboarding/start`))}>Start the onboarding</button>}
+                {data.canStartTest && <button type="button" className="btn" disabled={busy} onClick={() => act(() => api.post(`/deals/${dealId}/onboarding/test`))}>Start a test onboarding</button>}
+              </div>
+            )}>
+            {data.canStart ? "It normally starts by itself when the deposit is paid; this is the retry."
+              : "It starts by itself when the client’s deposit is paid: a welcome email, a questionnaire and a checklist of what you need from them."}
+          </Empty>
+          {data.canStartTest && <p className="slx-hint slx-pad">A test onboarding sends its welcome to your own address only, never to the client. It can only be made on a deal that has a signed test proposal and no real one, and it stays on its deal: a deal has one onboarding, so a test one cannot be replaced by a real one.</p>}
         </div>
-        {data.canStartTest && <p className="muted small">A test onboarding sends its welcome to your own address only, never to the client. It can only be made on a deal that has a signed test proposal and no real one, and it stays on its deal: a deal has one onboarding, so a test one cannot be replaced by a real one.</p>}
-      </section>
+        <Note>{PLAN_FOR_DELAYS}</Note>
+      </>
     );
   }
 
   const closed = !!o.closedAt;
   const welcome = welcomeLine(o, data.welcomeApproval);
   const quiet = !!o.welcomeSentAt && !closed;
+  const waiting = data.items.filter((i) => i.status === "waiting").length;
+  const toCheck = data.items.filter((i) => i.status === "received").length;
   return (
-    <section className="deal-form" aria-label="Onboarding">
-      <div className="cp-actions">
-        {data.stage && <span className={`badge2 ${TONE[stageTone(data.stage)]}`}><i className="dot" />{stageLabel(data.stage)}</span>}
-        <span className="muted small">{o.kind === "build" ? "Site build" : "Light onboarding"}{o.test ? ", test" : ""}</span>
-        <button type="button" className="btn-ghost-sm" disabled={busy} onClick={() => act(async () => {}, "Refreshed.")}>Refresh</button>
+    <>
+      {messages}
+      {quiet && data.silentDays >= SILENCE_DAYS && <Banner tone="warning" icon="clock" title={silenceNote(data.silentDays)}>Nudge the client, or move them to the back of the queue as the contract says.</Banner>}
+      {toCheck > 0 && <Banner tone="signal" icon="inbox" title={`${toCheck} ${toCheck === 1 ? "thing has" : "things have"} come in to check`}>Accept each one in the checklist, or ask again.</Banner>}
+      <div className="ds-cols c2">
+        <div className="ds-col">
+          <Card icon="list" title="Checklist" note={data.items.length ? `${waiting} waiting on the client` : undefined}>
+            <ItemsPanel items={data.items} closed={closed} act={act} />
+            <AddItem id={o.id} closed={closed} act={act} />
+          </Card>
+          <Card icon="file-text" title="Questionnaire" note={o.questionnaireSubmittedAt ? "Handed in" : "Not handed in"}>
+            <Answers o={o} questions={data.questions} answers={data.answers} />
+          </Card>
+        </div>
+        <div className="ds-col">
+          <Card icon="info" title="Where it stands" action={<button type="button" className="btn sm" disabled={busy} onClick={() => act(async () => {}, "Refreshed.")}><Icon name="refresh" size={14} />Refresh</button>}>
+            <div className="slx-actions">
+              {data.stage && <Chip tone={TONE[stageTone(data.stage)]} dot>{stageLabel(data.stage)}</Chip>}
+              <Chip tone="outline">{o.kind === "build" ? "Site build" : "Light onboarding"}{o.test ? ", test" : ""}</Chip>
+            </div>
+            {quiet && <p className={data.silentDays >= SILENCE_DAYS ? "slx-error" : "slx-hint"} role="status">{silenceNote(data.silentDays)}</p>}
+            <p className="slx-hint">{PLAN_FOR_DELAYS}</p>
+          </Card>
+          <Card icon="mail" title="Welcome">
+            <p>{welcome.text}{welcome.kind === "pending" && <> <Link to="/">Open Home to approve it</Link></>}</p>
+            {welcome.canRequest && <div className="slx-actions"><button type="button" className="btn sm" disabled={busy} onClick={() => act(() => api.post(`/onboardings/${o.id}/welcome`), "The welcome is waiting for your approval.")}>Ask for the welcome</button></div>}
+            <OwnerFields o={o} act={act} />
+          </Card>
+          <Card icon="link" title="The client’s link">
+            <LinkPanel o={o} link={data.link} act={act} />
+          </Card>
+        </div>
       </div>
-      {quiet && <p className={data.silentDays >= SILENCE_DAYS ? "warn small" : "muted small"} role="status">{silenceNote(data.silentDays)}</p>}
-      <p className="muted small">{PLAN_FOR_DELAYS}</p>
-      {error && <p className="warn small" role="alert">{error}</p>}
-      {notice && <p className="small" role="status">{notice}</p>}
-
-      <section aria-label="Welcome">
-        <h3>Welcome</h3>
-        <p>{welcome.text}{welcome.kind === "pending" && <> <Link to="/">Open Home to approve it</Link></>}</p>
-        {welcome.canRequest && <div className="cp-actions"><button type="button" className="btn-ghost-sm" disabled={busy} onClick={() => act(() => api.post(`/onboardings/${o.id}/welcome`), "The welcome is waiting for your approval.")}>Ask for the welcome</button></div>}
-        <OwnerFields o={o} act={act} />
-      </section>
-
-      <Answers o={o} questions={data.questions} answers={data.answers} />
-
-      <section aria-label="Checklist">
-        <h3>Checklist</h3>
-        <ItemsPanel items={data.items} closed={closed} act={act} />
-        <AddItem id={o.id} closed={closed} act={act} />
-      </section>
-
-      <LinkPanel o={o} link={data.link} act={act} />
-    </section>
+    </>
   );
 }

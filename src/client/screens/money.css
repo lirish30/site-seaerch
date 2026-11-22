@@ -1,0 +1,128 @@
+/* money screens: owned by the money agent. Uses ds.css. Prefix mnx-. Pages: Money (/money), Billing (/billing: invoices, subscriptions, holds), and the InvoiceItem component. */
+
+.mnx-muted { margin:0; font:400 13px/19px var(--font); color:var(--text-3); }
+.mnx-small { margin:0; font:400 12px/16px var(--font); color:var(--text-3); }
+.mnx-small a, .mnx-oldest a, .mnx-notice a { color:var(--link); text-decoration:none; } .mnx-small a:hover, .mnx-oldest a:hover, .mnx-notice a:hover { text-decoration:underline; }
+.mnx-mono { font-family:var(--font-mono); font-variant-numeric:tabular-nums; color:var(--text); white-space:nowrap; }
+.mnx-warn { margin:0; font:400 13px/19px var(--font); color:var(--critical); }
+.mnx-notice { margin:0; font:400 13px/19px var(--font); color:var(--text-2); }
+.mnx-plain { color:inherit; text-decoration:none; } .mnx-plain:hover { text-decoration:underline; }
+.mnx-foot { margin:0; padding-top:12px; border-top:1px solid var(--border); font:400 12px/16px var(--font); color:var(--text-3); }
+.mnx-note-link { color:var(--text-3); text-decoration:none; } .mnx-note-link:hover { color:var(--text); text-decoration:underline; }
+
+/* ---------- Stat cards (ds-stat with a control in the label row) ---------- */
+.mnx-stats { grid-template-columns:repeat(4,minmax(0,1fr)); }
+.mnx-stat .ds-stat-label { min-height:28px; }
+.mnx-stat .ds-stat-value { margin-top:0; }
+.mnx-stat .ds-stat-sub { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mnx-table th.num { font-family:var(--font); color:var(--text-3); }
+.mnx-table .ds-who > .ds-avatar, .mnx-ltv-row > .ds-avatar { display:inline-grid; }
+.mnx-goal { flex:none; }
+.mnx-goal > summary.btn { height:24px; padding:0 8px; font-size:12px; line-height:16px; box-shadow:none; color:var(--text-2); }
+.mnx-goal-pop { left:auto; right:-8px; width:270px; padding:14px; gap:10px; }
+.mnx-goal-pop b { font:600 14px/20px var(--font); color:var(--text); }
+.mnx-goal-pop p { margin:0; font:400 12px/16px var(--font); color:var(--text-2); }
+.mnx-goal-pop .btn { align-self:flex-start; }
+.mnx-field { display:flex; flex-direction:column; gap:4px; font:500 12px/16px var(--font); color:var(--text-2); }
+.mnx-field .in { width:100%; }
+
+/* ---------- The month chart (Figma 65:5874): 64px bars, Signal for this month, dashed green goal ---------- */
+.mnx-plot { position:relative; display:flex; align-items:flex-end; justify-content:space-between; gap:12px; height:236px; padding-top:28px; }
+.mnx-col { flex:1; max-width:64px; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; gap:6px; min-width:0; }
+.mnx-bar { display:block; width:100%; min-height:2px; border-radius:4px; background:var(--border-strong); }
+.mnx-col.now .mnx-bar { background:var(--signal); }
+.mnx-col-val { font:500 12px/16px var(--font); color:var(--text-3); white-space:nowrap; font-variant-numeric:tabular-nums; }
+.mnx-col.now .mnx-col-val { color:var(--text); }
+.mnx-col-label { font:500 12px/16px var(--font); color:var(--text-2); }
+.mnx-plot-empty { position:absolute; left:0; right:0; top:40%; margin:0; text-align:center; font:400 13px/19px var(--font); color:var(--text-3); }
+.mnx-goal-area { position:absolute; left:0; right:0; top:28px; bottom:0; pointer-events:none; }
+.mnx-goal-line { position:absolute; left:0; right:0; border-top:1px dashed var(--positive); pointer-events:none; }
+.mnx-goal-line span { position:absolute; left:0; top:4px; font:500 12px/16px var(--font); color:var(--positive); background:var(--bg-surface); padding-right:6px; }
+
+/* ---------- Tables ---------- */
+.mnx-scroll { overflow-x:auto; }
+.mnx-table .mnx-cell-2 { display:flex; flex-direction:column; min-width:0; }
+.mnx-table .mnx-cell-2 b { font:500 13px/19px var(--font); color:var(--text); }
+.mnx-table .mnx-cell-2 small { font:400 12px/16px var(--font); color:var(--text-3); }
+.mnx-table .mnx-cell-2.wrap { gap:6px; min-width:180px; max-width:260px; white-space:normal; }
+.mnx-profit td, .mnx-profit th { height:42px; }
+.mnx-profit thead th { height:33px; }
+.mnx-profit td:first-child { padding-left:18px; } .mnx-profit th:first-child { padding-left:18px; }
+.mnx-profit td:last-child, .mnx-profit th:last-child { padding-right:18px; }
+.mnx-neg { color:var(--critical) !important; }
+.mnx-dim { color:var(--text-2) !important; }
+.mnx-table td.mnx-late { color:var(--critical); }
+.mnx-table td.mnx-rem { color:var(--text-3); font-size:12px; white-space:nowrap; }
+.mnx-table td.mnx-what { color:var(--text-2); max-width:320px; }
+.mnx-table td.mnx-none { color:var(--text-3); text-align:center; }
+.mnx-inv-table td { white-space:nowrap; }
+.mnx-inv-table td.mnx-what { white-space:normal; }
+.mnx-click { cursor:pointer; }
+.mnx-click.is-open > * { background:var(--bg-hover); }
+.mnx-chev-cell { width:44px; text-align:right; }
+.mnx-actions-cell { white-space:nowrap; text-align:right !important; }
+.mnx-actions-cell .btn + .btn { margin-left:6px; }
+.mnx-detail-row > td, .mnx-msg-row > td { height:auto !important; padding-top:0 !important; padding-bottom:14px !important; background:var(--bg-hover); }
+.mnx-msg-row > td { padding-top:8px !important; }
+.mnx-detail { list-style:none; margin:0; padding:0; }
+.mnx-end { display:flex; flex-direction:column; align-items:flex-start; gap:4px; font:400 12px/16px var(--font); color:var(--text-3); }
+.mnx-end > span { white-space:nowrap; }
+.mnx-end select { height:30px; padding:0 28px 0 8px; font:400 12px/16px var(--font); width:auto; }
+.mnx-table .mnx-cell-2 small { white-space:normal; }
+.mnx-table td:has(> .mnx-cell-2) { min-width:200px; }
+
+/* ---------- Client scope strip (?businessId=) ---------- */
+.mnx-scope { display:flex; align-items:center; gap:10px; padding:8px 12px; border:1px solid var(--border); border-radius:10px; background:var(--bg-muted); font:400 13px/19px var(--font); color:var(--text-2); }
+.mnx-scope > span:not(.ds-avatar) { flex:1; min-width:0; } .mnx-scope b { color:var(--text); font-weight:500; }
+
+/* ---------- Right column cards ---------- */
+.mnx-meters { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:12px; }
+.mnx-meters li { display:flex; flex-direction:column; gap:6px; }
+.mnx-meters .ds-meter { height:5px; }
+.mnx-line { display:flex; align-items:baseline; justify-content:space-between; gap:12px; font:400 13px/19px var(--font); color:var(--text-2); }
+.mnx-line b { font-weight:500; }
+.mnx-oldest { list-style:none; margin:0; padding:10px 0 0; border-top:1px solid var(--border); display:flex; flex-direction:column; gap:4px; font:400 12px/16px var(--font); color:var(--text-3); }
+.mnx-oldest li { display:flex; justify-content:space-between; gap:10px; }
+.mnx-cap { align-items:baseline; }
+.mnx-cap small { margin-bottom:0; }
+.mnx-ltv { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px; }
+.mnx-ltv li { display:flex; flex-direction:column; gap:6px; }
+.mnx-ltv .ds-meter { height:4px; }
+.mnx-ltv-row { display:flex; align-items:center; gap:10px; color:var(--text); text-decoration:none; min-width:0; }
+.mnx-ltv-row .mnx-cell-2 { flex:1; min-width:0; display:flex; flex-direction:column; }
+.mnx-ltv-row .mnx-cell-2 b { font:500 13px/19px var(--font); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mnx-ltv-row .mnx-cell-2 small { font:400 12px/16px var(--font); color:var(--text-3); }
+.mnx-ltv-row:hover .mnx-cell-2 b { text-decoration:underline; }
+.mnx-lines { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:4px; font:400 13px/19px var(--font); color:var(--text-2); }
+.mnx-lines li { display:flex; justify-content:space-between; gap:12px; }
+.ds-link-row > .mnx-mono { font-size:13px; }
+
+/* ---------- InvoiceItem: a card in a list (project billing), or a row's opened detail (invoices table) ---------- */
+.mnx-inv { display:flex; flex-direction:column; gap:8px; min-width:0; padding:14px 16px; border:1px solid var(--border); border-radius:12px; background:var(--bg-surface); box-shadow:var(--shadow-card); list-style:none; font:400 13px/19px var(--font); color:var(--text); }
+.mnx-inv p { margin:0; }
+.mnx-inv a:not(.btn) { color:var(--link); text-decoration:none; } .mnx-inv a:not(.btn):hover { text-decoration:underline; }
+.mnx-inv.in-table { margin-left:40px; padding:12px 16px; box-shadow:none; white-space:normal; }
+.mnx-inv-head { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.mnx-inv-title { flex:1; min-width:180px; display:flex; flex-direction:column; }
+.mnx-inv-title b { font:500 14px/20px var(--font); color:var(--text); }
+.mnx-inv-title small { font:400 12px/16px var(--font); color:var(--text-3); }
+.mnx-inv-amt { font-size:14px; }
+.mnx-inv-links, .mnx-inv-sub { font:400 12px/16px var(--font); color:var(--text-3); }
+.mnx-inv .mnx-lines { padding:8px 0; border-top:1px solid var(--border); border-bottom:1px solid var(--border); font-size:12px; }
+.mnx-link { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.mnx-link .in { flex:1; min-width:200px; height:28px; font-family:var(--font-mono); font-size:12px; color:var(--text-2); }
+.mnx-inv-actions { display:flex; gap:8px; flex-wrap:wrap; }
+.co-list > .mnx-inv { margin:0; }
+
+/* ---------- Responsive ---------- */
+@media (max-width: 1100px) { .mnx-stats { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width: 640px) {
+  .mnx-stats { gap:10px; }
+  .mnx-stat { padding:12px 14px; }
+  .mnx-stat .ds-stat-value { font-size:18px; }
+  .mnx-plot { gap:6px; height:200px; }
+  .mnx-col-val { font-size:10px; }
+  .mnx-inv.in-table { margin-left:0; }
+  .mnx-goal-pop { right:auto; left:-180px; width:250px; }
+  .mnx-scope { flex-wrap:wrap; }
+}

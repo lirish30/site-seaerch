@@ -1,5 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { VIDEO_EMAIL_LABEL, videoEmailHelp, fieldErrors, parseJobValue, parseTowns, runResultTone, runSearchesConfirm, runSearchesLines, stepLabel } from "../src/client/campaignView";
+import { VIDEO_EMAIL_LABEL, videoEmailHelp, fieldErrors, parseJobValue, parseTowns, runResultTone, runSearchesConfirm, runSearchesLines, stepLabel, campaignStats, townsLine } from "../src/client/campaignView";
+
+describe("campaign stats", () => {
+  it("counts the leads and the towns its own searches covered", () => {
+    const s = campaignStats({ id: "c1", towns: ["Tigard", "Sherwood", "Tualatin"] }, [
+      { campaign_id: "c1", location: "tigard", found_count: 10, status: "done", created_at: "2026-11-01" },
+      { campaign_id: "c1", location: "Sherwood", found_count: 5, status: "running", created_at: "2026-11-02" },
+      { campaign_id: "c2", location: "Tualatin", found_count: 99, status: "done", created_at: "2026-11-03" },
+    ]);
+    expect(s).toEqual({ leads: 15, searchedTowns: 2, running: true, lastRunAt: "2026-11-02" });
+  });
+  it("shortens a long town list", () => {
+    expect(townsLine(["A", "B", "C", "D"])).toBe("A, B +2");
+    expect(townsLine(["A"])).toBe("A");
+  });
+});
 
 describe("stepLabel", () => {
   it("names the kind and counts business or calendar days", () => {

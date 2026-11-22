@@ -8,6 +8,7 @@ import {
   type Candidates, type ClientTraffic, type PanelSite,
 } from "../../trafficPanelView";
 import type { AccessKey, AccessStatus } from "../../../worker/db/sites";
+import { Card, Empty } from "../ds";
 
 /** A sentence a job wants shown after it ran, and whether it is good news or a problem. */
 type Said = { text: string; tone: "ok" | "error" };
@@ -134,22 +135,20 @@ export default function TrafficPanel({ businessId, clientName, today, access }: 
 
   if (data === null) {
     return (
-      <section className="cl-card tp" aria-label="Traffic">
-        <h2>Traffic</h2>
+      <Card icon="trending" title="Traffic">
         {failed ? <p className="error small" role="alert">Couldn’t load traffic. <button type="button" className="btn-plain" onClick={() => void load()}>Try again</button></p> : <p className="muted small">Loading…</p>}
-      </section>
+      </Card>
     );
   }
-  if (!showPanel(data)) return null;
+  if (!showPanel(data)) return <Card icon="trending" title="Traffic"><Empty icon="trending" title="No site to read traffic for">Search Console and Analytics numbers show here once this client has a site with a domain.</Empty></Card>;
   return (
-    <section className="cl-card tp" aria-label="Traffic">
-      <h2>Traffic</h2>
+    <Card icon="trending" title="Traffic">
       <p className="small">{accessLine(data, clientName)}{!data.connected || !data.hasScopes ? <> <Link to="/settings/google">Google settings</Link></> : null}</p>
       <ul className="tp-sites">
         {data.sites.map((s) => <SiteTraffic key={s.siteId} site={s} today={today} accessItems={access[s.siteId] ?? []} busy={busy} hasProfileScope={data.hasProfileScope} profileMissing={profileNote(data)} onRun={run} />)}
       </ul>
       {said && (said.tone === "ok" ? <p className="small" role="status">{said.text}</p> : <p className="error small" role="alert">{said.text}</p>)}
       {error && <p className="error small" role="alert">{error}</p>}
-    </section>
+    </Card>
   );
 }

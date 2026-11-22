@@ -5,6 +5,8 @@ import { noteProblem, type SiteFlag } from "../../../worker/sites/access";
 import type { AccessMethod, Cms, HostingTier, Site, SiteFields } from "../../../worker/db/sites";
 import type { ClientAccessItem } from "../../../worker/clients/record";
 import AccessChecklist from "./AccessChecklist";
+import { Chip } from "../ds";
+import Icon from "../Icon";
 
 const CMS: [Cms, string][] = [
   ["wordpress", "WordPress"], ["webflow", "Webflow"], ["wix", "Wix"], ["squarespace", "Squarespace"], ["shopify", "Shopify"], ["custom", "Custom"], ["unknown", "Not known yet"],
@@ -12,6 +14,9 @@ const CMS: [Cms, string][] = [
 const TIERS: [HostingTier, string][] = [["logan_hosted", "Hosted by you"], ["client_hosted", "Hosted by the client"], ["unknown", "Not known yet"]];
 const METHODS: [AccessMethod, string][] = [["ssh_wpcli", "SSH with WP-CLI"], ["mainwp", "MainWP"], ["none", "None"], ["unknown", "Not known yet"]];
 const label = <T extends string>(list: [T, string][], v: T): string => list.find(([k]) => k === v)?.[1] ?? v;
+/** "WordPress", "Hosted by you": the words the site form uses, for the record's About card. */
+export const cmsLabel = (v: Cms): string => label(CMS, v);
+export const tierLabel = (v: HostingTier): string => label(TIERS, v);
 
 type TextKey = "url" | "domain" | "hostProvider" | "registrar" | "dnsProvider" | "adminUrl" | "notes" | "wpSshAlias" | "wpPath" | "carePaths";
 const TEXT: { key: TextKey; label: string; type?: "url"; multiline?: boolean; hint?: string }[] = [
@@ -109,20 +114,22 @@ export default function SitePanel({ clientId, site, access, flags, onChanged }: 
   }
 
   return (
-    <article className="cl-site" aria-label={`Site ${title}`}>
-      <header className="cl-site-head">
-        <h3 className="cl-site-title">{title}</h3>
-        {site.test && <span className="badge2 info"><i className="dot" />Test</span>}
-        <span className="badge2 outline">{label(TIERS, site.hostingTier)}</span>
-        <span className="cl-site-links small">
+    <article className="ds-card clx-site" aria-label={`Site ${title}`}>
+      <header className="ds-card-head">
+        <Icon name="globe" size={16} />
+        <h2>{title}</h2>
+        {site.test && <Chip tone="info">Test</Chip>}
+        <Chip tone="outline">{label(TIERS, site.hostingTier)}</Chip>
+        <span className="clx-site-links">
           {safeHref(site.url) && <SafeLink url={site.url}>Open site</SafeLink>}
           {safeHref(site.adminUrl) && <SafeLink url={site.adminUrl}>Open admin</SafeLink>}
         </span>
       </header>
+      <div className="ds-card-body">
 
       {flags.length > 0 && (
-        <div className="cl-flags" role="group" aria-label={`Warnings for ${title}`}>
-          {flags.map((f) => <p key={f.code} className="small">{f.text}</p>)}
+        <div className="clx-flags" role="group" aria-label={`Warnings for ${title}`}>
+          {flags.map((f) => <p key={f.code}><Icon name="alert" size={14} />{f.text}</p>)}
         </div>
       )}
 
@@ -169,6 +176,7 @@ export default function SitePanel({ clientId, site, access, flags, onChanged }: 
       </form>
 
       <AccessChecklist clientId={clientId} siteId={site.id} siteName={title} items={access} onChanged={onChanged} />
+      </div>
     </article>
   );
 }

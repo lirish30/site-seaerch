@@ -1,0 +1,120 @@
+/* clients screens: owned by the clients agent. Uses ds.css. Everything is scoped under .clx (the Clients list and the client record). */
+
+.clx-muted { color:var(--text-3); }
+.clx-help { margin:0; font:400 12px/16px var(--font); color:var(--text-3); }
+.clx-sub { margin:4px 0 0; font:600 11px/14px var(--font); letter-spacing:.6px; text-transform:uppercase; color:var(--text-3); }
+.clx-more { align-self:flex-start; padding:0; border:0; background:none; box-shadow:none; color:var(--text-2); font:500 12px/16px var(--font); cursor:pointer; text-decoration:underline; text-underline-offset:2px; }
+.clx-more:hover { color:var(--text); background:none; }
+.clx-stack { display:flex; flex-direction:column; gap:16px; min-width:0; }
+
+/* ---------- Clients list ---------- */
+.clx-table thead th { white-space:nowrap; }
+.clx-table tbody th { font-weight:400; }
+.clx-table .ds-who > span { flex:0 1 auto; }
+.clx-table .ds-who b a { color:var(--text); text-decoration:none; }
+.clx-table .ds-who b a:hover { text-decoration:underline; text-underline-offset:2px; }
+.clx-table .ds-who b a:focus-visible { outline:2px solid var(--signal); outline-offset:2px; border-radius:4px; }
+.clx-table .clx-c-plan { width:150px; }
+.clx-table .clx-c-health { width:130px; }
+.clx-table .clx-c-grade { width:64px; }
+.clx-table .clx-c-next { width:230px; }
+.clx-table .num { width:80px; }
+.clx-health { display:inline-flex; align-items:center; gap:8px; }
+.clx-health .ds-meter { height:5px; }
+.clx-health b { font:500 13px/18px var(--font-mono); color:var(--text); letter-spacing:-.3px; font-variant-numeric:tabular-nums; }
+.clx-next { font:400 13px/19px var(--font); color:var(--text-2); }
+.clx-next.critical { color:var(--critical); }
+.clx-next.warning { color:var(--warning); }
+.clx-toggle { display:inline-flex; align-items:center; gap:8px; font:500 12px/16px var(--font); color:var(--text-2); cursor:pointer; }
+.clx-select { display:inline-flex; align-items:center; height:28px; padding:0 4px 0 10px; border:1px solid var(--border-strong, var(--border)); border-radius:8px; background:var(--bg-surface); box-shadow:var(--shadow-card); font:500 12px/16px var(--font); color:var(--text-3); gap:4px; }
+.clx-select select { height:26px; padding:0 4px; border:0; background:transparent; box-shadow:none; color:var(--text); font:500 12px/16px var(--font); cursor:pointer; }
+.clx-select select:focus-visible { outline:2px solid var(--signal); outline-offset:1px; border-radius:4px; }
+.clx-chip-x { display:inline-grid; place-items:center; width:16px; height:16px; margin-right:-4px; padding:0; border:0; border-radius:4px; background:none; box-shadow:none; color:inherit; cursor:pointer; }
+.clx-chip-x:hover { background:rgba(0,0,0,.06); }
+
+/* ---------- Client record ---------- */
+.clx-tl-head { min-height:34px; flex-wrap:wrap; }
+.clx-tl-foot { display:flex; justify-content:flex-start; }
+.clx-vault { margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:2px; }
+.clx-vault li { color:var(--link, var(--info)); }
+.clx-vault li .clx-muted { color:var(--text-3); }
+.clx-edit-form { display:flex; flex-direction:column; gap:8px; }
+.clx-field { display:flex; flex-direction:column; gap:4px; min-width:0; font:500 12px/16px var(--font); color:var(--text-2); }
+.clx-field.grow { flex:1; }
+.clx-field :is(input, textarea, select) { width:100%; min-height:32px; padding:6px 10px; border:1px solid var(--border-strong, var(--border)); border-radius:8px; background:var(--bg-surface); color:var(--text); font:400 13px/19px var(--font); box-sizing:border-box; }
+.clx-field :is(input, textarea):focus-visible { outline:2px solid var(--signal); outline-offset:0; border-color:transparent; }
+.clx-inline-form { display:flex; align-items:flex-end; gap:10px; flex-wrap:wrap; }
+.clx-people { display:flex; flex-direction:column; gap:12px; margin:0; padding:0; list-style:none; }
+.clx-people li { display:flex; align-items:center; gap:12px; }
+.clx-people li > span { display:flex; flex-wrap:wrap; align-items:center; gap:2px 8px; min-width:0; }
+.clx-people b { font:500 13px/19px var(--font); color:var(--text); }
+.clx-people small { flex-basis:100%; font:400 12px/16px var(--font); color:var(--text-3); }
+.clx .ds-card .ds-empty { padding:28px 20px; }
+.clx-grade .ds-seg button:disabled { opacity:.6; }
+
+/* Old panels moved into ds Cards: keep their forms tidy without the old .cl wrapper. */
+.clx .deal-field { display:flex; flex-direction:column; gap:4px; min-width:0; font:500 12px/16px var(--font); color:var(--text-2); }
+.clx .deal-field > span { font:500 12px/16px var(--font); color:var(--text-2); }
+.clx .deal-field :is(input, textarea, select) { width:100%; min-height:32px; padding:6px 10px; border:1px solid var(--border-strong, var(--border)); border-radius:8px; background:var(--bg-surface); color:var(--text); font:400 13px/19px var(--font); box-sizing:border-box; }
+.clx .deal-field small { font:400 12px/16px var(--font); color:var(--text-3); }
+.clx .deal-field small.error { color:var(--critical); }
+.clx .ds-card :is(h3, h4) { margin:6px 0 0; font:600 11px/14px var(--font); letter-spacing:.6px; text-transform:uppercase; color:var(--text-3); }
+.clx .muted { color:var(--text-3); }
+.clx .small { font-size:12px; line-height:16px; }
+
+/* A site on Sites & access */
+.clx-site .ds-card-head { flex-wrap:wrap; }
+.clx-site-links { display:inline-flex; gap:12px; margin-left:auto; font:500 12px/16px var(--font); }
+.clx-site-links a { color:var(--text-2); }
+.clx-site-links a:hover { color:var(--text); }
+.clx-flags { display:flex; flex-direction:column; gap:6px; padding:10px 12px; border-radius:10px; background:var(--warning-soft); }
+.clx-flags p { display:flex; gap:8px; align-items:flex-start; margin:0; font:400 13px/19px var(--font); color:var(--text); }
+.clx-flags .icon { margin-top:2px; color:var(--warning); flex:none; }
+.clx-site .cl-choices { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+.clx-site .cl-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; padding-top:12px; border-top:1px solid var(--border); }
+.clx-site .cl-fields .wide, .clx-site .cl-fields-msg, .clx-site .cl-fields-actions { grid-column:1 / -1; }
+.clx-site .cl-fields-actions { display:flex; align-items:center; gap:10px; }
+.clx-site .cl-fields-actions .btn:last-child { margin-left:auto; }
+.clx-site .cl-checklist { padding-top:12px; border-top:1px solid var(--border); }
+.clx-site .cl-access-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin:8px 0 0; padding:0; list-style:none; }
+.clx-site .cl-access { display:flex; flex-direction:column; gap:6px; padding:12px 14px; border:1px solid var(--border); border-radius:10px; background:var(--bg-surface); }
+.clx-site .cl-access.warn { border-left:3px solid var(--warning); }
+.clx-site .cl-access.good { border-left:3px solid var(--positive); }
+.clx-site .cl-access-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.clx-site .cl-access-name { font:500 13px/19px var(--font); color:var(--text); margin-right:auto; }
+.clx-site .cl-access-status { height:28px; padding:0 8px; border:1px solid var(--border); border-radius:8px; background:var(--bg-surface); font:500 12px/16px var(--font); }
+.clx-site .cl-access-form { display:flex; flex-direction:column; gap:8px; }
+.clx-site .cl-access-save { display:flex; align-items:center; gap:8px; }
+
+/* Care panel inside a Card */
+.clx-care .cr-reasons { margin:0; padding-left:18px; font:400 13px/19px var(--font); color:var(--text); }
+.clx-care .cr-sites { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:12px; margin:0; padding:0; list-style:none; }
+.clx-care .cr-site { display:flex; flex-direction:column; gap:8px; padding:14px; border:1px solid var(--border); border-radius:10px; }
+.clx-care .cr-site-head { display:flex; align-items:center; gap:8px; justify-content:space-between; }
+.clx-care .cr-facts { display:grid; grid-template-columns:auto 1fr; gap:4px 12px; margin:0; font:400 13px/19px var(--font); }
+.clx-care .cr-facts dt { color:var(--text-3); font-size:12px; }
+.clx-care .cr-facts dd { margin:0; }
+
+/* Meetings panel (not ours): give its old card the ds look */
+.clx-legacy .cl-card { padding:18px; border:1px solid var(--border); border-radius:12px; background:var(--bg-surface); box-shadow:var(--shadow-card); }
+.clx-legacy .cl-card > h2 { margin:0 0 10px; font:600 15px/22px var(--font); letter-spacing:-.1px; }
+
+/* ---------- Narrow screens ---------- */
+@media (max-width: 1100px) {
+  .clx-table .clx-c-next { width:auto; }
+}
+@media (max-width: 760px) {
+  .clx-table .clx-c-plan, .clx-table .clx-c-grade { display:none; }
+  .clx-site .cl-choices, .clx-site .cl-fields, .clx-site .cl-access-list { grid-template-columns:minmax(0,1fr); }
+}
+@media (max-width: 640px) {
+  .clx-table .clx-c-next, .clx-table .clx-c-health { display:none; }
+  .clx .ds-toolbar > .ds-grow { display:none; }
+  .clx .ds-actions .btn { flex:1 1 auto; justify-content:center; }
+}
+
+/* ds.css styles every direct span of .ds-who as the text column; the avatar is a span too, so put it back. */
+.clx .ds-who > .ds-avatar { display:inline-grid; place-items:center; flex-direction:row; }
+/* public.css has a global .lg (the login page) that also hits ds.css's .ds-tile.lg in Empty: undo it here. */
+.clx .ds-tile.lg { min-height:0; display:grid; place-items:center; gap:0; padding:0; flex-direction:row; }
+.clx-care .cr-site .btn { white-space:normal; text-align:left; height:auto; min-height:32px; }

@@ -1,30 +1,37 @@
 import { STATUSES, type LeadRow, type LeadStatus } from "./types";
 
-export type Section = "home" | "leads" | "find" | "outreach" | "work" | "settings";
+/**
+ * The rail's sections, as in the Figma file: Home, Approvals, then finding work (Leads, Find, Outreach), then running it
+ * (Sales, Clients, Work, Money), then Settings.
+ */
+export type Section = "home" | "approvals" | "leads" | "find" | "outreach" | "sales" | "clients" | "work" | "money" | "settings";
 
-const isWork = (p: string) => p === "/projects" || p.startsWith("/projects/") || p === "/timesheet" || p === "/billing" || p === "/money" || p === "/batches" || p === "/studio" || p === "/care" || p.startsWith("/care/") || p === "/seo" || p.startsWith("/tasks/") || p === "/clients" || p.startsWith("/clients/");
+const under = (p: string, ...roots: string[]) => roots.some((r) => p === r || p.startsWith(`${r}/`));
 
-/** Which rail section a path belongs to. Today is Home; lists, Promising and a lead are Leads; New search, searches, Radar, Niche test and Import are Find; Outreach, Campaigns and the Pipeline are Outreach; projects, a task's redirect, the timesheet, Billing, Money, Batches, Studio, Care and Local SEO are Projects ("work"). */
+/** Which rail section a path belongs to. */
 export function sectionOf(pathname: string): Section {
-  if (pathname === "/today") return "home";
-  if (pathname === "/leads" || pathname.startsWith("/leads/") || pathname === "/promising") return "leads";
-  if (pathname === "/settings" || pathname.startsWith("/settings/")) return "settings";
-  if (pathname === "/outreach" || pathname === "/campaigns" || pathname === "/pipeline") return "outreach";
-  if (isWork(pathname)) return "work";
+  const p = pathname;
+  if (p === "/today") return "home";
+  if (under(p, "/approvals")) return "approvals";
+  if (under(p, "/leads") || p === "/promising") return "leads";
+  if (under(p, "/settings")) return "settings";
+  if (p === "/outreach" || p === "/studio") return "outreach";
+  if (p === "/pipeline" || p === "/campaigns" || under(p, "/deals")) return "sales";
+  if (under(p, "/clients", "/care") || p === "/seo") return "clients";
+  if (under(p, "/projects", "/tasks") || p === "/timesheet" || p === "/batches") return "work";
+  if (p === "/money" || p === "/billing") return "money";
   return "find";
 }
 
-export type SidebarKind = "home" | "leads" | "find" | "outreach" | "work" | "settings";
+export type SidebarKind = "home" | "leads" | "find" | "outreach" | "sales" | "clients" | "work" | "money" | "settings";
 
-/** Only list-style pages get a contextual sidebar; a lead's own page and a client's page use the full width. */
+/** List pages get their section's sidebar; one record (a lead, a client, a deal, a project) uses the full width. */
 export function sidebarOf(pathname: string): SidebarKind | null {
-  if (pathname === "/today") return "home";
-  if (pathname === "/outreach" || pathname === "/campaigns" || pathname === "/pipeline") return "outreach";
-  if (pathname === "/leads" || pathname === "/promising") return "leads";
-  if (pathname === "/settings" || pathname.startsWith("/settings/")) return "settings";
-  if (pathname.startsWith("/leads/") || pathname.startsWith("/clients/")) return null;
-  if (isWork(pathname)) return "work";
-  return "find";
+  const p = pathname;
+  if (p.startsWith("/leads/") || p.startsWith("/clients/") || p.startsWith("/deals/") || p.startsWith("/projects/") || p.startsWith("/care/runs/")) return null;
+  const s = sectionOf(p);
+  if (s === "approvals") return null;
+  return s;
 }
 
 /** Counts for the Leads sidebar from the loaded (active) rows. */
