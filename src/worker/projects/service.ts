@@ -1,5 +1,5 @@
 import { getChangeOrder } from "../db/changeOrders";
-import { addCadence, getProject, markProjectDone, reachMilestone } from "../db/projects";
+import { addCadence, getProject, markProjectDone, reachMilestone, SEO_ONBOARDING_KEY } from "../db/projects";
 import {
   addComment, CREDENTIAL_REFUSED, getTask, insertTasks, listTasks, parseTaskPatch, patchTask, setTaskStatus, TaskInputError,
   type CommentAuthor, type Task, type TaskPatch,
@@ -28,6 +28,8 @@ export class TaskBlockedError extends TaskStateError {
 
 /** The recurring Care templates a finished Care onboarding project starts. */
 const CARE_CADENCES = ["CARE-1", "CARE-4"];
+/** The recurring Local SEO templates a finished SEO-0 project starts (never part of Care). */
+const SEO_CADENCES = ["SEO-1", "SEO-2", "SEO-3"];
 const MILESTONE_LABEL: Record<MilestoneKey, string> = { design_approved: "design approved", site_finished: "site finished" };
 /** Statuses a task can be finished, skipped or marked waiting from. */
 const OPEN: TaskStatus[] = ["todo", "in_progress", "in_review", "waiting_client"];
@@ -60,7 +62,7 @@ async function checkReady(env: Env, task: Task): Promise<void> {
 
 /**
  * Brings the project in line with a step that is closed (done, or skipped when `reaches` is false): records the milestone the step marks, finishes the project when it was the last
- * open step, and attaches the Care cadences to a finished Care onboarding. Every part is idempotent and guarded in its own statement, and this runs on EVERY completion or skip,
+ * open step, and attaches the Care cadences to a finished Care onboarding (or the Local SEO ones to a finished SEO-0 project). Every part is idempotent and guarded in its own statement, and this runs on EVERY completion or skip,
  * replays included, so a request that died after the task was saved (or hit a database error part-way) is repaired by repeating it. A database error propagates to the caller
  * for exactly that reason. Returns true when this call changed something (so the caller knows the tasks-changed hooks are due).
  *
@@ -87,6 +89,9 @@ async function settle(env: Env, task: Task, now: Date, reaches: boolean): Promis
   }
   if (project.kind === "care_onboarding" && project.status === "done") {
     for (const key of CARE_CADENCES) if (await addCadence(env.DB, project.id, key)) changed = true;
+  }
+  if (project.templateKey === SEO_ONBOARDING_KEY && project.status === "done") {
+    for (const key of SEO_CADENCES) if (await addCadence(env.DB, project.id, key)) changed = true;
   }
   if (finished) await runProjectDone(env, project);
   return changed;

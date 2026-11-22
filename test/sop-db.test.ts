@@ -86,8 +86,8 @@ describe("templatesForPackages", () => {
     expect((await templatesForPackages(env.DB, ["quick_fix"])).map((t) => t.key)).toEqual(["QUICKFIX"]);
   });
 
-  it("local_seo alone returns nothing", async () => {
-    expect(await templatesForPackages(env.DB, ["local_seo"])).toEqual([]);
+  it("local_seo alone returns SEO-0, and no packages return nothing", async () => {
+    expect((await templatesForPackages(env.DB, ["local_seo"])).map((t) => t.key)).toEqual(["SEO-0"]);
     expect(await templatesForPackages(env.DB, [])).toEqual([]);
   });
 

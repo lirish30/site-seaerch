@@ -77,15 +77,20 @@ export async function listProjects(db: D1Database, o: { status?: ProjectStatus[]
   return rows.map((r) => ({ ...toProject(r), businessName: r.business_name, openTasks: r.open_tasks, doneTasks: r.done_tasks, openSteps: r.open_steps, doneSteps: r.done_steps }));
 }
 
+/** The template key of the Local SEO onboarding project (a `custom` project: the kind list is not widened). Once it is done it is the client's ongoing Local SEO service, like a finished Care onboarding. */
+export const SEO_ONBOARDING_KEY = "SEO-0";
+
 /**
- * Whether work may be done on the project: it is active, or it is a finished Care onboarding project. A finished Care onboarding is the client's ongoing Care service (its recurring
- * weekly and monthly tasks start only once it is done, and `done` is final), so it must keep generating, dispatching and being worked. A paused or cancelled project, and a finished
+ * Whether work may be done on the project: it is active, or it is a finished Care onboarding project or a finished Local SEO onboarding (SEO-0). Those two are the client's ongoing service (their
+ * recurring tasks start only once they are done, and `done` is final), so they must keep generating, dispatching and being worked. A paused or cancelled project, and a finished
  * build or quick fix, are not live. Test projects are not told apart here; callers that exclude them say so themselves.
  */
-export const projectIsLive = (p: { status: ProjectStatus; kind: ProjectKind }): boolean => p.status === "active" || (p.status === "done" && p.kind === "care_onboarding");
+export const projectIsLive = (p: { status: ProjectStatus; kind: ProjectKind; templateKey?: string | null }): boolean =>
+  p.status === "active" || (p.status === "done" && (p.kind === "care_onboarding" || p.templateKey === SEO_ONBOARDING_KEY));
 
 /** The same rule as `projectIsLive`, as SQL for a projects table with this alias. */
-export const liveProjectSql = (alias: string): string => `(${alias}.status = 'active' OR (${alias}.status = 'done' AND ${alias}.kind = 'care_onboarding'))`;
+export const liveProjectSql = (alias: string): string =>
+  `(${alias}.status = 'active' OR (${alias}.status = 'done' AND (${alias}.kind = 'care_onboarding' OR ${alias}.template_key = '${SEO_ONBOARDING_KEY}')))`;
 
 /** Whether the lead has a project: a lead that does is archived, never deleted. */
 export async function hasProject(db: D1Database, businessId: string): Promise<boolean> {
@@ -94,14 +99,14 @@ export async function hasProject(db: D1Database, businessId: string): Promise<bo
 
 /**
  * Sets the status. The guard is in the statement: a done or cancelled project never reopens (the row is returned as it is), with one exception: a finished Care onboarding
- * project (the client's ongoing Care service, which `projectIsLive` keeps running) can be cancelled, so Logan has a way to stop it when the client leaves. Nothing else moves it
+ * project or a finished SEO-0 project (the client's ongoing Care or Local SEO service, which `projectIsLive` keeps running) can be cancelled, so Logan has a way to stop it when the client leaves. Nothing else moves it
  * (a done Care project is never paused or reopened; pausing it is Plan 8's to design). `done` stamps `completedAt`; the reason is kept only while paused. Throws when there is no such project.
  */
 export async function setProjectStatus(db: D1Database, id: string, status: ProjectStatus, o: { reason?: string | null; now?: string } = {}): Promise<Project> {
   const now = o.now ?? nowIso();
   await db.prepare(
     `UPDATE projects SET status = ?, paused_reason = ?, completed_at = CASE WHEN ? = 'done' THEN ? ELSE completed_at END, updated_at = ?
-     WHERE id = ? AND (status NOT IN ('done', 'cancelled') OR (status = 'done' AND kind = 'care_onboarding' AND ? = 'cancelled'))`,
+     WHERE id = ? AND (status NOT IN ('done', 'cancelled') OR (status = 'done' AND (kind = 'care_onboarding' OR template_key = '${SEO_ONBOARDING_KEY}') AND ? = 'cancelled'))`,
   ).bind(status, status === "paused" ? (o.reason ?? null) : null, status, now, now, id, status).run();
   const p = await getProject(db, id);
   if (!p) throw new Error(`project ${id} not found`);

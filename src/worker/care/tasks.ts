@@ -27,7 +27,7 @@ async function cadenceIds(env: Env, key: string, businessId: string, period: str
  * Ticks the checklist items for `steps` on the client's task of the recurring template `key` for `period`, found by their template order in the current template. Does nothing for a task that is done or skipped, and nothing at all when
  * the template no longer has one of the steps (or the task's checklist is shorter than the template). Never un-ticks. Returns whether anything changed.
  */
-async function tickChecklist(env: Env, key: string, businessId: string, period: string, steps: string[], now: Date): Promise<boolean> {
+export async function tickChecklist(env: Env, key: string, businessId: string, period: string, steps: string[], now: Date): Promise<boolean> {
   const tpl = await getTemplate(env.DB, key);
   if (!tpl) return false;
   const idx = steps.map((k) => tpl.steps.findIndex((s) => s.key === k));

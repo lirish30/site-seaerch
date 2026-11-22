@@ -24,6 +24,8 @@ export class ProjectStartError extends Error {
 }
 
 const CARE_KEYS: PackageKey[] = ["care", "care_plus", "care_fallback"];
+/** The Local SEO packages: SEO-0 starts for them, as its own project (never part of Care). */
+const SEO_KEYS: PackageKey[] = ["local_seo", "local_seo_growth"];
 /** Sold alongside a job, never a job of their own: a missing template for these is not worth a note. */
 const NO_PROJECT_KEYS: PackageKey[] = ["client_hosted_surcharge", "hourly"];
 /** The client's name comes from scraped lead data, so it is cleaned and clipped before it becomes part of a name. */
@@ -73,10 +75,11 @@ async function seedsPresent(db: D1Database): Promise<boolean> {
 }
 
 /**
- * Starts the projects for a signed proposal, from the packages the document froze: one primary project (BUILD for a site, else QUICKFIX) and a Care project (CARE-0) unless Care was
- * declined or is not sold. When there is a primary, Care waits (`careDeferred` on the primary) and starts when the primary is done; otherwise Care starts now. A package with no
+ * Starts the projects for a signed proposal, from the packages the document froze: one primary project (BUILD for a site, else QUICKFIX), a Care project (CARE-0) unless Care was
+ * declined or is not sold, and a Local SEO project (SEO-0, kind `custom`) when Local SEO or Local SEO Growth is sold. When there is a primary, Care waits (`careDeferred` on the primary) and starts
+ * when the primary is done; otherwise Care starts now. Local SEO never waits and is never part of Care. A package with no
  * template leaves one note on the lead's timeline and nothing else. Idempotent per (document, template): a replay finds the same projects, and one that has no steps gets them.
- * A real project then runs the tasks-changed hooks so its Claude steps begin; a test one (copied from the document) queues nothing. Returns the projects, primary first.
+ * A real project then runs the tasks-changed hooks so its Claude steps begin; a test one (copied from the document) queues nothing. Returns the projects, primary first, then Care, then Local SEO.
  * It does not catch database errors: the payment path wraps it so a failure here can never stop a payment from being recorded.
  */
 export async function startProjects(env: Env, doc: Document, o: { now?: Date } = {}): Promise<Project[]> {
@@ -91,9 +94,10 @@ export async function startProjects(env: Env, doc: Document, o: { now?: Date } =
   const careWanted = !doc.content.careDeclined;
   const careTemplate = careWanted ? templates.find((t) => covers(t, keys.filter((k) => CARE_KEYS.includes(k)))) : undefined;
   const primaryTemplate = buildTemplate ?? quickTemplate;
+  const seoTemplate = templates.find((t) => covers(t, keys.filter((k) => SEO_KEYS.includes(k))));
 
   // Every package that nothing above will start is named once. A declined Care is not a gap; a hosting surcharge or hourly time is not a job.
-  const started = [primaryTemplate, careTemplate].filter((t): t is SopTemplate => !!t);
+  const started = [primaryTemplate, careTemplate, seoTemplate].filter((t): t is SopTemplate => !!t);
   const missing = doc.content.packages.filter((p) => !NO_PROJECT_KEYS.includes(p.key) && !(CARE_KEYS.includes(p.key) && !careWanted) && !started.some((t) => t.appliesTo.includes(p.key)));
   await noteMissing(env, doc, missing.map((p) => p.name));
 
@@ -109,6 +113,8 @@ export async function startProjects(env: Env, doc: Document, o: { now?: Date } =
   } else if (careTemplate) {
     out.push(await begin(env, doc, careTemplate, { kind: "care_onboarding", careDeferred: false, now }));
   }
+  // Local SEO is its own job, never waiting on the build and never inside Care: SEO-0 starts now as a custom project, and its recurring work starts when it is done.
+  if (seoTemplate) out.push(await begin(env, doc, seoTemplate, { kind: "custom", careDeferred: false, now }));
   if (!doc.test) for (const p of out) if (p.status === "active") await runTasksChanged(env, p.id);
   return out;
 }
@@ -180,9 +186,9 @@ const SWEEP_LIMIT = 25;
 /**
  * Starts projects for real, signed documents whose deposit is paid and that have no project at all (the retry for a payment whose start failed: it is never replayed, because the
  * document is marked paid), whose project was made but never got its steps (a start that died between the two), or whose finished build was waiting to hand over Care and never did (a lost
- * or failed done hook). A finished or cancelled project with no tasks is left as it is.
+ * or failed done hook), or that sold Local SEO and have no SEO-0 project yet (the build started but the Local SEO start failed or came later). A finished or cancelled project with no tasks is left as it is.
  * Each document is tried on its own, so one failure leaves the rest to go on (it is noted on the lead's timeline and tried again next time). Returns how many documents got a project
- * or their steps. A document that has none to start (a Local SEO sale, whose note is written once) is not counted. Safe to repeat: it finds nothing new the second time.
+ * or their steps. A document that has none to start (say, a package with no template, whose note is written once) is not counted. Safe to repeat: it finds nothing new the second time.
  *
  * The documents least recently tried come first (never-tried ones before all, then by payment date), and each one is marked as tried whatever came of it. So a document that can never
  * get a project, or keeps failing, takes its turn and then waits behind the others instead of filling the `limit` for good and starving the ones behind it.
@@ -193,7 +199,9 @@ export async function startProjectsForPaidDocuments(env: Env, now: Date = new Da
        NOT EXISTS (SELECT 1 FROM projects p WHERE p.document_id = d.id)
        OR EXISTS (SELECT 1 FROM projects p WHERE p.document_id = d.id AND p.status = 'active' AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.project_id = p.id))
        OR EXISTS (SELECT 1 FROM projects p WHERE p.document_id = d.id AND p.care_deferred = 1 AND p.status = 'done'
-                    AND NOT EXISTS (SELECT 1 FROM projects c WHERE c.document_id = d.id AND c.kind = 'care_onboarding')))
+                    AND NOT EXISTS (SELECT 1 FROM projects c WHERE c.document_id = d.id AND c.kind = 'care_onboarding'))
+       OR (EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(d.content) THEN d.content ELSE '{}' END, '$.packages') WHERE json_extract(value, '$.key') IN ('local_seo', 'local_seo_growth'))
+           AND NOT EXISTS (SELECT 1 FROM projects s WHERE s.document_id = d.id AND s.template_key = 'SEO-0')))
      ORDER BY COALESCE(d.projects_checked_at, ''), d.paid_at, d.id LIMIT ?`,
   ).bind(o.limit ?? SWEEP_LIMIT).all<{ id: string }>()).results;
   let started = 0;
