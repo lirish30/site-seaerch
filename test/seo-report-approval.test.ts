@@ -447,6 +447,23 @@ describe("approving a seo.report", () => {
     expect(errors).toHaveBeenCalledWith("seo report: the monthly task was not ticked after the mail went out");
   });
 
+  it("a test report is mailed to the owner for a rehearsal client with no Local SEO project at all (SEO-0 not finished), and a real report for such a client is still refused", async () => {
+    const s = await seedClient({ subs: PLAN, test: true }); // a build project only: no SEO-1 cycle
+    const { id } = await proposed(s, { test: true });
+    errors.mockClear();
+    expect(await approve(ask(), id)).toEqual({ ok: true });
+    expect(mail.sent).toHaveLength(1);
+    expect(mail.sent[0]).toMatchObject({ to: OWNER_EMAIL, subject: "[Test] Your local search report for November 2026" });
+    expect(errors).not.toHaveBeenCalled();
+    expect((await refusals(s.businessId))).toEqual([]);
+
+    const real = await seedClient({ subs: PLAN });
+    const y = await proposed(real);
+    expect(await approve(ask(), y.id)).toEqual({ ok: true });
+    expect((await refusals(real.businessId))[0]).toMatch(/no live Local SEO project/);
+    expect(mail.sent).toHaveLength(1);
+  });
+
   it("a test report with no owner email set throws and sends nothing", async () => {
     const { id } = await proposed(await seoClient({ test: true }), { test: true });
     await saveSettings(env.DB, { contact_email: "" });

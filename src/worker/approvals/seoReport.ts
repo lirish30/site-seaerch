@@ -182,7 +182,8 @@ registerHandler({
     const skip = async (why: string) => { await logActivityOnce(db, report.businessId, "note", `Local SEO report not sent: ${label}: ${why}, so nothing was mailed`); };
     if (report.status !== "ready") { await skip(NOT_READY[report.status]); return; }
     const projectId = await liveSeoProject(db, report.businessId);
-    if (!projectId) { await skip("the client has no live Local SEO project"); return; }
+    // A rehearsal client has not finished SEO-0 (it may not even have a Local SEO project), and its report goes to the owner alone, so only a real report needs a live Local SEO project.
+    if (!projectId && !report.test) { await skip("the client has no live Local SEO project"); return; }
     if (!report.test && (await isOnHold(db, report.businessId))) throw new Error("This client is on a billing hold, so the report was not mailed. Approve it again once the hold is lifted.");
     const link = seoReportLink(env, report.token);
     if (!link) throw new Error(`The report was not mailed: ${NO_LINK_BASE}. Approve it again once that is fixed.`);
