@@ -43,7 +43,7 @@ export const SeoReportFacts = z.object({
   gbp: z.object({
     rating: z.number().min(0).max(5).nullable(),
     reviewCount: Count.nullable(),
-    /** The rise in the review count since the snapshot before, null when it fell or there is no earlier one. */
+    /** The rise in the review count since the snapshot before, null when it fell, there is no earlier snapshot, or this is the first report (no earlier rank check, so nothing is compared). */
     reviewsGained: Count.nullable(),
     ratingChange: z.number().min(-5).max(5).nullable(),
   }),
@@ -135,7 +135,9 @@ export async function buildSeoFacts(env: Env, businessId: string, period: string
   const terms = keywords.map((k) => termFacts(k.term, k.town, checks.filter((c) => c.keywordId === k.id), after));
 
   const { current, previous } = snapshotPair(await snapshotsFor(env.DB, businessId, {}), range.fromDay, after);
-  const gained = current?.reviewCount != null && previous?.reviewCount != null && current.reviewCount >= previous.reviewCount ? current.reviewCount - previous.reviewCount : null;
+  const previousRankAsOf = earliest(terms.map((t) => t.previousAsOf));
+  // A first report (no earlier rank check) says nothing is compared, so it claims no gain either, even when an earlier snapshot makes one possible.
+  const gained = previousRankAsOf !== null && current?.reviewCount != null && previous?.reviewCount != null && current.reviewCount >= previous.reviewCount ? current.reviewCount - previous.reviewCount : null;
   const change = current?.rating != null && previous?.rating != null ? Math.round((current.rating - previous.rating) * 10) / 10 || 0 : null;
 
   // Only counts leave the reviews: their text, authors and ids are never copied.
@@ -148,7 +150,7 @@ export async function buildSeoFacts(env: Env, businessId: string, period: string
 
   return SeoReportFacts.parse({
     version: 1, period, label: periodLabel("monthly", period), clientName: name.slice(0, 200),
-    rankAsOf: earliest(terms.map((t) => t.asOf)), previousRankAsOf: earliest(terms.map((t) => t.previousAsOf)),
+    rankAsOf: earliest(terms.map((t) => t.asOf)), previousRankAsOf,
     terms: terms.map((t) => t.fact),
     gbp: { rating: current?.rating ?? null, reviewCount: current?.reviewCount ?? null, reviewsGained: gained, ratingChange: change },
     reviews: {

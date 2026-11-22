@@ -162,6 +162,14 @@ describe("proposeSeoReportApproval", () => {
     expect(a.preview).not.toContain("not written by Claude");
   });
 
+  it("shows no gain on the card of a first report (nothing to compare), and still shows it with a previous check", async () => {
+    const first = await proposed(await seoClient(), { facts: { ...FACTS, previousRankAsOf: null, terms: FACTS.terms.map((t) => ({ ...t, previousVisible: null })), gbp: { ...FACTS.gbp, reviewsGained: null } } });
+    expect((await approvalRow(first.id))!.preview).toContain("the first check, nothing earlier to compare with");
+    expect((await approvalRow(first.id))!.preview).not.toMatch(/gained 3|since the previous check/);
+    const second = await proposed(await seoClient());
+    expect((await approvalRow(second.id))!.preview).toContain("gained 3 reviews since the previous check");
+  });
+
   it("says plainly when the summary was written by the code and not by Claude, and who edited it", async () => {
     const plain = await proposed(await seoClient(), { source: "plain", priorities: [] });
     expect((await approvalRow(plain.id))!.preview).toMatch(/not written by Claude/i);

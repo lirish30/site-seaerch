@@ -36,6 +36,12 @@ describe("cellText", () => {
 });
 
 describe("seoReportPageView", () => {
+  it("has no 'Reviews gained' row when none was claimed (a first report), and has it when one was", () => {
+    const rows = (v: ReturnType<typeof view>) => strings(v).join(" | ");
+    expect(rows(view({ previousRankAsOf: null, gbp: { rating: 4.7, reviewCount: 43, reviewsGained: null, ratingChange: 0.2 } }))).not.toMatch(/gained|since the previous check/i);
+    expect(rows(view())).toMatch(/Reviews gained/);
+  });
+
   it("gives each term a grid of three rows of three cells, row by row from the north-west", () => {
     const [first, second] = view().terms;
     expect(first.heading).toBe("drain cleaning in Tigard");

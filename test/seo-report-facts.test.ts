@@ -30,6 +30,12 @@ async function term(businessId: string, t: string, town = "") {
 const check = (businessId: string, keywordId: string, takenOn: string, spots: Spot[]) => upsertRankCheck(env.DB, { businessId, keywordId, takenOn, points: pts(spots), now: STAMP });
 const snap = (businessId: string, takenOn: string, reviewCount: number | null, rating: number | null = 4.6) =>
   upsertSnapshot(env.DB, { businessId, takenOn, rating, reviewCount, category: "Plumber", photoCount: 12, hasHours: true, now: STAMP });
+/** One term with a usable check on each side of the month's end, so the report has an earlier check to compare with. */
+async function withPreviousCheck(businessId: string) {
+  const k = await term(businessId, "drain cleaning");
+  await check(businessId, k.id, "2026-11-01", nine(5));
+  await check(businessId, k.id, "2026-12-01", nine(2));
+}
 const build = (businessId: string, period = PERIOD, now = NOW) => buildSeoFacts(env, businessId, period, now);
 
 describe("buildSeoFacts: the rank grid", () => {
@@ -183,13 +189,29 @@ describe("buildSeoFacts: the rank grid", () => {
 describe("buildSeoFacts: the Google profile", () => {
   it("gives the review count and rating, and the rise between the two snapshots", async () => {
     const s = await client();
+    await withPreviousCheck(s.businessId);
     await snap(s.businessId, "2026-11-01", 40, 4.5);
     await snap(s.businessId, "2026-12-01", 43, 4.7);
     expect((await build(s.businessId)).gbp).toEqual({ rating: 4.7, reviewCount: 43, reviewsGained: 3, ratingChange: 0.2 });
   });
 
+  it("claims no gain in a first report (no earlier rank check), even when an earlier snapshot makes one possible", async () => {
+    const s = await client();
+    const k = await term(s.businessId, "drain cleaning");
+    await check(s.businessId, k.id, "2026-12-01", nine(2)); // the first check there is
+    await snap(s.businessId, "2026-11-01", 40, 4.5);
+    await snap(s.businessId, "2026-12-01", 43, 4.7);
+    const f = await build(s.businessId);
+    expect(f.previousRankAsOf).toBeNull();
+    expect(f.gbp).toEqual({ rating: 4.7, reviewCount: 43, reviewsGained: null, ratingChange: 0.2 });
+    const text = plainSeoSummary(f);
+    expect(text).toContain("first check, so nothing to compare yet");
+    expect(text).not.toMatch(/gained|since the previous check/);
+  });
+
   it("gives null for the rise when the count fell, and when there is no earlier snapshot", async () => {
     const fell = await client();
+    await withPreviousCheck(fell.businessId);
     await snap(fell.businessId, "2026-11-01", 43);
     await snap(fell.businessId, "2026-12-01", 41);
     expect((await build(fell.businessId)).gbp).toMatchObject({ reviewCount: 41, reviewsGained: null });
@@ -197,6 +219,7 @@ describe("buildSeoFacts: the Google profile", () => {
     await snap(first.businessId, "2026-12-01", 43, 4.2);
     expect((await build(first.businessId)).gbp).toEqual({ rating: 4.2, reviewCount: 43, reviewsGained: null, ratingChange: null });
     const same = await client();
+    await withPreviousCheck(same.businessId);
     await snap(same.businessId, "2026-11-01", 43);
     await snap(same.businessId, "2026-12-01", 43);
     expect((await build(same.businessId)).gbp.reviewsGained).toBe(0);
@@ -204,6 +227,7 @@ describe("buildSeoFacts: the Google profile", () => {
 
   it("uses the last snapshot of the month when none was taken after it, and says nothing when there is none at all or a count is missing", async () => {
     const s = await client();
+    await withPreviousCheck(s.businessId);
     await snap(s.businessId, "2026-11-02", 40);
     await snap(s.businessId, "2026-11-30", 43);
     expect((await build(s.businessId)).gbp).toMatchObject({ reviewCount: 43, reviewsGained: 3 });
