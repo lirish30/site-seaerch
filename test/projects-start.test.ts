@@ -39,6 +39,8 @@ const pkg = (key: Pkg["key"], name: string): Pkg => ({ key, version: 1, name, pr
 const STARTER = pkg("starter_site", "Starter Site");
 const CARE = pkg("care", "Care");
 const SEO = pkg("local_seo", "Local SEO");
+/** A package no built-in template covers: its sale starts nothing and leaves one note. */
+const NOTHING = pkg("reviews_addon", "Reviews add-on");
 const QUICK = pkg("quick_fix", "Quick Fix");
 
 /** A signed proposal with its deposit invoice, for a real or test deal. */
@@ -144,23 +146,35 @@ describe("starting projects at payment", () => {
     expect(ps[0]).toMatchObject({ kind: "quick_fix", templateKey: "QUICKFIX", name: "Ace Plumbing: Quick fix", careDeferred: false });
   });
 
-  it("Local SEO alone leaves one timeline note and no project", async () => {
+  it("Local SEO alone starts SEO-0 as a custom project and leaves no note", async () => {
     const s = await seed({ packages: [SEO] });
     await pay(s);
     await pay(s);
+    const ps = await projectsOf(s.businessId);
+    expect(ps.map((p) => [p.kind, p.templateKey])).toEqual([["custom", "SEO-0"]]);
+    expect(await seoNotes(s.businessId)).toEqual([]);
+    expect(await lines(s.businessId, "project_started")).toHaveLength(1);
+    expect((await getDocument(env.DB, s.doc.id))!.paidAt).toBeTruthy();
+  });
+
+  it("a package no template covers leaves one timeline note and no project", async () => {
+    const s = await seed({ packages: [NOTHING] });
+    await pay(s);
+    await pay(s);
     expect(await projectsOf(s.businessId)).toEqual([]);
-    expect(await seoNotes(s.businessId)).toEqual(["SL-ABCDEF v1: no SOP for Local SEO yet, so no project was started for it"]);
+    expect(await seoNotes(s.businessId)).toEqual(["SL-ABCDEF v1: no SOP for Reviews add-on yet, so no project was started for it"]);
     expect(await lines(s.businessId, "project_started")).toEqual([]);
     expect((await getDocument(env.DB, s.doc.id))!.paidAt).toBeTruthy();
   });
 
-  it("an option with build, Care and Local SEO starts BUILD, defers Care and notes the SEO", async () => {
+  it("an option with build, Care and Local SEO starts BUILD and SEO-0, defers Care and notes nothing", async () => {
     const s = await seed({ packages: [STARTER, CARE, SEO] });
     await pay(s);
     const ps = await projectsOf(s.businessId);
-    expect(ps.map((p) => p.templateKey)).toEqual(["BUILD"]);
+    expect(ps.map((p) => p.templateKey)).toEqual(["BUILD", "SEO-0"]);
     expect(ps[0].careDeferred).toBe(true);
-    expect(await seoNotes(s.businessId)).toEqual(["SL-ABCDEF v1: no SOP for Local SEO yet, so no project was started for it"]);
+    expect(ps[1].careDeferred).toBe(false);
+    expect(await seoNotes(s.businessId)).toEqual([]);
   });
 
   it("a test document starts no project from payment", async () => {
@@ -324,7 +338,7 @@ describe("starting projects at payment", () => {
     await startProjects(e, s.doc);
     await env.DB.prepare(`UPDATE sop_templates SET name = 'Edited' WHERE key = 'CARE-4'`).run();
     await startProjects(e, s.doc);
-    expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM sop_templates`).first<{ n: number }>())!.n).toBe(7);
+    expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM sop_templates`).first<{ n: number }>())!.n).toBe(11);
     await env.DB.prepare(`UPDATE sop_templates SET name = 'Care monthly report' WHERE key = 'CARE-4'`).run();
   });
 });
@@ -345,21 +359,25 @@ describe("startProjectsForPaidDocuments", () => {
     const startedBefore = await projectsOf(started.businessId);
     const seoOnly = await seed({ packages: [SEO] });
     await setPaid(env.DB, seoOnly.doc.id, "2026-12-03T09:00:00.000Z");
+    const nothing = await seed({ packages: [NOTHING] });
+    await setPaid(env.DB, nothing.doc.id, "2026-12-03T09:00:00.000Z");
 
-    expect(await startProjectsForPaidDocuments(e, NOW)).toBe(2);
+    expect(await startProjectsForPaidDocuments(e, NOW)).toBe(3);
     expect(await keysOf(stuck.businessId)).toEqual(["BUILD"]);
     expect(await keysOf(stuckQuick.businessId)).toEqual(["QUICKFIX"]);
     expect(await projectsOf(unpaid.businessId)).toEqual([]);
     expect(await projectsOf(testDoc.businessId)).toEqual([]);
-    expect(await projectsOf(seoOnly.businessId)).toEqual([]);
+    expect(await keysOf(seoOnly.businessId)).toEqual(["SEO-0"]);
+    expect(await projectsOf(nothing.businessId)).toEqual([]);
     expect((await projectsOf(started.businessId)).map((p) => p.id)).toEqual(startedBefore.map((p) => p.id));
     expect((await projectsOf(stuck.businessId))[0].careDeferred).toBe(true);
 
-    // A replay finds nothing new (the Local SEO sale is looked at again but starts nothing and notes nothing twice).
+    // A replay finds nothing new (the sale with no template is looked at again but starts nothing and notes nothing twice).
     expect(await startProjectsForPaidDocuments(e, NOW)).toBe(0);
     expect(await projectsOf(stuck.businessId)).toHaveLength(1);
     expect(await lines(stuck.businessId, "project_started")).toHaveLength(1);
-    expect(await seoNotes(seoOnly.businessId)).toHaveLength(1);
+    expect(await lines(seoOnly.businessId, "project_started")).toHaveLength(1);
+    expect(await seoNotes(nothing.businessId)).toHaveLength(1);
   });
 
   it("one document that fails does not stop the others, and says so on its timeline", async () => {
@@ -398,9 +416,9 @@ describe("startProjectsForPaidDocuments: starvation and partial starts", () => {
 
   it("documents that can never get a project take their turn and then wait, so a later one is not starved", async () => {
     await startProjectsForPaidDocuments(e, NOW); // clear any paid document an earlier test left without a project
-    const seoA = await paid({ packages: [SEO] }, "2026-12-03T09:00:00.000Z");
-    const seoB = await paid({ packages: [SEO] }, "2026-12-03T09:01:00.000Z");
-    const seoC = await paid({ packages: [SEO] }, "2026-12-03T09:02:00.000Z");
+    const seoA = await paid({ packages: [NOTHING] }, "2026-12-03T09:00:00.000Z");
+    const seoB = await paid({ packages: [NOTHING] }, "2026-12-03T09:01:00.000Z");
+    const seoC = await paid({ packages: [NOTHING] }, "2026-12-03T09:02:00.000Z");
     const quick = await paid({ packages: [QUICK] }, "2026-12-03T09:03:00.000Z");
     // Other tests of this file leave paid documents that never get a project; they would take part in the rotation, so set them aside.
     await env.DB.prepare(`UPDATE documents SET paid_at = NULL WHERE id NOT IN (?, ?, ?, ?)`).bind(seoA.doc.id, seoB.doc.id, seoC.doc.id, quick.doc.id).run();

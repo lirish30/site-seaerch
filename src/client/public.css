@@ -296,6 +296,20 @@
 .mr-renewal-date { flex:none; color:var(--text-2); font-variant-numeric:tabular-nums; }
 .mr-foot { margin:0; font:400 13px/19px var(--font); color:var(--text-3); text-align:center; }
 .mr .btn { min-height:44px; }
+/* Local SEO report (.sr), on the same page frame as the Care report: the 3x3 grid of one search term. */
+/* Not `.rp-bar`: clients.css redefines that name as an 8px progress bar, which squashes the header of a public page. */
+.sr-for { display:flex; align-items:center; min-height:28px; }
+.sr-priorities { margin:0; padding:0 0 0 22px; display:flex; flex-direction:column; gap:6px; }
+.sr-priorities li { padding-left:2px; }
+.sr-grid { width:min(360px,100%); border-collapse:separate; border-spacing:6px; margin:-6px; table-layout:fixed; }
+.sr-sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+.sr-cell { height:56px; padding:4px; text-align:center; vertical-align:middle; border-radius:10px; border:1px solid var(--border); font:600 15px/18px var(--font); font-variant-numeric:tabular-nums; color:var(--text); overflow-wrap:anywhere; }
+.sr-cell.sr-top { background:var(--positive-soft); border-color:transparent; color:#0f6b31; }
+.sr-cell.sr-mid { background:var(--score-warm-soft); border-color:transparent; color:var(--score-warm-text); }
+.sr-cell.sr-low { background:var(--bg-muted); color:var(--text-2); }
+.sr-cell.sr-none { background:var(--bg-muted); color:var(--text-2); font-weight:500; font-size:12px; line-height:15px; }
+.sr-cell.sr-off { background:transparent; border-style:dashed; border-color:var(--border-strong); color:var(--text-3); font-weight:500; font-size:12px; line-height:15px; }
+.sr-line { font-weight:600; }
 @media (max-width:640px) {
   .mr-text { font-size:16px; }
   .mr-row { grid-template-columns:1fr; gap:2px; }

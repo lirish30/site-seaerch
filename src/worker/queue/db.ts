@@ -215,12 +215,12 @@ export async function expireOldTasks(env: Env, now: Date, maxAgeDays: number = E
   const cutoff = new Date(now.getTime() - maxAgeDays * 86_400_000).toISOString();
   const expired = (await env.DB.prepare(
     `UPDATE claude_tasks SET status = 'expired', error = ?, done_at = ?
-     WHERE id IN (SELECT id FROM claude_tasks WHERE status IN ('pending','claimed') AND created_at < ? ORDER BY created_at, id LIMIT ?) RETURNING kind, payload`,
-  ).bind(`expired: nobody finished it within ${maxAgeDays} days`, now.toISOString(), cutoff, EXPIRE_BATCH).all<{ kind: string; payload: string }>()).results;
+     WHERE id IN (SELECT id FROM claude_tasks WHERE status IN ('pending','claimed') AND created_at < ? ORDER BY created_at, id LIMIT ?) RETURNING *`,
+  ).bind(`expired: nobody finished it within ${maxAgeDays} days`, now.toISOString(), cutoff, EXPIRE_BATCH).all<Row>()).results;
   for (const t of expired) {
     const def = getTaskKind(t.kind);
     if (!def?.onExpire) continue;
-    try { await def.onExpire(env, JSON.parse(t.payload)); }
+    try { await def.onExpire(env, JSON.parse(t.payload), toTask(t)); }
     catch (e) { console.error("onExpire failed for", t.kind, e); }
   }
   return expired.length;

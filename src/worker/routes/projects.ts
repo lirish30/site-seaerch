@@ -6,7 +6,7 @@ import { listChangeOrders } from "../db/changeOrders";
 import { getBusiness } from "../db/businesses";
 import { getDeal } from "../db/deals";
 import { isOnHold } from "../db/holds";
-import { createProject, getProject, listMilestones, listProjects, PROJECT_STATUSES, projectIsLive, setProjectStatus, type Project, type ProjectStatus } from "../db/projects";
+import { createProject, getProject, listMilestones, listProjects, PROJECT_STATUSES, projectIsLive, SEO_ONBOARDING_KEY, setProjectStatus, type Project, type ProjectStatus } from "../db/projects";
 import { getSettings } from "../db/settings";
 import { getTemplate, saveTemplate } from "../db/sops";
 import {
@@ -96,8 +96,8 @@ const PatchProjectBody = z.object({ status: z.enum(["active", "paused", "cancell
   .refine((b) => b.status !== undefined || b.pausedReason !== undefined, { message: "nothing to change" });
 
 /**
- * Pause (with a reason), resume or cancel. A finished or cancelled project never reopens, except that a finished Care onboarding project can be cancelled (it is the client's ongoing
- * Care service; cancelling is how Logan stops its cadences and Claude dispatch). Resuming hands the project's ready Claude steps over at once.
+ * Pause (with a reason), resume or cancel. A finished or cancelled project never reopens, except that a finished Care onboarding project or a finished Local SEO onboarding (SEO-0) project can be
+ * cancelled (it is the client's ongoing Care or Local SEO service; cancelling is how Logan stops its cadences and Claude dispatch). Resuming hands the project's ready Claude steps over at once.
  */
 projectRoutes.patch("/projects/:id", async (c) => {
   const body = await bodyOf(c, PatchProjectBody);
@@ -105,8 +105,10 @@ projectRoutes.patch("/projects/:id", async (c) => {
   const p = await getProject(c.env.DB, c.req.param("id"));
   if (!p) return c.json(NOT_FOUND, 404);
   const careService = p.status === "done" && p.kind === "care_onboarding";
+  const seoService = p.status === "done" && p.templateKey === SEO_ONBOARDING_KEY;
   if (careService && body.status !== "cancelled") return c.json({ error: "This Care project is finished and its Care work is running. It can only be cancelled, which stops that work." }, 409);
-  if ((p.status === "done" && !careService) || p.status === "cancelled") return c.json({ error: `This project is ${p.status}, so it cannot be changed.` }, 409);
+  if (seoService && body.status !== "cancelled") return c.json({ error: "This Local SEO project is finished and its monthly work is running. It can only be cancelled, which stops that work." }, 409);
+  if ((p.status === "done" && !careService && !seoService) || p.status === "cancelled") return c.json({ error: `This project is ${p.status}, so it cannot be changed.` }, 409);
   const next: ProjectStatus = body.status ?? p.status;
   if (next !== "paused" && body.pausedReason !== undefined) return c.json({ error: "Only a paused project has a reason." }, 409);
   const reason = next === "paused" ? (body.pausedReason !== undefined ? cleanText(body.pausedReason, 300) : p.pausedReason) || null : null;

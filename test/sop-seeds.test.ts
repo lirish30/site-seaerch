@@ -13,7 +13,7 @@ beforeEach(async () => {
 
 describe("SEED_SOPS", () => {
   it("every seed passes validateTemplate", () => {
-    expect(SEED_SOPS.map((t) => t.key)).toEqual(["BUILD", "QUICKFIX", "CARE-0", "CARE-1", "CARE-4", "CARE-5", "CARE-3"]);
+    expect(SEED_SOPS.map((t) => t.key)).toEqual(["BUILD", "QUICKFIX", "CARE-0", "CARE-1", "CARE-4", "CARE-5", "CARE-3", "SEO-0", "SEO-1", "SEO-2", "SEO-3"]);
     for (const t of SEED_SOPS) {
       expect(validateTemplate(t), t.key).toEqual([]);
       const parsed = SopTemplateInputSchema.safeParse(t);
@@ -132,11 +132,11 @@ describe("SEED_SOPS", () => {
 });
 
 describe("ensureSeedSops", () => {
-  it("ensureSeedSops inserts seven and a second call inserts none", async () => {
-    expect(await ensureSeedSops(env.DB)).toBe(7);
+  it("ensureSeedSops inserts eleven and a second call inserts none", async () => {
+    expect(await ensureSeedSops(env.DB)).toBe(11);
     expect(await ensureSeedSops(env.DB)).toBe(0);
     const all = await listTemplates(env.DB);
-    expect(all.map((t) => t.key)).toEqual(["BUILD", "QUICKFIX", "CARE-0", "CARE-1", "CARE-4", "CARE-5", "CARE-3"]);
+    expect(all.map((t) => t.key)).toEqual(["BUILD", "QUICKFIX", "CARE-0", "CARE-1", "CARE-4", "CARE-5", "CARE-3", "SEO-0", "SEO-1", "SEO-2", "SEO-3"]);
     expect(all.every((t) => t.version === 1 && t.active)).toBe(true);
     for (const seed of SEED_SOPS) {
       const stored = all.find((t) => t.key === seed.key)!;

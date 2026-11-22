@@ -5,8 +5,14 @@ import type { CareRow, IncidentView, SiteMonitoringView } from "../worker/monito
 import type { CareRunDetail, CareUpdateView, CareUpdatesBoard } from "../worker/care/views";
 import type { CareBatch } from "../worker/db/careUpdates";
 import type { PublicReport } from "../worker/care/reportPublic";
+import type { PublicSeoReport } from "../worker/seo/reportPublic";
 import type { EditLedger } from "../worker/care/ledger";
 import type { ReportRow } from "../worker/care/reportAdmin";
+import type { Citation, CitationStatus, ContentItem, GbpSnapshot, SeoKeyword, SeoProfile, SeoReview } from "../worker/db/seo";
+import type { NapResult } from "../worker/seo/nap";
+import type { GridRow } from "../worker/seo/overview";
+import type { PlaceCandidate } from "../worker/seo/places";
+import type { SeoReportRow } from "../worker/seo/reportAdmin";
 export class ApiError extends Error { constructor(public status: number, message: string, public fields: string[] = [], public code = "", public body: unknown = undefined) { super(message); } }
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -93,6 +99,58 @@ export const careApi = {
   addEditRequest: (businessId: string, title: string) => api.post<{ taskId: string }>(`/clients/${encodeURIComponent(businessId)}/edit-requests`, { title }),
 };
 
+/** Everything about one client's Local SEO in one answer (`GET /clients/:id/seo`). A client with no setup yet gets nulls and empty lists; the profile never carries the checker's raw text. */
+export interface SeoOverview {
+  profile: (Omit<SeoProfile, "napResult"> & { napResult?: undefined }) | null;
+  keywords: SeoKeyword[];
+  latestGrid: GridRow[];
+  snapshot: GbpSnapshot | null;
+  nap: NapResult | null;
+  reviews: SeoReview[];
+  content: ContentItem[];
+  citations: Citation[];
+}
+/** One client's row on the /seo board: what to do next in a sentence, what waits, and last month's report. */
+export interface SeoBoardRow {
+  clientId: string; client: string; next: string; draftsWaiting: number; flaggedReviews: number;
+  report: { id: string; period: string; status: SeoReportRow["status"] } | null;
+}
+export interface SeoProfileInput { placeId: string; trade: string; towns: string[]; gridKm: number; siteId?: string }
+export interface SeoContentEdit { title?: string; metaTitle?: string; metaDescription?: string; body?: string }
+
+/** The Local SEO routes (Plan 14). A refusal is an ApiError whose message is a plain sentence; nothing here ever posts or publishes anywhere. Types only come from the worker. */
+export const seoApi = {
+  overview: (clientId: string) => api.get<SeoOverview>(`/clients/${encodeURIComponent(clientId)}/seo`),
+  /** Google's best matches (five at most) for a business name and address. The owner picks one. */
+  placeSearch: (clientId: string, name: string, address: string) => api.post<{ candidates: PlaceCandidate[] }>(`/clients/${encodeURIComponent(clientId)}/seo/place-search`, { name, address }).then((r) => r.candidates),
+  saveProfile: (clientId: string, input: SeoProfileInput) => api.put<{ profile: SeoOverview["profile"]; citations: Citation[] }>(`/clients/${encodeURIComponent(clientId)}/seo/profile`, input),
+  addKeyword: (clientId: string, term: string, town: string) => api.post<{ keyword: SeoKeyword; created: boolean }>(`/clients/${encodeURIComponent(clientId)}/seo/keywords`, { term, town }).then((r) => r.keyword),
+  /** Switches a keyword off; its past rank checks stay. */
+  switchOffKeyword: (clientId: string, keywordId: string) => api.del<{ keyword: SeoKeyword }>(`/clients/${encodeURIComponent(clientId)}/seo/keywords/${encodeURIComponent(keywordId)}`).then((r) => r.keyword),
+  setCitation: (clientId: string, directory: string, patch: { status: CitationStatus; url?: string; note?: string }) =>
+    api.put<{ citation: Citation; citations: Citation[] }>(`/clients/${encodeURIComponent(clientId)}/seo/citations/${encodeURIComponent(directory)}`, patch).then((r) => r.citations),
+  napCheck: (clientId: string) => api.post<{ nap: NapResult }>(`/clients/${encodeURIComponent(clientId)}/seo/nap-check`).then((r) => r.nap),
+  baseline: (clientId: string) => api.post<{ snapshot: GbpSnapshot | null; nap: NapResult | null; napNote: string | null; ranked: number }>(`/clients/${encodeURIComponent(clientId)}/seo/baseline`),
+  rankCheck: (clientId: string) => api.post<{ checked: number; unmeasured: number }>(`/clients/${encodeURIComponent(clientId)}/seo/rank-check`),
+  /** Starts last month's report now. 409 with a plain sentence when there is no usable rank check yet. */
+  buildReport: (clientId: string) => api.post<{ report: { id: string; status: string; period: string } }>(`/clients/${encodeURIComponent(clientId)}/seo/report`).then((r) => r.report),
+  /** Logan's own words as the reply; nothing is sent anywhere. */
+  saveDraft: (reviewId: string, draft: string) => api.put<{ review: SeoReview }>(`/seo/reviews/${encodeURIComponent(reviewId)}/draft`, { draft }).then((r) => r.review),
+  /** "I posted it": Logan says he put the reply on Google himself. */
+  markPosted: (reviewId: string) => api.post<{ review: SeoReview }>(`/seo/reviews/${encodeURIComponent(reviewId)}/posted`).then((r) => r.review),
+  skipReview: (reviewId: string) => api.post<{ review: SeoReview }>(`/seo/reviews/${encodeURIComponent(reviewId)}/skip`).then((r) => r.review),
+  editContent: (id: string, words: SeoContentEdit) => api.put<{ content: ContentItem }>(`/seo/content/${encodeURIComponent(id)}`, words).then((r) => r.content),
+  approveContent: (id: string) => api.post<{ content: ContentItem }>(`/seo/content/${encodeURIComponent(id)}/approve`).then((r) => r.content),
+  /** "I put it on the site": the app publishes nothing. The address is optional and must be https. */
+  markPublished: (id: string, url?: string) => api.post<{ content: ContentItem }>(`/seo/content/${encodeURIComponent(id)}/published`, url ? { url } : {}).then((r) => r.content),
+  rejectContent: (id: string, reason: string) => api.post<{ content: ContentItem }>(`/seo/content/${encodeURIComponent(id)}/reject`, { reason }).then((r) => r.content),
+  /** One client's reports, newest month first, each with its link when it has one. */
+  clientReports: (clientId: string) => api.get<{ reports: SeoReportRow[] }>(`/seo/reports?clientId=${encodeURIComponent(clientId)}`).then((r) => r.reports),
+  editReport: (id: string, words: { summary: string; recommendation: string; priorities: string[] }) => api.put<{ report: SeoReportRow }>(`/seo/reports/${encodeURIComponent(id)}`, words).then((r) => r.report),
+  revokeReport: (id: string) => api.post<{ report: SeoReportRow }>(`/seo/reports/${encodeURIComponent(id)}/revoke`).then((r) => r.report),
+  board: () => api.get<{ period: string; rows: SeoBoardRow[] }>("/seo/board"),
+};
+
 // The client's subscription page (`/s/<token>`). Public: it deliberately bypasses `req`, whose 401 handling sends the visitor to the owner's login. No cookie is sent.
 
 /** The page's state as the server reports it now: `{ status, page }`, `page` only for a 200. A dropped connection is `status` 0. */
@@ -108,6 +166,14 @@ export async function publicCareReport(token: string): Promise<{ status: number;
   try {
     const res = await fetch(`/api/public/m/${token}`, { credentials: "omit", cache: "no-store" });
     return { status: res.status, page: res.ok ? ((await res.json()) as PublicReport) : null };
+  } catch { return { status: 0, page: null }; }
+}
+
+/** The client's monthly Local SEO report (`/l/<token>`): `{ status, page }`, `page` only for a 200. A dropped connection is `status` 0. Public: no cookie is sent. */
+export async function publicSeoReport(token: string): Promise<{ status: number; page: PublicSeoReport | null }> {
+  try {
+    const res = await fetch(`/api/public/l/${token}`, { credentials: "omit", cache: "no-store" });
+    return { status: res.status, page: res.ok ? ((await res.json()) as PublicSeoReport) : null };
   } catch { return { status: 0, page: null }; }
 }
 

@@ -53,10 +53,10 @@ describe("mcp", () => {
     expect((await SELF.fetch("https://x/mcp", { method: "GET" })).status).toBe(401);
   });
 
-  it("mcp lists the eight task and lead tools, the eleven read tools, the five act tools, the money summary, the three care tools and the care report tool", async () => {
+  it("mcp lists the eight task and lead tools, the eleven read tools, the five act tools, the money summary, the three care tools, the care report tool and the Local SEO tool", async () => {
     const j = await result("tools/list", {});
-    expect(j.result.tools).toHaveLength(29);
-    expect(j.result.tools.map((t: { name: string }) => t.name).sort()).toEqual(["add_note", "add_task", "add_task_comment", "complete_claude_task", "get_care_overview", "get_care_report", "get_care_updates", "get_client", "get_deal", "get_lead", "get_meeting", "get_money_summary", "get_project", "get_site", "get_timeline", "list_approvals", "list_incidents", "list_invoices", "list_meetings",
+    expect(j.result.tools).toHaveLength(30);
+    expect(j.result.tools.map((t: { name: string }) => t.name).sort()).toEqual(["add_note", "add_task", "add_task_comment", "complete_claude_task", "get_care_overview", "get_care_report", "get_care_updates", "get_client", "get_deal", "get_lead", "get_meeting", "get_money_summary", "get_project", "get_seo_status", "get_site", "get_timeline", "list_approvals", "list_incidents", "list_invoices", "list_meetings",
         "list_open_tasks", "list_projects", "log_time", "next_claude_task", "propose_approval", "queue_status", "release_claude_task", "run_audit", "search_clients", "search_leads"]);
   });
 

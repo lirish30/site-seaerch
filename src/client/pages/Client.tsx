@@ -7,8 +7,10 @@ import ActivityTab from "../components/ActivityTab";
 import Icon from "../components/Icon";
 import MeetingsPanel from "../components/MeetingsPanel";
 import CarePanel from "../components/client/CarePanel";
+import ClientSeoPanel from "../components/client/ClientSeoPanel";
 import LinkedPanel from "../components/client/LinkedPanel";
 import SitePanel from "../components/client/SitePanel";
+import { hasSeoOnboarding, hasSeoPlan } from "../seoView";
 import { workError } from "../workData";
 import type { ClientRecord } from "../../worker/clients/record";
 
@@ -166,6 +168,8 @@ export default function ClientPage() {
             <LinkedPanel client={client} today={today} />
           </div>
         </div>
+        <ClientSeoPanel businessId={b.id} clientName={b.name} clientAddress={b.address ?? ""} hasPlan={hasSeoPlan(client.subscriptions) || hasSeoOnboarding(client.projects)}
+          sites={client.sites.flatMap(({ site, monitoring }) => (monitoring.domain ? [{ id: site.id, domain: monitoring.domain }] : []))} />
       </div>
     </div>
   );

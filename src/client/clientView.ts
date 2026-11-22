@@ -1,5 +1,5 @@
 import type { AccessStatus, Site } from "../worker/db/sites";
-import type { ProjectKind, ProjectStatus } from "../worker/db/projects";
+import { projectIsLive, SEO_ONBOARDING_KEY, type ProjectKind, type ProjectStatus } from "../worker/db/projects";
 import type { Tone } from "./projectView";
 import type { ClientRow } from "../worker/clients/record";
 import { shortDate } from "./billingView";
@@ -161,9 +161,10 @@ const STATUS_LABEL: Record<ProjectStatus, { label: string; tone: Tone }> = {
   active: { label: "Active", tone: "neutral" }, paused: { label: "Paused", tone: "warn" }, done: { label: "Done", tone: "good" }, cancelled: { label: "Cancelled", tone: "muted" },
 };
 
-/** The badge on a project in the Linked panel, from its status (the record does not say whether it waits on the client). A finished Care setup is the Care service still running. */
-export function projectStatusLabel(p: { status: ProjectStatus; kind: ProjectKind }): { label: string; tone: Tone } {
-  return p.status === "done" && p.kind === "care_onboarding" ? { label: "Care running", tone: "good" } : STATUS_LABEL[p.status];
+/** The badge on a project in the Linked panel, from its status (the record does not say whether it waits on the client). A finished Care setup is the Care service still running, and a finished Local SEO onboarding (SEO-0) is the Local SEO service still running. */
+export function projectStatusLabel(p: { status: ProjectStatus; kind: ProjectKind; templateKey: string | null }): { label: string; tone: Tone } {
+  if (p.status === "done" && projectIsLive(p)) return { label: p.templateKey === SEO_ONBOARDING_KEY ? "Local SEO running" : "Care running", tone: "good" };
+  return STATUS_LABEL[p.status];
 }
 
 /** The path to a won lead's client record, or null when the lead is not won yet. The id is encoded so a slash or a space stays one path segment. */

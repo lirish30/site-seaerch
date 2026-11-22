@@ -275,4 +275,93 @@ const CARE_3: SopTemplateInput = {
   ]),
 };
 
-export const SEED_SOPS: SopTemplateInput[] = [BUILD, QUICKFIX, CARE_0, CARE_1, CARE_4, CARE_5, CARE_3];
+/** Local SEO onboarding and baseline, once per client (Plan 14). Started as a `custom` project when a Local SEO document is paid; finishing it attaches SEO-1, SEO-2 and SEO-3. */
+const SEO_0: SopTemplateInput = {
+  key: "SEO-0",
+  name: "Local SEO onboarding",
+  kind: "project",
+  cadence: null,
+  cadenceDay: null,
+  appliesTo: ["local_seo", "local_seo_growth"],
+  active: true,
+  steps: stepsOf([
+    {
+      key: "setup", title: "Set up Local SEO", steps: [
+        { key: "1.1", title: "Turn the onboarding answers into the intake", owner: L, est: 15, done: "The notes list the main and secondary services, the service area, three competitors, what sets the business apart, the jobs to win, the review links, and who owns the Google Business Profile.", say: "We're reading your answers about your services and area" },
+        { key: "1.2", title: "Get access to the accounts", owner: L, est: 10, done: "Manager rights on the Google Business Profile, plus analytics, search and site admin access, are in. The notes name the password manager item for each, never the login itself.", say: "We're getting access to your Google profile and site" },
+        { key: "1.3", title: "Set up the Local SEO profile in the app", owner: L, est: 10, done: "The client's Local SEO panel has the right Google place, the name, address and phone, the trade and the towns served." },
+        { key: "1.4", title: "Run the baseline", owner: L, est: 10, done: "The client's Local SEO panel shows a Google listing snapshot, a name, address and phone check result and a first rank grid for the chosen search terms.", requires: ["1.3"], say: "We're taking your starting numbers" },
+        { key: "1.5", title: "Fill the citation list and look at three competitors", owner: CL, est: 45, done: "The citation list shows each directory as found, wrong or missing, and the notes compare reviews and rating against three competitors. Logan has approved it.", requires: ["1.4"] },
+        { key: "1.6", title: "Write the keyword and page plan", owner: CL, est: 20, done: "Five to ten search terms are chosen, each town is matched to a service, and there are no more town pages than can be kept up. Logan has approved the plan.", requires: ["1.4"] },
+        { key: "1.7", title: "Write the fix list and the 90-day plan", owner: CL, est: 15, done: "The fix list and a 90-day plan are written in plain words, the one-time setup fee is on them, and the client has accepted them in writing.", requires: ["1.6"], say: "Your fix list and 90-day plan are ready" },
+        { key: "1.8", title: "Make the foundational fixes", owner: CL, est: 240, done: "Titles, descriptions, service pages, internal links, and the profile's categories, services and hours are fixed or noted as not possible and why. Logan has approved each change before it went live.", requires: ["1.7"], say: "We're making the first fixes to your site and profile" },
+        { key: "1.9", title: "Check AI search readiness", owner: L, est: 30, done: "Structured data for the business and its services is on the site and passes a check, and the top 10 queries were tried by hand in AI answers with what showed up written down.", requires: ["1.8"], say: "We're checking how you show up in AI answers" },
+      ],
+    },
+  ]),
+};
+
+/** The monthly Local SEO cycle (Plan 14). The data pull and the report step are ticked by the app; the rest are worked by hand. Never dispatched as one Claude job: each part has its own. */
+const SEO_1: SopTemplateInput = {
+  key: "SEO-1",
+  name: "Local SEO monthly cycle",
+  kind: "recurring",
+  cadence: "monthly",
+  cadenceDay: 10,
+  appliesTo: ["local_seo", "local_seo_growth"],
+  active: true,
+  steps: stepsOf([
+    {
+      key: "monthly", title: "Monthly Local SEO", steps: [
+        { key: "1.1", title: "Pull the month's data", owner: C, est: 2, done: "The rank grid, the Google listing numbers, the review count and any new reviews are saved for the month. The app does this." },
+        { key: "1.2", title: "Draft and post review replies", owner: CL, est: 5, done: "Every new review has a reply drafted, each negative one is flagged to Logan, and Logan has approved and posted the replies or set them aside with a reason." },
+        { key: "1.3", title: "Prepare the Google posts and photos", owner: CL, est: 5, done: "Two to four posts and the month's photos are drafted, and Logan has approved and posted them, along with any hours, holiday or service changes." },
+        { key: "1.4", title: "Approve the content drafts", owner: CL, est: 15, done: "The month's pieces are drafted to the plan with title, description, internal links and image text, and Logan has approved each one, published it or rejected it with a reason." },
+        { key: "1.5", title: "Watch the site's technical health", owner: C, est: 3, done: "Indexing, broken pages, speed, structured data and the sitemap are checked, and each problem found is on the fix list or fixed." },
+        { key: "1.6", title: "Check the citations and name, address and phone", owner: CL, est: 5, done: "The name, address and phone check is rerun and each wrong or missing directory is drafted for fixing. Logan has approved the fixes." },
+        { key: "1.7", title: "Approve and send the report", owner: CL, est: 5, done: "The report has Logan's approval, has been sent to the client by the 10th, and every draft this month is published or rejected with a reason.", requires: ["1.1"] },
+      ],
+    },
+  ]),
+};
+
+/** The quarterly Local SEO review (Plan 14). No automation. */
+const SEO_2: SopTemplateInput = {
+  key: "SEO-2",
+  name: "Local SEO quarterly review",
+  kind: "recurring",
+  cadence: "quarterly",
+  cadenceDay: 15,
+  appliesTo: ["local_seo", "local_seo_growth"],
+  active: true,
+  steps: stepsOf([
+    {
+      key: "quarterly", title: "Quarterly Local SEO", steps: [
+        { key: "1.1", title: "Refresh competitors, keywords and the profile audit", owner: CL, est: 20, done: "Competitors and keywords are refreshed (search terms ranking 5 to 20 are noted), older pages are checked for decay, the profile's categories and attributes are audited, and the top queries were tried by hand in AI answers and written down." },
+        { key: "1.2", title: "Write the strategy memo and next quarter's plan", owner: CL, est: 10, done: "A short memo says what moved, what to do next quarter and why, and Logan has approved it.", requires: ["1.1"] },
+        { key: "1.3", title: "Hold the strategy call", owner: L, est: 30, done: "The call happened and the notes are saved with the next action dated, or the step is skipped because the plan has no call.", requires: ["1.2"], skippable: true },
+      ],
+    },
+  ]),
+};
+
+/** The annual Local SEO review (Plan 14). No automation. */
+const SEO_3: SopTemplateInput = {
+  key: "SEO-3",
+  name: "Local SEO annual review",
+  kind: "recurring",
+  cadence: "annual",
+  cadenceDay: 15,
+  appliesTo: ["local_seo", "local_seo_growth"],
+  active: true,
+  steps: stepsOf([
+    {
+      key: "annual", title: "Annual Local SEO", steps: [
+        { key: "1.1", title: "Run a full re-audit", owner: CL, est: 60, done: "The same checks as the first baseline are run again and compared with it, and Logan has approved the written result." },
+        { key: "1.2", title: "Review the price and term, and ask for a testimonial", owner: CL, est: 20, done: "The price and term are reviewed for the coming year, a renewal note and a testimonial or case study request are drafted, and Logan has approved and sent them.", requires: ["1.1"] },
+      ],
+    },
+  ]),
+};
+
+export const SEED_SOPS: SopTemplateInput[] = [BUILD, QUICKFIX, CARE_0, CARE_1, CARE_4, CARE_5, CARE_3, SEO_0, SEO_1, SEO_2, SEO_3];

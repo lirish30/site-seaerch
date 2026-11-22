@@ -266,13 +266,18 @@ describe("problemText", () => {
 
 describe("projectStatusLabel", () => {
   it("labels a project from its status alone, with no waiting-on-client guess", () => {
-    expect(projectStatusLabel({ status: "active", kind: "build" })).toEqual({ label: "Active", tone: "neutral" });
-    expect(projectStatusLabel({ status: "paused", kind: "build" })).toEqual({ label: "Paused", tone: "warn" });
-    expect(projectStatusLabel({ status: "done", kind: "build" })).toEqual({ label: "Done", tone: "good" });
-    expect(projectStatusLabel({ status: "cancelled", kind: "build" })).toEqual({ label: "Cancelled", tone: "muted" });
+    expect(projectStatusLabel({ status: "active", kind: "build", templateKey: null })).toEqual({ label: "Active", tone: "neutral" });
+    expect(projectStatusLabel({ status: "paused", kind: "build", templateKey: null })).toEqual({ label: "Paused", tone: "warn" });
+    expect(projectStatusLabel({ status: "done", kind: "build", templateKey: null })).toEqual({ label: "Done", tone: "good" });
+    expect(projectStatusLabel({ status: "cancelled", kind: "build", templateKey: null })).toEqual({ label: "Cancelled", tone: "muted" });
   });
   it("a finished Care setup is the client's running Care service", () => {
-    expect(projectStatusLabel({ status: "done", kind: "care_onboarding" })).toEqual({ label: "Care running", tone: "good" });
+    expect(projectStatusLabel({ status: "done", kind: "care_onboarding", templateKey: "CARE-0" })).toEqual({ label: "Care running", tone: "good" });
+  });
+  it("a finished SEO-0 is the Local SEO service still running, and a finished hand-made custom project is plain Done", () => {
+    expect(projectStatusLabel({ status: "done", kind: "custom", templateKey: "SEO-0" })).toEqual({ label: "Local SEO running", tone: "good" });
+    expect(projectStatusLabel({ status: "done", kind: "custom", templateKey: null })).toEqual({ label: "Done", tone: "good" });
+    expect(projectStatusLabel({ status: "cancelled", kind: "custom", templateKey: "SEO-0" })).toEqual({ label: "Cancelled", tone: "muted" });
   });
 });
 

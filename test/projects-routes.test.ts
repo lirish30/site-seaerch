@@ -241,6 +241,27 @@ describe("creating and changing a project", () => {
     expect((await json("PATCH", `/projects/${care.project.id}`, { status: "active" })).status).toBe(409);
   });
 
+  it("a finished Local SEO onboarding project (SEO-0) can be cancelled to stop its Local SEO work, and only cancelled", async () => {
+    const seo = await seedProject({ bare: true, kind: "custom", templateKey: "SEO-0" });
+    await markProjectDone(env.DB, seo.project.id, T0);
+    await addCadence(env.DB, seo.project.id, "SEO-1");
+    expect((await listCadences(env.DB, { liveProjectsOnly: true })).map((c) => c.projectId)).toContain(seo.project.id);
+    for (const status of ["active", "paused"]) {
+      const r = await json("PATCH", `/projects/${seo.project.id}`, { status });
+      expect(r.status, status).toBe(409);
+      expect(r.body.error).toMatch(/Local SEO/);
+    }
+    expect((await getProject(env.DB, seo.project.id))!.status).toBe("done");
+    const r = await json("PATCH", `/projects/${seo.project.id}`, { status: "cancelled" });
+    expect(r.status).toBe(200);
+    expect(r.body.project.status).toBe("cancelled");
+    expect((await listCadences(env.DB, { liveProjectsOnly: true })).map((c) => c.projectId)).not.toContain(seo.project.id);
+    // Any other finished custom project is still final.
+    const other = await seedProject({ bare: true, kind: "custom", templateKey: "OTHER" });
+    await markProjectDone(env.DB, other.project.id, T0);
+    expect((await json("PATCH", `/projects/${other.project.id}`, { status: "cancelled" })).status).toBe(409);
+  });
+
   it("adds an ad hoc task that is not a step, and refuses a login in its title", async () => {
     const s = await seedProject({ bare: true });
     const r = await json("POST", `/projects/${s.project.id}/tasks`, { title: "Call the printer", owner: "logan", estMinutes: 30, billable: true, dueOn: "2026-12-24" });

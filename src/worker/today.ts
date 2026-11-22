@@ -21,7 +21,7 @@ import { lastRunsFor } from "./db/careUpdates";
 import { UPDATE_DETAIL, isStillBroken } from "./care/incidents";
 import { domainDaysLeft } from "./monitoring/incidents";
 
-export const TODAY_KINDS = ["follow_up_due", "draft_unsent", "stalled_deal", "starred_idle", "promising_quick_scan", "proposal_follow_up", "onboarding_attention", "project_attention", "billing_attention", "access_missing", "site_incident", "care_edit_hours"] as const;
+export const TODAY_KINDS = ["follow_up_due", "draft_unsent", "stalled_deal", "starred_idle", "promising_quick_scan", "proposal_follow_up", "onboarding_attention", "project_attention", "billing_attention", "access_missing", "site_incident", "care_edit_hours", "seo_waiting"] as const;
 export type TodayKind = (typeof TODAY_KINDS)[number];
 export const isTodayKind = (s: string): s is TodayKind => (TODAY_KINDS as readonly string[]).includes(s);
 
@@ -126,6 +126,31 @@ async function editHoursAttention(db: D1Database, now: Date): Promise<Map<string
   for (const { id } of ids) {
     const l = await editLedger({ DB: db }, id, month, tz);
     if (l && l.state !== "ok") out.set(id, { percent: l.percent, priority: l.state === "over" ? 64 : 60 });
+  }
+  return out;
+}
+
+/**
+ * A Local SEO client with something waiting on Logan, one row per client: a low-rated review (flagged, not yet posted or skipped) is priority 66 and says the stars of the lowest one (the oldest of those on a tie);
+ * otherwise review replies and content that Claude has drafted and he has not dealt with (`drafted`) are priority 58 with their count. Only real clients: a test client never shows. `since` is when the newest waiting
+ * low-rated review arrived, so a Done pressed before a new one came in does not hide it. The owner's own work, so it stays for a suppressed lead.
+ */
+async function seoAttention(db: D1Database): Promise<Map<string, { reason: (name: string) => string; priority: number; since: number }>> {
+  const rows = (await db.prepare(
+    `SELECT b.id AS id,
+       (SELECT COUNT(*) FROM seo_reviews r WHERE r.business_id = b.id AND r.reply_status = 'drafted') AS replies,
+       (SELECT COUNT(*) FROM seo_content c WHERE c.business_id = b.id AND c.status = 'drafted') AS content,
+       (SELECT r.rating FROM seo_reviews r WHERE r.business_id = b.id AND r.flagged = 1 AND r.reply_status NOT IN ('posted', 'skipped') ORDER BY r.rating, r.first_seen_on, r.created_at, r.rowid LIMIT 1) AS stars,
+       (SELECT MAX(r.created_at) FROM seo_reviews r WHERE r.business_id = b.id AND r.flagged = 1 AND r.reply_status NOT IN ('posted', 'skipped')) AS flagged_at
+     FROM businesses b
+     WHERE b.archived_at IS NULL AND ${clientSql("b")} AND NOT ${testClientSql("b")}
+       AND b.id IN (SELECT business_id FROM seo_reviews WHERE reply_status = 'drafted' OR (flagged = 1 AND reply_status NOT IN ('posted', 'skipped'))
+                    UNION SELECT business_id FROM seo_content WHERE status = 'drafted')`,
+  ).all<{ id: string; replies: number; content: number; stars: number | null; flagged_at: string | null }>()).results;
+  const out = new Map<string, { reason: (name: string) => string; priority: number; since: number }>();
+  for (const r of rows) {
+    if (r.stars !== null) out.set(r.id, { reason: (name) => `${name}: a review of ${r.stars} ${r.stars === 1 ? "star" : "stars"} needs you`, priority: 66, since: r.flagged_at ? ms(r.flagged_at) : -Infinity });
+    else if (r.replies + r.content > 0) out.set(r.id, { reason: (name) => `${name}: ${plural(r.replies + r.content, "Local SEO draft")} waiting`, priority: 58, since: -Infinity });
   }
   return out;
 }
@@ -284,6 +309,8 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
   const incidents = await incidentAttention(db, now);
   // A Care client's edit hours for this month running out: the owner's own work, so it stays for a suppressed lead.
   const editHours = await editHoursAttention(db, now);
+  // A Local SEO client with drafts waiting or a low-rated review to answer: the owner's own work, so it stays for a suppressed lead.
+  const seo = await seoAttention(db);
   const activity = await recentActivity(db, candidates.map((b) => b.id), new Date(t - ACTIVITY_WINDOW_DAYS * DAY).toISOString());
 
   const lastContact = new Map<string, number>(), lastExport = new Map<string, number>();
@@ -345,6 +372,8 @@ export async function buildToday(db: D1Database, now: Date): Promise<TodayItem[]
     const edits = editHours.get(b.id);
     if (edits && !hidden(b.id, "care_edit_hours"))
       items.push(push("care_edit_hours", b, edits.percent === null ? `${b.name} has logged edit time this month with no edit hours included` : `${b.name} has used ${edits.percent}% of this month's edit hours`, null, edits.priority));
+    const seoRow = seo.get(b.id);
+    if (seoRow && !hidden(b.id, "seo_waiting", seoRow.since)) items.push(push("seo_waiting", b, seoRow.reason(b.name), null, seoRow.priority));
     // A paying client's onboarding is the owner's own work (like a stalled deal), so it stays for a suppressed lead.
     const attention = onboarding.get(b.id);
     if (attention && !hidden(b.id, "onboarding_attention")) items.push(push("onboarding_attention", b, attention, null, 70));

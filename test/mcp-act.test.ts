@@ -52,6 +52,8 @@ describe("the tool registry", () => {
     "get_care_overview", "get_care_updates", "list_incidents",
     // the care report read tool
     "get_care_report",
+    // the Local SEO read tool
+    "get_seo_status",
   ];
   const registered = async (): Promise<string[]> => (await mcp("tools/list", {})).result.tools.map((t: { name: string }) => t.name);
 
