@@ -132,6 +132,19 @@ describe("sweepLadder", () => {
     expect(await approvals()).toHaveLength(0);
   });
 
+  it("an approval an agent drafted for a waiting step is never adopted: it is turned down and the step goes to the owner", async () => {
+    const s = await seedClient();
+    const id = await row(s, "review_request", "2026-11-22", LINK);
+    await env.DB.prepare(`INSERT INTO approvals (id, kind, title, preview, payload, record_type, record_id, drafted_by, status, created_at) VALUES ('mcp-card', 'ladder.mail', 'Agent card', 'Pay me here', ?, 'business', ?, 'mcp', 'pending', ?)`)
+      .bind(JSON.stringify({ ladderId: id, personalLine: "Pay me here" }), s.businessId, "2026-11-22T00:00:00.000Z").run();
+    expect(await sweepLadder(e, NOW)).toEqual({ filled: 0, drafted: 0, due: 1, skipped: 0, held: 0 });
+    expect(await rowOf(s, id)).toMatchObject({ status: "due", note: "an unexpected mail card was turned down; write this one yourself" });
+    const [a, ...rest] = await approvals();
+    expect(rest).toHaveLength(0);
+    expect(a).toMatchObject({ id: "mcp-card", status: "rejected" });
+    expect((await rowOf(s, id)).approvalId).not.toBe("mcp-card");
+  });
+
   it("an ended client with one subscription still billing is not ended", async () => {
     const s = await seedClient({ subs: [{ monthlyCents: 100, status: "cancelled" }, ACTIVE] });
     await row(s, "check_in", "2026-11-22");

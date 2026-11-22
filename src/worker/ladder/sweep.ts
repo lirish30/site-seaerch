@@ -2,6 +2,7 @@ import { LADDER_MAIL_KIND } from "../approvals/ladderMail"; // importing it regi
 import { calendarDateIn, calendarDaysBetween } from "../billing/dates";
 import { signOff } from "../billing/mail";
 import { clientSql, testClientSql } from "../clients/record";
+import { reject } from "../approvals/decide";
 import { createApprovalOnce } from "../db/approvals";
 import { getBusiness } from "../db/businesses";
 import { dueLadderRows, insertLadderRows, moveLadder, type LadderRow } from "../db/ladder";
@@ -39,12 +40,14 @@ async function liveClientIds(db: D1Database): Promise<string[]> {
 }
 
 /** The approval already made for a step (in any state), or null: a crash between making it and marking the step leaves one behind. */
-async function approvalFor(db: D1Database, ladderId: string): Promise<{ id: string; status: string } | null> {
-  return await db.prepare(`SELECT id, status FROM approvals WHERE kind = ? AND json_extract(payload, '$.ladderId') = ? ORDER BY created_at, id LIMIT 1`).bind(LADDER_MAIL_KIND, ladderId).first<{ id: string; status: string }>();
+async function approvalFor(db: D1Database, ladderId: string): Promise<{ id: string; status: string; drafted_by: string } | null> {
+  return await db.prepare(`SELECT id, status, drafted_by FROM approvals WHERE kind = ? AND json_extract(payload, '$.ladderId') = ? ORDER BY created_at, id LIMIT 1`).bind(LADDER_MAIL_KIND, ladderId).first<{ id: string; status: string; drafted_by: string }>();
 }
 
 /** The note a step gets when its mail was turned down in the inbox. */
 export const TURNED_DOWN = "the mail was turned down in Approvals";
+/** The note a step gets when a card for it was drafted by an agent, not by this sweep: the app writes every ladder mail itself, so such a card is turned down and never mailed. */
+export const AGENT_CARD = "an unexpected mail card was turned down; write this one yourself";
 
 /**
  * The daily ladder sweep (Plan 15), in this order: adds the steps of any build whose hook never ran; from 1 December on, adds this year's December letter for each live real client (once); skips any waiting step that is
@@ -110,6 +113,12 @@ export async function sweepLadder(env: Env, now: Date): Promise<{ filled: number
     // the owner instead of sitting `drafted` behind an approval that nobody can act on.
     const existing = made ? null : await approvalFor(db, row.id);
     if (!made && !existing) continue;
+    // A card an agent drafted for this step (the app proposes ladder mail itself, so the agent tool refuses it, but a card made before that could still be here) is never adopted: its words are not the app's.
+    if (existing && existing.drafted_by === "mcp") {
+      await reject(db, existing.id, AGENT_CARD);
+      if (await moveLadder(db, row.id, ["waiting"], "due", { note: AGENT_CARD })) out.due++;
+      continue;
+    }
     if (existing && existing.status !== "pending") {
       const note = existing.status === "rejected" ? TURNED_DOWN : "the mail was already approved";
       if (await moveLadder(db, row.id, ["waiting"], "due", { approvalId: existing.id, note })) out.due++;
