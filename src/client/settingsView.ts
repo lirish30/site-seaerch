@@ -128,10 +128,12 @@ export function sinceLabel(iso: string, now = new Date()): string {
 }
 
 /** The Google permissions the app asks for (see SCOPES in src/worker/google/oauth.ts), in the words a person would use. */
-export const PERMISSIONS: { icon: "upload" | "calendar"; title: string; text: string; scope: string }[] = [
+export const PERMISSIONS: { icon: "upload" | "calendar" | "search" | "trending"; title: string; text: string; scope: string }[] = [
   { icon: "upload", title: "Save reports to Drive", text: "PDFs and Docs go into a “Site Search reports” folder it creates.", scope: "drive.file" },
   { icon: "calendar", title: "Book calls on your calendar", text: "Adds a booked call, with a Meet link, to your primary calendar and removes it if the guest cancels.", scope: "calendar.events" },
   { icon: "calendar", title: "Check when you’re busy", text: "Reads busy and free times on your primary calendar only, so nobody books over something else.", scope: "calendar.freebusy" },
+  { icon: "search", title: "Read Search Console", text: "Reads a client’s clicks, searches and top pages for the monthly traffic report. Read only.", scope: "webmasters.readonly" },
+  { icon: "trending", title: "Read Analytics", text: "Reads a client’s visits and where they came from for the monthly traffic report. Read only.", scope: "analytics.readonly" },
 ];
 
 // ---------- Mailing footer ----------

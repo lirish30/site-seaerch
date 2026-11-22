@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import type { Env } from "../env";
-import { authUrl, exchangeCode, revoke, signState, verifyState, hasCalendarScope } from "../google/oauth";
+import { authUrl, exchangeCode, revoke, signState, verifyState, hasCalendarScope, hasTrafficScopes } from "../google/oauth";
 import { encryptSecret, decryptSecret } from "../google/crypto";
 import { oauthClient } from "../google/access";
 import { getGoogleAuth, saveGoogleAuth, deleteGoogleAuth } from "../db/google";
@@ -12,7 +12,7 @@ export const googleRoutes = new Hono<{ Bindings: Env }>();
 
 googleRoutes.get("/status", async (c) => {
   const row = await getGoogleAuth(c.env.DB);
-  return c.json({ configured: !!oauthClient(c.env, new URL(c.req.url).origin), connected: !!row, email: row?.email ?? null, calendar: hasCalendarScope(row?.scope), ...(row ? { connected_at: row.connected_at } : {}) });
+  return c.json({ configured: !!oauthClient(c.env, new URL(c.req.url).origin), connected: !!row, email: row?.email ?? null, calendar: hasCalendarScope(row?.scope), traffic: hasTrafficScopes(row?.scope), ...(row ? { connected_at: row.connected_at } : {}) });
 });
 
 googleRoutes.get("/connect", async (c) => {

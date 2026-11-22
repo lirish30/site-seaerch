@@ -68,7 +68,7 @@ describe("mailing footer and email defaults", () => {
 describe("google status", () => {
   it("reports when it was connected (only while connected), and the callback returns to the Google page", async () => {
     await env.DB.prepare(`DELETE FROM google_auth`).run();
-    expect(await (await api("/api/google/status")).json()).toEqual({ configured: false, connected: false, email: null, calendar: false });
+    expect(await (await api("/api/google/status")).json()).toEqual({ configured: false, connected: false, email: null, calendar: false, traffic: false });
     await saveGoogleAuth(env.DB, "me@example.com", "sealed", null);
     const st = await (await api("/api/google/status")).json<any>();
     expect(st).toMatchObject({ connected: true, email: "me@example.com", calendar: false }); // connected before the calendar scopes: needs a reconnect

@@ -2,10 +2,15 @@ import type { Fetch } from "./oauth";
 
 const te = new TextEncoder();
 
+/** Google answered with a non-2xx status. `status` is what callers branch on; the message text is what it has always been. */
+export class GoogleApiError extends Error {
+  constructor(public status: number, message: string) { super(message); this.name = "GoogleApiError"; }
+}
+
 export async function google<T>(f: Fetch, token: string, url: string, init: RequestInit = {}): Promise<T> {
   const res = await f(url, { ...init, headers: { authorization: `Bearer ${token}`, ...(init.headers ?? {}) } });
   const json = await res.json<any>().catch(() => ({}));
-  if (!res.ok) throw new Error(`Google API ${res.status}: ${json.error?.message ?? "request failed"}`);
+  if (!res.ok) throw new GoogleApiError(res.status, `Google API ${res.status}: ${json.error?.message ?? "request failed"}`);
   return json as T;
 }
 

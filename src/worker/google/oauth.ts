@@ -4,12 +4,20 @@ import { hmacHex } from "./crypto";
 // A token stored by an earlier consent may still carry the old Gmail scope; it is simply never used.
 // calendar.events creates and deletes the booked-call events (with a Meet link); calendar.freebusy reads busy times on the primary calendar only.
 const CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/calendar.freebusy"];
-export const SCOPES = ["openid", "email", "https://www.googleapis.com/auth/drive.file", ...CALENDAR_SCOPES];
+// webmasters.readonly and analytics.readonly read a client's Search Console and Analytics numbers; nothing writes to either.
+export const TRAFFIC_SCOPES = ["https://www.googleapis.com/auth/webmasters.readonly", "https://www.googleapis.com/auth/analytics.readonly"];
+export const SCOPES = ["openid", "email", "https://www.googleapis.com/auth/drive.file", ...CALENDAR_SCOPES, ...TRAFFIC_SCOPES];
 
 /** True only when the granted scopes (Google's space-separated string) include BOTH calendar scopes: Google's consent screen lets a person untick one, and booking needs free/busy and events. NULL, from before booking existed, is false. */
 export const hasCalendarScope = (scope: string | null | undefined): boolean => {
   const granted = (scope ?? "").split(/\s+/);
   return CALENDAR_SCOPES.every((s) => granted.includes(s));
+};
+
+/** True only when BOTH traffic scopes were granted (the consent screen lets a person untick one). NULL, and anything stored before Plan 16, is false. */
+export const hasTrafficScopes = (scope: string | null | undefined): boolean => {
+  const granted = (scope ?? "").split(/\s+/);
+  return TRAFFIC_SCOPES.every((s) => granted.includes(s));
 };
 
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
