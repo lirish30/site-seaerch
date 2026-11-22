@@ -11,15 +11,17 @@ export interface TrafficView {
   /** Null when search was not measured: the block is left out, never shown as 0. */
   search: { rows: { label: string; value: string }[]; empty: string | null; queries: { text: string; value: string }[]; pages: { text: string; value: string }[] } | null;
   visits: { rows: { label: string; value: string }[] } | null;
+  /** Null when no Business Profile location was linked or it could not be read: the block is left out. A real zero is shown as 0. */
+  profile: { rows: { label: string; value: string }[] } | null;
   note: string;
 }
 
 /**
- * The "Search and visits" section: null (no section) unless a search or a visits block was measured. Queries and paths are returned as they are, for the page to put in as text. `positionLabel` names Search
+ * The "Search and visits" section: null (no section) unless a search, a visits or a Business Profile block was measured. Queries and paths are returned as they are, for the page to put in as text. `positionLabel` names Search
  * Console's average position (Local SEO words it so it is never taken for its own rank check).
  */
 export function trafficView(t: PublicTraffic | undefined, o: { positionLabel?: string } = {}): TrafficView | null {
-  if (!t || (!t.search && !t.visits)) return null;
+  if (!t || (!t.search && !t.visits && !t.profile)) return null;
   const clicks = (n: number) => plural(n, "click", "clicks");
   let search: TrafficView["search"] = null;
   if (t.search) {
@@ -37,5 +39,10 @@ export function trafficView(t: PublicTraffic | undefined, o: { positionLabel?: s
     { label: "People", value: whole(t.visits.users) },
     { label: "Visits from search", value: beside(t.visits.organic, t.visits.previousOrganic) },
   ] } : null;
-  return { search, visits, note: "Counted by Google's own month." };
+  const profile = t.profile ? { rows: [
+    { label: "People tapped to call", value: beside(t.profile.calls, t.profile.previousCalls) },
+    { label: "Directions requested", value: whole(t.profile.directions) },
+    { label: "Website clicks from your profile", value: whole(t.profile.websiteClicks) },
+  ] } : null;
+  return { search, visits, profile, note: "Counted by Google's own month." };
 }

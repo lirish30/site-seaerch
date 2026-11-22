@@ -3,7 +3,7 @@ import { proposeReportApproval } from "../approvals/careReport";
 import { plainSummary, ReportFacts } from "../care/reportFacts";
 import { getReport, setSummary, setTaskAndApproval, type CareReport } from "../db/careReports";
 import type { Env } from "../env";
-import { hasSearchOrVisits } from "../traffic/facts";
+import { hasTrafficData } from "../traffic/facts";
 import { trafficLines } from "../traffic/lines";
 import { enqueueTask } from "./db";
 import { registerTaskKind, type TaskKindDef } from "./registry";
@@ -44,9 +44,17 @@ const TRAFFIC_RULES = [
   "Never say what caused a change in them, never mention leads, sales, calls or money, and never promise a result. A part that is not listed was not measured: do not say anything about it.",
 ].join(" ");
 
+/** The same block when the traffic also carries Business Profile numbers: Claude may say those three counts (as Google's), and still nothing about leads, sales, money, causes or promises. */
+const PROFILE_TRAFFIC_RULES = [
+  "The numbers also include a \"Search and visits\" part. Use only the numbers listed there, and say each is counted by Google. Say how a number compares with last month only when last month's figure is given.",
+  "It may list a \"Google Business Profile\" line: how many times people tapped to call, asked for directions and clicked through to the website from the business's Google listing. You may say those three numbers (calls, direction requests and website clicks), always as counted by Google, and nothing more about them: a tap to call is not a booked job.",
+  "Never say what caused a change in them, never mention leads, sales or money, and never promise a result. A part that is not listed was not measured: do not say anything about it.",
+].join(" ");
+
 /** The fixed instructions for Claude's draft of `f`: Care's own rules, and one more block when the report carries traffic. The text is the same for every report without it. */
 export function instructionsFor(f: ReportFacts): string {
-  return (hasSearchOrVisits(f.traffic) ? [...RULES.slice(0, -1), TRAFFIC_RULES, RULES[RULES.length - 1]] : RULES).join("\n\n");
+  const t = f.traffic;
+  return (hasTrafficData(t) ? [...RULES.slice(0, -1), t.profile ? PROFILE_TRAFFIC_RULES : TRAFFIC_RULES, RULES[RULES.length - 1]] : RULES).join("\n\n");
 }
 
 const plain = (report: CareReport): string => {

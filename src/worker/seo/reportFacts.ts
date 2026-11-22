@@ -6,7 +6,7 @@ import {
 } from "../db/seo";
 import type { Env } from "../env";
 import { periodLabel, zoneOf } from "../sop/cadence";
-import { hasSearchOrVisits, plainTraffic, TrafficFacts } from "../traffic/facts";
+import { hasTrafficData, plainTraffic, TrafficFacts } from "../traffic/facts";
 import { trafficFor } from "../traffic/forClient";
 import { isUsable } from "./grid";
 import { parseNapResult } from "./nap";
@@ -232,7 +232,7 @@ export function plainSeoSummary(f: SeoReportFacts): string {
   if (f.nap && !off.length && !gone.length && same.length > 0) lines.push(`The ${listOf(same)} on the website match the details on file.`);
 
   // Last, so what Google counted never pushes out a sentence about the rank check or the listing.
-  if (hasSearchOrVisits(f.traffic)) lines.push(...plainTraffic(f.traffic));
+  if (hasTrafficData(f.traffic)) lines.push(...plainTraffic(f.traffic));
 
   let text = lines[0];
   for (const line of lines.slice(1)) {

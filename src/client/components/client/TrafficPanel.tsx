@@ -3,7 +3,8 @@ import { Link } from "react-router-dom";
 import { ApiError, trafficApi } from "../../api";
 import { latestOnly, problemText } from "../../clientView";
 import {
-  accessLine, analyticsAccessLine, canFind, canLink, canPull, canUnlink, foundLine, hasLink, lastMonthOf, linkBody, linkedLines, monthRows, needsDomain, pullResult, showPanel, siteName, unlinkQuestion,
+  PROFILE_CONNECT_PATH, PROFILE_HELP, accessLine, analyticsAccessLine, canClearLocation, canFind, canLink, canPull, canSaveLocation, canUnlink, foundLine, hasLink, lastMonthOf, linkBody, linkedLines, locationBody, locationProblem,
+  monthRows, needsDomain, profileNote, pullResult, showPanel, siteName, unlinkQuestion,
   type Candidates, type ClientTraffic, type PanelSite,
 } from "../../trafficPanelView";
 import type { AccessKey, AccessStatus } from "../../../worker/db/sites";
@@ -12,20 +13,22 @@ import type { AccessKey, AccessStatus } from "../../../worker/db/sites";
 type Said = { text: string; tone: "ok" | "error" };
 
 /** One site: what is linked, the buttons that find, link, unlink and pull, and the months already pulled. Every text is a React text node. */
-function SiteTraffic({ site, today, accessItems, busy, onRun }: {
-  site: PanelSite; today: string; accessItems: { key: AccessKey; status: AccessStatus }[]; busy: boolean;
+function SiteTraffic({ site, today, accessItems, busy, hasProfileScope, profileMissing, onRun }: {
+  site: PanelSite; today: string; accessItems: { key: AccessKey; status: AccessStatus }[]; busy: boolean; hasProfileScope: boolean; profileMissing: string | null;
   onRun: (job: () => Promise<Said | void>, fail: string) => Promise<boolean>;
 }) {
   const [found, setFound] = useState<Candidates | null>(null);
   const [gsc, setGsc] = useState("");
   const [ga4, setGa4] = useState("");
-  useEffect(() => { setFound(null); setGsc(""); setGa4(""); }, [site.siteId]);
+  const [location, setLocation] = useState("");
+  useEffect(() => { setFound(null); setGsc(""); setGa4(""); setLocation(""); }, [site.siteId]);
   const lines = linkedLines(site);
   const rows = monthRows(site.months);
   const body = linkBody({ gsc, ga4 });
   const last = lastMonthOf(today);
   const analytics = analyticsAccessLine(accessItems);
   const name = siteName(site);
+  const problem = locationProblem(location);
   return (
     <li className="tp-site">
       <h3 className="tp-name">{name}</h3>
@@ -62,6 +65,18 @@ function SiteTraffic({ site, today, accessItems, busy, onRun }: {
           )}
         </div>
       )}
+      <div className="tp-location">
+        <label className="deal-field" htmlFor={`tp-gbp-${site.siteId}`}><span>Business Profile location</span>
+          <input id={`tp-gbp-${site.siteId}`} type="text" value={location} placeholder="locations/1234567890" autoComplete="off" spellCheck={false} aria-describedby={`tp-gbp-help-${site.siteId}`} onChange={(e) => setLocation(e.target.value)} />
+        </label>
+        <p id={`tp-gbp-help-${site.siteId}`} className="muted small">{PROFILE_HELP}</p>
+        {problem && <p className="error small" role="status">{problem}</p>}
+        {profileMissing && <p className="muted small">{profileMissing} <a href={PROFILE_CONNECT_PATH}>Add the Business Profile permission</a></p>}
+        <div className="tp-actions">
+          <button type="button" className="btn" disabled={!canSaveLocation(location, site, busy, hasProfileScope)} onClick={() => void onRun(async () => { await trafficApi.link(site.siteId, locationBody(location)!); setLocation(""); return { text: "Business Profile location saved.", tone: "ok" as const }; }, "Couldn’t save the location.")}>Save location</button>
+          <button type="button" className="btn" disabled={!canClearLocation(site, busy)} onClick={() => void onRun(async () => { await trafficApi.link(site.siteId, { gbpLocation: null }); return { text: "Business Profile location cleared.", tone: "ok" as const }; }, "Couldn’t clear the location.")}>Clear location</button>
+        </div>
+      </div>
       {rows.length > 0 && (
         <table className="tp-months">
           <caption className="muted small">Counted by Google’s own month.</caption>
@@ -127,7 +142,7 @@ export default function TrafficPanel({ businessId, clientName, today, access }: 
       <h2>Traffic</h2>
       <p className="small">{accessLine(data, clientName)}{!data.connected || !data.hasScopes ? <> <Link to="/settings/google">Google settings</Link></> : null}</p>
       <ul className="tp-sites">
-        {data.sites.map((s) => <SiteTraffic key={s.siteId} site={s} today={today} accessItems={access[s.siteId] ?? []} busy={busy} onRun={run} />)}
+        {data.sites.map((s) => <SiteTraffic key={s.siteId} site={s} today={today} accessItems={access[s.siteId] ?? []} busy={busy} hasProfileScope={data.hasProfileScope} profileMissing={profileNote(data)} onRun={run} />)}
       </ul>
       {said && (said.tone === "ok" ? <p className="small" role="status">{said.text}</p> : <p className="error small" role="alert">{said.text}</p>)}
       {error && <p className="error small" role="alert">{error}</p>}

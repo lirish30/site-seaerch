@@ -10,7 +10,7 @@ import type { Env } from "../env";
 import { MIN_CHECKS_FOR_A_DAY, uptimeOf } from "../monitoring/rollup";
 import { runPageSpeed } from "../pagespeed";
 import { periodLabel, zoneOf } from "../sop/cadence";
-import { hasSearchOrVisits, plainTraffic, TrafficFacts } from "../traffic/facts";
+import { hasTrafficData, plainTraffic, TrafficFacts } from "../traffic/facts";
 import { trafficFor } from "../traffic/forClient";
 import { editLedger } from "./ledger";
 import { COLLATERAL_NOTE } from "./updateKind";
@@ -274,7 +274,7 @@ export function plainSummary(f: ReportFacts): string {
   if (f.renewals.length) lines.push(`${f.renewals.length} ${f.renewals.length === 1 ? "renewal is" : "renewals are"} coming up in the next ${RENEWAL_DAYS} days.`);
 
   // Last, so what Google counted never pushes out a sentence about the site itself.
-  if (hasSearchOrVisits(f.traffic)) lines.push(...plainTraffic(f.traffic));
+  if (hasTrafficData(f.traffic)) lines.push(...plainTraffic(f.traffic));
 
   let text = lines[0];
   for (const line of lines.slice(1)) {

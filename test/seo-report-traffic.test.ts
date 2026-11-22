@@ -160,10 +160,10 @@ describe("buildSeoFacts: traffic", () => {
     expect(page).not.toBeNull();
     expect(page).not.toHaveProperty("traffic");
     expect(trafficView(page!.traffic)).toBeNull();
-    // Its plain summary is the old one, byte for byte, with traffic absent, null, or a profile alone (nothing measured about search or visits).
+    // Its plain summary is the old one, byte for byte, with traffic absent or null; a profile block alone adds only its own sentence, last.
     expect(plainSeoSummary(SeoReportFacts.parse(FROZEN))).toBe(FROZEN_SUMMARY);
     expect(plainSeoSummary(SeoReportFacts.parse({ ...FROZEN, traffic: null }))).toBe(FROZEN_SUMMARY);
-    expect(plainSeoSummary(SeoReportFacts.parse({ ...FROZEN, traffic: PROFILE_ONLY }))).toBe(FROZEN_SUMMARY);
+    expect(plainSeoSummary(SeoReportFacts.parse({ ...FROZEN, traffic: PROFILE_ONLY }))).toBe(`${FROZEN_SUMMARY} On your Google Business Profile, counted by Google, people tapped to call 4 times, asked for directions 3 times and clicked through to your website 2 times.`);
   });
 
   it("plainSeoSummary adds the traffic sentences, last, only when traffic has search or visits", () => {
@@ -252,8 +252,7 @@ describe("Claude's instructions", () => {
   it("instructionsFor without traffic equals the old text byte for byte", () => {
     expect(instructionsFor(SeoReportFacts.parse(FROZEN))).toBe(OLD_INSTRUCTIONS);
     expect(instructionsFor(SeoReportFacts.parse({ ...FROZEN, traffic: null }))).toBe(OLD_INSTRUCTIONS);
-    // A profile block alone is no search and no visits: nothing about traffic may be said, so the old rule stays.
-    expect(instructionsFor(SeoReportFacts.parse({ ...FROZEN, traffic: PROFILE_ONLY }))).toBe(OLD_INSTRUCTIONS);
+    // A block with nothing in it is no traffic: the old rule stays.
     expect(instructionsFor(SeoReportFacts.parse({ ...FROZEN, traffic: traffic({ search: null, visits: null }) }))).toBe(OLD_INSTRUCTIONS);
   });
 
@@ -306,8 +305,8 @@ describe("Claude's instructions", () => {
     expect(built.instructions).toContain('"Search and visits"');
   });
 
-  it("a report without traffic, or with a profile alone, gets no Search and visits lines and the old instructions", async () => {
-    for (const facts of [FROZEN, { ...FROZEN, traffic: PROFILE_ONLY }]) {
+  it("a report without traffic gets no Search and visits lines and the old instructions", async () => {
+    for (const facts of [FROZEN, { ...FROZEN, traffic: traffic({ search: null, visits: null }) }]) {
       const s = await seedClient();
       const { report } = await insertSeoReport(env.DB, { businessId: s.businessId, period: PERIOD, token: newClientToken(), facts, test: false, now: STAMP });
       await queueSeoReport(env, report.id);
@@ -342,15 +341,15 @@ describe("the public page", () => {
     expect(t.search!.rows).toContainEqual({ label: "Average position in Google Search", value: "7.3" });
   });
 
-  it("the public JSON omits traffic when it is null, empty, or a profile alone", async () => {
+  it("the public JSON omits traffic when it is null or empty, and carries a profile alone as the four counts", async () => {
     const none = await sentReport({ ...FROZEN, traffic: null });
     expect(await publicSeoReport(e, none.token, NOW)).not.toHaveProperty("traffic");
     const empty = await sentReport({ ...FROZEN, traffic: { version: 1, period: PERIOD, search: null, visits: null, profile: null } });
     expect(await publicSeoReport(e, empty.token, NOW)).not.toHaveProperty("traffic");
     const profile = await sentReport({ ...FROZEN, traffic: PROFILE_ONLY });
     const page = (await publicSeoReport(e, profile.token, NOW))!;
-    expect(page).not.toHaveProperty("traffic");
-    expect(JSON.stringify(page)).not.toMatch(/calls|directions|websiteClicks/);
+    expect(page.traffic).toEqual({ profile: { calls: 4, directions: 3, websiteClicks: 2, previousCalls: 1 } });
+    expect(trafficView(page.traffic)!.profile!.rows).toHaveLength(3);
   });
 
   it("trafficView keeps its default position label, and a real zero says so", () => {

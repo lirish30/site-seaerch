@@ -2,6 +2,7 @@ import type { AccessKey, AccessStatus } from "../worker/db/sites";
 import type { TrafficStatus } from "../worker/db/traffic";
 import type { Candidates } from "../worker/traffic/link";
 import type { ClientTraffic, PanelMonth, PanelSite } from "../worker/traffic/panel";
+import { isGbpLocation } from "../worker/traffic/location";
 import { accessWords } from "./clientView";
 
 /** The owner's Traffic panel on a client's page: the words and the small decisions, as pure functions. No DOM, no fetch, no clock. */
@@ -31,15 +32,16 @@ export function accessLine(t: Pick<ClientTraffic, "connected" | "hasScopes" | "e
 }
 
 /** What is linked to the site, as plain text lines: the property ids are shown as they are (the owner's page only). */
-export function linkedLines(s: Pick<PanelSite, "gscProperty" | "ga4Property">): string[] {
+export function linkedLines(s: Pick<PanelSite, "gscProperty" | "ga4Property" | "gbpLocation">): string[] {
   const lines: string[] = [];
   if (s.gscProperty) lines.push(`Search Console: ${s.gscProperty}`);
   if (s.ga4Property) lines.push(`Analytics property: ${s.ga4Property}`);
+  if (s.gbpLocation) lines.push(`Business Profile: ${s.gbpLocation}`);
   return lines;
 }
 
-/** Whether there is something to pull or unlink: the site has a property linked. */
-export const hasLink = (s: Pick<PanelSite, "gscProperty" | "ga4Property">): boolean => s.gscProperty !== null || s.ga4Property !== null;
+/** Whether there is something to pull or unlink: the site has a property or a Business Profile location linked. */
+export const hasLink = (s: Pick<PanelSite, "gscProperty" | "ga4Property" | "gbpLocation">): boolean => s.gscProperty !== null || s.ga4Property !== null || !!s.gbpLocation;
 
 const STATUS_WORDS: Record<TrafficStatus, string> = { ok: "Read in full", partial: "Read in part", failed: "Could not be read" };
 const STATUS_TONES: Record<TrafficStatus, "positive" | "warning" | "critical"> = { ok: "positive", partial: "warning", failed: "critical" };
@@ -57,6 +59,7 @@ export function monthRows(months: PanelMonth[]): MonthRow[] {
     const parts: string[] = [];
     if (m.search) parts.push(`${plural(m.search.clicks, "click", "clicks")} from ${plural(m.search.impressions, "search result", "search results")}`);
     if (m.visits) parts.push(plural(m.visits.sessions, "visit", "visits"));
+    if (m.profile) parts.push(`${plural(m.profile.calls, "call", "calls")} from the profile`);
     return { period: m.period, label: periodLabel(m.period), status: m.status, statusWord: statusWord(m.status), tone: statusTone(m.status), numbers: parts.join(", "), error: m.status === "ok" ? "" : m.error };
   });
 }
@@ -87,10 +90,38 @@ export function foundLine(c: Candidates): string {
 /** The panel is for a client that has at least one live site. */
 export const showPanel = (data: Pick<ClientTraffic, "sites">): boolean => data.sites.length > 0;
 
+/** The help under the Business Profile location field. */
+export const PROFILE_HELP = "From your Business Profile API access (the location id looks like locations/1234567890)";
+/** Where "Add the Business Profile permission" goes: the connect route with the extra consent. */
+export const PROFILE_CONNECT_PATH = "/api/google/connect?profile=1";
+
+/** The note under the location field while the connected account lacks the Business Profile permission, or null (nothing to say when Google is not connected at all: the access line says so). */
+export function profileNote(t: Pick<ClientTraffic, "connected" | "hasProfileScope">): string | null {
+  return t.connected && !t.hasProfileScope ? "The connected Google account does not have the Business Profile permission yet. A location can only be saved once it has." : null;
+}
+
+/** The body of the link call for a pasted location (trimmed), or null when it is blank or is not a location id. */
+export function locationBody(raw: string): { gbpLocation: string } | null {
+  const gbpLocation = raw.trim();
+  return isGbpLocation(gbpLocation) ? { gbpLocation } : null;
+}
+
+/** Why a pasted location cannot be saved, once something was typed; null for a blank field or a good id. */
+export const locationProblem = (raw: string): string | null => (raw.trim() === "" || locationBody(raw) ? null : "That is not a location id. It looks like locations/1234567890.");
+
+/** Saving needs a new, valid location, the permission on the connection, and nothing else running. */
+export const canSaveLocation = (raw: string, s: Pick<PanelSite, "gbpLocation">, busy: boolean, hasPermission: boolean): boolean => {
+  const body = locationBody(raw);
+  return !busy && hasPermission && body !== null && body.gbpLocation !== s.gbpLocation;
+};
+
+/** Clearing needs a saved location and nothing else running (it needs no permission). */
+export const canClearLocation = (s: Pick<PanelSite, "gbpLocation">, busy: boolean): boolean => !busy && !!s.gbpLocation;
+
 /** What a site is called on the panel. */
 export const siteName = (s: Pick<PanelSite, "domain">): string => s.domain ?? "This site";
 
-type Site = Pick<PanelSite, "domain" | "gscProperty" | "ga4Property">;
+type Site = Pick<PanelSite, "domain" | "gscProperty" | "ga4Property" | "gbpLocation">;
 
 /** A site with no domain cannot be matched to a Google property: the panel says to set it first. */
 export const needsDomain = (s: Pick<PanelSite, "domain">): boolean => !s.domain;

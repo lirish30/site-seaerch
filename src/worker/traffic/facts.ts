@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { GbpMonth } from "../google/businessProfile";
 import type { Ga4Month } from "../google/analytics";
 import type { GscMonth } from "../google/searchConsole";
 import { BLANK_LINES, MARKDOWN, REFUSED } from "../queue/wordGuards";
@@ -7,7 +8,7 @@ import { looksSecret } from "../sites/access";
 // The traffic a client's site had in a month, as Google counted it (Plan 16), frozen into the report row when it is made. Only what Google measured goes in: a figure that was not measured (a source
 // that is not linked, a property that could not be read, a month with nothing to compare with) is null, never 0. A real 0 is a month Google counted and found empty. Search queries and page paths are
 // text written by strangers, so they pass `cleanQuery` / `cleanPath` first and are dropped (never trimmed) when they carry a link, an email, an amount, markdown or a key. Nothing about a person
-// who visited exists here: Google withholds it. `profile` (Google Business Profile) is filled by a later task only.
+// who visited exists here: Google withholds it. `profile` (Google Business Profile: calls, directions, website clicks) is filled only for a site with a Business Profile location, after the owner's profile consent.
 
 const Count = z.number().int().min(0).max(1_000_000);
 const COUNT_MAX = 1_000_000;
@@ -45,12 +46,17 @@ export const TrafficFacts = z.object({
     previousOrganic: Count.nullable(),
     channels: z.array(z.object({ channel: z.string().min(1).max(CHANNEL_MAX), sessions: Count })).max(TOP_CHANNELS),
   }).nullable(),
-  /** Google Business Profile: what people did on the listing. Filled only when the owner gave the profile consent. */
+  /** Google Business Profile: what people did on the listing. Null when no location is linked or it could not be read. */
   profile: z.object({ calls: Count, directions: Count, websiteClicks: Count, previousCalls: Count.nullable() }).nullable(),
 });
 export type TrafficFacts = z.infer<typeof TrafficFacts>;
 
-/** Whether a month's traffic has a search or a visits block. A profile block alone (Google Business Profile) says nothing about search or visits, so it counts as no traffic for the report sections and Claude's rules. */
+/** Whether a month's traffic has a search, a visits or a profile block (something Google counted). A traffic value with none of them counts as no traffic for the report sections and Claude's rules. */
+export function hasTrafficData(t: TrafficFacts | null | undefined): t is TrafficFacts {
+  return !!t && (t.search !== null || t.visits !== null || t.profile !== null);
+}
+
+/** Whether a month's traffic has a search or a visits block. The strategy memo has no use for Business Profile counts (its own "profile" is the listing's rating and reviews), so it keeps this narrower test. */
 export function hasSearchOrVisits(t: TrafficFacts | null | undefined): t is TrafficFacts {
   return !!t && (t.search !== null || t.visits !== null);
 }
@@ -140,6 +146,11 @@ export function shapeVisits(r: Ga4Month): Visits {
   };
 }
 
+/** A Business Profile month as the report keeps it. */
+export function shapeProfile(r: GbpMonth): Profile {
+  return { calls: count(r.calls), directions: count(r.directions), websiteClicks: count(r.websiteClicks), previousCalls: r.previousCalls === null ? null : count(r.previousCalls) };
+}
+
 const sum = (xs: number[]): number => count(xs.reduce((a, b) => a + b, 0));
 /** The sum of a figure, or null unless EVERY part has it (a partial sum would understate the month). */
 const sumAll = (xs: (number | null)[]): number | null => (xs.length > 0 && xs.every((x) => x != null) ? sum(xs as number[]) : null);
@@ -210,7 +221,7 @@ export function plainTraffic(t: TrafficFacts): string[] {
   }
   if (t.profile) {
     const p = t.profile;
-    out.push(`On your Google Business Profile, counted by Google, people made ${n(p.calls, "call", "calls")}, asked for ${n(p.directions, "set of directions", "sets of directions")} and clicked through to your website ${n(p.websiteClicks, "time", "times")}.`);
+    out.push(`On your Google Business Profile, counted by Google, people tapped to call ${n(p.calls, "time", "times")}, asked for directions ${n(p.directions, "time", "times")} and clicked through to your website ${n(p.websiteClicks, "time", "times")}.`);
   }
   return out;
 }

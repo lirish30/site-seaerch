@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  accessLine, analyticsAccessLine, canFind, canLink, canPull, canUnlink, foundLine, hasLink, lastMonthOf, linkBody, linkedLines, monthRows, needsDomain, periodLabel, pullResult, showPanel, siteName, unlinkQuestion,
+  PROFILE_CONNECT_PATH, PROFILE_HELP, accessLine, analyticsAccessLine, canClearLocation, canFind, canLink, canPull, canSaveLocation, canUnlink, foundLine, hasLink, lastMonthOf, linkBody, linkedLines, locationBody, locationProblem,
+  monthRows, needsDomain, periodLabel, profileNote, pullResult, showPanel, siteName, unlinkQuestion,
 } from "../src/client/trafficPanelView";
 
 describe("accessLine", () => {
@@ -25,10 +26,12 @@ describe("lastMonthOf and periodLabel", () => {
 
 describe("linkedLines, hasLink and linkBody", () => {
   it("lists only what is linked, as plain text", () => {
-    expect(linkedLines({ gscProperty: null, ga4Property: null })).toEqual([]);
-    expect(linkedLines({ gscProperty: "sc-domain:ace.com", ga4Property: "123456789" })).toEqual(["Search Console: sc-domain:ace.com", "Analytics property: 123456789"]);
-    expect(hasLink({ gscProperty: null, ga4Property: "1" })).toBe(true);
-    expect(hasLink({ gscProperty: null, ga4Property: null })).toBe(false);
+    expect(linkedLines({ gscProperty: null, ga4Property: null, gbpLocation: null })).toEqual([]);
+    expect(linkedLines({ gscProperty: "sc-domain:ace.com", ga4Property: "123456789", gbpLocation: null })).toEqual(["Search Console: sc-domain:ace.com", "Analytics property: 123456789"]);
+    expect(linkedLines({ gscProperty: null, ga4Property: null, gbpLocation: "locations/1234567890" })).toEqual(["Business Profile: locations/1234567890"]);
+    expect(hasLink({ gscProperty: null, ga4Property: "1", gbpLocation: null })).toBe(true);
+    expect(hasLink({ gscProperty: null, ga4Property: null, gbpLocation: "locations/123456" })).toBe(true);
+    expect(hasLink({ gscProperty: null, ga4Property: null, gbpLocation: null })).toBe(false);
   });
   it("sends only the sources that were chosen, and nothing when none was", () => {
     expect(linkBody({ gsc: "", ga4: "" })).toBeNull();
@@ -39,19 +42,22 @@ describe("linkedLines, hasLink and linkBody", () => {
 });
 
 describe("monthRows", () => {
-  const month = (over: object) => ({ period: "2026-11", status: "ok" as const, pulledAt: "2026-12-04T00:00:00.000Z", error: "", search: null, visits: null, ...over });
+  const month = (over: object) => ({ period: "2026-11", status: "ok" as const, pulledAt: "2026-12-04T00:00:00.000Z", error: "", search: null, visits: null, profile: null, ...over });
   it("words what Google counted, leaving out a block that was not read and never showing it as 0", () => {
-    const [a, b, c, d] = monthRows([
+    const [a, b, c, d, e2] = monthRows([
       month({ search: { clicks: 1, impressions: 1 }, visits: { sessions: 1 } }),
       month({ period: "2026-10", search: { clicks: 7, impressions: 70 } }),
       month({ period: "2026-09" }),
       month({ period: "2026-08", search: { clicks: 0, impressions: 0 } }),
+      month({ period: "2026-07", profile: { calls: 0 } }),
     ]);
     expect(a.numbers).toBe("1 click from 1 search result, 1 visit");
     expect(a.label).toBe("November 2026");
     expect(b.numbers).toBe("7 clicks from 70 search results");
     expect(c.numbers).toBe("");
     expect(d.numbers).toBe("0 clicks from 0 search results");
+    expect(e2.numbers).toBe("0 calls from the profile");
+    expect(monthRows([month({ visits: { sessions: 2 }, profile: { calls: 1 } })])[0].numbers).toBe("2 visits, 1 call from the profile");
   });
   it("keeps the plain sentence only for a month that was not read in full", () => {
     const [ok, partial, failed] = monthRows([month({ error: "old" }), month({ status: "partial", error: "Google did not answer." }), month({ status: "failed", error: "Reconnect Google in Settings." })]);
@@ -73,9 +79,9 @@ describe("analyticsAccessLine and foundLine", () => {
 });
 
 describe("what the buttons may do", () => {
-  const linked = { domain: "ace.com", gscProperty: "sc-domain:ace.com", ga4Property: null };
-  const bare = { domain: "ace.com", gscProperty: null, ga4Property: null };
-  const noDomain = { domain: null, gscProperty: null, ga4Property: null };
+  const linked = { domain: "ace.com", gscProperty: "sc-domain:ace.com", ga4Property: null, gbpLocation: null };
+  const bare = { domain: "ace.com", gscProperty: null, ga4Property: null, gbpLocation: null };
+  const noDomain = { domain: null, gscProperty: null, ga4Property: null, gbpLocation: null };
 
   it("everything is off while something else is running", () => {
     expect(canFind(linked, true)).toBe(false);
@@ -112,7 +118,7 @@ describe("what the buttons may do", () => {
 
   it("the panel is hidden for a client with no sites", () => {
     expect(showPanel({ sites: [] })).toBe(false);
-    expect(showPanel({ sites: [{ siteId: "s", domain: null, gscProperty: null, ga4Property: null, lastError: "", months: [] }] })).toBe(true);
+    expect(showPanel({ sites: [{ siteId: "s", domain: null, gscProperty: null, ga4Property: null, gbpLocation: null, lastError: "", months: [] }] })).toBe(true);
   });
 
   it("names the site and asks before unlinking it", () => {
@@ -128,5 +134,41 @@ describe("pullResult", () => {
     expect(pullResult({ status: "ok", error: "an old sentence" }).tone).toBe("ok");
     expect(pullResult({ status: "partial", error: "Google did not answer." })).toEqual({ text: "Google did not answer.", tone: "error" });
     expect(pullResult({ status: "failed", error: "" })).toEqual({ text: "Last month could not be read.", tone: "error" });
+  });
+});
+
+describe("the Business Profile location field", () => {
+  const withLocation = { domain: "ace.com", gscProperty: null, ga4Property: null, gbpLocation: "locations/1234567890" };
+  const none = { domain: "ace.com", gscProperty: null, ga4Property: null, gbpLocation: null };
+
+  it("shows the plain help text and the permission note only while the connected account lacks the permission", () => {
+    expect(PROFILE_HELP).toBe("From your Business Profile API access (the location id looks like locations/1234567890)");
+    expect(PROFILE_CONNECT_PATH).toBe("/api/google/connect?profile=1");
+    expect(profileNote({ connected: true, hasProfileScope: false })).toBe("The connected Google account does not have the Business Profile permission yet. A location can only be saved once it has.");
+    expect(profileNote({ connected: true, hasProfileScope: true })).toBeNull();
+    expect(profileNote({ connected: false, hasProfileScope: false })).toBeNull();
+  });
+
+  it("sends a pasted location trimmed, and nothing for a blank or a wrong one", () => {
+    expect(locationBody("  locations/1234567890 ")).toEqual({ gbpLocation: "locations/1234567890" });
+    for (const bad of ["", "   ", "1234567890", "https://business.google.com/locations/1234567890", "locations/12", "ChIJN1t_tDeuEmsRUsoyG83frY4"]) expect(locationBody(bad)).toBeNull();
+  });
+
+  it("says what is wrong with a pasted location only when something was typed that does not fit", () => {
+    expect(locationProblem("")).toBeNull();
+    expect(locationProblem("locations/1234567890")).toBeNull();
+    expect(locationProblem("1234567890")).toBe("That is not a location id. It looks like locations/1234567890.");
+  });
+
+  it("saves only a new, valid location, with the permission and nothing else running; clears only a saved one", () => {
+    expect(canSaveLocation("locations/1234567890", none, false, true)).toBe(true);
+    expect(canSaveLocation("locations/1234567890", none, true, true)).toBe(false);
+    expect(canSaveLocation("locations/1234567890", none, false, false)).toBe(false);
+    expect(canSaveLocation("locations/1234567890", withLocation, false, true)).toBe(false);
+    expect(canSaveLocation("nope", none, false, true)).toBe(false);
+    expect(canSaveLocation("", none, false, true)).toBe(false);
+    expect(canClearLocation(withLocation, false)).toBe(true);
+    expect(canClearLocation(withLocation, true)).toBe(false);
+    expect(canClearLocation(none, false)).toBe(false);
   });
 });

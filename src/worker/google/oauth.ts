@@ -7,6 +7,8 @@ const CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar.events", "htt
 // webmasters.readonly and analytics.readonly read a client's Search Console and Analytics numbers; nothing writes to either.
 export const TRAFFIC_SCOPES = ["https://www.googleapis.com/auth/webmasters.readonly", "https://www.googleapis.com/auth/analytics.readonly"];
 export const SCOPES = ["openid", "email", "https://www.googleapis.com/auth/drive.file", ...CALENDAR_SCOPES, ...TRAFFIC_SCOPES];
+// business.manage reads a business's Business Profile performance numbers (calls, directions, website clicks). It is asked for only on the explicit profile consent, never by the default connect, and nothing writes to a profile.
+export const PROFILE_SCOPE = "https://www.googleapis.com/auth/business.manage";
 
 /** True only when the granted scopes (Google's space-separated string) include BOTH calendar scopes: Google's consent screen lets a person untick one, and booking needs free/busy and events. NULL, from before booking existed, is false. */
 export const hasCalendarScope = (scope: string | null | undefined): boolean => {
@@ -20,7 +22,10 @@ export const hasTrafficScopes = (scope: string | null | undefined): boolean => {
   return TRAFFIC_SCOPES.every((s) => granted.includes(s));
 };
 
-const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
+/** True only when the Business Profile permission was granted (it is a separate, optional consent). NULL, and anything stored before Task 11, is false. */
+export const hasProfileScope = (scope: string | null | undefined): boolean => (scope ?? "").split(/\s+/).includes(PROFILE_SCOPE);
+
+const AUTH_URL ="https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const STATE_TTL_MS = 10 * 60 * 1000;
 
@@ -44,9 +49,9 @@ export async function verifyState(secret: string, state: string, cookieNonce: st
 }
 
 // No `include_granted_scopes`: with it Google would fold scopes granted in an earlier consent (the old Gmail one) into a reconnect.
-export function authUrl(c: OAuthClient, state: string): string {
+export function authUrl(c: OAuthClient, state: string, o: { profile?: boolean } = {}): string {
   const q = new URLSearchParams({
-    client_id: c.clientId, redirect_uri: c.redirectUri, response_type: "code", scope: SCOPES.join(" "),
+    client_id: c.clientId, redirect_uri: c.redirectUri, response_type: "code", scope: (o.profile ? [...SCOPES, PROFILE_SCOPE] : SCOPES).join(" "),
     access_type: "offline", prompt: "consent", state,
   });
   return `${AUTH_URL}?${q}`;

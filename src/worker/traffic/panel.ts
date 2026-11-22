@@ -4,7 +4,7 @@ import { getSettings } from "../db/settings";
 import { listSites } from "../db/sites";
 import { getLink, getTrafficMonth, type TrafficStatus } from "../db/traffic";
 import type { Env } from "../env";
-import { hasTrafficScopes } from "../google/oauth";
+import { hasProfileScope, hasTrafficScopes } from "../google/oauth";
 import { zoneOf } from "../sop/cadence";
 import { previousMonth } from "../sop/months";
 import { TrafficFacts } from "./facts";
@@ -18,12 +18,15 @@ export interface PanelMonth {
   error: string;
   search: { clicks: number; impressions: number } | null;
   visits: { sessions: number } | null;
+  profile: { calls: number } | null;
 }
 
 export interface PanelSite {
   siteId: string; domain: string | null;
   /** The Google properties linked to the site, as Google names them; the owner sees them as they are (they are not secrets). */
   gscProperty: string | null; ga4Property: string | null;
+  /** The Business Profile location (`locations/<digits>`) linked to the site; the owner pastes it in, so it is shown as it is. */
+  gbpLocation: string | null;
   lastError: string;
   /** The last six finished months that were pulled, newest first. */
   months: PanelMonth[];
@@ -33,6 +36,8 @@ export interface ClientTraffic {
   connected: boolean;
   /** Both traffic scopes were granted. */
   hasScopes: boolean;
+  /** The Business Profile permission was granted (it is a separate consent). */
+  hasProfileScope: boolean;
   /** The connected Google account, so the owner knows whose access to ask the client for. */
   email: string | null;
   sites: PanelSite[];
@@ -54,7 +59,7 @@ function lastMonths(now: Date, tz: string, n: number): string[] {
 
 /**
  * What the owner's Traffic panel on a client's page shows: the Google connection, and for each live site its linked properties and the last six finished months that were pulled. Field by field:
- * never a token, the stored facts beyond the two headline numbers, or what Google said. Null when the id is not a client.
+ * never a token, the stored facts beyond the headline numbers, or what Google said. Null when the id is not a client.
  */
 export async function clientTraffic(env: Env, businessId: string, now: Date): Promise<ClientTraffic | null> {
   if (!(await isClient(env.DB, businessId))) return null;
@@ -71,9 +76,10 @@ export async function clientTraffic(env: Env, businessId: string, now: Date): Pr
         period: row.period, status: row.status, pulledAt: row.pulledAt, error: row.status === "ok" ? "" : row.error,
         search: facts.success && facts.data.search ? { clicks: facts.data.search.clicks, impressions: facts.data.search.impressions } : null,
         visits: facts.success && facts.data.visits ? { sessions: facts.data.visits.sessions } : null,
+        profile: facts.success && facts.data.profile ? { calls: facts.data.profile.calls } : null,
       });
     }
-    return { siteId: site.id, domain: site.domain, gscProperty: link?.gscProperty ?? null, ga4Property: link?.ga4Property ?? null, lastError: link?.lastError ?? "", months };
+    return { siteId: site.id, domain: site.domain, gscProperty: link?.gscProperty ?? null, ga4Property: link?.ga4Property ?? null, gbpLocation: link?.gbpLocation ?? null, lastError: link?.lastError ?? "", months };
   }));
-  return { connected: !!auth, hasScopes: !!auth && hasTrafficScopes(auth.scope), email: auth?.email ?? null, sites };
+  return { connected: !!auth, hasScopes: !!auth && hasTrafficScopes(auth.scope), hasProfileScope: !!auth && hasProfileScope(auth.scope), email: auth?.email ?? null, sites };
 }

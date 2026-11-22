@@ -164,7 +164,7 @@ export const trafficApi = {
   get: (clientId: string) => api.get<ClientTraffic>(`/clients/${encodeURIComponent(clientId)}/traffic`),
   /** The Search Console entries and Analytics properties of the connected Google account that belong to the site. Nothing is linked. */
   find: (siteId: string) => api.post<Candidates>(`/traffic/site/${encodeURIComponent(siteId)}/find`),
-  link: (siteId: string, body: { gscProperty?: string | null; ga4Property?: string | null }) => api.put<SiteLink>(`/traffic/site/${encodeURIComponent(siteId)}/link`, body),
+  link: (siteId: string, body: { gscProperty?: string | null; ga4Property?: string | null; gbpLocation?: string | null }) => api.put<SiteLink>(`/traffic/site/${encodeURIComponent(siteId)}/link`, body),
   /** Removes both links; the months already pulled stay (the server answers 204). */
   unlink: (siteId: string) => api.del<unknown>(`/traffic/site/${encodeURIComponent(siteId)}/link`),
   /** Pulls a finished month now. The answer is the month's status and its plain sentence. */

@@ -20,7 +20,7 @@ export function registerTrafficTools(server: McpServer, ctx: ToolCtx): void {
   const { db, log, text } = ctx;
 
   server.registerTool("get_traffic", {
-    description: "Search and visit numbers per client, ordered by client name, for one month (period YYYY-MM, default last month): Search Console clicks and impressions with the average position, Analytics visits, people and visits from search, each with last month's figure where known (null when it was not measured), merged over the client's linked sites, or traffic null when nothing was pulled. Each linked site has its domain, its status for that month (ok, partial, failed, or null when not pulled yet) and, when the status is not ok, one plain sentence for why. Numbers are counted by Google's own month. Only clients with a site linked to Google appear; clientId narrows to one client. Rehearsal clients are left out. Never a property id, a token, a search query or page, or anything Google said.",
+    description: "Search and visit numbers per client, ordered by client name, for one month (period YYYY-MM, default last month): Search Console clicks and impressions with the average position, Analytics visits, people and visits from search, and Google Business Profile calls, direction requests and website clicks (only for a site with a profile location), each with last month's figure where known (null when it was not measured), merged over the client's linked sites, or traffic null when nothing was pulled. Each linked site has its domain, its status for that month (ok, partial, failed, or null when not pulled yet) and, when the status is not ok, one plain sentence for why. Numbers are counted by Google's own month. Only clients with a site linked to Google appear; clientId narrows to one client. Rehearsal clients are left out. Never a property id or profile location id, a token, a search query or page, or anything Google said.",
     inputSchema: { period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "period must look like 2026-11").optional(), clientId: z.string().min(1).max(100).optional() },
   }, async ({ period, clientId }) => {
     const tz = zoneOf(await getSettings(db));
@@ -28,7 +28,7 @@ export function registerTrafficTools(server: McpServer, ctx: ToolCtx): void {
     const clients = (await db.prepare(
       `SELECT b.id AS id, b.name AS name FROM businesses b
        WHERE b.archived_at IS NULL AND ${clientSql("b")} AND NOT ${testClientSql("b")} ${clientId === undefined ? "" : "AND b.id = ?"}
-         AND EXISTS (SELECT 1 FROM site_analytics a JOIN sites s ON s.id = a.site_id WHERE s.business_id = b.id AND s.archived_at IS NULL AND (a.gsc_property IS NOT NULL OR a.ga4_property IS NOT NULL))
+         AND EXISTS (SELECT 1 FROM site_analytics a JOIN sites s ON s.id = a.site_id WHERE s.business_id = b.id AND s.archived_at IS NULL AND (a.gsc_property IS NOT NULL OR a.ga4_property IS NOT NULL OR a.gbp_location IS NOT NULL))
        ORDER BY LOWER(b.name), b.id`,
     ).bind(...(clientId === undefined ? [] : [clientId])).all<{ id: string; name: string }>()).results;
     // A stored sentence can name the Google account that was connected when it was written (maybe another one, maybe none now): any address in it is worded out.
@@ -43,7 +43,7 @@ export function registerTrafficTools(server: McpServer, ctx: ToolCtx): void {
           visits: t.visits && { sessions: t.visits.sessions, users: t.visits.users, organic: t.visits.organic, keyEvents: t.visits.keyEvents, previousSessions: t.visits.previousSessions, previousOrganic: t.visits.previousOrganic },
           profile: t.profile && { calls: t.profile.calls, directions: t.profile.directions, websiteClicks: t.profile.websiteClicks, previousCalls: t.profile.previousCalls },
         },
-        sites: (await linksForBusiness(db, b.id)).filter((l) => l.gscProperty !== null || l.ga4Property !== null).map((l) => {
+        sites: (await linksForBusiness(db, b.id)).filter((l) => l.gscProperty !== null || l.ga4Property !== null || l.gbpLocation !== null).map((l) => {
           const m = pulled.get(l.siteId);
           // A site not pulled yet says what its last attempt said, if anything; a month that is not ok says why; an ok month says nothing.
           return { domain: l.domain, status: m?.status ?? null, error: plain(m ? (m.status === "ok" ? "" : m.error) : l.lastError) };

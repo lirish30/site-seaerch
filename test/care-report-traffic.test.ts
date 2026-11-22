@@ -225,10 +225,12 @@ describe("Claude's instructions", () => {
     expect(text.split("\n\n")).toHaveLength(OLD_INSTRUCTIONS.split("\n\n").length + 1);
   });
 
-  it("a profile block alone is no traffic: the old instructions and no traffic sentence", () => {
+  it("a profile block alone is traffic: Claude may say the three counts, and the plain summary says them as Google's", () => {
     const profileOnly = ReportFacts.parse({ ...FROZEN, traffic: { version: 1, period: PERIOD, search: null, visits: null, profile: { calls: 4, directions: 3, websiteClicks: 2, previousCalls: 1 } } });
-    expect(instructionsFor(profileOnly)).toBe(OLD_INSTRUCTIONS);
-    expect(plainSummary(profileOnly)).toBe(plainSummary(ReportFacts.parse(FROZEN)));
+    expect(instructionsFor(profileOnly)).not.toBe(OLD_INSTRUCTIONS);
+    expect(instructionsFor(profileOnly)).toMatch(/calls, direction requests and website clicks/);
+    expect(instructionsFor(profileOnly).endsWith("Answer with a summary (up to 600 characters) and a recommendation (up to 300 characters).")).toBe(true);
+    expect(plainSummary(profileOnly)).toBe(`${plainSummary(ReportFacts.parse(FROZEN))} On your Google Business Profile, counted by Google, people tapped to call 4 times, asked for directions 3 times and clicked through to your website 2 times.`);
   });
 
   it("the Claude input lists search queries only inside the untrusted block", async () => {

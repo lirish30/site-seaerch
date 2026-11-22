@@ -13,7 +13,7 @@ import { trafficProblem } from "../traffic/problem";
 
 /**
  * Mounted at /api/traffic (behind requireAuth, the owner only): finding and linking the Google properties of a site.
- * POST /site/:siteId/find (the Search Console entries and Analytics properties that belong to the site), PUT /site/:siteId/link (`{ gscProperty?, ga4Property? }`; `null` unlinks one)
+ * POST /site/:siteId/find (the Search Console entries and Analytics properties that belong to the site), PUT /site/:siteId/link (`{ gscProperty?, ga4Property?, gbpLocation? }`; `null` unlinks one)
  * and DELETE /site/:siteId/link (204; the months already pulled stay), and POST /site/:siteId/pull (`{ period }`, a finished month in the booking zone; pulls it now, replacing a complete one, and answers `{ status, error }`). A site that is archived or unknown is 404. Nothing a Google error body said is returned.
  */
 export const trafficRoutes = new Hono<{ Bindings: Env }>();
@@ -26,7 +26,7 @@ trafficRoutes.onError((e, c) => {
 
 trafficRoutes.post("/site/:siteId/find", async (c) => c.json(await findCandidates(c.env, c.req.param("siteId"))));
 
-const LinkBody = z.object({ gscProperty: z.string().nullable().optional(), ga4Property: z.string().nullable().optional() });
+const LinkBody = z.object({ gscProperty: z.string().nullable().optional(), ga4Property: z.string().nullable().optional(), gbpLocation: z.string().nullable().optional() });
 
 trafficRoutes.put("/site/:siteId/link", async (c) => {
   const body = await bodyOf(c, LinkBody);

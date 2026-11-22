@@ -40,6 +40,14 @@ export default function TrafficSection({ view }: { view: TrafficView }) {
           </dl>
         </article>
       )}
+      {view.profile && (
+        <article className="rp-card mr-site">
+          <h3>Google Business Profile</h3>
+          <dl className="mr-rows">
+            {view.profile.rows.map((row) => <div key={row.label} className="mr-row"><dt>{row.label}</dt><dd>{row.value}</dd></div>)}
+          </dl>
+        </article>
+      )}
       <p className="mr-note">{view.note}</p>
     </section>
   );

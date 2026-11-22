@@ -83,6 +83,17 @@ describe("get_traffic", () => {
     expect((await ok<Answer>("get_traffic", { clientId: other.businessId })).clients[0].traffic).toBeNull();
   });
 
+  it("includes the three Business Profile counts for a client linked to a location alone, and never the location id", async () => {
+    const s = await linked("Ace Plumbing", { link: false, facts: { ...facts({}), profile: { calls: 12, directions: 9, websiteClicks: 30, previousCalls: 8 } } });
+    await saveLink(env.DB, s.site!.id, { gbpLocation: "locations/5550123456789" }, "2026-10-01T00:00:00.000Z");
+    const r = await tool("get_traffic", {});
+    const out = JSON.parse(r.text) as Answer;
+    expect(out.clients).toHaveLength(1);
+    expect(out.clients[0].traffic).toEqual({ search: null, visits: null, profile: { calls: 12, directions: 9, websiteClicks: 30, previousCalls: 8 } });
+    expect(out.clients[0].sites).toEqual([{ domain: "ace.com", status: "ok", error: "" }]);
+    expect(r.text).not.toMatch(/locations\/|5550123456789/);
+  });
+
   it("merges the sites of one client like the reports do and says nothing was pulled as traffic null", async () => {
     const a = await linked("Ace Plumbing");
     await linked("Bay Roofing", { facts: null });

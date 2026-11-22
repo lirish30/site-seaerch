@@ -5,8 +5,10 @@ import type { Env } from "../env";
 import { GoogleApiError } from "../google/api";
 import { googleAccess } from "../google/access";
 import { ga4Hosts, listGa4Properties } from "../google/analytics";
-import { hasTrafficScopes, type Fetch } from "../google/oauth";
+import { getGoogleAuth } from "../db/google";
+import { hasProfileScope, hasTrafficScopes, type Fetch } from "../google/oauth";
 import { listGscSites } from "../google/searchConsole";
+import { isGbpLocation } from "./location";
 
 /** Analytics properties whose streams are read when looking for the ones that belong to a site (a request makes at most this many Google calls for streams). */
 export const MAX_GA4_STREAM_LOOKUPS = 40;
@@ -88,12 +90,13 @@ export async function findCandidates(env: Env, siteId: string, f: Fetch = fetch)
 /**
  * Links the site to Google properties that belong to it, or (with `null`) unlinks one source; a key that is left out is not touched. A property is refused unless its host is the site's
  * (equality after `normalizeHost`, for Search Console and Analytics alike), so one client's numbers can never reach another client's report. Search Console is checked by the property's
- * name alone; an Analytics id costs one call to read its streams. A change is logged on the client's timeline.
+ * name alone; an Analytics id costs one call to read its streams. A Business Profile location (`locations/<digits>`) has no host to compare, so it is checked for its form only, and linking one needs
+ * the Business Profile permission on the connection (clearing it needs nothing). A change is logged on the client's timeline.
  */
-export async function linkSite(env: Env, siteId: string, p: { gscProperty?: string | null; ga4Property?: string | null }, now: Date, f: Fetch = fetch): Promise<SiteLink> {
+export async function linkSite(env: Env, siteId: string, p: { gscProperty?: string | null; ga4Property?: string | null; gbpLocation?: string | null }, now: Date, f: Fetch = fetch): Promise<SiteLink> {
   const { site, host } = await liveSite(env, siteId);
   const current = await getLink(env.DB, siteId);
-  const { gscProperty, ga4Property } = p;
+  const { gscProperty, ga4Property, gbpLocation } = p;
   if (typeof gscProperty === "string" || typeof ga4Property === "string") needHost(host);
   if (typeof gscProperty === "string") {
     if (!gscMatchesHost(gscProperty, host)) throw new LinkRefused("That property is for another site.");
@@ -106,16 +109,22 @@ export async function linkSite(env: Env, siteId: string, p: { gscProperty?: stri
     if (hosts.length === 0 && current?.ga4Property !== ga4Property) throw new LinkRefused("That property has no website data stream.");
     if (hosts.length > 0 && !streamsMatch(hosts, host)) throw new LinkRefused("That property is for another site.");
   }
+  if (typeof gbpLocation === "string") {
+    if (!isGbpLocation(gbpLocation)) throw new LinkRefused("That is not a Business Profile location id. It looks like locations/1234567890.");
+    if (!hasProfileScope((await getGoogleAuth(env.DB))?.scope)) throw new LinkRefused("Reconnect Google with the Business Profile permission.");
+  }
   const gscChanged = gscProperty !== undefined && gscProperty !== (current?.gscProperty ?? null);
   const ga4Changed = ga4Property !== undefined && ga4Property !== (current?.ga4Property ?? null);
-  if (!gscChanged && !ga4Changed) {
+  const gbpChanged = gbpLocation !== undefined && gbpLocation !== (current?.gbpLocation ?? null);
+  if (!gscChanged && !ga4Changed && !gbpChanged) {
     if (current) return current;
     throw new LinkRefused("Choose a Search Console or Analytics property to link.");
   }
-  const link = await saveLink(env.DB, siteId, { gscProperty, ga4Property }, now.toISOString());
+  const link = await saveLink(env.DB, siteId, { gscProperty, ga4Property, gbpLocation }, now.toISOString());
   const said = [
     gscChanged && `Search Console ${gscProperty ? "linked" : "unlinked"}`,
     ga4Changed && `Analytics ${ga4Property ? "linked" : "unlinked"}`,
+    gbpChanged && `Business Profile ${gbpLocation ? "linked" : "unlinked"}`,
   ].filter(Boolean).join(", ");
   await logActivity(env.DB, site.businessId, "traffic_linked", `${host || "site"}: ${said}`);
   return link;

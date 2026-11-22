@@ -310,6 +310,22 @@ describe("the link routes", () => {
     expect(await r.json()).toMatchObject({ siteId, gscProperty: "sc-domain:example.com", ga4Property: null });
   });
 
+  it("PUT link takes a Business Profile location: refused with 409 and its sentence without the permission, saved with it, and cleared by null", async () => {
+    const siteId = await siteOn("example.com");
+    await connect();
+    const without = await call("PUT", `/site/${siteId}/link`, { gbpLocation: "locations/1234567890" });
+    expect(without.status).toBe(409);
+    expect(await without.json()).toEqual({ error: "Reconnect Google with the Business Profile permission." });
+    expect((await call("PUT", `/site/${siteId}/link`, { gbpLocation: "1234567890" })).status).toBe(409);
+    await env.DB.prepare(`DELETE FROM google_auth`).run();
+    await saveGoogleAuth(env.DB, "me@x.test", await encryptSecret(env.SESSION_SECRET, "refresh-1"), `${SCOPE} https://www.googleapis.com/auth/business.manage`);
+    const r = await call("PUT", `/site/${siteId}/link`, { gbpLocation: "locations/1234567890" });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toMatchObject({ siteId, gscProperty: null, ga4Property: null, gbpLocation: "locations/1234567890" });
+    expect(await (await call("PUT", `/site/${siteId}/link`, { gbpLocation: null })).json()).toMatchObject({ gbpLocation: null });
+    expect((await call("PUT", `/site/${siteId}/link`, { gbpLocation: 5 })).status).toBe(400);
+  });
+
   it("PUT link refuses another site's property with 409 and its sentence", async () => {
     const siteId = await siteOn("example.com");
     const r = await call("PUT", `/site/${siteId}/link`, { gscProperty: "sc-domain:other.com" });

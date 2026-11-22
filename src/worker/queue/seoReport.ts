@@ -5,7 +5,7 @@ import { proposeSeoReportApproval } from "../approvals/seoReport";
 import { getSeoReport, setSeoSummary, setSeoTaskAndApproval, type SeoReport } from "../db/seoReports";
 import type { Env } from "../env";
 import { plainSeoSummary, SeoReportFacts } from "../seo/reportFacts";
-import { hasSearchOrVisits } from "../traffic/facts";
+import { hasTrafficData } from "../traffic/facts";
 import { trafficLines } from "../traffic/lines";
 import { enqueueTask } from "./db";
 import { registerTaskKind, type TaskKindDef } from "./registry";
@@ -48,9 +48,18 @@ const TRAFFIC_RULE = [
   "Never say what caused a change in them, never mention leads, sales, calls or money, and never promise a result. A part that is not listed was not measured: do not say anything about it.",
 ].join(" ");
 
-/** The fixed instructions for Claude's draft of `f`: the same text for every report without search or visit figures, and with them the rule about traffic is replaced (every other rule stays, in its place). */
+/** The same replacement when the traffic also carries Business Profile numbers: Claude may say those three counts (as Google's), apart from the reviews and rating of our own profile check, and still nothing about leads, sales, money, causes or promises. */
+const PROFILE_TRAFFIC_RULE = [
+  "The numbers also include a \"Search and visits\" part, counted by Google. Use only the numbers listed there, and say each is counted by Google. Say how a number compares with last month only when last month's figure is given.",
+  "An average position there is Google's own figure for its search results, not our rank check: never mix it with the ranks or say it as in our check.",
+  "Its \"Google Business Profile\" line gives how many times people tapped to call, asked for directions and clicked through to the website from the business's Google listing. You may say those three numbers (calls, direction requests and website clicks), always as counted by Google. They are not the reviews or rating in the Google profile line and not a rank: never mix them.",
+  "Never say what caused a change in them, never mention leads, sales or money, and never promise a result. A part that is not listed was not measured: do not say anything about it.",
+].join(" ");
+
+/** The fixed instructions for Claude's draft of `f`: the same text for every report without Google's numbers, and with them the rule about traffic is replaced (every other rule stays, in its place). */
 export function instructionsFor(f: SeoReportFacts): string {
-  return (hasSearchOrVisits(f.traffic) ? RULES.map((r) => (r === NOTHING_ABOUT_TRAFFIC ? TRAFFIC_RULE : r)) : RULES).join("\n\n");
+  const t = f.traffic;
+  return (hasTrafficData(t) ? RULES.map((r) => (r === NOTHING_ABOUT_TRAFFIC ? (t.profile ? PROFILE_TRAFFIC_RULE : TRAFFIC_RULE) : r)) : RULES).join("\n\n");
 }
 
 const plain = (report: SeoReport): string => {
@@ -80,7 +89,7 @@ function factLines(f: SeoReportFacts): string {
   lines.push(`Content: published ${f.content.published.length}${f.content.published.length ? ` (${f.content.published.map((c) => `${c.kind.replace("_", " ")} "${c.title}"`).join("; ")})` : ""}; written and waiting ${f.content.drafted}; still to write ${f.content.planned}`);
   lines.push(f.citations ? `Directory listings: confirmed ${f.citations.listed}; need fixing ${f.citations.needsFix}; still to do ${f.citations.todo}` : "Directory listings: not measured");
   lines.push(f.nap ? `Name, address and phone on the website against the details on file: name ${napWord(f.nap.name)}, address ${napWord(f.nap.address)}, phone ${napWord(f.nap.phone)}` : "Name, address and phone check: not measured");
-  if (hasSearchOrVisits(f.traffic)) lines.push(...trafficLines(f.traffic, { position: "average position in Google Search" }));
+  if (hasTrafficData(f.traffic)) lines.push(...trafficLines(f.traffic, { position: "average position in Google Search" }));
   return lines.join("\n");
 }
 
