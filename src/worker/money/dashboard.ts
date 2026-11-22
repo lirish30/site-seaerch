@@ -1,5 +1,6 @@
 import type { Env } from "../env";
 import { calendarDateIn } from "../billing/dates";
+import { liveClientCount } from "../capacity/compute";
 import { clientMrrCents, testClientSql } from "../clients/record";
 import { listInvoices } from "../db/invoices";
 import { listProjects } from "../db/projects";
@@ -28,6 +29,8 @@ export interface MoneyDashboard {
   /** The ten clients who have paid the most (cash actually received), with what each bills a month now. No projection. */
   ltv: { businessId: string; name: string; paidCents: number; mrrCents: number }[];
   freedom: ReturnType<typeof freedomProgress>;
+  /** Real live clients (a billing or late subscription, or a live project; never a test client) against the limit set in Settings > Work. */
+  clients: { count: number; limit: number };
   costs: { spentUsd: number; limitUsd: number; level: "ok" | "warn" | "capped"; services: { service: string; spentUsd: number; capUsd: number | null; level: string }[] };
 }
 
@@ -97,7 +100,8 @@ export async function moneyDashboard(env: Env, now: Date): Promise<MoneyDashboar
   const booked = bookedNotBilled({ documents, signedOrders: orders.filter((o) => o.status === "signed").map((o) => ({ id: o.id, businessId: o.businessId, priceCents: o.content.priceCents, paidAt: o.paidAt })), invoices });
   const mrrCents = clientMrrCents(subs);
 
-  const costRateCentsPerHour = parseWorkConfig(settings.work_config).costRateCentsPerHour;
+  const work = parseWorkConfig(settings.work_config);
+  const costRateCentsPerHour = work.costRateCentsPerHour;
   const profit: MoneyDashboard["profit"] = [];
   for (const p of real(allProjects)) {
     if (p.status !== "active" && p.status !== "done") continue;
@@ -124,6 +128,7 @@ export async function moneyDashboard(env: Env, now: Date): Promise<MoneyDashboar
     bookedNotBilled: { cents: booked.cents, rows: booked.rows.map((r) => ({ ...r, businessName: nameOf(r.businessId) })) },
     profit,
     ltv: top.map(([businessId, paidCents]) => ({ businessId, name: nameOf(businessId), paidCents, mrrCents: clientMrrCents(subs.filter((s) => s.businessId === businessId)) })),
+    clients: { count: await liveClientCount(db), limit: work.clientLimit },
     freedom: freedomProgress(mrrCents, parseMoneyConfig(settings.money_config).freedomMrrCents),
     costs: { spentUsd: status.spentUsd, limitUsd: status.limitUsd, level: status.level, services: await serviceSpend(db, now) },
   };

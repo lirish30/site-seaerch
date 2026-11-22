@@ -7,6 +7,7 @@ import { DealMoveError, getDeal, moveDeal } from "../db/deals";
 import { getDocument, type Document } from "../db/documents";
 import { getSettings } from "../db/settings";
 import { dollars } from "../../client/packagesView";
+import { capacityWarning } from "../capacity/compute";
 import { clientBase, renderProposalMail } from "../documents/mail";
 import { mailProposalLink, sealProposal, sendProblems } from "../documents/service";
 import type { ProposalContent } from "../documents/proposal";
@@ -45,11 +46,14 @@ export async function createSendApproval(env: Env, doc: Document): Promise<Appro
   const c = doc.content;
   const base = clientBase(env);
   const mail = renderProposalMail(c, `${base ?? "(set CLIENT_LINK_BASE first)"}/p/(the link is made when you approve)`, settings);
+  // Capacity only warns: a full week never stops a proposal from going out.
+  const warning = await capacityWarning(db, new Date(), 0);
   const preview = [
     `To: ${c.header.contactName} <${c.header.contactEmail}>`, `Subject: ${mail.subject}`, "", mail.body, "",
     `Proposal ${c.header.reference}, version ${doc.version}, option ${doc.optionId.toUpperCase()}`,
     ...c.packages.map((p) => `  ${p.name}: ${p.priceLine}`), "Payment schedule:", ...scheduleLines(c).map((l) => `  ${l}`), "",
     `Approving countersigned as ${settings.your_name.trim()} <${settings.contact_email.trim()}>.`,
+    ...(warning ? ["", warning] : []),
   ].join("\n");
   const a = await createApproval(db, {
     kind: "proposal.send", title: `Send the proposal to ${c.header.clientName}`, preview, payload: { documentId: doc.id } satisfies ProposalSendPayload,

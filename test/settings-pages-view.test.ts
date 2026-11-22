@@ -102,7 +102,7 @@ describe("billing line", () => {
 
 describe("work settings", () => {
   it("readWorkDraft fills missing keys and survives junk", () => {
-    expect(readWorkDraft("")).toEqual({ costRateCentsPerHour: 0, weekStartsOn: 1, timerCapMinutes: 720 });
+    expect(readWorkDraft("")).toEqual({ costRateCentsPerHour: 0, weekStartsOn: 1, timerCapMinutes: 720, weeklyHoursLimit: 20, clientLimit: 45 });
     expect(readWorkDraft(JSON.stringify({ costRateCentsPerHour: 4500 })).weekStartsOn).toBe(1);
     expect(readWorkDraft("[]").timerCapMinutes).toBe(720);
     expect(readWorkDraft("{nope").costRateCentsPerHour).toBe(0);

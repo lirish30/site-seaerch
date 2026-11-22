@@ -159,3 +159,25 @@ export function timerCapProblem(raw: string): string | null {
   if (m === null) return "Enter hours, like 12.";
   return m < 60 || m > 1440 ? "The timer cap is from 1 to 24 hours." : null;
 }
+
+const NUMBER = /^-?\d+(\.\d+)?$/;
+
+/** Why the weekly hours limit typed in the box cannot be saved (whole hours, 1 to 80). The messages are the worker's own (`WorkConfigSchema`; a test keeps them equal). Null when it is fine. */
+export function weeklyHoursProblem(raw: string): string | null {
+  const v = raw.trim();
+  if (!NUMBER.test(v)) return "Enter hours, like 20.";
+  const n = Number(v);
+  if (!Number.isInteger(n)) return "The weekly hours limit must be whole hours";
+  if (n < 1) return "The weekly hours limit is at least 1 hour";
+  return n > 80 ? "The weekly hours limit is at most 80 hours" : null;
+}
+
+/** Why the client limit typed in the box cannot be saved (a whole number, 1 to 200), with the worker's own messages. Null when it is fine. */
+export function clientLimitProblem(raw: string): string | null {
+  const v = raw.trim();
+  if (!NUMBER.test(v)) return "Enter a whole number, like 45.";
+  const n = Number(v);
+  if (!Number.isInteger(n)) return "The client limit must be a whole number";
+  if (n < 1) return "The client limit is at least 1";
+  return n > 200 ? "The client limit is at most 200" : null;
+}

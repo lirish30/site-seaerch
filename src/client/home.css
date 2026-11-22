@@ -150,3 +150,12 @@
 .hm-spend-level { font:400 13px/19px var(--font); color:var(--text-2); }
 .hm-spend-level.warn { color:var(--warning); } .hm-spend-level.capped { color:var(--critical); }
 .hm-spend-fixed { padding-top:10px; border-top:1px solid var(--border); }
+
+/* Capacity */
+.hm-cap-line { margin:0; font:500 14px/20px var(--font); color:var(--text); overflow-wrap:anywhere; }
+.hm-cap-line.near, .hm-cap-note.near, .hm-cap-sub.near { color:var(--warning); } .hm-cap-line.over, .hm-cap-note.over, .hm-cap-sub.over { color:var(--critical); }
+.hm-cap-note { margin:0; font:400 13px/19px var(--font); }
+.hm-cap-rows { display:flex; flex-direction:column; gap:10px; margin:12px 0 0; padding:0; list-style:none; }
+.hm-cap-rows li { display:grid; grid-template-columns:minmax(0, 96px) minmax(0, 1fr) auto; align-items:center; gap:10px; font:400 13px/19px var(--font); color:var(--text-2); }
+.hm-cap-rows li span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } .hm-cap-rows b { font-weight:500; color:var(--text-2); white-space:nowrap; }
+.hm-cap-sub { margin:10px 0 0; color:var(--text-3); }
