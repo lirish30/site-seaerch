@@ -5,6 +5,8 @@ import { addKeyword, listCitations, listKeywords, setCitation, setKeywordActive,
 import { getSettings } from "../db/settings";
 import type { Env } from "../env";
 import { bodyOf, NOT_FOUND, ownerOnError, type Ctx } from "../projects/http";
+import { runBaseline } from "../seo/baseline";
+import { runRankGrid } from "../seo/grid";
 import { CITATION_DIRECTORIES, parseNapResult } from "../seo/nap";
 import { findPlaces } from "../seo/places";
 import { CREDENTIAL_REFUSED, MAX_TEXT, MIN_TEXT, SeoRefusal, placesRefusal, runNapCheck, setupProfile, tidy } from "../seo/profile";
@@ -12,7 +14,7 @@ import { looksLikeCredential } from "../onboarding/templates";
 
 /**
  * Mounted at /api (behind requireAuth), all under /clients/:id/seo (the owner's local SEO setup for one client; a test client is allowed):
- * POST /place-search, PUT /profile, POST /keywords, DELETE /keywords/:keywordId, PUT /citations/:directory, POST /nap-check.
+ * POST /place-search, PUT /profile, POST /keywords, DELETE /keywords/:keywordId, PUT /citations/:directory, POST /nap-check, POST /baseline, POST /rank-check.
  * Places data, site text and business names are untrusted: nothing from the request body sets a location, and neither the Places key nor anything a remote service said is ever returned.
  */
 export const seoRoutes = new Hono<{ Bindings: Env }>();
@@ -130,4 +132,21 @@ seoRoutes.post("/clients/:id/seo/nap-check", async (c) => {
   const id = await clientId(c);
   if (id instanceof Response) return id;
   return c.json({ nap: await runNapCheck(c.env, id) });
+});
+
+/**
+ * Takes the baseline now: the listing's numbers, the name, address and phone check, the first rank grid, and the watch switched on. A manual "Check now": it is not held by the spend gate.
+ * Answers with the snapshot, the check result and how many keywords ended with a usable check.
+ */
+seoRoutes.post("/clients/:id/seo/baseline", async (c) => {
+  const id = await clientId(c);
+  if (id instanceof Response) return id;
+  return c.json(await runBaseline(c.env, id, new Date()));
+});
+
+/** Runs the rank grid for every active keyword now (a second run the same local day replaces that day's check). Answers with how many were stored and how many have no usable check. */
+seoRoutes.post("/clients/:id/seo/rank-check", async (c) => {
+  const id = await clientId(c);
+  if (id instanceof Response) return id;
+  return c.json(await runRankGrid(c.env, id, new Date()));
 });
