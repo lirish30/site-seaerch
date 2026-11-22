@@ -26,6 +26,8 @@ interface Call { url: string; method: string; body: any }
 interface Plan {
   /** Search Console answers this status instead of data. */
   gscStatus?: number;
+  /** Search Console answers with no rows at all: Google counted nothing. */
+  gscEmpty?: boolean;
   /** Every Analytics call answers this status instead of data. */
   ga4Status?: number;
   /** The web stream hosts Analytics reports for a property (default: the host given to `linked`). */
@@ -41,6 +43,7 @@ function google(plan: Plan = {}, curStart = "2026-11-01") {
     if (url === "https://oauth2.googleapis.com/token") return Response.json({ access_token: "tok", expires_in: 3600 });
     if (url.includes("/searchAnalytics/query")) {
       if (plan.gscStatus) return Response.json({ error: { message: "nope" } }, { status: plan.gscStatus });
+      if (plan.gscEmpty) return Response.json({});
       const cur = body.startDate === curStart;
       if (body.dimensions?.[0] === "query") return Response.json({ rows: [{ keys: ["ace plumbing"], clicks: 12, impressions: 300 }] });
       if (body.dimensions?.[0] === "page") return Response.json({ rows: [{ keys: ["https://ace.test/drains"], clicks: 9 }] });
@@ -248,6 +251,78 @@ describe("pullMonth", () => {
     expect(await month(s.siteId)).toMatchObject({ status: "failed", facts: frame, pulledAt: later.toISOString(), attempts: 2 });
   });
 
+  it("a linked property with an empty Search Console answer saves ok with clicks 0 and impressions 0", async () => {
+    const s = await linked({ domain: "ace.test" });
+    expect(await pullMonth(e, s.siteId, PERIOD, { now: NOW, f: google({ gscEmpty: true }).f })).toEqual({ status: "ok", error: "" });
+    const facts = (await month(s.siteId))!.facts as any;
+    expect(facts.search).toEqual({ clicks: 0, impressions: 0, position: null, previousClicks: 0, previousImpressions: 0, queries: [], pages: [] });
+    expect(facts.visits).toBeNull();
+  });
+
+  describe("a retry of a month that was not complete", () => {
+    const NEXT = at("2026-12-05T18:00:00.000Z");
+    const both = async () => {
+      const s = await linked({ domain: "ace.test", ga4: "123" });
+      return { siteId: s.siteId, streams: { "123": ["ace.test"] } };
+    };
+
+    it("a failed retry keeps the search numbers a partial pull already read", async () => {
+      const s = await both();
+      expect((await pullMonth(e, s.siteId, PERIOD, { now: NOW, f: google({ ga4Status: 403, streams: s.streams }).f })).status).toBe("partial");
+      const r = await pullMonth(e, s.siteId, PERIOD, { now: NEXT, f: google({ gscStatus: 500, ga4Status: 403, streams: s.streams }).f });
+      expect(r.status).toBe("partial");
+      expect(r.error).toContain("Google did not answer.");
+      expect(r.error).toContain("can't read this one");
+      const row = (await month(s.siteId))!;
+      expect(row).toMatchObject({ status: "partial", attempts: 2, pulledAt: NEXT.toISOString(), error: r.error });
+      expect((row.facts as any).search.clicks).toBe(40);
+      expect((row.facts as any).visits).toBeNull();
+      expect((await getLink(env.DB, s.siteId))!.lastError).toBe(r.error);
+    });
+
+    it("a partial retry that reads the other source ends up ok with both", async () => {
+      const s = await both();
+      expect((await pullMonth(e, s.siteId, PERIOD, { now: NOW, f: google({ gscStatus: 500, streams: s.streams }).f })).status).toBe("partial");
+      // Search Console reads now, Analytics does not: the visits an earlier try read are kept, so both are there.
+      const r = await pullMonth(e, s.siteId, PERIOD, { now: NEXT, f: google({ ga4Status: 403, streams: s.streams }).f });
+      expect(r.status).toBe("ok");
+      expect(r.error).toContain("can't read this one");
+      const row = (await month(s.siteId))!;
+      expect(row.status).toBe("ok");
+      expect((row.facts as any).search.clicks).toBe(40);
+      expect((row.facts as any).visits.sessions).toBe(100);
+    });
+
+    it("a partial retry that swaps sources keeps the union", async () => {
+      const s = await both();
+      await pullMonth(e, s.siteId, PERIOD, { now: NOW, f: google({ ga4Status: 403, streams: s.streams }).f });
+      // Search Console now fails and Analytics now reads: the month holds both.
+      const r = await pullMonth(e, s.siteId, PERIOD, { now: NEXT, f: google({ gscStatus: 500, streams: s.streams }).f });
+      expect(r.status).toBe("ok");
+      const row = (await month(s.siteId))!;
+      expect(row.status).toBe("ok");
+      expect((row.facts as any).search.clicks).toBe(40);
+      expect((row.facts as any).visits.sessions).toBe(100);
+    });
+
+    it("a source that is no longer linked is not kept", async () => {
+      const s = await both();
+      await pullMonth(e, s.siteId, PERIOD, { now: NOW, f: google({ ga4Status: 403, streams: s.streams }).f });
+      await saveLink(env.DB, s.siteId, { gscProperty: null }, NOW.toISOString());
+      const r = await pullMonth(e, s.siteId, PERIOD, { now: NEXT, f: google({ ga4Status: 403, streams: s.streams }).f });
+      expect(r.status).toBe("failed");
+      expect((await month(s.siteId))!.facts).toEqual(frame);
+    });
+
+    it("force replaces the merged facts with this pull's result", async () => {
+      const s = await both();
+      await pullMonth(e, s.siteId, PERIOD, { now: NOW, f: google({ ga4Status: 403, streams: s.streams }).f });
+      const r = await pullMonth(e, s.siteId, PERIOD, { now: NEXT, force: true, f: google({ gscStatus: 500, ga4Status: 403, streams: s.streams }).f });
+      expect(r.status).toBe("failed");
+      expect(await month(s.siteId)).toMatchObject({ status: "failed", facts: frame, attempts: 2 });
+    });
+  });
+
   it("an unknown or archived site is refused", async () => {
     const s = await linked({ domain: "ace.test" });
     await archiveSite(env.DB, s.siteId, NOW.toISOString());
@@ -277,6 +352,14 @@ describe("sweepTraffic", () => {
     const rows = await Promise.all(sites.map((s) => month(s.siteId)));
     expect(rows.filter(Boolean)).toHaveLength(1);
     expect(rows.find(Boolean)!.status).toBe("failed");
+  });
+
+  it("sweepTraffic asks Google for one token for the whole run", async () => {
+    const sites = [await linked(), await linked(), await linked()];
+    const g = google();
+    expect(await sweepTraffic(e, NOW, g.f)).toEqual({ pulled: 3, failed: 0, skipped: 0 });
+    expect(g.calls.filter((c) => c.url === "https://oauth2.googleapis.com/token")).toHaveLength(1);
+    expect((await Promise.all(sites.map((s) => month(s.siteId)))).every((m) => m?.status === "ok")).toBe(true);
   });
 
   it("sweepTraffic stops the whole run when Google is not connected", async () => {

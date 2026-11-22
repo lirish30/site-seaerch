@@ -3,7 +3,7 @@ import { previousMonth } from "../care/reportSweep";
 import { testClientSql } from "../clients/record";
 import { getSettings } from "../db/settings";
 import { getSite } from "../db/sites";
-import { getLink, saveTrafficMonth, setLinkError, type SiteLink, type TrafficStatus } from "../db/traffic";
+import { getLink, getTrafficMonth, saveTrafficMonth, setLinkError, type SiteLink, type TrafficStatus } from "../db/traffic";
 import type { Env } from "../env";
 import { GoogleNotConnected, googleAccess } from "../google/access";
 import { ga4Hosts, ga4Month } from "../google/analytics";
@@ -53,14 +53,29 @@ const monthBefore = (period: string): string => {
 /** Whether the link has a source the pull reads (Search Console or Analytics). */
 const hasSource = (l: SiteLink | null): l is SiteLink => !!l && (l.gscProperty !== null || l.ga4Property !== null);
 
+/** A fresh Google token and the connected account, or the reason there is none (a sweep asks once and hands the answer to every site). */
+type Access = { token: string; email: string | null } | { failed: unknown };
+
+/** A fresh token for reading Search Console and Analytics, or what stopped it. */
+async function resolveAccess(env: Env, f: Fetch): Promise<Access> {
+  try {
+    const a = await googleAccess(env, "", f);
+    if (!hasTrafficScopes(a.row.scope)) throw new ScopesMissing(NEEDS_SCOPES);
+    return { token: a.token, email: a.row.email };
+  } catch (failed) {
+    return { failed };
+  }
+}
+
 interface Outcome { status: TrafficStatus; error: string; /** The connection is dead: the sweep stops. */ dead: boolean }
 
 /**
  * Reads one month of a site from the Google properties linked to it and saves it. Before any Google call the link is checked again against the site's domain (a property that is not on the site's own host is never
  * read; Analytics costs one stream lookup). Each linked source is tried on its own: all read is `ok`, some `partial`, none `failed` (a source that is not linked is null in the facts and does not make a month partial).
- * A later `failed` or `partial` pull never replaces an `ok` row unless `force`. The link's error is set to the plain sentence, or cleared. A site that is unknown or archived throws `SiteNotFound`.
+ * A later `failed` or `partial` pull never replaces an `ok` row unless `force`, and (unless `force`) keeps, for each linked source this pull could not read, what an earlier `failed` or `partial` pull of the month already read:
+ * the status is worked out from the merged facts. The link's error is set to this pull's plain sentence, or cleared. A site that is unknown or archived throws `SiteNotFound`.
  */
-async function pull(env: Env, siteId: string, period: string, o: { now: Date; force?: boolean; f?: Fetch }): Promise<Outcome> {
+async function pull(env: Env, siteId: string, period: string, o: { now: Date; force?: boolean; f?: Fetch; access?: Access }): Promise<Outcome> {
   const f = o.f ?? fetch;
   const site = await getSite(env.DB, siteId);
   if (!site || site.archivedAt) throw new SiteNotFound("not found");
@@ -93,16 +108,10 @@ async function pull(env: Env, siteId: string, period: string, o: { now: Date; fo
   if ((gscLinked && !gscOk) || (ga4Linked && !ga4Maybe)) say(NO_MATCH);
 
   if (gscOk || ga4Maybe) {
-    let token = "";
-    let email: string | null = null;
-    try {
-      const a = await googleAccess(env, "", f);
-      if (!hasTrafficScopes(a.row.scope)) throw new ScopesMissing(NEEDS_SCOPES);
-      token = a.token;
-      email = a.row.email;
-    } catch (e) {
-      fail(e, null);
-    }
+    const access = o.access ?? await resolveAccess(env, f);
+    if ("failed" in access) fail(access.failed, null);
+    const token = "token" in access ? access.token : "";
+    const email = "token" in access ? access.email : null;
     if (token && gscOk) {
       try {
         const m = await gscMonth(f, token, link.gscProperty!, cur);
@@ -118,18 +127,26 @@ async function pull(env: Env, siteId: string, period: string, o: { now: Date; fo
     }
   }
 
+  // A retry keeps what an earlier try of the month read from a source this try could not read (a month that is `ok` is never merged: the save keeps it). A source that is no longer linked is null.
+  const before = o.force ? null : await getTrafficMonth(env.DB, siteId, period);
+  const kept = before && before.status !== "ok" ? TrafficFacts.safeParse(before.facts) : null;
+  if (kept?.success) {
+    if (gscLinked && !search) search = kept.data.search;
+    if (ga4Linked && !visits) visits = kept.data.visits;
+  }
+  const profile = kept?.success ? kept.data.profile : null;
   const read = (search ? 1 : 0) + (visits ? 1 : 0);
   const status: TrafficStatus = read === 0 ? "failed" : read === (gscLinked ? 1 : 0) + (ga4Linked ? 1 : 0) ? "ok" : "partial";
-  const facts = TrafficFacts.parse({ version: 1, period, search, visits, profile: null });
-  const error = status === "ok" ? "" : errors.join(" ");
+  const facts = TrafficFacts.parse({ version: 1, period, search, visits, profile });
+  const error = errors.join(" ");
   await saveTrafficMonth(env.DB, { siteId, period, status, facts, error, force: o.force }, now);
   await setLinkError(env.DB, siteId, error, now);
   return { status, error, dead };
 }
 
 /** The pull of one site and month (see `pull`): what the pull made of it, which is not always what the row holds (an `ok` row is kept against a worse pull unless `force`). */
-export async function pullMonth(env: Env, siteId: string, period: string, o: { now: Date; force?: boolean; f?: Fetch }): Promise<{ status: TrafficStatus; error: string }> {
-  const { status, error } = await pull(env, siteId, period, o);
+export async function pullMonth(env: Env, siteId: string, period: string, o: { now: Date; force?: boolean; f?: Fetch; access?: { token: string; email?: string | null } }): Promise<{ status: TrafficStatus; error: string }> {
+  const { status, error } = await pull(env, siteId, period, { ...o, access: o.access && { token: o.access.token, email: o.access.email ?? null } });
   return { status, error };
 }
 
@@ -160,12 +177,14 @@ export async function sweepTraffic(env: Env, now: Date, f: Fetch = fetch): Promi
     `SELECT s.id AS id ${readable("t.status = 'ok' OR t.attempts >= ?")} ORDER BY COALESCE(t.pulled_at, ''), s.created_at, s.rowid LIMIT ?`,
   ).bind(period, MAX_PULL_ATTEMPTS, MAX_SITES_PER_RUN).all<{ id: string }>()).results.map((r) => r.id);
 
+  // One token for the whole run (and one check of the scopes): a dead connection then costs the first site that needs Google one failed row, and ends the run.
+  const access = ids.length > 0 ? await resolveAccess(env, f) : undefined;
   const started = trafficClock.now();
   for (const [i, id] of ids.entries()) {
     if (trafficClock.now() - started > TRAFFIC_WALL_MS) { out.skipped = ids.length - i; break; }
     let r: Outcome;
     try {
-      r = await pull(env, id, period, { now, f });
+      r = await pull(env, id, period, { now, f, access });
     } catch (e) {
       // A site archived since the list was read, or a fault in our own code: this site only.
       if (!(e instanceof SiteNotFound)) console.error("traffic pull failed", id, e);
