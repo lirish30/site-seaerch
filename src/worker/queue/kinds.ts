@@ -12,3 +12,4 @@ import "./careReview";
 import "./careReport";
 import "./seoReviewReply";
 import "./seoContent";
+import "./seoReport";
