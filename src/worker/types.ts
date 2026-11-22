@@ -128,6 +128,7 @@ export const ACTIVITY_KINDS = [
   "site_down", "site_back", "domain_expiring", "care_updated", "care_rolled_back", "care_report_sent",
   "seo_report_sent", "seo_baseline",
   "grade_set", "ladder_sent", "auto_approved", "studio_posted",
+  "traffic_linked", "strategy_sent",
 ] as const;
 export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
 export interface Activity { id: string; business_id: string; kind: ActivityKind; detail: string | null; created_at: string; }

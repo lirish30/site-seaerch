@@ -98,6 +98,8 @@ export function describeActivity(a: Pick<Activity, "kind" | "detail">): Activity
     case "ladder_sent": return { icon: "mail", tone: "positive", title: "Ladder step sent", detail: d, bubble: false };
     case "auto_approved": return { icon: "check", tone: "info", title: "Auto-approved", detail: d, bubble: false };
     case "studio_posted": return { icon: "check", tone: "positive", title: "Studio post published", detail: d, bubble: false };
+    case "traffic_linked": return { icon: "globe", tone: "info", title: "Traffic linked", detail: d, bubble: false };
+    case "strategy_sent": return { icon: "mail", tone: "positive", title: "Strategy memo sent", detail: d, bubble: false };
     case "seo_baseline": return { icon: "target", tone: "info", title: "Local SEO baseline taken", detail: d, bubble: false };
     case "access_changed": return { icon: "key", tone: "info", title: "Access changed", detail: d, bubble: false };
     case "snoozed": return { icon: "clock", tone: "neutral", title: "Snoozed", detail: d, bubble: false };
