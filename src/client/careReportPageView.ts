@@ -1,10 +1,14 @@
-import type { PublicReport, PublicReportSite } from "../worker/care/reportPublic";
+import type { PublicReport, PublicReportSite, PublicTraffic } from "../worker/care/reportPublic";
 
 /** Pure helpers for the client's monthly report page (`/m/<token>`). Plain values in, plain text out: no DOM, no fetch, no clock. */
 
-export type { PublicReport, PublicReportSite };
+export type { PublicReport, PublicReportSite, PublicTraffic };
+export { trafficView, type TrafficView } from "./trafficView";
 type Edits = NonNullable<PublicReport["edits"]>;
 type Renewal = PublicReport["renewals"][number];
+
+/** The caption under a report's short video: it does not say how long the video is (it is as long as the report has numbers for). */
+export const VIDEO_CAPTION = "A short summary";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;

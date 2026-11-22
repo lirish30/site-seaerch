@@ -19,10 +19,10 @@ async function made(o: { status: StudioStatus; anonymize: boolean; businessId?: 
 type Answer = { posts: { id: string; kind: string; status: string; client: string | null; headline: string | null; caption: string | null; tags: string[]; slides: number; anonymous: boolean }[] };
 
 describe("get_studio_posts", () => {
-  it("is registered, which makes 32 tools in all", async () => {
+  it("is registered, which makes 33 tools in all", async () => {
     const names = (await mcp("tools/list", {})).result.tools.map((t: { name: string }) => t.name);
     expect(names).toContain("get_studio_posts");
-    expect(names).toHaveLength(32);
+    expect(names).toHaveLength(33);
   });
 
   it("hides the client name and any R2 key for an anonymous post", async () => {

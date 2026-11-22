@@ -10,6 +10,8 @@ import type { Env } from "../env";
 import { MIN_CHECKS_FOR_A_DAY, uptimeOf } from "../monitoring/rollup";
 import { runPageSpeed } from "../pagespeed";
 import { periodLabel, zoneOf } from "../sop/cadence";
+import { hasTrafficData, plainTraffic, TrafficFacts } from "../traffic/facts";
+import { trafficFor } from "../traffic/forClient";
 import { editLedger } from "./ledger";
 import { COLLATERAL_NOTE } from "./updateKind";
 
@@ -63,6 +65,8 @@ export const ReportFacts = z.object({
     domain: z.string().min(1).max(253).nullable(),
     on: Day,
   })).max(10),
+  /** What Google counted for the client's sites that month (Plan 16). Absent (a report frozen before it) or null: no section, and nothing said. */
+  traffic: TrafficFacts.nullable().optional(),
   generatedAt: z.string().min(1).max(40),
 });
 export type ReportFacts = z.infer<typeof ReportFacts>;
@@ -205,6 +209,7 @@ export async function buildFacts(env: Env, businessId: string, period: string, n
     version: 1, period, label: periodLabel("monthly", period), from: range.from, to: range.to, clientName: name.slice(0, 200), sites: perSite,
     edits: ledger ? { ...ledger, requestsDone } : null,
     renewals: await renewalsOf(env, businessId, sites, dayKey(now.getTime(), tz)),
+    traffic: await trafficFor(env.DB, businessId, period),
     generatedAt: now.toISOString(),
   });
 }
@@ -267,6 +272,9 @@ export function plainSummary(f: ReportFacts): string {
     lines.push(`${used} and ${f.edits.requestsDone} ${f.edits.requestsDone === 1 ? "edit request was" : "edit requests were"} done.`);
   }
   if (f.renewals.length) lines.push(`${f.renewals.length} ${f.renewals.length === 1 ? "renewal is" : "renewals are"} coming up in the next ${RENEWAL_DAYS} days.`);
+
+  // Last, so what Google counted never pushes out a sentence about the site itself.
+  if (hasTrafficData(f.traffic)) lines.push(...plainTraffic(f.traffic));
 
   let text = lines[0];
   for (const line of lines.slice(1)) {

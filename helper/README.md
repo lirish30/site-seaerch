@@ -234,6 +234,21 @@ from the browser is converted to a wav first), measures each line with ffprobe, 
 (`src/render/render.ts`: 1280x720, 30 fps, H.264 + AAC, `+faststart`, at most 40 MB, one retry at a lower bitrate), makes the GIF (480 px wide, 8 fps, at most 1.5 MB)
 and the poster (2 seconds in), and uploads the three files to the keys the job lists. A render of a long video takes a minute or two.
 
+### The report video (`report.render`)
+
+The short, silent video that goes with a client's monthly Care or Local SEO report (needs helper 0.2.0 and up, the same HyperFrames, Chrome and ffmpeg as above). It is 1080 x 1080, about 6 seconds a scene, and shows
+captions only: a title card, up to four numbers (uptime, updates, backups, search clicks, visits, rank points, new reviews) and a thank-you card, all from the report's own numbers. It downloads nothing: the scenes are
+in the job. The helper renders the page `buildReportComposition` makes (`src/render/composition.ts`), takes the first frame as the poster and uploads exactly the two files the job lists (an `.mp4` and a `.jpg`).
+The report page shows it only once the report has been sent.
+
+Never run for real from the test suite (the tests use fakes). To try it once on this Mac:
+
+1. `node helper/src/cli.ts doctor` shows `hyperframes`, `ffmpeg` and `ffprobe` with versions (and no "NOT FOUND").
+2. In Agency OS, open a client with a Care or Local SEO report whose words are ready (Claude's task done, or the plain summary) and wait for the report's job: it is queued on its own when the words are stored.
+3. `node helper/src/cli.ts once` claims it, renders (a minute or less) and uploads. Check the log for `report.render` and `done`.
+4. Approve and send the report to yourself, open its link and press play: the video shows the month and the numbers, and nothing the summary says. A report with fewer than three numbers makes no video.
+5. A failed render marks the video failed with a fixed sentence (`report_videos.error`); the helper's own reason is in its log and in the job's `error` (`helper_jobs.error`). The report page is not affected and shows no video.
+
 Install HyperFrames once, pinned to the version this was checked with (see `docs/superpowers/notes/2026-11-hyperframes.md`):
 
 ```sh

@@ -67,7 +67,7 @@ describe("publicSeoReport", () => {
       reviews: { seen: 3, posted: 2 },
       content: { published: [{ kind: "page", title: "Drain cleaning in Tigard" }, { kind: "gbp_post", title: "Winter pipe tips" }] },
       citations: { listed: 6, needsFix: 2, todo: 4 },
-      sentOn: "2026-12-01",
+      video: false, sentOn: "2026-12-01",
     });
     const row = await views(r.id);
     expect(row.viewCount).toBe(1);
@@ -136,7 +136,7 @@ describe("GET /api/public/l/:token", () => {
       "facts", "needsYou", "nap", "generatedAt", r.id, r.businessId, r.token,
     ]) expect(text, secret).not.toContain(secret);
     expect(Object.keys(JSON.parse(text)).sort()).toEqual([
-      "citations", "clientName", "content", "gbp", "label", "previousRankAsOf", "priorities", "rankAsOf", "recommendation", "reviews", "sentOn", "summary", "terms",
+      "citations", "clientName", "content", "gbp", "label", "previousRankAsOf", "priorities", "rankAsOf", "recommendation", "reviews", "sentOn", "summary", "terms", "video",
     ]);
     expect(Object.keys(JSON.parse(text).terms[0]).sort()).toEqual(["measured", "points", "previousVisible", "term", "town", "visible"]);
     expect(Object.keys(JSON.parse(text).terms[0].points[0]).sort()).toEqual(["ok", "pos"]);

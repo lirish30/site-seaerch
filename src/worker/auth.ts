@@ -85,8 +85,14 @@ const isPublicCareReport = (path: string, method: string) => method === "GET" &&
 // A client's monthly Local SEO report (`GET /api/public/l/<token>`): one non-empty token segment, read only.
 const isPublicSeoReport = (path: string, method: string) => method === "GET" && /^\/api\/public\/l\/[^/]+$/.test(path);
 
+// A client's strategy memo (`GET /api/public/y/<token>`): one non-empty token segment, read only.
+const isPublicMemo = (path: string, method: string) => method === "GET" && /^\/api\/public\/y\/[^/]+$/.test(path);
+
+// The video of a client's monthly report (`GET /api/public/m/<token>/video.mp4` for Care, `.../l/<token>/video.mp4` for Local SEO): one non-empty token segment, that exact file name, read only.
+const isPublicReportVideo = (path: string, method: string) => method === "GET" && /^\/api\/public\/[ml]\/[^/]+\/video\.mp4$/.test(path);
+
 export const requireAuth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
-  if (PUBLIC.has(c.req.path) || isPublicReport(c.req.path, c.req.method) || isPublicProposal(c.req.path, c.req.method) || isPublicOnboarding(c.req.path, c.req.method) || isPublicChangeOrder(c.req.path, c.req.method) || isPublicSubscription(c.req.path, c.req.method) || isPublicCareReport(c.req.path, c.req.method) || isPublicSeoReport(c.req.path, c.req.method)) return next();
+  if (PUBLIC.has(c.req.path) || isPublicReport(c.req.path, c.req.method) || isPublicProposal(c.req.path, c.req.method) || isPublicOnboarding(c.req.path, c.req.method) || isPublicChangeOrder(c.req.path, c.req.method) || isPublicSubscription(c.req.path, c.req.method) || isPublicCareReport(c.req.path, c.req.method) || isPublicSeoReport(c.req.path, c.req.method) || isPublicMemo(c.req.path, c.req.method) || isPublicReportVideo(c.req.path, c.req.method)) return next();
   const token = getCookie(c, "session");
   if (!token || !(await verifySession(c.env.SESSION_SECRET, token, Date.now()))) return c.json({ error: "unauthorized" }, 401);
   return next();

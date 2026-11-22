@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dayLabel, editsLine, hours, renewalLine, siteDetails, uptimeLine, type PublicReportSite } from "../src/client/careReportPageView";
+import { VIDEO_CAPTION, dayLabel, editsLine, hours, renewalLine, siteDetails, uptimeLine, type PublicReportSite } from "../src/client/careReportPageView";
 
 const site = (over: Partial<Parameters<typeof uptimeLine>[0]> = {}) => ({ uptimePercent: 99.9, coveredDays: 29, monitoredSince: "2026-11-02", ...over });
 
@@ -101,5 +101,11 @@ describe("siteDetails", () => {
   });
   it("one incident is once", () => {
     expect(siteDetails(s({ incidents: 1, longestOutageMinutes: null }))).toContainEqual({ label: "Downtime", value: "Went down once" });
+  });
+});
+
+describe("VIDEO_CAPTION", () => {
+  it("is a short summary and promises no length", () => {
+    expect(VIDEO_CAPTION).toBe("A short summary");
   });
 });

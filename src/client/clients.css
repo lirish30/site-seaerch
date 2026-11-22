@@ -252,3 +252,20 @@
 .st-edit .deal-field { width:100%; }
 .st-slide-edit { margin:0; padding:8px 10px; border:1px solid var(--border); border-radius:10px; display:flex; flex-direction:column; gap:8px; min-width:0; }
 .st-pics { grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); }
+
+/* The Traffic panel on a client's page (Plan 16). */
+.tp-sites { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:16px; }
+.tp-site { display:flex; flex-direction:column; gap:8px; min-width:0; padding-bottom:16px; border-bottom:1px solid var(--border); }
+.tp-site:last-child { border-bottom:0; padding-bottom:0; }
+.tp-name { margin:0; font-size:15px; line-height:22px; overflow-wrap:anywhere; }
+.tp-site p { margin:0; overflow-wrap:anywhere; }
+.tp-linked { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:2px; overflow-wrap:anywhere; }
+.tp-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.tp-actions .btn, .tp-found .btn { min-height:44px; }
+.tp-found { display:flex; flex-direction:column; align-items:flex-start; gap:8px; }
+.tp-found .deal-field { width:100%; }
+.tp-found select { width:100%; min-width:0; }
+.tp-months { width:100%; border-collapse:collapse; font-size:13px; }
+.tp-months th, .tp-months td { padding:6px 8px; text-align:left; vertical-align:top; border-top:1px solid var(--border); overflow-wrap:anywhere; }
+.tp-months caption { text-align:left; padding-bottom:4px; }
+.tp-months thead th { border-top:0; color:var(--text-2); font-weight:500; }

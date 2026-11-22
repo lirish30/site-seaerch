@@ -54,6 +54,8 @@ describe("the tool registry", () => {
     "get_care_report",
     // the Local SEO read tool
     "get_seo_status",
+    // the traffic read tool
+    "get_traffic",
     // the batch board
     "list_batches",
     // the Studio

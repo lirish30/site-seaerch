@@ -12,6 +12,7 @@ import ChangeOrder from "./pages/ChangeOrder";
 import Subscribe from "./pages/Subscribe";
 import CareReportPage from "./pages/CareReportPage";
 import SeoReportPage from "./pages/SeoReportPage";
+import StrategyMemoPage from "./pages/StrategyMemoPage";
 import Radar from "./pages/Radar";
 import Promising from "./pages/Promising";
 import Import from "./pages/Import";
@@ -74,6 +75,7 @@ export default function App() {
       <Route path="/s/*" element={<Subscribe />} />
       <Route path="/m/*" element={<CareReportPage />} />
       <Route path="/l/*" element={<SeoReportPage />} />
+      <Route path="/y/*" element={<StrategyMemoPage />} />
       <Route path="*" element={
         <Shell>
           <Routes>

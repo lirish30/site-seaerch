@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import Icon from "../components/Icon";
+import ReportVideo from "../components/ReportVideo";
+import TrafficSection from "../components/TrafficSection";
 import { publicCareReport } from "../api";
-import { dayLabel, editsLine, renewalLine, siteDetails, type PublicReport } from "../careReportPageView";
+import { dayLabel, editsLine, renewalLine, siteDetails, trafficView, type PublicReport } from "../careReportPageView";
 import { isReportToken } from "../reportView";
 
 type Load = "loading" | "ok" | "gone" | "error";
@@ -81,6 +83,7 @@ export default function CareReportPage() {
 
   const edits = editsLine(page.edits);
   const sent = dayLabel(page.sentOn);
+  const traffic = trafficView(page.traffic);
   const barPercent = page.edits && page.edits.allowanceMinutes > 0 ? Math.min(100, Math.round((page.edits.usedMinutes / page.edits.allowanceMinutes) * 100)) : 0;
 
   return (
@@ -94,6 +97,7 @@ export default function CareReportPage() {
             <h1>{page.label}</h1>
             {sent && <p className="rp-based">Sent {sent}</p>}
           </div>
+          {page.video && token && <ReportVideo src={`/api/public/m/${token}/video.mp4`} />}
           {page.summary && <p className="mr-text">{page.summary}</p>}
           {page.recommendation && (
             <section className="mr-suggest" aria-labelledby="mr-suggest-h">
@@ -118,6 +122,8 @@ export default function CareReportPage() {
             ))}
           </section>
         )}
+
+        {traffic && <TrafficSection view={traffic} />}
 
         {edits && page.edits && (
           <section className="mr-section" aria-labelledby="mr-edits-h">

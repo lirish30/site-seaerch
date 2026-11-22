@@ -590,7 +590,7 @@ describe("local SEO, end to end", () => {
     expect((await reportOf(a.businessId))!.viewCount).toBe(0);
     const opened = await open(tokenIn(letter.text)[0]);
     expect(opened.status).toBe(200);
-    expect(Object.keys(opened.json).sort()).toEqual(["citations", "clientName", "content", "gbp", "label", "previousRankAsOf", "priorities", "rankAsOf", "recommendation", "reviews", "sentOn", "summary", "terms"]);
+    expect(Object.keys(opened.json).sort()).toEqual(["citations", "clientName", "content", "gbp", "label", "previousRankAsOf", "priorities", "rankAsOf", "recommendation", "reviews", "sentOn", "summary", "terms", "video"]);
     expect(opened.json).toMatchObject({
       clientName: "Ace Plumbing", label: "November 2026", summary: A_SUMMARY, recommendation: A_REC, priorities: A_PRIO, rankAsOf: "2026-12-01", previousRankAsOf: "2026-11-02", sentOn: "2026-12-02",
       gbp: { rating: 4.6, reviewCount: 43, reviewsGained: 3, ratingChange: 0.1 }, reviews: { seen: 1, posted: 1 }, content: { published: [{ kind: "post", title: "How to unclog a kitchen drain" }] },
@@ -611,7 +611,7 @@ describe("local SEO, end to end", () => {
     const tools = await mcp("tools/list");
     const names = tools.result.tools.map((t: { name: string }) => t.name);
     expect(names).toContain("get_seo_status");
-    expect(names).toHaveLength(32);
+    expect(names).toHaveLength(33);
     const status = await ask("get_seo_status", { period: "2026-11" });
     expect(status.period).toBe("2026-11");
     expect(status.clients.map((c: { client: string; status: string }) => [c.client, c.status])).toEqual([["Ace Plumbing", "active"], ["Bravo Heating", "active"], ["Delta Auto", "active"]]);

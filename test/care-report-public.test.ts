@@ -67,7 +67,7 @@ describe("publicReport", () => {
       ],
       edits: { usedMinutes: 100, allowanceMinutes: 60, state: "over", requestsDone: 3 },
       renewals: [{ what: "certificate", domain: "ace.com", on: "2026-12-20" }, { what: "subscription_term", domain: null, on: "2027-01-15" }],
-      sentOn: "2026-12-01",
+      video: false, sentOn: "2026-12-01",
     });
     const row = await views(r.id);
     expect(row.viewCount).toBe(1);
@@ -125,7 +125,7 @@ describe("GET /api/public/m/:token", () => {
       "alias", "ace-prod", "wp_path", "/var/www", "siteline-backups", ".tar.gz", "token", "approval", "approval-xyz", "task-xyz", "contact-form-7", "Connection refused", "vault", "Ace WP admin",
       "updatesFailed", "facts", r.id, r.businessId, r.token,
     ]) expect(text, secret).not.toContain(secret);
-    expect(Object.keys(JSON.parse(text)).sort()).toEqual(["clientName", "edits", "label", "recommendation", "renewals", "sentOn", "sites", "summary"]);
+    expect(Object.keys(JSON.parse(text)).sort()).toEqual(["clientName", "edits", "label", "recommendation", "renewals", "sentOn", "sites", "summary", "video"]);
     expect(Object.keys(JSON.parse(text).sites[0]).sort()).toEqual(
       ["backups", "coveredDays", "domain", "incidents", "longestOutageMinutes", "monitoredSince", "speedScore", "updatesApplied", "updatesRolledBack", "updatesTracked", "uptimePercent"],
     );

@@ -6,6 +6,8 @@ import {
 } from "../db/seo";
 import type { Env } from "../env";
 import { periodLabel, zoneOf } from "../sop/cadence";
+import { hasTrafficData, plainTraffic, TrafficFacts } from "../traffic/facts";
+import { trafficFor } from "../traffic/forClient";
 import { isUsable } from "./grid";
 import { parseNapResult } from "./nap";
 
@@ -58,6 +60,8 @@ export const SeoReportFacts = z.object({
   citations: z.object({ listed: Count, needsFix: Count, todo: Count }).nullable(),
   /** The last name, address and phone check of the website, or null when there is none. */
   nap: z.object({ phone: NAP_PART, address: NAP_PART, name: NAP_PART }).nullable(),
+  /** What Google counted for the client's sites that month (Plan 16). Absent (a report frozen before it) or null: no section, and nothing said. Search Console's average `position` lives only in here: the rank grid above is the only rank claim. */
+  traffic: TrafficFacts.nullable().optional(),
   generatedAt: z.string().min(1).max(40),
 });
 export type SeoReportFacts = z.infer<typeof SeoReportFacts>;
@@ -166,6 +170,7 @@ export async function buildSeoFacts(env: Env, businessId: string, period: string
       listed: citations.filter((c) => c.status === "listed").length, needsFix: citations.filter((c) => c.status === "needs_fix").length, todo: citations.filter((c) => c.status === "todo").length,
     } : null,
     nap: nap ? { phone: nap.phone, address: nap.address, name: nap.name } : null,
+    traffic: await trafficFor(env.DB, businessId, period),
     generatedAt: now.toISOString(),
   });
 }
@@ -225,6 +230,9 @@ export function plainSeoSummary(f: SeoReportFacts): string {
   // A part that was not compared (the listing has nothing to compare it with) is never mentioned to the client.
   const same = f.nap ? parts.filter((p) => f.nap![p] === "match") : [];
   if (f.nap && !off.length && !gone.length && same.length > 0) lines.push(`The ${listOf(same)} on the website match the details on file.`);
+
+  // Last, so what Google counted never pushes out a sentence about the rank check or the listing.
+  if (hasTrafficData(f.traffic)) lines.push(...plainTraffic(f.traffic, { positionWording: "average position in Google Search" }));
 
   let text = lines[0];
   for (const line of lines.slice(1)) {

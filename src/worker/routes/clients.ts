@@ -3,6 +3,8 @@ import { z } from "zod";
 import { gradeViewFor } from "../clients/gradeData";
 import { getClientRecord, isClient, isTestClient, listClients } from "../clients/record";
 import { logActivity } from "../db/activity";
+import { getBusiness } from "../db/businesses";
+import { listMemos } from "../db/strategy";
 import { getGrades, setGrade } from "../db/grade";
 import { settleAccessItem } from "../db/onboardings";
 import {
@@ -12,6 +14,10 @@ import {
 import type { Env } from "../env";
 import { bodyOf, invalid, NOT_FOUND, ownerOnError, type Ctx } from "../projects/http";
 import { cleanText } from "../onboarding/templates";
+import { cancelMemoNow, memoRow, revokeMemoNow, type MemoDone } from "../strategy/admin";
+import { MemoRefused } from "../strategy/facts";
+import { startStrategyMemo } from "../strategy/start";
+import { clientTraffic } from "../traffic/panel";
 import { ACCESS_LABELS, cleanVaultName, isHttpUrl, noteProblem, vaultNameProblem } from "../sites/access";
 
 /** Mounted at /api (behind requireAuth): /clients, /clients/:id, /clients/:id/sites, /sites/:id, /sites/:id/access/:key (and the same site routes under /clients/:id/sites/:siteId). */
@@ -92,6 +98,43 @@ clientRoutes.get("/clients/:id", async (c) => {
   const client = await getClientRecord(c.env.DB, c.req.param("id"), new Date());
   return client ? c.json({ client }) : c.json(NOT_FOUND, 404);
 });
+
+/** The owner's Traffic panel: the Google connection and each site's linked properties and last six pulled months (see `clientTraffic`). An id that is not a client is 404. */
+clientRoutes.get("/clients/:id/traffic", async (c) => {
+  const traffic = await clientTraffic(c.env, c.req.param("id"), new Date());
+  return traffic ? c.json(traffic) : c.json(NOT_FOUND, 404);
+});
+
+/**
+ * Starts the client's strategy memo by hand (Plan 16): the facts are frozen into a memo and Claude is asked for the words. 201 with `{ memoId, status, created: true }`, or 200 with the memo already open for the
+ * client (`created: false`). A rehearsal client's memo is marked as a test. No token is sent. 404 for a business that does not exist; 409 with a plain sentence for a lead or for a client with nothing measured yet.
+ */
+clientRoutes.post("/clients/:id/strategy-memo", async (c) => {
+  const businessId = c.req.param("id");
+  if (!(await getBusiness(c.env.DB, businessId))) return c.json(NOT_FOUND, 404);
+  try {
+    const { memo, created } = await startStrategyMemo(c.env, businessId, { now: new Date(), test: await isTestClient(c.env.DB, businessId) });
+    return c.json({ memoId: memo.id, status: memo.status, created }, created ? 201 : 200);
+  } catch (e) {
+    if (e instanceof MemoRefused) return c.json({ error: e.message }, 409);
+    throw e;
+  }
+});
+
+/** The client's strategy memos, newest first, as the owner sees them (see `MemoRow`). Never a token on its own, the facts or the Claude task id. 404 for a business that does not exist. */
+clientRoutes.get("/clients/:id/strategy-memos", async (c) => {
+  const businessId = c.req.param("id");
+  if (!(await getBusiness(c.env.DB, businessId))) return c.json(NOT_FOUND, 404);
+  return c.json({ memos: (await listMemos(c.env.DB, businessId)).map((m) => memoRow(c.env, m)) });
+});
+
+const memoAnswer = (c: Ctx, done: MemoDone) => (done.ok ? c.json({ memo: memoRow(c.env, done.memo) }) : c.json(done.status === 404 ? NOT_FOUND : { error: done.error }, done.status));
+
+/** Cancels a memo that has not gone out ("Try again" cancels the one being written, then starts a new one). 404 for a memo of another client; 409 with a plain sentence for one that was sent, revoked or cancelled. */
+clientRoutes.post("/clients/:id/strategy-memos/:memoId/cancel", async (c) => memoAnswer(c, await cancelMemoNow(c.env, c.req.param("id"), c.req.param("memoId"), new Date())));
+
+/** Takes a ready or sent memo back: its link stops working. 404 for a memo of another client; 409 with a plain sentence for any other state. */
+clientRoutes.post("/clients/:id/strategy-memos/:memoId/revoke", async (c) => memoAnswer(c, await revokeMemoNow(c.env, c.req.param("id"), c.req.param("memoId"), new Date())));
 
 const GRADE_NOTE_MAX = 300;
 const GradeBody = z.object({

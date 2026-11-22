@@ -8,12 +8,14 @@ import { findSubscription, startCheckout, subscriptionPage } from "../billing/ch
 import { changeOrderPage, declineChangeOrderPublic, signChangeOrderPublic, type ChangeOrderWriteResult } from "../changeorders/public";
 import { publicReport as publicCareReport } from "../care/reportPublic";
 import { publicSeoReport } from "../seo/reportPublic";
+import { publicMemo } from "../strategy/public";
 import { publicReport } from "../db/reports";
 import { ensureDepositInvoice } from "../documents/deposit";
 import { SignFormSchema, proposalPage, signProposal, signedProposalFor } from "../documents/public";
 import { signedPdfResponse } from "../documents/signed";
 import { MAX_UPLOAD_BODY, acceptUpload, checkUploadTarget, readBodyCapped, removeClientFile } from "../onboarding/files";
 import { onboardingPage, saveClientAnswers, saveClientItemText, submitClientQuestionnaire, type WriteResult } from "../onboarding/public";
+import { serveReportVideo } from "../report/videoPublic";
 import { serveMedia } from "../video/media";
 import { MAX_EVENT_BYTES, ViewEventSchema, recordEvent } from "../video/views";
 
@@ -350,6 +352,16 @@ publicRoutes.get("/m/:token", async (c) => {
   return page ? c.json(page) : c.json(NOT_FOUND, 404);
 });
 
+// The video of the Care report (Plan 16): streamed with byte ranges, for a `sent` report with a rendered video only. Every other case is the same 404 as a wrong token.
+publicRoutes.use("/m/:token/video.mp4", clientLimited);
+
+publicRoutes.get("/m/:token/video.mp4", async (c) => {
+  const res = await serveReportVideo(c.env, "care", c.req.param("token"), c.req.header("range") ?? null);
+  if (!res) return c.json(NOT_FOUND, 404);
+  if (res.status === 200 || res.status === 206) c.set("media", true);
+  return res;
+});
+
 // The client's monthly Local SEO report (Plan 14): the same rules as the Care report's. The same 404 for every link that is not live, a malformed token never reaches the database, only a sent report is shown,
 // showing it counts as a view, and the owner opening it does not.
 publicRoutes.use("/l/:token", clientLimited);
@@ -358,6 +370,27 @@ publicRoutes.get("/l/:token", async (c) => {
   const token = c.req.param("token");
   if (!TOKEN.test(token)) return c.json(NOT_FOUND, 404);
   const page = await publicSeoReport(c.env, token, new Date(), { countView: !(await isOwner(c)) });
+  return page ? c.json(page) : c.json(NOT_FOUND, 404);
+});
+
+// The video of the Local SEO report: the same rules as the Care report's.
+publicRoutes.use("/l/:token/video.mp4", clientLimited);
+
+publicRoutes.get("/l/:token/video.mp4", async (c) => {
+  const res = await serveReportVideo(c.env, "seo", c.req.param("token"), c.req.header("range") ?? null);
+  if (!res) return c.json(NOT_FOUND, 404);
+  if (res.status === 200 || res.status === 206) c.set("media", true);
+  return res;
+});
+
+// The client's strategy memo (Plan 16): the same rules as the reports'. The same 404 for every link that is not live, a malformed token never reaches the database, only a sent memo is shown, showing it counts
+// as a view, and the owner opening it does not.
+publicRoutes.use("/y/:token", clientLimited);
+
+publicRoutes.get("/y/:token", async (c) => {
+  const token = c.req.param("token");
+  if (!TOKEN.test(token)) return c.json(NOT_FOUND, 404);
+  const page = await publicMemo(c.env, token, new Date(), { countView: !(await isOwner(c)) });
   return page ? c.json(page) : c.json(NOT_FOUND, 404);
 });
 

@@ -21,6 +21,7 @@ import { sweepReports } from "./care/reportSweep";
 import { queueCertCheck } from "./care/certsKind";
 import { sweepSeo } from "./seo/sweep";
 import { sweepLadder } from "./ladder/sweep";
+import { sweepTraffic } from "./traffic/pull";
 
 /** The cron strings in wrangler.jsonc. The daily one MUST stay first there: test/radar-info.test.ts reads the first entry. */
 export const DAILY_CRON = "17 13 * * *";
@@ -55,7 +56,7 @@ async function expireProposals(env: Env, now: Date): Promise<number> {
  * and notes 14 days of silence), and sweeps the projects (makes this period's recurring tasks, starts the projects a paid proposal never got, sends the Claude steps that are
  * ready, expires change orders past their date, and saves a timer left running past its cap), and last sweeps the billing (drafts the milestone invoices a hook never made, plans and
  * proposes subscriptions, drafts the reminders and pause notices that are due and places the holds, notices or converts the terms that end, and settles the open invoices whose webhook never
- * came), then looks up the expiry of the monitored sites' domains, rolls the uptime up and deletes old uptime checks, starts the weekly Care update batch on its weekday (read-only inventories; the update waves are approvals), runs the Care batch backstop, queues the certificate checks, starts the monthly Care report of each live Care client (queues Claude's summary; nothing is sent), sweeps the Local SEO clients (watches the reviews, pulls the month's ranks and content slots, starts last month's report; nothing is sent or published) and, last, sweeps the post-launch ladder (adds the steps of a finished build that the hook missed and the December letters, skips what is too late, marks the thank-you and case study steps due and drafts the review, testimonial, check-in and December mails as approvals; nothing is sent). This is unattended work: it can start searches, create approvals and holds, queue Claude steps and close queue tasks, and it never throws. It sends nothing itself, with one exception: the billing and onboarding sweeps may send the two fixed reminder kinds (`invoice.reminder`, `onboarding.nudge`) that the owner has switched auto-approve on for, and only through the ordinary `approve()` (see approvals/auto.ts).
+ * came), then looks up the expiry of the monitored sites' domains, rolls the uptime up and deletes old uptime checks, starts the weekly Care update batch on its weekday (read-only inventories; the update waves are approvals), runs the Care batch backstop, queues the certificate checks, pulls last month's Search Console and Analytics numbers for the linked sites of real clients from the 4th of the month (read only, before the report sweeps that use them), starts the monthly Care report of each live Care client (queues Claude's summary; nothing is sent), sweeps the Local SEO clients (watches the reviews, pulls the month's ranks and content slots, starts last month's report; nothing is sent or published) and, last, sweeps the post-launch ladder (adds the steps of a finished build that the hook missed and the December letters, skips what is too late, marks the thank-you and case study steps due and drafts the review, testimonial, check-in and December mails as approvals; nothing is sent). This is unattended work: it can start searches, create approvals and holds, queue Claude steps and close queue tasks, and it never throws. It sends nothing itself, with one exception: the billing and onboarding sweeps may send the two fixed reminder kinds (`invoice.reminder`, `onboarding.nudge`) that the owner has switched auto-approve on for, and only through the ordinary `approve()` (see approvals/auto.ts).
  */
 export async function runScheduled(env: Env, cron: string, now: Date): Promise<void> {
   if (cron === MAIL_SYNC_CRON) {
@@ -84,6 +85,8 @@ export async function runScheduled(env: Env, cron: string, now: Date): Promise<v
   await part("care updates", () => startWeeklyBatch(env, now));
   await part("care backstop", () => careBackstop(env, now));
   await part("certificates", () => queueCertCheck(env, now));
+  // Before the report sweeps: they read the months it pulls (from the 4th a client's linked sites have last month's Search Console and Analytics numbers saved), and it only reads, a few calls to Google a site, so it cannot starve the parts above.
+  await part("traffic", () => sweepTraffic(env, now));
   // Last: it must follow the project sweep (it makes the month's CARE-4 task) and the domain sweep (its uptime rollup settles the month's last day), and it is the one part that can run long on the 1st (a PageSpeed
   // call per site, client after client), so it must not starve the parts above of their time.
   await part("care reports", () => sweepReports(env, now));

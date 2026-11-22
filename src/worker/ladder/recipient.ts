@@ -33,6 +33,12 @@ export async function reviewLinkFor(db: D1Database, businessId: string, row: Pic
   return placeId ? `https://search.google.com/local/writereview?placeid=${encodeURIComponent(placeId)}` : null;
 }
 
+/** Whether the client has ended: it has at least one real (not test) subscription and every one of them is cancelled or ended. A client with no subscription at all (a build-only client) has not ended. */
+export async function clientHasEnded(db: D1Database, businessId: string): Promise<boolean> {
+  const subs = (await listSubscriptions(db, { businessId })).filter((s) => !s.test);
+  return subs.length > 0 && subs.every((s) => s.status === "cancelled" || s.status === "ended");
+}
+
 /**
  * Why a client must not be written to right now, in plain words, or null when it may be: a billing hold, a rehearsal client, a client that has ended (it has at least one subscription and every one of
  * them is cancelled or ended; a client with no subscription at all, a build-only client, is NOT ended), a do-not-contact or suppression hit (an "existing client" hit is the point of the ladder and does not
@@ -41,8 +47,8 @@ export async function reviewLinkFor(db: D1Database, businessId: string, row: Pic
 export async function clientBlock(db: D1Database, businessId: string, o: { step: LadderStep; email: string }): Promise<string | null> {
   if (await isOnHold(db, businessId)) return "the client is on a billing hold";
   if (await isTestClient(db, businessId)) return "the client is a test client";
+  if (await clientHasEnded(db, businessId)) return "the client has ended";
   const subs = (await listSubscriptions(db, { businessId })).filter((s) => !s.test);
-  if (subs.length > 0 && subs.every((s) => s.status === "cancelled" || s.status === "ended")) return "the client has ended";
   if (o.step === "december_letter" && !subs.some((s) => s.status === "active" || s.status === "past_due")) return "the client has no live subscription";
   const conflict = await checkConflict(db, { email: o.email, businessId });
   if (conflict.blocked && conflict.source !== "client") return `blocked: ${conflict.reason}`;

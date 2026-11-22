@@ -25,7 +25,8 @@ describe("google crypto + oauth state", () => {
     const u = new URL(authUrl({ clientId: "cid", clientSecret: "x", redirectUri: "https://app/api/google/callback" }, "st"));
     expect(u.searchParams.get("scope")).toBe(SCOPES.join(" "));
     expect(SCOPES).toEqual(["openid", "email", "https://www.googleapis.com/auth/drive.file",
-      "https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/calendar.freebusy"]);
+      "https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/calendar.freebusy",
+      "https://www.googleapis.com/auth/webmasters.readonly", "https://www.googleapis.com/auth/analytics.readonly"]);
     expect(SCOPES.join(" ")).not.toContain("gmail");
     expect(u.searchParams.get("access_type")).toBe("offline");
     expect(u.searchParams.has("include_granted_scopes")).toBe(false); // a reconnect must not bring back a scope granted earlier

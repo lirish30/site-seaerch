@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import type { Env } from "../env";
-import { authUrl, exchangeCode, revoke, signState, verifyState, hasCalendarScope } from "../google/oauth";
+import { authUrl, exchangeCode, revoke, signState, verifyState, hasCalendarScope, hasProfileScope, hasTrafficScopes } from "../google/oauth";
 import { encryptSecret, decryptSecret } from "../google/crypto";
 import { oauthClient } from "../google/access";
 import { getGoogleAuth, saveGoogleAuth, deleteGoogleAuth } from "../db/google";
@@ -12,7 +12,7 @@ export const googleRoutes = new Hono<{ Bindings: Env }>();
 
 googleRoutes.get("/status", async (c) => {
   const row = await getGoogleAuth(c.env.DB);
-  return c.json({ configured: !!oauthClient(c.env, new URL(c.req.url).origin), connected: !!row, email: row?.email ?? null, calendar: hasCalendarScope(row?.scope), ...(row ? { connected_at: row.connected_at } : {}) });
+  return c.json({ configured: !!oauthClient(c.env, new URL(c.req.url).origin), connected: !!row, email: row?.email ?? null, calendar: hasCalendarScope(row?.scope), traffic: hasTrafficScopes(row?.scope), profile: hasProfileScope(row?.scope), ...(row ? { connected_at: row.connected_at } : {}) });
 });
 
 googleRoutes.get("/connect", async (c) => {
@@ -21,7 +21,9 @@ googleRoutes.get("/connect", async (c) => {
   const nonce = crypto.randomUUID();
   // Lax (not Strict) so the cookie survives Google's redirect back to us; it only binds the state to this browser.
   setCookie(c, NONCE_COOKIE, nonce, { httpOnly: true, secure: true, sameSite: "Lax", path: "/api/google", maxAge: 600 });
-  return c.redirect(authUrl(client, await signState(c.env.SESSION_SECRET, nonce, Date.now())));
+  // ?profile=1 adds the Business Profile permission to the consent; the plain connect asks for it only when the stored connection already has it (a reconnect must not drop a permission that was granted).
+  const profile = c.req.query("profile") === "1" || hasProfileScope((await getGoogleAuth(c.env.DB))?.scope);
+  return c.redirect(authUrl(client, await signState(c.env.SESSION_SECRET, nonce, Date.now()), { profile }));
 });
 
 // Public (see auth.ts): Strict session cookies aren't sent on Google's cross-site redirect, so this route is

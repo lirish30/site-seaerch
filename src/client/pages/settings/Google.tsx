@@ -7,7 +7,7 @@ import { Pill } from "../../components/settingsBits";
 import { useSettingsDoc } from "../../settingsData";
 import { PERMISSIONS, sinceLabel } from "../../settingsView";
 
-interface GoogleStatus { configured: boolean; connected: boolean; email: string | null; calendar: boolean; connected_at?: string }
+interface GoogleStatus { configured: boolean; connected: boolean; email: string | null; calendar: boolean; traffic: boolean; connected_at?: string }
 
 /** Settings > Google: whether Drive saves are connected, and what the connection can do. */
 export default function Google() {
@@ -55,6 +55,7 @@ export default function Google() {
                     <b>Connected as {status.email ?? "your account"}</b>
                     <span>{status.connected_at ? `Since ${sinceLabel(status.connected_at)} · ` : ""}token stored encrypted</span>
                     <span>{status.calendar ? "Calendar booking is on." : "Reconnect to turn on booking, and leave both Calendar boxes ticked."}</span>
+                    <span>{status.traffic ? "Search Console and Analytics are on." : "Reconnect to add Search Console and Analytics, and leave both boxes ticked."}</span>
                   </> : status.configured ? <>
                     <b>Not connected</b>
                     <span>Connect to save reports to Drive.</span>
@@ -63,7 +64,7 @@ export default function Google() {
                     <span>Add the <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code> secrets (see the README), then connect.</span>
                   </>}
                 </div>
-                {connected && !status.calendar && status.configured && <a className="btn primary" href="/api/google/connect">Reconnect to enable booking</a>}
+                {connected && status.configured && (!status.calendar || !status.traffic) && <a className="btn primary" href="/api/google/connect">{status.calendar ? "Reconnect to add Search Console and Analytics" : "Reconnect to enable booking"}</a>}
                 {connected && <button type="button" className="btn sm" onClick={() => void disconnect()} disabled={busy}>{busy ? "Disconnecting…" : "Disconnect"}</button>}
                 {!connected && status.configured && <a className="btn primary" href="/api/google/connect">Connect Google</a>}
               </div>
