@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dayLabel, elapsedLabel, formatMinutes, parseDuration, shiftDay, varianceLabel, weekLabel } from "../src/client/timeView";
+import { dayLabel, elapsedLabel, formatMinutes, parseDuration, shiftDay, varianceLabel, todayIn, weekLabel, weekSummary } from "../src/client/timeView";
 
 describe("formatMinutes", () => {
   it("formatMinutes at 65 and 0", () => {
@@ -83,5 +83,32 @@ describe("parseDuration", () => {
   });
   it("refuses nothing, zero, negative and more than a day", () => {
     for (const bad of ["", "abc", "0", "-5", "25h", "1:75", "1.5.5h"]) expect(parseDuration(bad), bad).toBeNull();
+  });
+});
+
+describe("weekSummary", () => {
+  const days = ["2026-11-16", "2026-11-17", "2026-11-18", "2026-11-19", "2026-11-20", "2026-11-21", "2026-11-22"];
+  it("adds up the week: total, days worked, the busiest day and time per project, most first", () => {
+    const s = weekSummary({ days, total: 240, dayTotals: [30, 150, 0, 0, 60, 0, 0], rows: [
+      { projectId: "a", projectName: "A", total: 60 }, { projectId: "b", projectName: "B", total: 150 }, { projectId: "a", projectName: "A", total: 30 },
+    ] });
+    expect(s.total).toBe(240);
+    expect(s.daysWorked).toBe(3);
+    expect(s.busiest).toEqual({ day: "2026-11-17", minutes: 150 });
+    expect(s.byProject).toEqual([{ projectId: "b", name: "B", minutes: 150 }, { projectId: "a", name: "A", minutes: 90 }]);
+  });
+  it("an empty week has no busiest day and no projects", () => {
+    const s = weekSummary({ days, total: 0, dayTotals: [0, 0, 0, 0, 0, 0, 0], rows: [] });
+    expect(s).toEqual({ total: 0, daysWorked: 0, busiest: null, byProject: [] });
+  });
+});
+
+describe("todayIn", () => {
+  it("is the calendar date in the zone, not in UTC", () => {
+    expect(todayIn("America/Los_Angeles", new Date("2026-11-23T05:00:00Z"))).toBe("2026-11-22");
+    expect(todayIn("UTC", new Date("2026-11-23T05:00:00Z"))).toBe("2026-11-23");
+  });
+  it("falls back to the browser's zone for a zone it cannot read", () => {
+    expect(todayIn("Not/AZone", new Date("2026-11-23T12:00:00Z"))).toMatch(/^2026-11-2[234]$/);
   });
 });

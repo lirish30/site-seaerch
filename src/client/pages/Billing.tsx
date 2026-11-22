@@ -6,6 +6,7 @@ import {
   cancelSubscriptionText, earlyExitText, END_ACTIONS, groupInvoices, holdLine, isClosedInvoice, liftConfirmText, shortDate, subscriptionLine, subscriptionNext, subscriptionStatusLabel,
 } from "../billingView";
 import Icon from "../components/Icon";
+import { EmptyState, StatRow } from "../components/PageBits";
 import InvoiceItem from "../components/InvoiceItem";
 import { dollars } from "../packagesView";
 import type { Package } from "../packagesView";
@@ -17,11 +18,6 @@ const TABS: [Tab, string][] = [["invoices", "Invoices"], ["subscriptions", "Subs
 const isTab = (s: string | null): s is Tab => TABS.some(([k]) => k === s);
 
 type Names = ReturnType<typeof useNames>;
-
-/** A line of the strip under the title. */
-const Stat = ({ label, value, tone }: { label: string; value: string; tone?: "warn" }) => (
-  <div className={`bl-stat${tone ? ` ${tone}` : ""}`}><span className="bl-stat-label">{label}</span><b className="bl-stat-num">{value}</b></div>
-);
 
 /** One subscription: what it is, where it stands, what happens next, and the buttons that apply (Start billing, the end-of-term choice, Cancel). Nothing goes to the client without your approval. */
 function SubscriptionItem({ s, plan, today, names, onChanged }: { s: SubscriptionRow; plan: string; today: string; names: Names; onChanged: () => Promise<void> }) {
@@ -147,6 +143,11 @@ export default function Billing() {
   const groups = groupInvoices(invoices ?? [], today);
   const closed = (invoices ?? []).filter(isClosedInvoice);
   const counts: Record<Tab, number | null> = { invoices: groups.needsYou.length, subscriptions: subs ? mineSubs.length : null, holds: holds ? mineHolds.length : null };
+  const month = today.slice(0, 7);
+  const paidRows = (invoices ?? []).filter((i) => i.status === "paid" && (i.paidAt ?? "").slice(0, 7) === month);
+  const paidThisMonth = paidRows.reduce((n, i) => n + i.amountCents, 0);
+  const paidCount = paidRows.length;
+  const liveSubs = (subs ?? []).filter((x) => x.status === "active" || x.status === "past_due");
   const item = (inv: InvoiceRow) => (
     <InvoiceItem key={inv.id} inv={inv} today={today} client={{ id: inv.businessId, name: names.client(inv.businessId) }} project={names.project(inv.projectId)} onChanged={load} />
   );
@@ -163,27 +164,37 @@ export default function Billing() {
           <Link to="/settings/billing" className="btn">Billing settings</Link>
         </div>
       </header>
-      <div className="wk-body">
+      <div className="pb-page bl-page">
         {failed && <p className="error" role="alert">Couldn’t load billing. <button type="button" className="btn" onClick={() => void load()}>Try again</button></p>}
         {summary && (
-          <div className="bl-sum" role="group" aria-label="Billing summary, all clients">
-            <Stat label="Monthly recurring" value={dollars(summary.mrrCents)} />
-            <Stat label="Open" value={dollars(summary.openCents)} />
-            <Stat label="Overdue" value={dollars(summary.overdueCents)} tone={summary.overdueCents > 0 ? "warn" : undefined} />
-            <Stat label="Clients on hold" value={String(summary.heldClients)} tone={summary.heldClients > 0 ? "warn" : undefined} />
-          </div>
+          <StatRow label="Billing summary, all clients" stats={[
+            { label: "Monthly recurring", icon: "refresh", value: dollars(summary.mrrCents), sub: liveSubs.length ? `${liveSubs.length} live subscription${liveSubs.length === 1 ? "" : "s"}` : summary.mrrCents > 0 ? "From live subscriptions" : "No subscription billing yet" },
+            { label: "Waiting on clients", icon: "clock", value: dollars(summary.openCents), sub: summary.openCents > 0 ? (groups.open.length ? `${groups.open.length} invoice${groups.open.length === 1 ? "" : "s"} sent, not paid yet` : "Sent, not paid yet") : "Nothing outstanding" },
+            { label: "Overdue", icon: "alert", value: dollars(summary.overdueCents), sub: summary.overdueCents > 0 ? "Reminders go out once you approve them" : "Nobody is late", tone: summary.overdueCents > 0 ? "warning" : "positive" },
+            { label: "Paid this month", icon: "check", value: dollars(paidThisMonth), sub: paidCount ? `${paidCount} invoice${paidCount === 1 ? "" : "s"} paid` : summary.heldClients > 0 ? `${summary.heldClients} client${summary.heldClients === 1 ? "" : "s"} on hold` : "No payments yet this month", tone: summary.heldClients > 0 && !paidCount ? "warning" : "" },
+          ]} />
         )}
         {businessId && (
           <p className="small" role="status">Showing {names.client(businessId)} only. <button type="button" className="btn-plain" onClick={clearClient}>Show every client</button></p>
         )}
-        <div className="seg-pills wk-tabs" role="group" aria-label="Billing sections">
-          {TABS.map(([key, label]) => <button key={key} type="button" aria-pressed={tab === key} onClick={() => setTab(key)}>{label}{counts[key] ? ` (${counts[key]})` : ""}</button>)}
+        <div className="lead-tabs bl-tabs" role="tablist" aria-label="Billing sections">
+          {TABS.map(([key, label]) => <button key={key} type="button" role="tab" aria-selected={tab === key} onClick={() => setTab(key)}>{label}{counts[key] ? <span className={`count${key === "invoices" ? " ready" : ""}`}>{counts[key]}</span> : null}</button>)}
         </div>
 
         {tab === "invoices" && (
           <section aria-label="Invoices">
             {invoices === null && !failed && <p className="muted">Loading…</p>}
-            {invoices !== null && invoices.length === 0 && <p className="muted">No invoices yet. A deposit, a milestone or a change order makes one, and it waits here as a draft.</p>}
+            {invoices !== null && invoices.length === 0 && (
+              <EmptyState icon="file-text" title="No invoices yet"
+                steps={[
+                  { title: "A signed proposal", text: "Drafts the deposit invoice the moment the client signs." },
+                  { title: "Milestones and change orders", text: "Each one drafts its own invoice when the work reaches it." },
+                  { title: "You approve, Stripe collects", text: "Drafts wait here for your OK. Paid ones mark themselves paid." },
+                ]}>
+                Invoices are made for you from the work. You never start one from a blank page.
+              </EmptyState>
+            )}
+            {invoices !== null && invoices.length > 0 && groups.needsYou.length === 0 && <p className="bl-ok yes small"><Icon name="check" size={14} /> Nothing needs you: no drafts to approve and nothing late.</p>}
             {groups.needsYou.length > 0 && <><h3>Needs you ({groups.needsYou.length})</h3><ul className="co-list">{groups.needsYou.map(item)}</ul></>}
             {groups.open.length > 0 && <><h3>Waiting on the client ({groups.open.length})</h3><ul className="co-list">{groups.open.map(item)}</ul></>}
             {groups.paid.length > 0 && <details className="bl-more"><summary>Paid ({groups.paid.length})</summary><ul className="co-list">{groups.paid.map(item)}</ul></details>}
@@ -194,7 +205,11 @@ export default function Billing() {
         {tab === "subscriptions" && (
           <section aria-label="Subscriptions">
             {subs === null && !failed && <p className="muted">Loading…</p>}
-            {subs !== null && mineSubs.length === 0 && <p className="muted">No subscriptions. One is planned when a signed proposal sells a subscription.</p>}
+            {subs !== null && mineSubs.length === 0 && (
+              <EmptyState icon="refresh" title="No subscriptions yet">
+                A subscription is planned when a signed proposal sells a monthly plan. Start billing puts the Stripe link up for your approval; the client pays monthly from then on.
+              </EmptyState>
+            )}
             <ul className="co-list">{mineSubs.map((s) => <SubscriptionItem key={s.id} s={s} plan={plans.get(s.packageKey) ?? s.packageKey} today={today} names={names} onChanged={load} />)}</ul>
           </section>
         )}
@@ -203,7 +218,11 @@ export default function Billing() {
           <section aria-label="Holds">
             <p className="muted small">A hold stops your tasks and Claude’s for a client whose invoice stays unpaid past the pause day set under Billing settings. It lifts by itself when the invoice is paid or voided.</p>
             {holds === null && !failed && <p className="muted">Loading…</p>}
-            {holds !== null && mineHolds.length === 0 && <p className="muted">No client is on hold.</p>}
+            {holds !== null && mineHolds.length === 0 && (
+              <EmptyState icon="shield" title="No client is on hold">
+                Everyone is paid up, so all work is running.
+              </EmptyState>
+            )}
             <ul className="co-list">{mineHolds.map((h) => <HoldItem key={h.id} h={h} invoice={(invoices ?? []).find((i) => i.id === h.invoiceId)} today={today} tz={tz} onChanged={load} />)}</ul>
           </section>
         )}

@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { ApiError, clientsApi, studioApi } from "../api";
 import { latestOnly } from "../clientView";
-import Icon from "../components/Icon";
+import Icon, { type IconName } from "../components/Icon";
+import { EmptyState } from "../components/PageBits";
 import { KIND_LABEL, captionWithTags, copyEdit, copyOf, imageName, isOpen, nextAction, newPostBody, pickerKey, statusLabel, statusTone, type StudioKind, type StudioPost } from "../studioView";
 import type { ClientRow } from "../../worker/clients/record";
 
@@ -20,6 +21,12 @@ function PicturePicker({ label, onPick }: { label: string; onPick: (f: File | nu
     </label>
   );
 }
+
+const KINDS: { kind: StudioKind; icon: IconName; text: string; mock: string[] }[] = [
+  { kind: "audit_tip", icon: "list", text: "Up to 6 slides of tips taken from a real audit's findings.", mock: ["ink", "", "", ""] },
+  { kind: "before_after", icon: "image", text: "Your two screenshots side by side, with Claude's words on top.", mock: ["", "sig"] },
+  { kind: "case_study", icon: "trending", text: "One card on a finished client: what was wrong and what changed.", mock: ["ink"] },
+];
 
 /** The New post form: the kind, what the kind needs, the two pictures for a before and after, and the anonymous box (unticked only once the client agreed). */
 function NewPost({ clients, initialAudit, onMade }: { clients: ClientRow[]; initialAudit: string; onMade: () => Promise<void> }) {
@@ -58,18 +65,25 @@ function NewPost({ clients, initialAudit, onMade }: { clients: ClientRow[]; init
   }
 
   return (
-    <form className="cl-card st-new" onSubmit={(e) => void submit(e)} aria-label="New post">
-      <h2>New post</h2>
+    <form className="hm-card pb-card st-new" onSubmit={(e) => void submit(e)} aria-label="New post">
+      <header className="hm-card-head"><Icon name="plus" size={16} /><h2>New post</h2><span className="hm-head-note small">1080 × 1350 pictures, ready for Instagram and LinkedIn</span></header>
+      <div className="hm-card-body">
+      <fieldset className="st-kinds" style={{ border: 0, margin: 0, padding: 0 }}>
+        <legend className="sr-only">Kind of post</legend>
+        {KINDS.map((k) => (
+          <label key={k.kind} className={`st-kind${kind === k.kind ? " on" : ""}`}>
+            <input type="radio" name="st-kind" value={k.kind} checked={kind === k.kind} onChange={() => { setKind(k.kind); setBefore(null); setAfter(null); setPickerEpoch((n) => n + 1); setError(""); }} />
+            <span className="st-mock" aria-hidden="true">{k.mock.map((m, i) => <i key={i} className={m} />)}</span>
+            <b><Icon name={k.icon} size={16} />{KIND_LABEL[k.kind]}</b>
+            <span>{k.text}</span>
+          </label>
+        ))}
+      </fieldset>
       <div className="cl-fields">
-        <label className="deal-field"><span>Kind of post</span>
-          <select value={kind} onChange={(e) => { setKind(e.target.value as StudioKind); setBefore(null); setAfter(null); setPickerEpoch((n) => n + 1); setError(""); }}>
-            {(Object.keys(KIND_LABEL) as StudioKind[]).map((k) => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}
-          </select>
-        </label>
         {kind === "audit_tip" && (
-          <label className="deal-field"><span>Audit id</span>
-            <input value={auditId} onChange={(e) => setAuditId(e.target.value)} autoComplete="off" autoCapitalize="off" spellCheck={false} placeholder="Use “Post a tip” on a lead’s Website issues tab" />
-            <small>The easy way is the “Post a tip” button on a lead’s Website issues tab: it brings you here with the id filled in.</small>
+          <label className="deal-field wide"><span>Which audit</span>
+            <input value={auditId} onChange={(e) => setAuditId(e.target.value)} autoComplete="off" autoCapitalize="off" spellCheck={false} placeholder="Audit id" />
+            <small>{auditId ? "Filled in from the lead you came from." : <>Open a lead with real findings and press <b>Post a tip</b> on its Website issues tab: it brings you back here with this filled in. <Link to="/leads">Go to leads</Link></>}</small>
           </label>
         )}
         {kind === "case_study" && (
@@ -85,14 +99,17 @@ function NewPost({ clients, initialAudit, onMade }: { clients: ClientRow[]; init
           <PicturePicker key={pickerKey("after", pickerEpoch)} label="After picture" onPick={setAfter} />
         </>}
         <div className="deal-field wide st-consent">
+          <span>Naming the business</span>
           <label className="st-check"><input className="cb" type="checkbox" checked={agreed} onChange={(e) => { setAgreed(e.target.checked); if (!e.target.checked) setAnonymous(true); }} />The client agreed to be named</label>
-          <label className="st-check"><input className="cb" type="checkbox" checked={anonymous} disabled={!agreed} onChange={(e) => setAnonymous(e.target.checked)} />Anonymous (no business name, address or phone)</label>
+          <label className="st-check"><input className="cb" type="checkbox" checked={anonymous} disabled={!agreed} onChange={(e) => setAnonymous(e.target.checked)} />Keep it anonymous (no business name, address or phone)</label>
+          <small>{anonymous ? "The post will not say who the business is." : "The post names the business. Only do this with their OK in writing."}</small>
         </div>
         <div className="cl-fields-actions">
-          <button type="submit" className="btn" disabled={busy}>{busy ? "Making…" : "Make the post"}</button>
+          <button type="submit" className="btn primary" disabled={busy}><Icon name="sparkles" size={16} />{busy ? "Making…" : "Make the post"}</button>
         </div>
       </div>
       {error && <p className="error small" role="alert">{error}</p>}
+      </div>
     </form>
   );
 }
@@ -247,23 +264,43 @@ export default function Studio() {
     return () => clearInterval(t);
   }, [waiting, load]);
 
+  const all = posts ?? [];
+  const n = (st: StudioPost["status"][]) => all.filter((p) => st.includes(p.status)).length;
+  const flow: [string, string, number][] = [
+    ["Make", "Pick a kind and what it's about", n(["draft"])],
+    ["Claude writes", "Headline, caption, slide text", n(["writing"])],
+    ["You approve", "On Today, with the other approvals", n(["review"])],
+    ["Download & post", "Post it yourself, then Mark posted", n(["approved"])],
+  ];
+  const open = all.filter(isOpen);
+  const done = all.filter((p) => !isOpen(p));
   return (
     <div className="cl cr">
       <header className="page-header">
         <div>
           <h1>Studio</h1>
-          <p>Social posts for the feed. Claude writes the words, you approve them in the inbox, then download the pictures and post them yourself. Nothing here posts for you.</p>
+          <p>Posts for your feed, made from real audits and real client work. Claude writes, you approve, you post. Nothing here posts for you.</p>
         </div>
         <div className="header-actions">
           <button type="button" className="btn" onClick={() => void load()}><Icon name="refresh" size={16} />Refresh</button>
         </div>
       </header>
-      <div className="cl-body">
+      <div className="pb-page">
+        <section className="hm-card" aria-label="How a post moves">
+          <ol className="st-flow">
+            {flow.map(([t, d, c], i) => <li key={t}><b><em>{i + 1}</em>{t}{c > 0 && <span className="badge2 warning">{c}</span>}</b>{d}</li>)}
+          </ol>
+        </section>
         <NewPost clients={clients} initialAudit={params.get("audit") ?? ""} onMade={load} />
         {failed && <p className="error" role="alert">Couldn’t load the posts{posts ? ". What you see may be out of date" : ""}. <button type="button" className="btn" onClick={() => void load()}>Try again</button></p>}
         {posts === null && !failed && <p className="muted">Loading…</p>}
-        {posts !== null && posts.length === 0 && <p className="muted">No posts yet. Make one above.</p>}
-        {posts !== null && posts.length > 0 && <ul className="cr-board">{posts.map((p) => <Card key={p.id} p={p} onChanged={load} />)}</ul>}
+        {posts !== null && posts.length === 0 && (
+          <EmptyState icon="image" title="No posts yet">
+            Your first post is one click away: an audit tip from a lead with real findings is the quickest. It stays a draft until you ask Claude for the words.
+          </EmptyState>
+        )}
+        {open.length > 0 && <><h2 className="pb-section">In progress <span>{open.length}</span></h2><ul className="cr-board">{open.map((p) => <Card key={p.id} p={p} onChanged={load} />)}</ul></>}
+        {done.length > 0 && <><h2 className="pb-section">Posted and discarded <span>{done.length}</span></h2><ul className="cr-board">{done.map((p) => <Card key={p.id} p={p} onChanged={load} />)}</ul></>}
       </div>
     </div>
   );

@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import Icon from "../components/Icon";
-import { kindLabel, listProgress, projectState, visibleProjects, type Bucket, type Tone } from "../projectView";
+import { EmptyState, StatRow } from "../components/PageBits";
+import { bucketCounts, kindLabel, listProgress, projectState, visibleProjects, type Bucket, type Tone } from "../projectView";
 import { projectIsLive } from "../../worker/db/projects";
 import { PROJECTS_CHANGED, type MyTasks, type ProjectRow } from "../workData";
 
@@ -23,13 +24,14 @@ export default function Projects() {
   const view: Bucket = isBucket(wanted) ? wanted : "active";
   const [rows, setRows] = useState<ProjectRow[] | null>(null);
   const [next, setNext] = useState<Map<string, string>>(new Map());
+  const [mineCount, setMineCount] = useState(0);
   const [failed, setFailed] = useState(false);
 
   const load = useCallback(() => {
     setFailed(false);
     api.get<{ projects: ProjectRow[] }>("/projects").then((r) => setRows(r.projects)).catch(() => { setRows(null); setFailed(true); });
     // The first step waiting on Logan in each project; a project with none is simply without the line.
-    api.get<MyTasks>("/me/tasks").then((r) => setNext(new Map(r.projects.filter((p) => p.tasks.length).map((p) => [p.projectId, p.tasks[0].title])))).catch(() => setNext(new Map()));
+    api.get<MyTasks>("/me/tasks").then((r) => { setNext(new Map(r.projects.filter((p) => p.tasks.length).map((p) => [p.projectId, p.tasks[0].title]))); setMineCount(r.projects.reduce((n, p) => n + p.tasks.length, 0)); }).catch(() => setNext(new Map()));
   }, []);
   useEffect(() => {
     load();
@@ -52,10 +54,28 @@ export default function Projects() {
           <button type="button" className="btn" onClick={load}><Icon name="refresh" size={16} />Refresh</button>
         </div>
       </header>
-      <div className="wk-body">
+      <div className="pb-page">
         {failed && <p className="error" role="alert">Couldn’t load the projects. <button type="button" className="btn" onClick={load}>Try again</button></p>}
         {!failed && rows === null && <p className="muted">Loading…</p>}
-        {rows !== null && shown.length === 0 && <p className="muted">{v.empty}</p>}
+        {rows !== null && !lead && (() => {
+          const c = bucketCounts(rows);
+          return <StatRow stats={[
+            { label: "Active", icon: "briefcase", value: c.active, sub: c.active ? "Projects being worked" : "None running" },
+            { label: "Steps on you", icon: "user", value: mineCount, sub: mineCount ? "Open them from each card" : "Nothing waiting on you", tone: mineCount ? "warning" : "positive" },
+            { label: "Waiting on client", icon: "clock", value: c.waiting, sub: c.waiting ? "Gone quiet on onboarding" : "Nobody is holding you up", tone: c.waiting ? "warning" : "" },
+            { label: "Done", icon: "check", value: c.done, sub: c.paused ? `${c.paused} paused` : "Finished or cancelled" },
+          ]} />;
+        })()}
+        {rows !== null && shown.length === 0 && (view === "active" && !lead ? (
+          <EmptyState icon="briefcase" title="No active projects"
+            steps={[
+              { title: "A client signs", text: "The proposal names the package, and the package names its SOP.", to: "/pipeline" },
+              { title: "The deposit is paid", text: "The project starts by itself with every task from the SOP." },
+              { title: "You and Claude work it", text: "Your steps show here as Next for you; Claude's run from the queue." },
+            ]}>
+            {v.empty}
+          </EmptyState>
+        ) : <EmptyState icon={view === "done" ? "check" : view === "paused" ? "ban" : "clock"} title={v.empty} />)}
         <ul className="wk-cards">
           {shown.map((p) => {
             const state = projectState(p);
@@ -76,7 +96,7 @@ export default function Projects() {
                     <span className="wk-bar" aria-hidden="true"><i style={{ width: `${pct}%` }} /></span>
                     <span className="small muted">{done} of {total} done</span>
                   </span>
-                  {projectIsLive(p) && <span className="small">{mine ? <>Next for you: {mine}</> : <span className="muted">Nothing waiting on you</span>}</span>}
+                  {projectIsLive(p) && <span className={`wk-next small${mine ? " on" : ""}`}>{mine ? <><Icon name="arrow-right" size={14} /><span>Next for you: <b>{mine}</b></span></> : <span className="muted">Nothing waiting on you</span>}</span>}
                 </Link>
               </li>
             );
