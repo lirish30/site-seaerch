@@ -7,6 +7,7 @@ import type { Env } from "../env";
 import { plainSeoSummary, SeoReportFacts } from "../seo/reportFacts";
 import { enqueueTask } from "./db";
 import { registerTaskKind, type TaskKindDef } from "./registry";
+import { words } from "./wordGuards";
 
 /** The task kind this file handles: Claude writes the words of a client's monthly Local SEO report from its numbers. */
 export const SEO_REPORT_KIND = "seo.report";
@@ -15,17 +16,6 @@ export const SEO_REPORT_TARGET = "seo_report";
 
 export const SeoReportPayload = z.object({ reportId: z.string().min(1).max(100) });
 export type SeoReportPayload = z.infer<typeof SeoReportPayload>;
-
-/** Claude's words are shown to a client: no address, no email, no dollar amount, no markdown, no long run of blank lines, and nothing that sounds like a promise about a ranking or a result. A result that fails this is refused and the task stays claimed. */
-const REFUSED = /https?:\/\/|www\.|@|\$\s?\d|[`#*_]{2}/i;
-const BLANK_LINES = /(?:\r?\n){3,}/;
-/** Markdown that survives the two-character check: a link `[x](y)` and a line that starts as a heading or a bullet. */
-const MARKDOWN = /\]\(|^\s*(#|[-*]\s)/m;
-const PROMISE = /guarantee|promise|#1|number one|first page|top spot|will rank|will (?:improve|increase|rise|climb|grow|get)/i;
-const words = (max: number) => z.string().trim().min(1).max(max)
-  .refine((s) => !REFUSED.test(s) && !MARKDOWN.test(s), "must not contain a link, an email address, a price or markdown")
-  .refine((s) => !BLANK_LINES.test(s), "must not contain a run of blank lines")
-  .refine((s) => !PROMISE.test(s), "must not promise a ranking or a result");
 
 export const SeoReportResult = z.object({
   summary: words(600),
