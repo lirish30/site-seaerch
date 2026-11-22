@@ -10,7 +10,7 @@ import { periodLabel } from "../../../worker/sop/cadence";
 export function LedgerBar({ bar, label }: { bar: Bar; label: string }) {
   return (
     <div className="rp-bar-wrap">
-      <div className={`rp-bar ${bar.tone}`} role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={bar.width} aria-valuetext={bar.label}>
+      <div className={`rp-meter ${bar.tone}`} role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={bar.width} aria-valuetext={bar.label}>
         <i style={{ width: `${bar.width}%` }} />
       </div>
       <p className="small rp-bar-label">{bar.label}{bar.note && <> · <b className={bar.tone}>{bar.note}</b></>}</p>
