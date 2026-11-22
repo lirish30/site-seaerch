@@ -103,7 +103,7 @@ interface Plan {
   checks: RankCheck[];
   /** A usable rank check from this month exists now. */
   usable: boolean;
-  /** The month has a check, a plan and active keywords, and fewer slot rows than the plan includes (no Places call needed). */
+  /** The month has a check, a plan and active keywords, and fewer slot rows than the plan includes or a slot that is planned with no draft task (no Places call needed). */
   slotsDue: boolean;
   /** A usable check exists but 1.1 is not yet ticked on the month's SEO-1 task. */
   tickDue: boolean;
@@ -139,7 +139,11 @@ async function planFor(env: Env, businessId: string, o: { today: string; monthFr
   let slotsDue = false;
   if (checks.length > 0 && active.length > 0) {
     const slotPlan = await slotPlanFor(env.DB, businessId);
-    slotsDue = !!slotPlan && (await listContent(env.DB, { businessId, period: o.current })).length < slotPlan.content + slotPlan.gbpPosts;
+    if (slotPlan) {
+      // A slot left `planned` with no task (its draft task expired or was given up on, or a crash came between making the row and queueing it) is due too: `ensureSlots` hands it to Claude again.
+      const rows = await listContent(env.DB, { businessId, period: o.current });
+      slotsDue = rows.length < slotPlan.content + slotPlan.gbpPosts || rows.some((i) => i.status === "planned" && i.claudeTaskId === null);
+    }
   }
   return {
     profile, keywords: active.length, watch, pull, checks,

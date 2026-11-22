@@ -4,12 +4,13 @@ import worker from "../src/worker/index";
 import { placeHold } from "../src/worker/db/holds";
 import { addCadence } from "../src/worker/db/projects";
 import { ensureSeedSops } from "../src/worker/db/sops";
-import { addKeyword, getProfile, listContent, rankChecksFor, snapshotsFor, upsertProfile, upsertRankCheck, type ProfileStatus } from "../src/worker/db/seo";
+import { addKeyword, getProfile, listContent, rankChecksFor, setContent, snapshotsFor, upsertProfile, upsertRankCheck, type ProfileStatus } from "../src/worker/db/seo";
 import { setSpendCap } from "../src/worker/db/spendCaps";
 import { getSeoReportFor, listSeoReports } from "../src/worker/db/seoReports";
 import { listTasks } from "../src/worker/db/tasks";
 import type { Env } from "../src/worker/env";
 import { generateRecurring } from "../src/worker/projects/sweep";
+import { expireOldTasks } from "../src/worker/queue/db";
 import "../src/worker/queue/kinds";
 import { previousMonth } from "../src/worker/care/reportSweep";
 import { DAILY_CRON, runScheduled } from "../src/worker/schedule";
@@ -275,6 +276,30 @@ describe("sweepSeo", () => {
     spy.mockClear();
     expect(await sweepSeo(e, NOW)).toMatchObject({ clients: 0 });
     expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("queues the draft of a slot again when its task expired and put it back to planned, once, and leaves a slot that has its draft or a task alone", async () => {
+    const s = await seoClient({ keywords: 2 });
+    await generateRecurring(e, NOW);
+    await check(s, "2026-12-01");
+    await sweepSeo(e, NOW);
+    const first = await listContent(env.DB, { businessId: s.businessId, period: "2026-12" });
+    expect(first.map((i) => i.status)).toEqual(["drafting", "drafting", "drafting"]);
+    expect(await jobs("seo.content")).toHaveLength(3);
+    // Claude writes one of the three; nobody picks up the other two, and 15 days on the queue's expiry puts those slots back to planned with no task.
+    expect(await setContent(env.DB, first[0].id, ["drafting"], { title: "A title", body: "A body", status: "drafted" }, NOW.toISOString())).toBe(true);
+    expect(await expireOldTasks(e, at(NOW, 15))).toBeGreaterThanOrEqual(3);
+    expect((await listContent(env.DB, { businessId: s.businessId, period: "2026-12" })).map((i) => [i.status, i.claudeTaskId === null])).toEqual([["drafted", false], ["planned", true], ["planned", true]]);
+    // The next daily run hands the two slots to Claude again, and the one after it hands out nothing more.
+    await sweepSeo(e, at(NOW, 15));
+    const again = await listContent(env.DB, { businessId: s.businessId, period: "2026-12" });
+    expect(again.map((i) => i.status)).toEqual(["drafted", "drafting", "drafting"]);
+    expect(again[1].claudeTaskId).not.toBeNull();
+    expect(again[1].claudeTaskId).not.toBe(first[1].claudeTaskId);
+    expect((await jobs("seo.content")).filter((j) => j.status === "pending")).toHaveLength(2);
+    expect(await jobs("seo.content")).toHaveLength(5);
+    await sweepSeo(e, at(NOW, 16));
+    expect(await jobs("seo.content")).toHaveLength(5);
   });
 
   it("ticks 1.1 when a usable check arrives after the slots were made", async () => {
