@@ -105,13 +105,13 @@ clientRoutes.get("/clients/:id/traffic", async (c) => {
 
 /**
  * Starts the client's strategy memo by hand (Plan 16): the facts are frozen into a memo and Claude is asked for the words. 201 with `{ memoId, status, created: true }`, or 200 with the memo already open for the
- * client (`created: false`). No token is sent. 404 for a business that does not exist; 409 with a plain sentence for a lead or for a client with nothing measured yet.
+ * client (`created: false`). A rehearsal client's memo is marked as a test. No token is sent. 404 for a business that does not exist; 409 with a plain sentence for a lead or for a client with nothing measured yet.
  */
 clientRoutes.post("/clients/:id/strategy-memo", async (c) => {
   const businessId = c.req.param("id");
   if (!(await getBusiness(c.env.DB, businessId))) return c.json(NOT_FOUND, 404);
   try {
-    const { memo, created } = await startStrategyMemo(c.env, businessId, { now: new Date() });
+    const { memo, created } = await startStrategyMemo(c.env, businessId, { now: new Date(), test: await isTestClient(c.env.DB, businessId) });
     return c.json({ memoId: memo.id, status: memo.status, created }, created ? 201 : 200);
   } catch (e) {
     if (e instanceof MemoRefused) return c.json({ error: e.message }, 409);

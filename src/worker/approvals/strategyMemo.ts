@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { mainMailboxProblem } from "../booking/mail";
 import { invoiceRecipient, signOff, type Recipient } from "../billing/mail";
-import { isClient } from "../clients/record";
+import { isClient, isTestClient } from "../clients/record";
 import { checkConflict } from "../conflict";
 import { logActivityOnce } from "../db/activity";
 import { createApprovalOnce, toApproval, type Approval } from "../db/approvals";
@@ -10,6 +10,7 @@ import { getByApproval } from "../db/messages";
 import { getSettings } from "../db/settings";
 import { getMemo, markMemoSent, setMemoLinks, unmarkMemoSent, type StrategyMemo } from "../db/strategy";
 import type { Env } from "../env";
+import { clientHasEnded } from "../ladder/recipient";
 import { getMailDeps } from "../mail/deps";
 import { sendEmail } from "../mail/send";
 import { MemoFacts } from "../strategy/facts";
@@ -47,12 +48,13 @@ async function describe(env: Env, memo: StrategyMemo): Promise<{ title: string; 
   try { who = await invoiceRecipient(env, { documentId: null, projectId: null, businessId: memo.businessId }); }
   catch (e) { whoProblem = e instanceof Error ? e.message : "no contact"; }
   const owner = settings.contact_email.trim();
+  const test = memo.test || (await isTestClient(env.DB, memo.businessId));
   const link = strategyLink(env, memo.token);
   const clientName = (facts.success && facts.data.clientName) || who?.clientName || "this client";
   const mail = renderStrategyMail({ clientName, contactName: who?.contactName ?? "", yourName: signOff(settings), link: link ?? "(no link yet)" });
 
   const contact = who ? `${who.contactName || who.clientName} <${who.to}>` : `nobody yet (this client has no contact email: add one first; ${whoProblem})`;
-  const to = memo.test ? `${owner || "your contact email (not set: add it in Settings first)"} (a test: nothing goes to ${contact})` : contact;
+  const to = test ? `${owner || "your contact email (not set: add it in Settings first)"} (a test: nothing goes to ${contact})` : contact;
   const words = Words.safeParse(memo.body);
   const standing = (words.success && words.data.standing?.trim()) || "";
   const titles = (words.success ? words.data.priorities ?? [] : []).map((p) => p.title?.trim() ?? "").filter(Boolean);
@@ -60,7 +62,7 @@ async function describe(env: Env, memo: StrategyMemo): Promise<{ title: string; 
     ? ["Standing: " + (standing || "none"), "Priorities:", ...(titles.length ? titles.map((t, i) => `${i + 1}. ${t}`) : ["None were written."])]
     : ["The memo has no words yet."];
   const preview = [
-    `To: ${to}`, `Subject: ${memo.test ? "[Test] " : ""}${mail.subject}`, "", mail.body, "",
+    `To: ${to}`, `Subject: ${test ? "[Test] " : ""}${mail.subject}`, "", mail.body, "",
     ...(link ? [] : [`The link cannot be made: ${NO_LINK_BASE}.`, ""]),
     "On the memo page (not in the mail):", ...page, "",
     "Nothing is mailed until you approve.",
@@ -112,13 +114,16 @@ registerHandler({
     const memo = await getMemo(db, p.memoId);
     if (!memo) throw new Error("This strategy memo was not found.");
     const mailed = await getByApproval(db, a.id);
-    const done = async (to: string) => { await logActivityOnce(db, memo.businessId, "strategy_sent", `Strategy memo sent to ${to}${memo.test ? " (test)" : ""}`); };
+    // A rehearsal client's memo is a test whatever the stored flag says: it goes to the owner alone.
+    const test = memo.test || (await isTestClient(db, memo.businessId));
+    const done = async (to: string) => { await logActivityOnce(db, memo.businessId, "strategy_sent", `Strategy memo sent to ${to}${test ? " (test)" : ""}`); };
     if (mailed?.status === "sent") { await markMemoSent(db, memo.id, mailed.sent_at ?? getMailDeps().now().toISOString()); await done(mailed.counterpart); return; } // an earlier run mailed it and something after the mail failed
 
     const skip = async (why: string) => { await logActivityOnce(db, memo.businessId, "note", `Strategy memo not sent: ${why}, so nothing was mailed`); };
     if (memo.status !== "ready") { await skip(NOT_READY[memo.status]); return; }
-    if (!memo.test && !(await isClient(db, memo.businessId))) { await skip("the business is no longer a client"); return; }
-    if (!memo.test && (await isOnHold(db, memo.businessId))) throw new Error("This client is on a billing hold, so the memo was not mailed. Approve it again once the hold is lifted.");
+    if (!test && !(await isClient(db, memo.businessId))) { await skip("the business is no longer a client"); return; }
+    if (!test && (await clientHasEnded(db, memo.businessId))) { await skip("the client has ended (every subscription is cancelled or ended)"); return; }
+    if (!test && (await isOnHold(db, memo.businessId))) throw new Error("This client is on a billing hold, so the memo was not mailed. Approve it again once the hold is lifted.");
     const link = strategyLink(env, memo.token);
     if (!link) throw new Error(`The memo was not mailed: ${NO_LINK_BASE}. Approve it again once that is fixed.`);
 
@@ -127,8 +132,8 @@ registerHandler({
     if (mailbox) throw new Error(`The main mailbox cannot send: ${mailbox}`);
     const who = await invoiceRecipient(env, { documentId: null, projectId: null, businessId: memo.businessId });
     const owner = settings.contact_email.trim();
-    if (memo.test && !owner) throw new Error("Add your contact email in Settings first: a test memo goes to it.");
-    if (!memo.test) {
+    if (test && !owner) throw new Error("Add your contact email in Settings first: a test memo goes to it.");
+    if (!test) {
       // The client has paid before, so the gate's "existing client" rule does not apply; a do-not-contact or suppression hit still blocks.
       const conflict = await checkConflict(db, { email: who.to, businessId: memo.businessId });
       if (conflict.blocked && conflict.source !== "client") throw new Error(`Blocked: ${conflict.reason}`);
@@ -136,15 +141,18 @@ registerHandler({
 
     const facts = MemoFacts.safeParse(memo.facts);
     const mail = renderStrategyMail({ clientName: (facts.success && facts.data.clientName) || who.clientName, contactName: who.contactName, yourName: signOff(settings), link });
-    const to = memo.test ? owner : who.to;
+    const to = test ? owner : who.to;
     // Sent first, so a second approval (or a racing one) finds it taken and mails nothing.
     if (!(await markMemoSent(db, memo.id, getMailDeps().now().toISOString()))) return;
     try {
       await sendEmail(env, {
-        mailbox: "main", to, subject: `${memo.test ? "[Test] " : ""}${mail.subject}`, body: mail.body, includeFooter: false, ...(memo.test ? {} : { businessId: memo.businessId }),
+        mailbox: "main", to, subject: `${test ? "[Test] " : ""}${mail.subject}`, body: mail.body, includeFooter: false, ...(test ? {} : { businessId: memo.businessId }),
       }, { approvalId: a.id, skipLimits: true });
     } catch (e) {
-      if ((await getByApproval(db, a.id))?.status !== "sent") await unmarkMemoSent(db, memo.id).catch(() => { /* the memo stays `sent`: the safe side */ });
+      // No mail row, or one that failed: nothing went out, so the memo is `ready` again. A row still `sending` may have reached the server: the memo stays `sent` and the timeline says so.
+      const row = await getByApproval(db, a.id);
+      if (row?.status === "sending") await logActivityOnce(db, memo.businessId, "note", "Strategy memo: the mail may or may not have gone out (the send did not finish), so the memo stays marked sent. Check the mailbox's Sent folder before sending it again").catch(() => {});
+      else if (row?.status !== "sent") await unmarkMemoSent(db, memo.id).catch(() => { /* the memo stays `sent`: the safe side */ });
       throw e;
     }
     await done(to);

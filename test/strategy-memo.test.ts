@@ -6,6 +6,7 @@ import { proposeStrategyApproval } from "../src/worker/approvals/strategyMemo";
 import { listActivity } from "../src/worker/db/activity";
 import { addDoNotContact } from "../src/worker/db/doNotContact";
 import { activeHolds, liftHold, placeHold } from "../src/worker/db/holds";
+import * as messagesDb from "../src/worker/db/messages";
 import { addKeyword, upsertProfile, upsertSnapshot } from "../src/worker/db/seo";
 import { getMemo, getMemoByToken, listMemos, revokeMemo, setMemoBody } from "../src/worker/db/strategy";
 import { saveLink, saveTrafficMonth } from "../src/worker/db/traffic";
@@ -16,7 +17,7 @@ import { buildMemoFacts, MemoFacts, MemoRefused } from "../src/worker/strategy/f
 import { renderStrategyMail, strategyLink } from "../src/worker/strategy/mail";
 import { startStrategyMemo } from "../src/worker/strategy/start";
 import type { TrafficFacts } from "../src/worker/traffic/facts";
-import { seedClient } from "./fixtures/clients";
+import { seedClient, type SubSpec } from "./fixtures/clients";
 import { OWNER_EMAIL, readyToSend } from "./fixtures/documents";
 import { resetProjectWork } from "./fixtures/projects";
 
@@ -73,8 +74,8 @@ async function pulled(siteId: string, period: string, facts: TrafficFacts, statu
   await saveTrafficMonth(env.DB, { siteId, period, status, facts }, STAMP);
 }
 /** A client with a Local SEO profile (a plumber in two towns), two keywords and a Search Console month. */
-async function measured(o: { test?: boolean } = {}) {
-  const s = await seedClient({ test: o.test });
+async function measured(o: { test?: boolean; subs?: SubSpec[] } = {}) {
+  const s = await seedClient({ test: o.test, subs: o.subs });
   await upsertProfile(env.DB, s.businessId, { napName: "Ace Plumbing", trade: "plumber", towns: ["Tigard", "Beaverton"], status: "active" }, "2026-10-01T00:00:00.000Z");
   await addKeyword(env.DB, s.businessId, { term: "drain cleaning", town: "Tigard" }, STAMP);
   await addKeyword(env.DB, s.businessId, { term: "water heater repair", town: "" }, STAMP);
@@ -144,6 +145,27 @@ describe("buildMemoFacts", () => {
     const facts = await buildMemoFacts(e, s.businessId, NOW);
     expect(facts).toMatchObject({ trade: null, towns: [], keywords: [], period: "2026-11", profile: null });
     expect(facts.search?.clicks).toBe(40);
+  });
+
+  it("makes a memo from a Local SEO profile alone: no keyword, no traffic, search null", async () => {
+    const s = await seedClient();
+    await upsertProfile(env.DB, s.businessId, { trade: "plumber", towns: ["Tigard"], status: "active" }, "2026-10-01T00:00:00.000Z");
+    const facts = await buildMemoFacts(e, s.businessId, NOW);
+    expect(facts).toMatchObject({ trade: "plumber", towns: ["Tigard"], keywords: [], search: null, visits: null, period: null, profile: null });
+  });
+
+  it("looks back across the year boundary: in January 2027 the three months are December, November and October", async () => {
+    const s = await measured();
+    await env.DB.prepare(`DELETE FROM traffic_months`).run();
+    await pulled(s.site!.id, "2026-11", month("2026-11", { search: search({ clicks: 11 }) }));
+    const jan = new Date("2027-01-05T17:00:00.000Z");
+    const facts = await buildMemoFacts(e, s.businessId, jan);
+    expect(facts.period).toBe("2026-11");
+    expect(facts.search?.clicks).toBe(11);
+    // September is the fourth month back from January: not looked at.
+    await env.DB.prepare(`DELETE FROM traffic_months`).run();
+    await pulled(s.site!.id, "2026-09", month("2026-09"));
+    expect((await buildMemoFacts(e, s.businessId, jan)).period).toBeNull();
   });
 
   it("cleans what was typed and keeps the lists inside their caps", async () => {
@@ -370,6 +392,28 @@ describe("approving a strategy.memo", () => {
     expect((await lines(s.businessId, "note")).find((d) => d.startsWith("Strategy memo not sent"))).toMatch(/no longer a client/);
   });
 
+  it("a client whose subscriptions are all cancelled has ended: nothing is sent, the timeline says why and the approval is used up", async () => {
+    const s = await measured({ subs: [{ monthlyCents: 60_000, status: "cancelled" }] });
+    const { memo, approval } = await readyMemo(s);
+    expect(await approve(ask(), approval.id)).toEqual({ ok: true });
+    expect(mail.sent).toHaveLength(0);
+    const notes = (await lines(s.businessId, "note")).filter((d) => d.startsWith("Strategy memo not sent"));
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toMatch(/client has ended/);
+    expect(await approvalRow(approval.id)).toMatchObject({ status: "approved", error: null });
+    expect((await getMemo(env.DB, memo.id))!.status).toBe("ready");
+    expect(await lines(s.businessId, "strategy_sent")).toHaveLength(0);
+  });
+
+  it("a client with one cancelled and one active subscription, and a build-only client, have not ended and are mailed", async () => {
+    for (const subs of [[{ monthlyCents: 60_000, status: "cancelled" as const }, { monthlyCents: 30_000 }], []]) {
+      const s = await measured({ subs });
+      const { approval } = await readyMemo(s);
+      expect(await approve(ask(), approval.id)).toEqual({ ok: true });
+    }
+    expect(mail.sent).toHaveLength(2);
+  });
+
   it("with no contact email sends nothing and says so, and the approval stays pending", async () => {
     const s = await measured();
     const { memo, approval } = await readyMemo(s);
@@ -425,6 +469,34 @@ describe("approving a strategy.memo", () => {
   });
 });
 
+describe("a rehearsal client's memo", () => {
+  it("stored with test false still goes to the owner alone, with [Test] on the subject, and the card says so", async () => {
+    const s = await measured({ test: true });
+    const { memo, approval } = await readyMemo(s);
+    expect(memo.test).toBe(false);
+    expect((await approvalRow(approval.id))!.preview).toContain(`To: ${OWNER_EMAIL} (a test: nothing goes to Pat Jones <pat@ace.test>)`);
+    expect(await approve(ask(), approval.id)).toEqual({ ok: true });
+    expect(mail.sent).toHaveLength(1);
+    expect(mail.sent[0].to).toBe(OWNER_EMAIL);
+    expect(mail.sent[0].subject).toMatch(/^\[Test\] Your plan, /);
+    expect(mail.sent.some((m) => m.to === "pat@ace.test")).toBe(false);
+    expect(await lines(s.businessId, "strategy_sent")).toEqual([`Strategy memo sent to ${OWNER_EMAIL} (test)`]);
+  });
+});
+
+describe("a send that does not finish", () => {
+  it("leaves the memo marked sent, and says so on the timeline, when the mail row is still sending", async () => {
+    const s = await measured();
+    const { memo, approval } = await readyMemo(s);
+    mail.failures.push(new Error("smtp dropped"));
+    vi.spyOn(messagesDb, "markFailed").mockRejectedValue(new Error("database is busy"));
+    expect(await approve(ask(), approval.id)).toMatchObject({ ok: false, error: "smtp dropped" });
+    expect((await getMemo(env.DB, memo.id))!.status).toBe("sent");
+    expect((await lines(s.businessId, "note")).filter((d) => d.startsWith("Strategy memo: the mail may or may not have gone out"))).toHaveLength(1);
+    expect(mail.sent).toHaveLength(0);
+  });
+});
+
 describe("POST /api/clients/:id/strategy-memo", () => {
   const post = (id: string, auth = true) => SELF.fetch(`https://x/api/clients/${id}/strategy-memo`, { method: "POST", headers: auth ? { cookie } : {} });
   beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW); });
@@ -441,6 +513,15 @@ describe("POST /api/clients/:id/strategy-memo", () => {
     const again = (await second.json()) as typeof body;
     expect(again).toEqual({ ...body, created: false });
     expect(JSON.stringify(body)).not.toMatch(/token/i);
+  });
+
+  it("marks a rehearsal client's memo as a test", async () => {
+    const s = await measured({ test: true });
+    expect((await post(s.businessId)).status).toBe(201);
+    expect((await listMemos(env.DB, s.businessId))[0].test).toBe(true);
+    const real = await measured();
+    expect((await post(real.businessId)).status).toBe(201);
+    expect((await listMemos(env.DB, real.businessId))[0].test).toBe(false);
   });
 
   it("is 409 with a plain sentence for a client with nothing measured, and for a lead", async () => {
