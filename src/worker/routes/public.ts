@@ -8,6 +8,7 @@ import { findSubscription, startCheckout, subscriptionPage } from "../billing/ch
 import { changeOrderPage, declineChangeOrderPublic, signChangeOrderPublic, type ChangeOrderWriteResult } from "../changeorders/public";
 import { publicReport as publicCareReport } from "../care/reportPublic";
 import { publicSeoReport } from "../seo/reportPublic";
+import { publicMemo } from "../strategy/public";
 import { publicReport } from "../db/reports";
 import { ensureDepositInvoice } from "../documents/deposit";
 import { SignFormSchema, proposalPage, signProposal, signedProposalFor } from "../documents/public";
@@ -358,6 +359,17 @@ publicRoutes.get("/l/:token", async (c) => {
   const token = c.req.param("token");
   if (!TOKEN.test(token)) return c.json(NOT_FOUND, 404);
   const page = await publicSeoReport(c.env, token, new Date(), { countView: !(await isOwner(c)) });
+  return page ? c.json(page) : c.json(NOT_FOUND, 404);
+});
+
+// The client's strategy memo (Plan 16): the same rules as the reports'. The same 404 for every link that is not live, a malformed token never reaches the database, only a sent memo is shown, showing it counts
+// as a view, and the owner opening it does not.
+publicRoutes.use("/y/:token", clientLimited);
+
+publicRoutes.get("/y/:token", async (c) => {
+  const token = c.req.param("token");
+  if (!TOKEN.test(token)) return c.json(NOT_FOUND, 404);
+  const page = await publicMemo(c.env, token, new Date(), { countView: !(await isOwner(c)) });
   return page ? c.json(page) : c.json(NOT_FOUND, 404);
 });
 

@@ -4,6 +4,7 @@ import { gradeViewFor } from "../clients/gradeData";
 import { getClientRecord, isClient, isTestClient, listClients } from "../clients/record";
 import { logActivity } from "../db/activity";
 import { getBusiness } from "../db/businesses";
+import { listMemos } from "../db/strategy";
 import { getGrades, setGrade } from "../db/grade";
 import { settleAccessItem } from "../db/onboardings";
 import {
@@ -13,6 +14,7 @@ import {
 import type { Env } from "../env";
 import { bodyOf, invalid, NOT_FOUND, ownerOnError, type Ctx } from "../projects/http";
 import { cleanText } from "../onboarding/templates";
+import { cancelMemoNow, memoRow, revokeMemoNow, type MemoDone } from "../strategy/admin";
 import { MemoRefused } from "../strategy/facts";
 import { startStrategyMemo } from "../strategy/start";
 import { clientTraffic } from "../traffic/panel";
@@ -118,6 +120,21 @@ clientRoutes.post("/clients/:id/strategy-memo", async (c) => {
     throw e;
   }
 });
+
+/** The client's strategy memos, newest first, as the owner sees them (see `MemoRow`). Never a token on its own, the facts or the Claude task id. 404 for a business that does not exist. */
+clientRoutes.get("/clients/:id/strategy-memos", async (c) => {
+  const businessId = c.req.param("id");
+  if (!(await getBusiness(c.env.DB, businessId))) return c.json(NOT_FOUND, 404);
+  return c.json({ memos: (await listMemos(c.env.DB, businessId)).map((m) => memoRow(c.env, m)) });
+});
+
+const memoAnswer = (c: Ctx, done: MemoDone) => (done.ok ? c.json({ memo: memoRow(c.env, done.memo) }) : c.json(done.status === 404 ? NOT_FOUND : { error: done.error }, done.status));
+
+/** Cancels a memo that has not gone out ("Try again" cancels the one being written, then starts a new one). 404 for a memo of another client; 409 with a plain sentence for one that was sent, revoked or cancelled. */
+clientRoutes.post("/clients/:id/strategy-memos/:memoId/cancel", async (c) => memoAnswer(c, await cancelMemoNow(c.env, c.req.param("id"), c.req.param("memoId"), new Date())));
+
+/** Takes a ready or sent memo back: its link stops working. 404 for a memo of another client; 409 with a plain sentence for any other state. */
+clientRoutes.post("/clients/:id/strategy-memos/:memoId/revoke", async (c) => memoAnswer(c, await revokeMemoNow(c.env, c.req.param("id"), c.req.param("memoId"), new Date())));
 
 const GRADE_NOTE_MAX = 300;
 const GradeBody = z.object({

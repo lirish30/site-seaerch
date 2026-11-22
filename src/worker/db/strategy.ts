@@ -85,6 +85,11 @@ export async function revokeMemo(db: D1Database, id: string, now: string): Promi
   return changed(await db.prepare(`UPDATE strategy_memos SET status = 'revoked', revoked_at = ? WHERE id = ? AND status IN ('ready', 'sent')`).bind(now, id).run());
 }
 
+/** Takes a memo that never went out out of play: `collecting` or `ready` to `cancelled` (stamping `revoked_at` with when), which frees the client's one open-memo slot; false for any other state. */
+export async function cancelMemo(db: D1Database, id: string, now: string): Promise<boolean> {
+  return changed(await db.prepare(`UPDATE strategy_memos SET status = 'cancelled', revoked_at = ? WHERE id = ? AND status IN ('collecting', 'ready')`).bind(now, id).run());
+}
+
 /** Counts one view of the memo's link; `first_viewed_at` keeps the first one. */
 export async function countMemoView(db: D1Database, id: string, now: string): Promise<void> {
   await db.prepare(`UPDATE strategy_memos SET view_count = view_count + 1, first_viewed_at = COALESCE(first_viewed_at, ?) WHERE id = ?`).bind(now, id).run();

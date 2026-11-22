@@ -12,6 +12,7 @@ import ClientSeoPanel from "../components/client/ClientSeoPanel";
 import LadderPanel from "../components/client/LadderPanel";
 import LinkedPanel from "../components/client/LinkedPanel";
 import SitePanel from "../components/client/SitePanel";
+import StrategyMemoSection from "../components/client/StrategyMemoSection";
 import TrafficPanel from "../components/client/TrafficPanel";
 import { hasSeoOnboarding, hasSeoPlan } from "../seoView";
 import { workError } from "../workData";
@@ -177,6 +178,7 @@ export default function ClientPage() {
         {client.sites.length > 0 && (
           <TrafficPanel businessId={b.id} clientName={b.name} today={today} access={Object.fromEntries(client.sites.map(({ site, access }) => [site.id, access.map((a) => ({ key: a.key, status: a.status }))]))} />
         )}
+        <StrategyMemoSection businessId={b.id} tz={tz} />
         <ClientSeoPanel businessId={b.id} clientName={b.name} clientAddress={b.address ?? ""} hasPlan={hasSeoPlan(client.subscriptions) || hasSeoOnboarding(client.projects)}
           sites={client.sites.flatMap(({ site, monitoring }) => (monitoring.domain ? [{ id: site.id, domain: monitoring.domain }] : []))} />
       </div>

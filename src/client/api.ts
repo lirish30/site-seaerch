@@ -20,6 +20,8 @@ import type { LadderRow } from "../worker/db/ladder";
 import type { SiteLink, TrafficStatus } from "../worker/db/traffic";
 import type { Candidates } from "../worker/traffic/link";
 import type { ClientTraffic } from "../worker/traffic/panel";
+import type { MemoRow } from "../worker/strategy/admin";
+import type { PublicMemo } from "../worker/strategy/public";
 import type { AutoApproveState } from "../worker/routes/autoApprove";
 import type { StudioCopy, StudioPost } from "./studioView";
 export class ApiError extends Error { constructor(public status: number, message: string, public fields: string[] = [], public code = "", public body: unknown = undefined) { super(message); } }
@@ -169,6 +171,18 @@ export const trafficApi = {
   pull: (siteId: string, period: string) => api.post<{ status: TrafficStatus; error: string }>(`/traffic/site/${encodeURIComponent(siteId)}/pull`, { period }),
 };
 
+/** The owner's strategy memo routes (Plan 16). Starting one only freezes the facts and asks Claude; the mail goes out only when its approval is approved. */
+export const strategyApi = {
+  /** The client's memos, newest first. */
+  list: (clientId: string) => api.get<{ memos: MemoRow[] }>(`/clients/${encodeURIComponent(clientId)}/strategy-memos`).then((r) => r.memos),
+  /** Starts a memo, or answers the one already open. A 409 carries a plain sentence (a lead, or nothing measured yet). */
+  start: (clientId: string) => api.post<{ memoId: string; status: string; created: boolean }>(`/clients/${encodeURIComponent(clientId)}/strategy-memo`),
+  /** Cancels a memo that has not gone out. */
+  cancel: (clientId: string, memoId: string) => api.post<{ memo: MemoRow }>(`/clients/${encodeURIComponent(clientId)}/strategy-memos/${encodeURIComponent(memoId)}/cancel`).then((r) => r.memo),
+  /** Takes a ready or sent memo back: its link stops working. */
+  revoke: (clientId: string, memoId: string) => api.post<{ memo: MemoRow }>(`/clients/${encodeURIComponent(clientId)}/strategy-memos/${encodeURIComponent(memoId)}/revoke`).then((r) => r.memo),
+};
+
 /** The post-launch ladder routes (Plan 15). Nothing here sends mail: a mail goes out only when its approval is approved. */
 export const ladderApi = {
   list: (clientId: string) => api.get<{ rows: LadderRow[] }>(`/clients/${encodeURIComponent(clientId)}/ladder`).then((r) => r.rows),
@@ -242,6 +256,14 @@ export async function publicSeoReport(token: string): Promise<{ status: number; 
   try {
     const res = await fetch(`/api/public/l/${token}`, { credentials: "omit", cache: "no-store" });
     return { status: res.status, page: res.ok ? ((await res.json()) as PublicSeoReport) : null };
+  } catch { return { status: 0, page: null }; }
+}
+
+/** The client's strategy memo (`/y/<token>`): `{ status, page }`, `page` only for a 200. A dropped connection is `status` 0. Public: no cookie is sent. */
+export async function publicStrategyMemo(token: string): Promise<{ status: number; page: PublicMemo | null }> {
+  try {
+    const res = await fetch(`/api/public/y/${token}`, { credentials: "omit", cache: "no-store" });
+    return { status: res.status, page: res.ok ? ((await res.json()) as PublicMemo) : null };
   } catch { return { status: 0, page: null }; }
 }
 

@@ -91,6 +91,21 @@ describe("auth routes", () => {
     });
   });
 
+  describe("a client's strategy memo (GET /api/public/y/<token>)", () => {
+    const T = "abcDEF123_-".padEnd(43, "x");
+    it("needs no cookie to read: an unknown token is a 404, not a 401", async () => {
+      const r = await SELF.fetch(`https://x/api/public/y/${T}`);
+      expect(r.status).toBe(404);
+      expect(await r.json()).toEqual({ error: "not found" });
+    });
+    it.each(["/api/public/y", "/api/public/y/", `/api/public/y/${"A".repeat(43)}/`, `/api/public/y/${"A".repeat(43)}/x`, "/api/public/y//x", "/api/public/yx/abc", "/api/public/Y/abc", "/api/public/y/a/b/c"])("GET %s stays protected without a cookie", async (p) => {
+      expect((await SELF.fetch(`https://x${p}`)).status).toBe(401);
+    });
+    it.each(["POST", "PUT", "DELETE", "PATCH"])("%s on it stays protected", async (m) => {
+      expect((await SELF.fetch(`https://x/api/public/y/${T}`, { method: m, body: "{}" })).status).toBe(401);
+    });
+  });
+
   it("the three video files need no cookie (404 for an unknown token, not 401)", async () => {
     for (const n of ["video.mp4", "poster.jpg", "preview.gif"]) expect((await SELF.fetch(`https://x/api/public/report/${"abcDEF123_-".padEnd(43, "x")}/media/${n}`)).status).toBe(404);
   });
