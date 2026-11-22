@@ -7,7 +7,7 @@ import { getLink, saveLink, saveTrafficMonth, getTrafficMonth } from "../src/wor
 import type { Env } from "../src/worker/env";
 import { encryptSecret } from "../src/worker/google/crypto";
 import { GoogleNotConnected } from "../src/worker/google/access";
-import { LinkRefused, MAX_GA4_STREAM_LOOKUPS, findCandidates, linkSite, normalizeHost } from "../src/worker/traffic/link";
+import { LinkRefused, MAX_GA4_STREAM_LOOKUPS, findCandidates, ga4StreamMatchesHost, gscMatchesHost, linkSite, normalizeHost } from "../src/worker/traffic/link";
 import { listActivity } from "../src/worker/db/activity";
 import { seedClient } from "./fixtures/clients";
 import { E } from "./fixtures/close";
@@ -62,6 +62,39 @@ describe("normalizeHost", () => {
   ])("%s -> %s", (input, out) => expect(normalizeHost(input)).toBe(out));
 });
 
+describe("gscMatchesHost and ga4StreamMatchesHost", () => {
+  it.each([
+    ["sc-domain:example.com", "example.com", true],
+    ["sc-domain:www.example.com", "example.com", true],
+    ["SC-DOMAIN:Example.COM", "www.example.com", true],
+    ["https://example.com/", "example.com", true],
+    ["https://www.example.com:8443/a?b=1", "example.com", true],
+    ["http://example.com./", "example.com", true],
+    ["sc-domain:example.com", "blog.example.com", false],
+    ["https://example.com/", "blog.example.com", false],
+    ["sc-domain:blog.example.com", "example.com", false],
+    ["sc-domain:badexample.com", "example.com", false],
+    ["sc-domain:example.com.evil.com", "example.com", false],
+    ["https://evil.com/example.com", "example.com", false],
+    ["https://example.com@evil.com/", "example.com", false],
+    ["sc-domain:", "example.com", false],
+    ["sc-domain:com", "example.com", false],
+    ["sc-domain:", "", false],
+  ])("gscMatchesHost(%s, %s) is %s", (property, site, out) => expect(gscMatchesHost(property, site)).toBe(out));
+
+  it.each([
+    ["example.com", "example.com", true],
+    ["www.example.com", "example.com", true],
+    ["EXAMPLE.com", "www.example.com", true],
+    ["blog.example.com:443", "blog.example.com", true],
+    ["example.com", "blog.example.com", false],
+    ["com", "example.com", false],
+    ["co.uk", "example.co.uk", false],
+    ["example.com.evil.com", "example.com", false],
+    ["", "", false],
+  ])("ga4StreamMatchesHost(%s, %s) is %s", (stream, site, out) => expect(ga4StreamMatchesHost(stream, site)).toBe(out));
+});
+
 describe("findCandidates", () => {
   it("matches sc-domain:www.example.com and https://example.com/ to a site on example.com and not to example.org", async () => {
     await connect();
@@ -73,12 +106,21 @@ describe("findCandidates", () => {
     expect(c.ga4).toEqual([]);
   });
 
-  it("matches a domain property above a subdomain site, and a url-prefix only on the exact host", async () => {
+  it("matches a subdomain site only to properties on that exact host, never to the domain above it", async () => {
     await connect();
     const siteId = await siteOn("blog.example.com");
-    const { f } = google({ sites: ["sc-domain:example.com", "https://example.com/", "https://blog.example.com/", "sc-domain:shop.example.com"] });
+    const { f } = google({ sites: ["sc-domain:example.com", "https://example.com/", "https://blog.example.com/", "sc-domain:shop.example.com", "sc-domain:blog.example.com", "sc-domain:com"] });
     const c = await findCandidates(e, siteId, f);
-    expect(c.gsc.map((g) => g.siteUrl)).toEqual(["sc-domain:example.com", "https://blog.example.com/"]);
+    expect(c.gsc.map((g) => g.siteUrl)).toEqual(["https://blog.example.com/", "sc-domain:blog.example.com"]);
+  });
+
+  it("does not list a sc-domain value with a trailing dot, the same as linkSite refuses it", async () => {
+    await connect();
+    const siteId = await siteOn("example.com");
+    const { f } = google({ sites: ["sc-domain:example.com.", "https://example.com./", "sc-domain:example.com"] });
+    expect((await findCandidates(e, siteId, f)).gsc.map((g) => g.siteUrl)).toEqual(["sc-domain:example.com"]);
+    await expect(linkSite(e, siteId, { gscProperty: "sc-domain:example.com." }, NOW, f)).rejects.toThrow(LinkRefused);
+    await expect(linkSite(e, siteId, { gscProperty: "https://example.com./" }, NOW, f)).rejects.toThrow(LinkRefused);
   });
 
   it("lists a GA4 property only when a web stream host matches and stops after 40 stream lookups", async () => {
@@ -100,12 +142,13 @@ describe("findCandidates", () => {
     expect(g.calls).toHaveLength(0);
   });
 
-  it("asks to reconnect Google when the traffic scopes were not granted, without calling Google", async () => {
+  it("asks to reconnect Google when the traffic scopes were not granted, after the token call and with no property lookups", async () => {
     await saveGoogleAuth(env.DB, "me@x.test", await encryptSecret(env.SESSION_SECRET, "refresh-1"), "openid email https://www.googleapis.com/auth/webmasters.readonly");
     const siteId = await siteOn("example.com");
     const g = google();
     await expect(findCandidates(e, siteId, g.f)).rejects.toThrow("Reconnect Google in Settings so it can read Search Console and Analytics.");
     expect(g.streamCalls()).toBe(0);
+    expect(g.calls.every((c) => c.url === "https://oauth2.googleapis.com/token")).toBe(true);
   });
 
   it("refuses a site with no domain", async () => {
@@ -160,11 +203,32 @@ describe("linkSite", () => {
     expect(g.calls).toHaveLength(0);
   });
 
-  it("links a ga4 property whose web stream is the site's host, or a host above it", async () => {
+  it("links a ga4 property whose web stream is exactly the site's host, and refuses a host above it", async () => {
     await connect();
     const siteId = await siteOn("blog.example.com");
-    const link = await linkSite(e, siteId, { ga4Property: "12345" }, T, google({ streams: { "12345": ["www.example.com"] } }).f);
-    expect(link.ga4Property).toBe("12345");
+    const g = google({ streams: { "12345": ["example.com"], "23456": ["www.example.com"], "34567": ["com"], "45678": ["co.uk"], "56789": ["BLOG.example.com:443"] } });
+    for (const id of ["12345", "23456", "34567", "45678"]) {
+      const err = await linkSite(e, siteId, { ga4Property: id }, T, g.f).catch((x) => x);
+      expect(err, id).toBeInstanceOf(LinkRefused);
+      expect(err.message).toBe("That property is for another site.");
+    }
+    expect(await getLink(env.DB, siteId)).toBeNull();
+    expect((await linkSite(e, siteId, { ga4Property: "56789" }, T, g.f)).ga4Property).toBe("56789");
+  });
+
+  it("refuses these look-alike Search Console properties for example.com with \"That property is for another site.\"", async () => {
+    const siteId = await siteOn("example.com");
+    for (const bad of ["sc-domain:badexample.com", "sc-domain:example.com.evil.com", "https://example.com.evil.com/", "https://evil.com/example.com", "https://example.com@evil.com/", "sc-domain:com", "sc-domain:other.com"]) {
+      const err = await linkSite(e, siteId, { gscProperty: bad }, T, google().f).catch((x) => x);
+      expect(err, bad).toBeInstanceOf(LinkRefused);
+      expect(err.message, bad).toBe("That property is for another site.");
+    }
+    expect(await getLink(env.DB, siteId)).toBeNull();
+  });
+
+  it("refuses a subdomain site a sc-domain property above it", async () => {
+    const siteId = await siteOn("blog.example.com");
+    await expect(linkSite(e, siteId, { gscProperty: "sc-domain:example.com" }, T, google().f)).rejects.toThrow("That property is for another site.");
   });
 
   it("refuses a ga4 property with no web stream unless it is exactly the one already linked", async () => {
@@ -180,6 +244,18 @@ describe("linkSite", () => {
   it("refuses a site with no domain", async () => {
     const siteId = await siteOn(null);
     await expect(linkSite(e, siteId, { gscProperty: "sc-domain:example.com" }, T, google().f)).rejects.toThrow("Set the site's domain first.");
+  });
+
+  it("clears a link on a site whose domain was removed, but refuses to link one there", async () => {
+    const s = await seedClient({ site: false });
+    const { site } = await createSite(env.DB, { businessId: s.businessId, url: "https://example.com", domain: "example.com" });
+    await saveLink(env.DB, site.id, { gscProperty: "sc-domain:example.com", ga4Property: "12345" }, T.toISOString());
+    await env.DB.prepare(`UPDATE sites SET domain = NULL WHERE id = ?`).bind(site.id).run();
+    const g = google();
+    await expect(linkSite(e, site.id, { gscProperty: "sc-domain:example.com" }, T, g.f)).rejects.toThrow("Set the site's domain first.");
+    await expect(linkSite(e, site.id, { ga4Property: "12345" }, T, g.f)).rejects.toThrow("Set the site's domain first.");
+    expect(await linkSite(e, site.id, { gscProperty: null, ga4Property: null }, T, g.f)).toMatchObject({ gscProperty: null, ga4Property: null });
+    expect(g.calls).toHaveLength(0);
   });
 
   it("with null clears that one key only", async () => {
@@ -261,6 +337,21 @@ describe("the link routes", () => {
     const r = await call("POST", `/site/${siteId}/find`);
     expect(r.status).toBe(409);
     expect(await r.json()).toEqual({ error: "Connect your Google account in Settings first" });
+  });
+
+  it("DELETE link and PUT with both null work on a site without a domain, and a string property there is 409", async () => {
+    const siteId = await siteOn("example.com");
+    await saveLink(env.DB, siteId, { gscProperty: "sc-domain:example.com" }, NOW.toISOString());
+    await env.DB.prepare(`UPDATE sites SET domain = NULL WHERE id = ?`).bind(siteId).run();
+    const bad = await call("PUT", `/site/${siteId}/link`, { gscProperty: "sc-domain:example.com" });
+    expect(bad.status).toBe(409);
+    expect(await bad.json()).toEqual({ error: "Set the site's domain first." });
+    const cleared = await call("PUT", `/site/${siteId}/link`, { gscProperty: null, ga4Property: null });
+    expect(cleared.status).toBe(200);
+    expect(await cleared.json()).toMatchObject({ gscProperty: null, ga4Property: null });
+    await saveLink(env.DB, siteId, { gscProperty: "sc-domain:example.com" }, NOW.toISOString());
+    expect((await call("DELETE", `/site/${siteId}/link`)).status).toBe(204);
+    expect(await getLink(env.DB, siteId)).toBeNull();
   });
 
   it("DELETE link keeps the pulled months", async () => {

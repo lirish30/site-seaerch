@@ -33,26 +33,36 @@ export function normalizeHost(s: string): string {
   return h.replace(/^www\./, "");
 }
 
-/** A property's host covers a site's host when they are equal or, for a whole-domain property, the site is a subdomain of it. Never a substring match. */
-const covers = (propHost: string, siteHost: string, wholeDomain: boolean) =>
-  propHost !== "" && (propHost === siteHost || (wholeDomain && siteHost.endsWith(`.${propHost}`)));
+/**
+ * The one safety rule: a Google property belongs to a site only when its host EQUALS the site's host (both normalized: scheme, `www.`, port, path, query, `sc-domain:`, trailing dot and case
+ * ignored). Never a parent domain and never a substring, so a stream on `com` or a franchisor's `brand.com` cannot be linked to another business's site. Two functions, one rule, and
+ * nothing else decides: link time, find time and the daily pull's re-check all use these two.
+ */
+const sameHost = (a: string, b: string) => { const h = normalizeHost(a); return h !== "" && h === normalizeHost(b); };
+
+/** A Search Console property (`sc-domain:` or a URL prefix), given as Google names it, is on the site's host. */
+export const gscMatchesHost = (property: string, siteHost: string): boolean => sameHost(property, siteHost);
+
+/** A web stream's host (what an Analytics property says it measures) is the site's host. */
+export const ga4StreamMatchesHost = (streamHost: string, siteHost: string): boolean => sameHost(streamHost, siteHost);
 
 const DOMAIN_PROPERTY = /^sc-domain:[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/i;
-const PREFIX_PROPERTY = /^https?:\/\/[^\s/?#@]+(\/[^\s?#]*)?$/i;
+const PREFIX_PROPERTY = /^https?:\/\/[^\s/?#@]*[^\s/?#@.](\/[^\s?#]*)?$/i;
 const GA4_ID = /^\d{5,15}$/;
 
+/** The two forms Search Console names a property in. A trailing dot on the host is refused, in find and in link alike (Google never names one that way). */
 const isSearchConsoleProperty = (p: string) => DOMAIN_PROPERTY.test(p) || PREFIX_PROPERTY.test(p);
-const gscCovers = (p: string, siteHost: string) => covers(normalizeHost(p), siteHost, p.toLowerCase().startsWith("sc-domain:"));
-const streamsCover = (hosts: string[], siteHost: string) => hosts.some((h) => covers(normalizeHost(h), siteHost, true));
+const streamsMatch = (hosts: string[], siteHost: string) => hosts.some((h) => ga4StreamMatchesHost(h, siteHost));
 
-/** The live site and its host, or the refusal to say. */
+/** The live site and its host (`""` when it has no domain), or SiteNotFound. */
 async function liveSite(env: Env, siteId: string): Promise<{ site: Site; host: string }> {
   const site = await getSite(env.DB, siteId);
   if (!site || site.archivedAt) throw new SiteNotFound("not found");
-  const host = normalizeHost(site.domain ?? "");
-  if (!host) throw new LinkRefused("Set the site's domain first.");
-  return { site, host };
+  return { site, host: normalizeHost(site.domain ?? "") };
 }
+
+/** Linking and finding need the site's domain; unlinking does not (a site whose domain was removed must still be cleared). */
+const needHost = (host: string) => { if (!host) throw new LinkRefused("Set the site's domain first."); };
 
 /** A fresh Google token for reading Search Console and Analytics (GoogleNotConnected when Google is not connected). */
 async function trafficAccess(env: Env, f: Fetch) {
@@ -64,35 +74,37 @@ async function trafficAccess(env: Env, f: Fetch) {
 /** The Search Console entries and Analytics properties the connected account can see that belong to the site: nothing is linked here. */
 export async function findCandidates(env: Env, siteId: string, f: Fetch = fetch): Promise<Candidates> {
   const { host } = await liveSite(env, siteId);
+  needHost(host);
   const { token, email } = await trafficAccess(env, f);
   const [sites, props] = await Promise.all([listGscSites(f, token), listGa4Properties(f, token)]);
-  const gsc = sites.filter((s) => gscCovers(s.siteUrl, host)).map((s) => ({ siteUrl: s.siteUrl, label: s.siteUrl.startsWith("sc-domain:") ? `${normalizeHost(s.siteUrl)} (the whole domain)` : s.siteUrl }));
+  const gsc = sites.filter((s) => gscMatchesHost(s.siteUrl, host) && isSearchConsoleProperty(s.siteUrl)).map((s) => ({ siteUrl: s.siteUrl, label: s.siteUrl.startsWith("sc-domain:") ? `${normalizeHost(s.siteUrl)} (the whole domain)` : s.siteUrl }));
   // A property that cannot be read (Google refused it) simply is not offered.
   const looked = props.slice(0, MAX_GA4_STREAM_LOOKUPS);
   const streams = await Promise.all(looked.map((p) =>
     ga4Hosts(f, token, p.id).catch((e) => { if (e instanceof GoogleApiError) return [] as string[]; throw e; })));
-  return { gsc, ga4: looked.filter((_, i) => streamsCover(streams[i], host)), email };
+  return { gsc, ga4: looked.filter((_, i) => streamsMatch(streams[i], host)), email };
 }
 
 /**
  * Links the site to Google properties that belong to it, or (with `null`) unlinks one source; a key that is left out is not touched. A property is refused unless its host is the site's
- * (or, for a whole domain or an Analytics stream, a domain the site is on), so one client's numbers can never reach another client's report. Search Console is checked by the property's
+ * (equality after `normalizeHost`, for Search Console and Analytics alike), so one client's numbers can never reach another client's report. Search Console is checked by the property's
  * name alone; an Analytics id costs one call to read its streams. A change is logged on the client's timeline.
  */
 export async function linkSite(env: Env, siteId: string, p: { gscProperty?: string | null; ga4Property?: string | null }, now: Date, f: Fetch = fetch): Promise<SiteLink> {
   const { site, host } = await liveSite(env, siteId);
   const current = await getLink(env.DB, siteId);
   const { gscProperty, ga4Property } = p;
+  if (typeof gscProperty === "string" || typeof ga4Property === "string") needHost(host);
   if (typeof gscProperty === "string") {
+    if (!gscMatchesHost(gscProperty, host)) throw new LinkRefused("That property is for another site.");
     if (!isSearchConsoleProperty(gscProperty)) throw new LinkRefused("That is not a Search Console property.");
-    if (!gscCovers(gscProperty, host)) throw new LinkRefused("That property is for another site.");
   }
   if (typeof ga4Property === "string" && !GA4_ID.test(ga4Property)) throw new LinkRefused("That is not an Analytics property id.");
   if (typeof ga4Property === "string") {
     const { token } = await trafficAccess(env, f);
     const hosts = await ga4Hosts(f, token, ga4Property);
     if (hosts.length === 0 && current?.ga4Property !== ga4Property) throw new LinkRefused("That property has no website data stream.");
-    if (hosts.length > 0 && !streamsCover(hosts, host)) throw new LinkRefused("That property is for another site.");
+    if (hosts.length > 0 && !streamsMatch(hosts, host)) throw new LinkRefused("That property is for another site.");
   }
   const gscChanged = gscProperty !== undefined && gscProperty !== (current?.gscProperty ?? null);
   const ga4Changed = ga4Property !== undefined && ga4Property !== (current?.ga4Property ?? null);
@@ -105,7 +117,7 @@ export async function linkSite(env: Env, siteId: string, p: { gscProperty?: stri
     gscChanged && `Search Console ${gscProperty ? "linked" : "unlinked"}`,
     ga4Changed && `Analytics ${ga4Property ? "linked" : "unlinked"}`,
   ].filter(Boolean).join(", ");
-  await logActivity(env.DB, site.businessId, "traffic_linked", `${host}: ${said}`);
+  await logActivity(env.DB, site.businessId, "traffic_linked", `${host || "site"}: ${said}`);
   return link;
 }
 
@@ -114,5 +126,5 @@ export async function unlinkSite(env: Env, siteId: string): Promise<void> {
   const { site, host } = await liveSite(env, siteId);
   if (!(await getLink(env.DB, siteId))) return;
   await deleteLink(env.DB, siteId);
-  await logActivity(env.DB, site.businessId, "traffic_linked", `${host}: unlinked from Google`);
+  await logActivity(env.DB, site.businessId, "traffic_linked", `${host || "site"}: unlinked from Google`);
 }
