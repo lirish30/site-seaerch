@@ -5,29 +5,39 @@
 .cl h3 { margin:0; font-size:15px; line-height:21px; font-weight:600; }
 .cl h4 { margin:0 0 8px; font-size:13px; line-height:19px; font-weight:600; color:var(--text-2); }
 .cl p { overflow-wrap:anywhere; }
-/* Touch targets are at least 44px, and fields are 16px so iOS does not zoom into them. */
-.cl .btn, .cl .btn.sm { min-height:44px; height:auto; padding:0 14px; font-size:14px; line-height:20px; }
-.cl .btn-plain { min-height:44px; }
-.cl input, .cl select, .cl textarea { font-size:16px; min-height:44px; max-width:100%; min-width:0; }
-.cl input[type=checkbox].cb { width:20px; min-height:20px; height:20px; flex:none; margin:0; }
+/* Desktop uses the Figma scale (32px buttons, 34px fields, 13px text). Phones get 44px touch targets and 16px fields so iOS does not zoom. */
+.cl input:not([type=checkbox]):not([type=radio]):not([type=file]), .cl select { height:34px; min-height:0; padding:0 10px; border:1px solid var(--border); border-radius:8px; background-color:var(--bg-surface); color:var(--text); font:400 13px/19px var(--font); max-width:100%; min-width:0; }
+.cl select { appearance:none; -webkit-appearance:none; padding-right:30px; background:var(--bg-surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%238b8b94' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E") right 9px center/14px 14px no-repeat; cursor:pointer; }
+.cl textarea { min-height:0; padding:7px 10px; border:1px solid var(--border); border-radius:8px; font:400 13px/20px var(--font); max-width:100%; min-width:0; }
+.cl input::placeholder, .cl textarea::placeholder { color:var(--text-3); opacity:1; }
+.cl input:focus-visible, .cl select:focus-visible, .cl textarea:focus-visible { outline:0; border-color:var(--border-focus); box-shadow:0 0 0 1px var(--border-focus); }
+.cl input[type=file] { font:400 12px/16px var(--font); color:var(--text-2); }
+.cl .deal-field { gap:6px; } .cl .deal-field > span { font:500 12px/16px var(--font); color:var(--text-2); } .cl .deal-field small { font:400 12px/17px var(--font); color:var(--text-3); }
+.cl input[type=checkbox] { width:16px; height:16px; min-height:0; flex:none; margin:0; }
 .cl .seg-pills { flex-wrap:wrap; }
-.cl .seg-pills button { min-height:44px; height:auto; padding:0 14px; font-size:14px; cursor:pointer; }
+.cl .seg-pills button { height:30px; padding:0 12px; font-size:13px; cursor:pointer; }
 .cl .header-actions { display:flex; gap:8px; flex-wrap:wrap; }
+@media (max-width: 640px) {
+  .cl .btn, .cl .btn.sm, .cl .btn-plain { min-height:44px; height:auto; padding:0 14px; font-size:14px; line-height:20px; }
+  .cl input:not([type=checkbox]):not([type=radio]), .cl select, .cl textarea { font-size:16px; min-height:44px; }
+  .cl input[type=checkbox] { width:20px; height:20px; }
+  .cl .seg-pills button { min-height:44px; height:auto; padding:0 14px; font-size:14px; }
+}
 .cl .page-header > div:first-child { flex:1 1 220px; }
 .cl a { overflow-wrap:anywhere; }
 
 /* The list */
 .cl-sum { margin-bottom:2px; }
 .cl-tools { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px 16px; }
-.cl-toggle { display:inline-flex; align-items:center; gap:10px; min-height:44px; font-size:14px; cursor:pointer; }
-.cl-table { width:100%; border-collapse:collapse; background:var(--bg-surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; font-size:14px; }
+.cl-toggle { display:inline-flex; align-items:center; gap:10px; min-height:32px; font-size:13px; cursor:pointer; }
+.cl-table { width:100%; border-collapse:collapse; background:var(--bg-surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; font-size:13px; }
 .cl-table th, .cl-table td { padding:10px 12px; text-align:left; vertical-align:middle; border-bottom:1px solid var(--border); overflow-wrap:break-word; }
 .cl-table a { overflow-wrap:break-word; }
 .cl-table thead th { white-space:nowrap; font:500 12px/16px var(--font); color:var(--text-3); text-transform:uppercase; letter-spacing:.04em; background:var(--bg-muted); }
 .cl-table tbody tr:last-child > * { border-bottom:0; }
 .cl-table .num { text-align:right; white-space:nowrap; }
 .cl-table tbody th { font-weight:600; }
-.cl-table .cl-name a { display:inline-flex; align-items:center; min-height:44px; color:var(--text); }
+.cl-table .cl-name a { display:inline-flex; align-items:center; min-height:32px; color:var(--text); }
 .cl-table .cl-name .badge2 { margin-left:8px; }
 
 /* The header strip of one client */
@@ -43,14 +53,14 @@
 .cl-card { padding:14px; border:1px solid var(--border); border-radius:10px; background:var(--bg-surface); min-width:0; }
 .cl-card > :last-child { margin-bottom:0; }
 .cl-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
-.cl-list li { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; font-size:14px; min-width:0; }
-.cl-list li > a { display:inline-flex; align-items:center; min-height:44px; }
+.cl-list li { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; font-size:13px; min-width:0; }
+.cl-list li > a { display:inline-flex; align-items:center; min-height:32px; }
 .cl-linked { display:flex; flex-direction:column; gap:14px; }
 .cl-big { margin:0; font:600 28px/34px var(--font); letter-spacing:-.4px; }
 .cl-people { list-style:none; margin:0 0 10px; padding:0; display:flex; flex-direction:column; gap:10px; }
 .cl-people li { display:flex; flex-wrap:wrap; align-items:center; gap:0 8px; min-width:0; }
 .cl-people-meta { display:flex; flex-wrap:wrap; gap:4px 14px; flex-basis:100%; }
-.cl-people-meta a { display:inline-flex; align-items:center; min-height:44px; }
+.cl-people-meta a { display:inline-flex; align-items:center; min-height:32px; }
 
 /* Meetings */
 .cl-mt { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:12px; }
@@ -61,7 +71,7 @@
 .cl-mt-title { overflow-wrap:anywhere; }
 .cl-mt-body { display:flex; flex-direction:column; align-items:flex-start; gap:8px; min-width:0; max-width:100%; margin-top:6px; }
 .cl-mt-body p { margin:0; }
-.cl-mt-list { margin:0; padding-left:18px; font-size:14px; overflow-wrap:anywhere; }
+.cl-mt-list { margin:0; padding-left:18px; font-size:13px; overflow-wrap:anywhere; }
 .cl-mt-notes { white-space:pre-wrap; }
 
 /* Sites */
@@ -71,7 +81,7 @@
 .cl-site-head { display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px; min-width:0; }
 .cl-site-title { flex:1 1 180px; min-width:0; overflow-wrap:anywhere; }
 .cl-site-links { display:flex; flex-wrap:wrap; gap:4px 14px; flex-basis:100%; }
-.cl-site-links a { display:inline-flex; align-items:center; min-height:44px; }
+.cl-site-links a { display:inline-flex; align-items:center; min-height:32px; }
 .cl-flags { padding:10px 12px; border-radius:8px; border:1px solid var(--warning); background:var(--warning-soft); }
 .cl-flags p { margin:0; color:var(--text); }
 .cl-flags p + p { margin-top:6px; }
@@ -128,24 +138,24 @@
 .cr-card { display:flex; flex-direction:column; gap:10px; }
 .cr-card-head { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:6px 12px; min-width:0; }
 .cr-name { margin:0; font-size:16px; line-height:22px; min-width:0; }
-.cr-name a { display:inline-flex; align-items:center; min-height:44px; color:var(--text); }
+.cr-name a { color:var(--text); }
 .cr-meta { display:flex; flex-wrap:wrap; gap:2px 16px; margin:0; color:var(--text-2); }
 .cr-incidents { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; }
-.cr-incidents li { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; min-width:0; font-size:14px; }
+.cr-incidents li { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; min-width:0; font-size:13px; }
 .cr-incident-text { min-width:0; overflow-wrap:anywhere; }
 .cr-sitelist { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; }
-.cr-sitelist li { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:4px 12px; font-size:14px; min-width:0; }
+.cr-sitelist li { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:4px 12px; font-size:13px; min-width:0; }
 .cr-site-name { min-width:0; overflow-wrap:anywhere; }
 .cr-health { margin:0 0 8px; }
-.cr-reasons { margin:0 0 4px; padding-left:18px; font-size:14px; }
+.cr-reasons { margin:0 0 4px; padding-left:18px; font-size:13px; }
 .cr-sub { margin:14px 0 8px; }
 .cr-sites { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px; }
 .cr-site { display:flex; flex-direction:column; gap:8px; padding:12px; border:1px solid var(--border); border-radius:10px; min-width:0; }
 .cr-site-head { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:4px 8px; min-width:0; }
-.cr-facts { display:grid; grid-template-columns:max-content minmax(0, 1fr); gap:2px 12px; margin:0; font-size:14px; }
+.cr-facts { display:grid; grid-template-columns:max-content minmax(0, 1fr); gap:2px 12px; margin:0; font-size:13px; }
 .cr-facts dt { color:var(--text-3); }
 .cr-facts dd { margin:0; overflow-wrap:anywhere; }
-.cr-switch { min-height:44px; }
+.cr-switch { min-height:32px; }
 .cr-note { margin:0; }
 .cl .cr-switch input { min-height:0; }
 
@@ -169,23 +179,23 @@
 /* Care reports (Plan 13): the month's reports, the edit-hours bar and the last-report line on the client's Care panel. */
 .rp-card { display:flex; flex-direction:column; gap:10px; min-width:0; }
 .rp-words { display:flex; flex-direction:column; gap:6px; }
-.rp-words textarea { resize:vertical; min-height:44px; max-width:100%; }
+.rp-words textarea { resize:vertical; min-height:32px; max-width:100%; }
 .rp-actions { display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; }
 .rp-text { margin:0; overflow-wrap:anywhere; white-space:pre-wrap; }
 .rp-link { display:flex; flex-direction:column; gap:4px; min-width:0; }
 .rp-link-label { color:var(--text-3); }
 .rp-link-row { display:flex; flex-wrap:wrap; gap:8px; align-items:stretch; }
-.rp-link-row input { flex:1 1 220px; min-width:0; min-height:44px; }
-.rp-link-row .btn { flex:none; min-height:44px; display:inline-flex; align-items:center; gap:6px; }
+.rp-link-row input { flex:1 1 220px; min-width:0; min-height:32px; }
+.rp-link-row .btn { flex:none; min-height:32px; display:inline-flex; align-items:center; gap:6px; }
 .rp-link p, .rp-card p { margin:0; }
 .rp-card button[aria-disabled="true"], .rp-add button[aria-disabled="true"], .rp-missing button[aria-disabled="true"] { opacity:.5; cursor:default; }
-.rp-revoke { align-self:flex-start; min-height:44px; }
+.rp-revoke { align-self:flex-start; min-height:32px; }
 .rp-missing-card { display:flex; flex-direction:column; gap:8px; margin-top:12px; }
 .rp-missing-card h2, .rp-missing-card p { margin:0; }
 .rp-missing-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
 .rp-missing { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:6px 12px; min-width:0; }
 .rp-missing-name { min-width:0; overflow-wrap:anywhere; }
-.rp-missing .btn { min-height:44px; }
+.rp-missing .btn { min-height:32px; }
 .rp-bar-wrap { display:flex; flex-direction:column; gap:4px; }
 .rp-meter { height:8px; border-radius:99px; background:var(--bg-muted); box-shadow:inset 0 0 0 1px var(--border); overflow:hidden; }
 .rp-meter i { display:block; height:100%; border-radius:99px; background:var(--positive); }
@@ -196,10 +206,10 @@
 .rp-bar-label b { color:var(--text); }
 .rp-bar-month { margin:0 0 6px; }
 .rp-add { margin-top:8px; display:flex; flex-direction:column; gap:6px; }
-.rp-add .btn { align-self:flex-start; min-height:44px; }
+.rp-add .btn { align-self:flex-start; min-height:32px; }
 .rp-add p { margin:0; }
 .rp-add-form { display:flex; flex-direction:column; gap:6px; }
-.rp-add-form input { min-height:44px; }
+.rp-add-form input { min-height:32px; }
 .cr-panel h3.cr-sub { margin-top:18px; }
 .rp-last { margin:0; display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; }
 
@@ -211,7 +221,7 @@
 .gr-panel .seg-pills { margin-bottom:10px; }
 .gr-panel textarea { width:100%; resize:vertical; }
 .gr-sub { margin:10px 0 4px !important; font-size:13px !important; color:var(--text-2); }
-.gr-reasons { margin:0; padding-left:18px; font-size:14px; overflow-wrap:anywhere; }
+.gr-reasons { margin:0; padding-left:18px; font-size:13px; overflow-wrap:anywhere; }
 .cr-chips { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
 
 /* Batches (Plan 15): the board reuses the Care board's card, head and chips; these are the task rows. */
@@ -220,7 +230,7 @@
 .bt-task:first-child { border-top:0; }
 .bt-task.is-closed { color:var(--text-3); }
 .bt-client { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; min-width:0; overflow-wrap:anywhere; }
-.bt-client a { display:inline-flex; align-items:center; min-height:44px; color:inherit; }
+.bt-client a { display:inline-flex; align-items:center; min-height:32px; color:inherit; }
 .bt-meta { display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; color:var(--text-2); }
 
 /* The post-launch ladder on a client's page. */
@@ -234,13 +244,13 @@
 .lp-link .deal-field { width:100%; }
 .lp-link input { width:100%; min-width:0; }
 .lp-actions { display:flex; flex-wrap:wrap; gap:8px; }
-.lp-actions .btn, .lp-link .btn { min-height:44px; }
+.lp-actions .btn, .lp-link .btn { min-height:32px; }
 
 /* Studio (Plan 15): the New post form and the post cards reuse the Care board's card, head and chips; these are the slides row and the words. */
 .st-new { display:flex; flex-direction:column; gap:10px; margin-bottom:12px; }
 .st-new h2 { margin:0; font-size:16px; line-height:22px; }
 .st-consent { display:flex; flex-direction:column; gap:2px; }
-.st-check { display:flex; align-items:center; gap:10px; min-height:44px; }
+.st-check { display:flex; align-items:center; gap:10px; min-height:32px; }
 .st-check:has(input:disabled) { color:var(--text-3); }
 .st-slides { list-style:none; margin:0; padding:0 0 4px; display:flex; gap:12px; overflow-x:auto; }
 .st-slide { flex:none; display:flex; flex-direction:column; gap:6px; width:108px; }
@@ -261,7 +271,7 @@
 .tp-site p { margin:0; overflow-wrap:anywhere; }
 .tp-linked { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:2px; overflow-wrap:anywhere; }
 .tp-actions { display:flex; flex-wrap:wrap; gap:8px; }
-.tp-actions .btn, .tp-found .btn { min-height:44px; }
+.tp-actions .btn, .tp-found .btn { min-height:32px; }
 .tp-found { display:flex; flex-direction:column; align-items:flex-start; gap:8px; }
 .tp-found .deal-field { width:100%; }
 .tp-found select { width:100%; min-width:0; }

@@ -97,10 +97,10 @@ export default function Batches() {
           const late = groups.filter((g) => isLate(g, today)).length;
           const held = groups.reduce((n, g) => n + g.tasks.filter((t) => t.held).length, 0);
           return <StatRow stats={[
-            { label: "Jobs due", icon: "list", value: groups.length, sub: `${tasks} client task${tasks === 1 ? "" : "s"} in all` },
-            { label: "Left to do", icon: "clock", value: left, sub: left ? `${Math.round(((tasks - left) / Math.max(1, tasks)) * 100)}% done` : "All done", tone: left ? "" : "positive" },
-            { label: "Late", icon: "alert", value: late, sub: late ? "Past the due day: start with these" : "Nothing past due", tone: late ? "warning" : "positive" },
-            { label: "On hold", icon: "ban", value: held, sub: held ? "Unpaid clients, skipped until paid" : "Everyone is paid up" },
+            { label: "Jobs due", value: groups.length, sub: `${tasks} client task${tasks === 1 ? "" : "s"} in all` },
+            { label: "Left to do", value: left, sub: left ? `${Math.round(((tasks - left) / Math.max(1, tasks)) * 100)}% done` : "All done", tone: left ? "" : "positive" },
+            { label: "Late", value: late, sub: late ? "Past the due day: start with these" : "Nothing past due", tone: late ? "warning" : "positive" },
+            { label: "On hold", value: held, sub: held ? "Unpaid clients, skipped until paid" : "Everyone is paid up" },
           ]} />;
         })()}
         {groups !== null && groups.length > 0 && <ul className="cr-board">{groups.map((g) => <Card key={`${g.templateKey}:${g.period}`} g={g} today={today} />)}</ul>}

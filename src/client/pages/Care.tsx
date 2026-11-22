@@ -58,10 +58,10 @@ export default function Care() {
           const incidents = rows.reduce((n, r) => n + r.openIncidents.length, 0);
           const watch = rows.filter((r) => r.health.hasData && r.health.band !== "good").length;
           return <StatRow stats={[
-            { label: "On Care", icon: "shield", value: onCare.length, sub: `${moneyLabel(onCare.reduce((n, r) => n + r.mrrCents, 0))} a month` },
-            { label: "Uptime, 30 days", icon: "gauge", value: ups.length ? formatUptime(Math.min(...ups)) : "—", sub: ups.length ? (ups.length > 1 ? "the lowest client" : "across their sites") : "No checks yet" },
-            { label: "Open incidents", icon: "alert", value: incidents, sub: incidents ? "Fix these first" : "Nothing broken", tone: incidents ? "warning" : "positive" },
-            { label: "Need a look", icon: "eye", value: watch, sub: watch ? "Health under 80" : "Every client healthy", tone: watch ? "warning" : "positive" },
+            { label: "On Care", value: onCare.length, sub: `${moneyLabel(onCare.reduce((n, r) => n + r.mrrCents, 0))} a month` },
+            { label: "Uptime, 30 days", value: ups.length ? formatUptime(Math.min(...ups)) : "—", sub: ups.length ? (ups.length > 1 ? "the lowest client" : "across their sites") : "No checks yet" },
+            { label: "Open incidents", value: incidents, sub: incidents ? "Fix these first" : "Nothing broken", tone: incidents ? "warning" : "positive" },
+            { label: "Need a look", value: watch, sub: watch ? "Health under 80" : "Every client healthy", tone: watch ? "warning" : "positive" },
           ]} />;
         })()}
         {rows !== null && rows.length > 0 && (

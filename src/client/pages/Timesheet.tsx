@@ -66,11 +66,11 @@ export default function Timesheet() {
   const capWeek = capacity?.weeks.find((w) => week?.days.includes(w.monday)) ?? null;
   const limit = capWeek?.limitMinutes ?? 0;
   const stats: Stat[] = sum && week ? [
-    { label: "Logged", icon: "clock", value: formatMinutes(sum.total),
+    { label: "Logged", value: formatMinutes(sum.total),
       sub: limit ? <><Meter value={sum.total} max={limit} label={`${formatMinutes(sum.total)} of ${formatMinutes(limit)}`} /><span className="pb-hint">of your {Math.round(limit / 60)} h week{capWeek ? ` · ${formatMinutes(capWeek.bookedMinutes)} booked` : ""}</span></> : thisWeek ? "So far this week" : "That week" },
-    { label: "Days worked", icon: "calendar", value: <>{sum.daysWorked}<small>of 7</small></>, sub: sum.daysWorked ? `${formatMinutes(Math.round(sum.total / sum.daysWorked))} a day on average` : "Nothing logged yet" },
-    { label: "Busiest day", icon: "zap", value: sum.busiest ? `${dayLabel(sum.busiest.day).weekday} ${dayLabel(sum.busiest.day).date}` : "—", sub: sum.busiest ? formatMinutes(sum.busiest.minutes) : "No time logged" },
-    { label: "Most time on", icon: "briefcase", value: sum.byProject[0] ? `${Math.round((sum.byProject[0].minutes / Math.max(1, sum.total)) * 100)}%` : "—", sub: sum.byProject[0]?.name ?? "No project yet" },
+    { label: "Days worked", value: <>{sum.daysWorked}<small>of 7</small></>, sub: sum.daysWorked ? `${formatMinutes(Math.round(sum.total / sum.daysWorked))} a day on average` : "Nothing logged yet" },
+    { label: "Busiest day", value: sum.busiest ? `${dayLabel(sum.busiest.day).weekday} ${dayLabel(sum.busiest.day).date}` : "—", sub: sum.busiest ? formatMinutes(sum.busiest.minutes) : "No time logged" },
+    { label: "Most time on", value: sum.byProject[0] ? `${Math.round((sum.byProject[0].minutes / Math.max(1, sum.total)) * 100)}%` : "—", sub: sum.byProject[0]?.name ?? "No project yet" },
   ] : [];
   const peak = Math.max(1, ...(week?.dayTotals ?? [0]));
 
@@ -175,7 +175,7 @@ export default function Timesheet() {
                 )}
               </div>
               <div className="pb-side">
-                <Card icon="calendar" title="The week" note={formatMinutes(week.total)}>
+                {week.total > 0 && <Card icon="calendar" title="The week" note={formatMinutes(week.total)}>
                   <div className="ts-days" role="img" aria-label={week.days.map((d, i) => `${dayLabel(d).weekday} ${formatMinutes(week.dayTotals[i])}`).join(", ")}>
                     {week.days.map((d, i) => (
                       <span key={d} className={`ts-day${d === today ? " today" : ""}${week.dayTotals[i] ? "" : " zero"}`}>
@@ -184,7 +184,7 @@ export default function Timesheet() {
                       </span>
                     ))}
                   </div>
-                </Card>
+                </Card>}
                 {addForm}
               </div>
             </div>

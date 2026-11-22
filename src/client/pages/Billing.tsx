@@ -168,10 +168,10 @@ export default function Billing() {
         {failed && <p className="error" role="alert">Couldn’t load billing. <button type="button" className="btn" onClick={() => void load()}>Try again</button></p>}
         {summary && (
           <StatRow label="Billing summary, all clients" stats={[
-            { label: "Monthly recurring", icon: "refresh", value: dollars(summary.mrrCents), sub: liveSubs.length ? `${liveSubs.length} live subscription${liveSubs.length === 1 ? "" : "s"}` : summary.mrrCents > 0 ? "From live subscriptions" : "No subscription billing yet" },
-            { label: "Waiting on clients", icon: "clock", value: dollars(summary.openCents), sub: summary.openCents > 0 ? (groups.open.length ? `${groups.open.length} invoice${groups.open.length === 1 ? "" : "s"} sent, not paid yet` : "Sent, not paid yet") : "Nothing outstanding" },
-            { label: "Overdue", icon: "alert", value: dollars(summary.overdueCents), sub: summary.overdueCents > 0 ? "Reminders go out once you approve them" : "Nobody is late", tone: summary.overdueCents > 0 ? "warning" : "positive" },
-            { label: "Paid this month", icon: "check", value: dollars(paidThisMonth), sub: paidCount ? `${paidCount} invoice${paidCount === 1 ? "" : "s"} paid` : summary.heldClients > 0 ? `${summary.heldClients} client${summary.heldClients === 1 ? "" : "s"} on hold` : "No payments yet this month", tone: summary.heldClients > 0 && !paidCount ? "warning" : "" },
+            { label: "Monthly recurring", value: dollars(summary.mrrCents), sub: liveSubs.length ? `${liveSubs.length} live subscription${liveSubs.length === 1 ? "" : "s"}` : summary.mrrCents > 0 ? "From live subscriptions" : "No subscription billing yet" },
+            { label: "Waiting on clients", value: dollars(summary.openCents), sub: summary.openCents > 0 ? (groups.open.length ? `${groups.open.length} invoice${groups.open.length === 1 ? "" : "s"} sent, not paid yet` : "Sent, not paid yet") : "Nothing outstanding" },
+            { label: "Overdue", value: dollars(summary.overdueCents), sub: summary.overdueCents > 0 ? "Reminders go out once you approve them" : "Nobody is late", tone: summary.overdueCents > 0 ? "warning" : "positive" },
+            { label: "Paid this month", value: dollars(paidThisMonth), sub: paidCount ? `${paidCount} invoice${paidCount === 1 ? "" : "s"} paid` : summary.heldClients > 0 ? `${summary.heldClients} client${summary.heldClients === 1 ? "" : "s"} on hold` : "No payments yet this month", tone: summary.heldClients > 0 && !paidCount ? "warning" : "" },
           ]} />
         )}
         {businessId && (

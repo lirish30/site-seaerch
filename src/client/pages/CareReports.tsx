@@ -185,10 +185,10 @@ export default function CareReports() {
         {!loaded && !failed && <p className="muted">Loading…</p>}
         {loaded && (
           <StatRow stats={[
-            { label: "Reports this month", icon: "file-text", value: <>{sent}<small>of {due} sent</small></>, sub: <Meter value={sent} max={Math.max(1, due)} label={`${sent} of ${due} sent`} /> },
-            { label: "Waiting for your OK", icon: "check", value: ready, sub: ready ? <Link to="/today">Approve on Today</Link> : "Nothing to approve", tone: ready ? "warning" : "" },
-            { label: "Opened by clients", icon: "eye", value: sent ? `${opened} of ${sent}` : "—", sub: sent ? (opened < sent ? "A nudge on your next call helps" : "Every sent report was read") : "Shows once a report is sent" },
-            { label: "Care revenue", icon: "trending", value: moneyLabel(careMrr), sub: "a month, the work these reports prove" },
+            { label: "Reports this month", value: <>{sent}<small>of {due} sent</small></>, sub: <Meter value={sent} max={Math.max(1, due)} label={`${sent} of ${due} sent`} /> },
+            { label: "Waiting for your OK", value: ready, sub: ready ? <Link to="/today">Approve on Today</Link> : "Nothing to approve", tone: ready ? "warning" : "" },
+            { label: "Opened by clients", value: sent ? `${opened} of ${sent}` : "—", sub: sent ? (opened < sent ? "A nudge on your next call helps" : "Every sent report was read") : "Shows once a report is sent" },
+            { label: "Care revenue", value: moneyLabel(careMrr), sub: "a month, the work these reports prove" },
           ]} label="This month's reports" />
         )}
         {loaded && list.length === 0 && missing.length === 0 && (
