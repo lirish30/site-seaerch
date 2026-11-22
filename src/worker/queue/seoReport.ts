@@ -21,7 +21,7 @@ const REFUSED = /https?:\/\/|www\.|@|\$\s?\d|[`#*_]{2}/i;
 const BLANK_LINES = /(?:\r?\n){3,}/;
 /** Markdown that survives the two-character check: a link `[x](y)` and a line that starts as a heading or a bullet. */
 const MARKDOWN = /\]\(|^\s*(#|[-*]\s)/m;
-const PROMISE = /guarantee|promise|#1|number one|first page|top spot|will rank/i;
+const PROMISE = /guarantee|promise|#1|number one|first page|top spot|will rank|will (?:improve|increase|rise|climb|grow|get)/i;
 const words = (max: number) => z.string().trim().min(1).max(max)
   .refine((s) => !REFUSED.test(s) && !MARKDOWN.test(s), "must not contain a link, an email address, a price or markdown")
   .refine((s) => !BLANK_LINES.test(s), "must not contain a run of blank lines")

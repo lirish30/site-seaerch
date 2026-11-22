@@ -68,7 +68,7 @@ describe("the seo.report kind", () => {
     expect(SeoReportResult.parse({ ...GOOD, summary: "  hello  ", recommendation: " there ", priorities: [" a ", "b ", " c"] })).toEqual({ summary: "hello", recommendation: "there", priorities: ["a", "b", "c"] });
   });
 
-  it.each(["guarantee", "promise", "#1", "number one", "first page", "top spot", "will rank"])("refuses the words %s in the summary, the recommendation and a priority, in any case", (word) => {
+  it.each(["guarantee", "promise", "#1", "number one", "first page", "top spot", "will rank", "will improve", "will increase", "will rise", "will climb", "will grow", "will get"])("refuses the words %s in the summary, the recommendation and a priority, in any case", (word) => {
     for (const w of [word, word.toUpperCase(), `We ${word} it`, `This ${word.replace(/^./, (c) => c.toUpperCase())}.`]) {
       expect(SeoReportResult.safeParse({ ...GOOD, summary: `Result: ${w}` }).success, `summary ${w}`).toBe(false);
       expect(SeoReportResult.safeParse({ ...GOOD, recommendation: `Result: ${w}` }).success, `recommendation ${w}`).toBe(false);

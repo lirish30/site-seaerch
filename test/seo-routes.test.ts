@@ -296,7 +296,7 @@ describe("PUT /seo/reports/:id", () => {
       [{ summary: "It costs $50 a month." }, /summary.*price/i], [{ summary: "**Bold** words." }, /summary.*markdown/i], [{ summary: "One.\n\n\n\nTwo." }, /summary.*blank/i],
       [{ summary: "We guarantee the first page." }, /summary.*promise/i], [{ summary: "You will rank number one." }, /summary.*promise/i], [{ summary: "   " }, /summary.*1 to 600/i], [{ summary: "x".repeat(601) }, /summary.*1 to 600/i],
       [{ recommendation: "We promise a top spot." }, /recommendation.*promise/i], [{ recommendation: "- a bullet" }, /recommendation.*markdown/i], [{ recommendation: "" }, /recommendation.*1 to 300/i], [{ recommendation: "y".repeat(301) }, /recommendation.*1 to 300/i],
-      [{ priorities: ["Fine", "Check https://evil.example", "Fine too"] }, /priority 2.*link/i], [{ priorities: ["Fine", "Fine too", "This will rank first"] }, /priority 3.*promise/i], [{ priorities: ["Fine", "Fine too", "z".repeat(121)] }, /priority 3.*1 to 120/i],
+      [{ priorities: ["Fine", "Check https://evil.example", "Fine too"] }, /priority 2.*link/i], [{ priorities: ["Fine", "Fine too", "This will rank first"] }, /priority 3.*promise/i], [{ recommendation: "Your calls will increase." }, /recommendation.*promise/i], [{ priorities: ["Your rank will improve", "Fine", "Fine too"] }, /priority 1.*promise/i], [{ priorities: ["Fine", "Fine too", "z".repeat(121)] }, /priority 3.*1 to 120/i],
       [{ priorities: ["", "Fine", "Fine too"] }, /priority 1.*1 to 120/i],
     ];
     for (const [over, name] of bad) {
