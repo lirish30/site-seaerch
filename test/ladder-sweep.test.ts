@@ -123,8 +123,10 @@ describe("sweepLadder", () => {
     expect(await placeHold(env.DB, { businessId: held.businessId, invoiceId: held.invoice!.id, now: NOW.toISOString() })).toBe(true);
     const test = await seedClient({ test: true });
     const ended = await seedClient({ subs: [{ monthlyCents: 100, status: "cancelled" }, { monthlyCents: 200, status: "ended" }] });
+    // Only the do-not-contact client's own address is listed, so each of the other three is held by its own guard alone.
     const dnc = await seedClient();
-    await addDoNotContact(env.DB, { kind: "email", value: "pat@ace.test", reason: "opt_out" });
+    await env.DB.prepare(`UPDATE people SET email = 'optout@ace.test' WHERE business_id = ?`).bind(dnc.businessId).run();
+    await addDoNotContact(env.DB, { kind: "email", value: "optout@ace.test", reason: "opt_out" });
     const ids: [Client, string][] = [];
     for (const s of [held, test, ended, dnc]) ids.push([s, await row(s, "review_request", "2026-11-22", LINK)], [s, await row(s, "thank_you", "2026-11-22")]);
     expect(await sweepLadder(e, NOW)).toEqual({ filled: 0, drafted: 0, due: 0, skipped: 0, held: 8 });
