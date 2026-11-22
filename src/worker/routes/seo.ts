@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { isClient, todayKey } from "../clients/record";
-import { addKeyword, getReview, listCitations, listKeywords, setCitation, setKeywordActive, setReviewDraft, setReviewStatus, type CitationStatus, type SeoReview } from "../db/seo";
+import { logActivity } from "../db/activity";
+import { addKeyword, getContent, getReview, listCitations, listContent, listKeywords, setCitation, setContent, setKeywordActive, setReviewDraft, setReviewStatus, type CitationStatus, type ContentItem, type SeoReview } from "../db/seo";
 import { getSettings } from "../db/settings";
 import type { Env } from "../env";
 import { bodyOf, NOT_FOUND, ownerOnError, type Ctx } from "../projects/http";
@@ -11,12 +12,16 @@ import { CITATION_DIRECTORIES, parseNapResult } from "../seo/nap";
 import { findPlaces } from "../seo/places";
 import { CREDENTIAL_REFUSED, MAX_TEXT, MIN_TEXT, SeoRefusal, placesRefusal, runNapCheck, setupProfile, tidy } from "../seo/profile";
 import { looksLikeCredential } from "../onboarding/templates";
+import { SeoContentResult, kindProblem } from "../queue/seoContent";
 import { replyText } from "../queue/seoReviewReply";
+import { planFor } from "../seo/content";
 
 /**
  * Mounted at /api (behind requireAuth), all under /clients/:id/seo (the owner's local SEO setup for one client; a test client is allowed):
  * POST /place-search, PUT /profile, POST /keywords, DELETE /keywords/:keywordId, PUT /citations/:directory, POST /nap-check, POST /baseline, POST /rank-check.
  * And, for a review of a client's listing, PUT /seo/reviews/:id/draft, POST /seo/reviews/:id/posted and POST /seo/reviews/:id/skip. The app never posts a reply to Google: "posted" is Logan saying he did.
+ * And, for the month's content: GET /clients/:id/seo/content (?period=YYYY-MM), PUT /seo/content/:id (edit the words) and POST /seo/content/:id/{approve,published,reject}. The app never publishes anything:
+ * "published" is Logan saying he put it on the client's site or profile.
  * Places data, site text and business names are untrusted: nothing from the request body sets a location, and neither the Places key nor anything a remote service said is ever returned.
  */
 export const seoRoutes = new Hono<{ Bindings: Env }>();
@@ -196,4 +201,98 @@ seoRoutes.post("/seo/reviews/:id/skip", async (c) => {
     throw new SeoRefusal(`This review is already ${review.replyStatus}.`, 409);
   }
   return c.json({ review: await getReview(c.env.DB, review.id) });
+});
+
+// --- content ---------------------------------------------------------------------------------------------------------------------------------------------------
+
+/** The content item, or the 404 to send back when it does not exist or its business is not a client. */
+async function contentOf(c: Ctx): Promise<ContentItem | Response> {
+  const item = await getContent(c.env.DB, c.req.param("id") ?? "");
+  return item && (await isClient(c.env.DB, item.businessId)) ? item : c.json(NOT_FOUND, 404);
+}
+
+/** The client's content: every month, or one with `?period=YYYY-MM`, and what its plan includes each month (null when it has no live Local SEO plan). */
+seoRoutes.get("/clients/:id/seo/content", async (c) => {
+  const id = await clientId(c);
+  if (id instanceof Response) return id;
+  const period = c.req.query("period");
+  if (period !== undefined && !/^\d{4}-(?:0[1-9]|1[0-2])$/.test(period)) throw new SeoRefusal("period must be a month written YYYY-MM.");
+  return c.json({ plan: await planFor(c.env.DB, id), content: await listContent(c.env.DB, { businessId: id, ...(period !== undefined ? { period } : {}) }) });
+});
+
+const EditBody = z.object({ title: z.string().optional(), metaTitle: z.string().optional(), metaDescription: z.string().optional(), body: z.string().optional() });
+
+/**
+ * Saves Logan's own words for a `drafted` or `approved` item: whatever of the title, meta title, meta description and body is given (what is not given stays). The same text rules as Claude's drafts hold,
+ * and a Google post keeps its limits. The status does not change.
+ */
+seoRoutes.put("/seo/content/:id", async (c) => {
+  const item = await contentOf(c);
+  if (item instanceof Response) return item;
+  const body = await bodyOf(c, EditBody);
+  if (body instanceof Response) return body;
+  if (body.title === undefined && body.metaTitle === undefined && body.metaDescription === undefined && body.body === undefined) {
+    throw new SeoRefusal("Give a title, meta title, meta description or body to change.");
+  }
+  if (item.status !== "drafted" && item.status !== "approved") {
+    throw new SeoRefusal(item.status === "planned" || item.status === "drafting" ? "Claude has not drafted this yet, so there is nothing to edit." : `This item is already ${item.status}, so its words can't be changed.`, 409);
+  }
+  const parsed = SeoContentResult.safeParse({
+    title: body.title ?? item.title, metaTitle: body.metaTitle ?? item.metaTitle, metaDescription: body.metaDescription ?? item.metaDescription, body: body.body ?? item.body,
+  });
+  if (!parsed.success) throw new SeoRefusal(parsed.error.issues[0]?.message ?? "That text can't be used.");
+  const problem = kindProblem(item.kind, parsed.data);
+  if (problem) throw new SeoRefusal(problem);
+  if (!(await setContent(c.env.DB, item.id, ["drafted", "approved"], parsed.data, new Date().toISOString()))) {
+    throw new SeoRefusal(`This item is no longer drafted or approved, so its words can't be changed.`, 409);
+  }
+  return c.json({ content: await getContent(c.env.DB, item.id) });
+});
+
+/** Logan approves the drafted words. Only a drafted item can be approved. */
+seoRoutes.post("/seo/content/:id/approve", async (c) => {
+  const item = await contentOf(c);
+  if (item instanceof Response) return item;
+  if (!(await setContent(c.env.DB, item.id, ["drafted"], { status: "approved" }, new Date().toISOString()))) {
+    throw new SeoRefusal(item.status === "approved" ? "This item is already approved." : "Only a drafted item can be approved.", 409);
+  }
+  return c.json({ content: await getContent(c.env.DB, item.id) });
+});
+
+const PublishedBody = z.object({
+  url: z.string().trim().max(500).refine((s) => {
+    try {
+      const u = new URL(s);
+      return u.protocol === "https:" && u.username === "" && u.password === "";
+    } catch { return false; }
+  }, "url must be an https address.").optional(),
+});
+
+/** Logan says he put the approved words on the client's site or profile, with the address if he has it (https). The app publishes nothing. Only an approved item can be marked published. */
+seoRoutes.post("/seo/content/:id/published", async (c) => {
+  const item = await contentOf(c);
+  if (item instanceof Response) return item;
+  const body = await bodyOf(c, PublishedBody);
+  if (body instanceof Response) return body;
+  if (!(await setContent(c.env.DB, item.id, ["approved"], { status: "published", ...(body.url !== undefined ? { url: body.url } : {}) }, new Date().toISOString()))) {
+    throw new SeoRefusal(item.status === "published" ? "This item is already marked as published." : "Only an approved item can be marked as published. Approve it first.", 409);
+  }
+  return c.json({ content: await getContent(c.env.DB, item.id) });
+});
+
+const RejectBody = z.object({ reason: z.string().trim().min(3, "Say why in 3 to 300 characters.").max(300, "Say why in 3 to 300 characters.") });
+
+/** Logan turns the item down, with a reason (kept in the client's timeline). Anything not yet published can be rejected; a rejected slot is not planned again this month. */
+seoRoutes.post("/seo/content/:id/reject", async (c) => {
+  const item = await contentOf(c);
+  if (item instanceof Response) return item;
+  const body = await bodyOf(c, RejectBody);
+  if (body instanceof Response) return body;
+  const reason = tidy(body.reason);
+  if (looksLikeCredential(reason)) throw new SeoRefusal(CREDENTIAL_REFUSED);
+  if (!(await setContent(c.env.DB, item.id, ["planned", "drafting", "drafted", "approved"], { status: "rejected" }, new Date().toISOString()))) {
+    throw new SeoRefusal(`This item is already ${item.status}.`, 409);
+  }
+  await logActivity(c.env.DB, item.businessId, "note", `Rejected ${item.kind.replace("_", " ")} for ${item.period} (${item.brief}): ${reason}`);
+  return c.json({ content: await getContent(c.env.DB, item.id) });
 });
