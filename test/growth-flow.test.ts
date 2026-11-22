@@ -238,6 +238,8 @@ describe("growth and retain, end to end", () => {
     const a = await audit(lead.id, [
       finding("Pinecrest Roofing hides its phone number on a phone", { recommendation: "Show it at the top of every page.", severity: "critical" }),
       finding("The page at pinecrest-roofing.example.com loads slowly on a phone", { code: "slow_mobile", recommendation: "Shrink the large photos." }),
+      // The seeded phone and address are written into a finding on purpose, so the secrets check below has something real to catch.
+      finding("Call (208) 555-1234 or visit 12 Main St, Boise, ID 83702 is not a link people can tap", { recommendation: "Make the number a tap-to-call link." }),
     ]);
     const post = await api<{ id: string; status: string; anonymize: boolean; images: number }>("POST", "/studio", { kind: "audit_tip", auditId: a.id }, 201);
     expect(post).toMatchObject({ status: "draft", anonymize: true, images: 0 });
@@ -250,7 +252,9 @@ describe("growth and retain, end to end", () => {
     expect(claimed.isError).toBe(false);
     expect(claimed.text).toContain("<untrusted_site_content>");
     const [head, block] = claimed.text.split("<untrusted_site_content>");
-    for (const secret of ["Pinecrest", "pinecrest-roofing", "208", "555-1234", lead.id]) {
+    // The seeded phone is "(208) 555-1234": every way it could be written is checked whole (a bare "208" would match a random id or timestamp), and so are the seeded address and its pieces.
+    const PHONE = ["(208) 555-1234", "208-555-1234", "208.555.1234", "208 555 1234", "2085551234", "+1 208 555 1234", "555-1234"];
+    for (const secret of ["Pinecrest", "pinecrest-roofing", ...PHONE, "12 Main St", "83702", lead.id]) {
       expect(head, `${secret} is above the untrusted block`).not.toContain(secret);
       expect(block, `${secret} is in the untrusted block`).not.toContain(secret);
     }
