@@ -15,7 +15,7 @@ import { previousMonth } from "../src/worker/care/reportSweep";
 import { DAILY_CRON, runScheduled } from "../src/worker/schedule";
 import * as contentMod from "../src/worker/seo/content";
 import { plainSeoSummary, type SeoReportFacts } from "../src/worker/seo/reportFacts";
-import { MAX_CLIENTS_PER_RUN, MAX_PLACES_CALLS_PER_RUN, SeoReportRefused, WATCH_EVERY_DAYS, startSeoReport, sweepSeo } from "../src/worker/seo/sweep";
+import { MAX_CLIENTS_PER_RUN, MAX_PLACES_CALLS_PER_RUN, MAX_PULL_DAYS_PER_MONTH, SeoReportRefused, WATCH_EVERY_DAYS, startSeoReport, sweepSeo } from "../src/worker/seo/sweep";
 import { zoneOf } from "../src/worker/sop/cadence";
 import { getSettings } from "../src/worker/db/settings";
 import { localDay } from "../src/worker/monitoring/rollup";
@@ -236,18 +236,100 @@ describe("sweepSeo", () => {
     await generateRecurring(e, NOW);
     details = (id) => { if (id === "ChIJbad") throw new Error("network down"); return jsonRes(place(id)); };
     const real = contentMod.ensureSlots;
-    vi.spyOn(contentMod, "ensureSlots").mockImplementation((en, id, ...rest) => (id === bad.businessId ? Promise.reject(new Error("slots exploded")) : real(en, id, ...rest)));
+    let broken = true;
+    const spy = vi.spyOn(contentMod, "ensureSlots").mockImplementation((en, id, ...rest) => (broken && id === bad.businessId ? Promise.reject(new Error("slots exploded")) : real(en, id, ...rest)));
 
     expect(await sweepSeo(e, NOW)).toEqual({ clients: 2, watched: 1, ranked: 2, reports: 2, blocked: false });
     expect((await getProfile(env.DB, bad.businessId))!.lastWatchOn).toBeNull();
     expect(errors).toHaveBeenCalledWith("seo sweep: could not watch a client's reviews", expect.stringContaining("Google could not be reached"));
-    expect(errors).toHaveBeenCalledWith("seo sweep: could not pull a client's ranks", "slots exploded");
-    // The failing client's other parts ran (its grid and its report), and the good one is whole.
+    expect(errors).toHaveBeenCalledWith("seo sweep: could not plan a client's content", "slots exploded");
+    // The failing client's other parts ran (its grid, the tick and its report), and the good one is whole.
     expect((await rankChecksFor(env.DB, bad.businessId, {})).length).toBe(1);
     expect(await listContent(env.DB, { businessId: bad.businessId })).toEqual([]);
-    expect((await seo1(bad, "2026-12")).checklist.every((c) => !c.done)).toBe(true);
+    expect((await seo1(bad, "2026-12")).checklist[0].done).toBe(true);
     expect((await seo1(ok, "2026-12")).checklist[0].done).toBe(true);
     expect((await listContent(env.DB, { businessId: ok.businessId, period: "2026-12" })).length).toBe(3);
+
+    // The next day the month's slots are made (the month has a check and no slots), and only for the client that lacked them.
+    broken = false;
+    details = (id) => jsonRes(place(id));
+    spy.mockClear();
+    expect(await sweepSeo(e, at(NOW, 1))).toMatchObject({ clients: 1 });
+    expect((await listContent(env.DB, { businessId: bad.businessId, period: "2026-12" })).length).toBe(3);
+    expect(spy.mock.calls.map((c) => c[1])).toEqual([bad.businessId]);
+    // With the slots complete a second run the same day does not call it at all.
+    spy.mockClear();
+    expect(await sweepSeo(e, at(NOW, 1))).toMatchObject({ clients: 0 });
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("makes the month's slots and the 1.1 tick when the month's first check came from the baseline or the owner's rank check, and not again", async () => {
+    const s = await seoClient({ keywords: 2 });
+    await generateRecurring(e, NOW);
+    await check(s, "2026-12-01"); // taken by hand (the manual route and the baseline store checks the same way)
+    const spy = vi.spyOn(contentMod, "ensureSlots");
+    expect(await sweepSeo(e, NOW)).toMatchObject({ clients: 1, ranked: 0, reports: 1 });
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect((await listContent(env.DB, { businessId: s.businessId, period: "2026-12" })).length).toBe(3);
+    expect((await seo1(s, "2026-12")).checklist.map((c) => c.done)).toEqual([true, false, false, false, false, false, false]);
+    spy.mockClear();
+    expect(await sweepSeo(e, NOW)).toMatchObject({ clients: 0 });
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("ticks 1.1 when a usable check arrives after the slots were made", async () => {
+    const s = await seoClient({ keywords: 1 });
+    await generateRecurring(e, NOW);
+    await check(s, "2026-12-01", 5); // not usable: slots are made, nothing is ticked
+    await sweepSeo(e, NOW);
+    expect((await seo1(s, "2026-12")).checklist[0].done).toBe(false);
+    expect((await listContent(env.DB, { businessId: s.businessId, period: "2026-12" })).length).toBe(3);
+    await check(s, "2026-12-01", 9); // the owner's check replaces it the same day
+    expect(await sweepSeo(e, NOW)).toMatchObject({ clients: 1, reports: 1 });
+    expect((await seo1(s, "2026-12")).checklist[0].done).toBe(true);
+  });
+
+  it("retries a pull that left an unusable check on a later day, builds the report from the good one, and does not pull again once every keyword is usable", async () => {
+    expect(MAX_PULL_DAYS_PER_MONTH).toBe(4);
+    const s = await seoClient({ keywords: 2 });
+    const fine = await seoClient({ keywords: 2, placeId: "ChIJfine" });
+    await generateRecurring(e, NOW);
+    // 1 December: Google throttles during the first client's grid: 5 of 9 points, three errors in a row, and the run gives up (its second keyword is never reached).
+    let throttle = true;
+    let n = 0;
+    search = () => { n++; return throttle && n >= 6 && n <= 8 ? new Response("", { status: 500 }) : jsonRes({ places: [{ id: "other" }, { id: "ChIJace" }] }); };
+    expect(await sweepSeo(e, NOW)).toMatchObject({ clients: 2 });
+    const first = await rankChecksFor(env.DB, s.businessId, {});
+    expect(first.length).toBe(1);
+    expect(first[0].points.filter((p) => p.ok).length).toBe(5);
+    expect(await getSeoReportFor(env.DB, s.businessId, "2026-11")).toBeNull();
+    expect((await seo1(s, "2026-12")).checklist[0].done).toBe(false);
+
+    // 2 December: Google is fine. The grid is run again for the client with no usable check, the report is built from that check (not the day before), and the client that was fine is left alone.
+    throttle = false;
+    urls = [];
+    await sweepSeo(e, at(NOW, 1));
+    const days = (await rankChecksFor(env.DB, s.businessId, {})).map((c) => c.takenOn);
+    expect(days).toEqual(["2026-12-01", "2026-12-02", "2026-12-02"]); // the unusable check of the 1st stays, and is never used
+    expect((await getSeoReportFor(env.DB, s.businessId, "2026-11"))!.facts).toMatchObject({ rankAsOf: "2026-12-02", previousRankAsOf: null });
+    expect((await seo1(s, "2026-12")).checklist[0].done).toBe(true);
+    expect((await rankChecksFor(env.DB, fine.businessId, {})).map((c) => c.takenOn)).toEqual(["2026-12-01", "2026-12-01"]);
+    expect(searchCalls()).toBe(18); // one client's grid of 2 keywords x 9 points
+    urls = [];
+    await sweepSeo(e, at(NOW, 2));
+    expect(searchCalls()).toBe(0);
+  });
+
+  it("gives up on a client whose pulls have failed on 4 different days of the month", async () => {
+    const s = await seoClient({ keywords: 1 });
+    search = () => new Response("", { status: 500 }); // every point fails
+    for (let d = 0; d < 6; d++) await sweepSeo(e, at(NOW, d));
+    expect([...new Set((await rankChecksFor(env.DB, s.businessId, {})).map((c) => c.takenOn))]).toEqual(["2026-12-01", "2026-12-02", "2026-12-03", "2026-12-04"]);
+    expect(await reports()).toEqual([]);
+    // A call the first four days made only, nothing on the 5th and 6th.
+    urls = [];
+    await sweepSeo(e, at(NOW, 6));
+    expect(searchCalls()).toBe(0);
   });
 
   it("handles 25 clients a run, and the 26th goes first the next day", async () => {
