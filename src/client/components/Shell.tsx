@@ -148,7 +148,7 @@ function Bell() {
         <div className="popover rail-left" role="dialog" aria-label="Today">
           <h4>Today</h4>
           {items && items.length > 0 ? items.slice(0, 6).map((i) => (
-            <Link key={i.id} className="pop-item" to={i.kind === "billing_attention" || i.kind === "access_missing" || i.kind === "site_incident" || i.kind === "care_edit_hours" ? itemLink(i)! : `/leads/${i.businessId}`} onClick={() => setOpen(false)}><span>{i.businessName}</span><small>{TODAY_KIND_LABEL[i.kind]}</small></Link>
+            <Link key={i.id} className="pop-item" to={i.kind === "billing_attention" || i.kind === "access_missing" || i.kind === "site_incident" || i.kind === "care_edit_hours" || i.kind === "seo_waiting" ? itemLink(i)! : `/leads/${i.businessId}`} onClick={() => setOpen(false)}><span>{i.businessName}</span><small>{TODAY_KIND_LABEL[i.kind]}</small></Link>
           )) : <p className="pop-empty">Nothing needs you today.</p>}
           <hr />
           <Link className="pop-item" to="/today" onClick={() => setOpen(false)}>Open Home<Icon name="arrow-right" size={14} /></Link>

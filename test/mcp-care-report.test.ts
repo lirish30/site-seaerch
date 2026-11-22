@@ -49,10 +49,10 @@ async function reported(name: string, o: { status?: "collecting" | "ready" | "se
 type Answer = { period: string; reports: { clientId: string; client: string; status: string; summary: string; recommendation: string; sentOn: string | null; views: number; headline: any; ledger: any }[] };
 
 describe("the tool", () => {
-  it("is registered, which makes 29 tools in all", async () => {
+  it("is registered, which makes 30 tools in all", async () => {
     const names = (await mcp("tools/list", {})).result.tools.map((t: { name: string }) => t.name);
     expect(names).toContain("get_care_report");
-    expect(names).toHaveLength(29);
+    expect(names).toHaveLength(30);
   });
 });
 

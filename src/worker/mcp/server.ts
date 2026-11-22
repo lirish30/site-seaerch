@@ -22,6 +22,7 @@ import { registerCareTools } from "./tools/care";
 import { registerCareReportTools } from "./tools/careReport";
 import { registerMoneyTools } from "./tools/money";
 import { registerReadTools } from "./tools/read";
+import { registerSeoTools } from "./tools/seo";
 import { approvalView } from "./tools/views";
 import { getBusiness } from "../db/businesses";
 import { isKnownRecipient } from "../db/contacts";
@@ -224,5 +225,6 @@ export function buildMcpServer(env: Env): McpServer {
   registerMoneyTools(server, ctx);
   registerCareTools(server, ctx);
   registerCareReportTools(server, ctx);
+  registerSeoTools(server, ctx);
   return server;
 }

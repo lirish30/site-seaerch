@@ -1,9 +1,10 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { previousMonth } from "../care/reportSweep";
-import { isClient, isTestClient, todayKey } from "../clients/record";
+import { clientSql, isClient, isTestClient, testClientSql, todayKey } from "../clients/record";
 import { logActivity } from "../db/activity";
-import { addKeyword, getContent, getReview, listCitations, listContent, listKeywords, setCitation, setContent, setKeywordActive, setReviewDraft, setReviewStatus, type CitationStatus, type ContentItem, type SeoReview } from "../db/seo";
+import { addKeyword, getContent, getProfile, getReview, listCitations, listContent, listKeywords, listReviews, setCitation, setContent, setKeywordActive, setReviewDraft, setReviewStatus, snapshotsFor, type CitationStatus, type ContentItem, type SeoReview } from "../db/seo";
+import { getSeoReport, listSeoReports } from "../db/seoReports";
 import { getSettings } from "../db/settings";
 import type { Env } from "../env";
 import { bodyOf, NOT_FOUND, ownerOnError, type Ctx } from "../projects/http";
@@ -16,6 +17,8 @@ import { looksLikeCredential } from "../onboarding/templates";
 import { SeoContentResult, kindProblem } from "../queue/seoContent";
 import { replyText } from "../queue/seoReviewReply";
 import { planFor } from "../seo/content";
+import { latestGrid, waitingFor } from "../seo/overview";
+import { checkSeoWords, editSeoReport, revokeSeoReportNow, seoReportRow } from "../seo/reportAdmin";
 import { SeoReportRefused, startSeoReport } from "../seo/sweep";
 import { zoneOf } from "../sop/cadence";
 
@@ -23,6 +26,8 @@ import { zoneOf } from "../sop/cadence";
  * Mounted at /api (behind requireAuth), all under /clients/:id/seo (the owner's local SEO setup for one client; a test client is allowed):
  * POST /place-search, PUT /profile, POST /keywords, DELETE /keywords/:keywordId, PUT /citations/:directory, POST /nap-check, POST /baseline, POST /rank-check and POST /report (last month's report by hand).
  * And, for a review of a client's listing, PUT /seo/reviews/:id/draft, POST /seo/reviews/:id/posted and POST /seo/reviews/:id/skip. The app never posts a reply to Google: "posted" is Logan saying he did.
+ * And the owner's reading and the month's reports: GET /clients/:id/seo (everything about one client in one answer), GET /seo/board (one row per active client), GET /seo/reports (?period=YYYY-MM, ?clientId=),
+ * PUT /seo/reports/:id (edit the words of a `ready` report) and POST /seo/reports/:id/revoke. No answer carries a report's token except, for a `sent` report, as the path of its page.
  * And, for the month's content: GET /clients/:id/seo/content (?period=YYYY-MM), PUT /seo/content/:id (edit the words) and POST /seo/content/:id/{approve,published,reject}. The app never publishes anything:
  * "published" is Logan saying he put it on the client's site or profile.
  * Places data, site text and business names are untrusted: nothing from the request body sets a location, and neither the Places key nor anything a remote service said is ever returned.
@@ -315,4 +320,115 @@ seoRoutes.post("/seo/content/:id/reject", async (c) => {
   }
   await logActivity(c.env.DB, item.businessId, "note", `Rejected ${item.kind.replace("_", " ")} for ${item.period} (${item.brief}): ${reason}`);
   return c.json({ content: await getContent(c.env.DB, item.id) });
+});
+
+// --- the owner's reading ---------------------------------------------------------------------------------------------------------------------------------------
+
+const MONTH = /^\d{4}-(?:0[1-9]|1[0-2])$/;
+const MAX_REVIEWS_SHOWN = 100;
+
+/**
+ * Everything about one client's Local SEO in one answer (a test client too): the profile (no checker text: the name, address and phone result is `nap`), every keyword, the latest rank check of each active keyword,
+ * the latest Google profile snapshot, the reviews (newest first, 100 at most), the content, the directory list and the latest report. A client with no setup yet gets nulls and empty lists. The report carries no token;
+ * a `sent` report carries `linkPath`, the path of its page on the client link address.
+ */
+seoRoutes.get("/clients/:id/seo", async (c) => {
+  const id = await clientId(c);
+  if (id instanceof Response) return id;
+  const db = c.env.DB;
+  const tz = zoneOf(await getSettings(db));
+  const profile = await getProfile(db, id);
+  const latest = (await listSeoReports(db, { businessId: id })).sort((x, y) => y.period.localeCompare(x.period))[0];
+  const row = latest ? await seoReportRow(c.env, latest, tz) : null;
+  return c.json({
+    profile: profile ? { ...profile, napResult: undefined } : null,
+    keywords: await listKeywords(db, id),
+    latestGrid: await latestGrid(db, id),
+    snapshot: (await snapshotsFor(db, id, {})).at(-1) ?? null,
+    nap: profile ? parseNapResult(profile.napResult) : null,
+    reviews: (await listReviews(db, id)).reverse().slice(0, MAX_REVIEWS_SHOWN),
+    content: await listContent(db, { businessId: id }),
+    citations: await listCitations(db, id),
+    report: latest && row ? {
+      id: row.id, period: row.period, status: row.status, summary: row.summary, recommendation: row.recommendation, priorities: row.priorities, source: row.source, sentOn: row.sentOn, views: row.views, test: row.test,
+      ...(latest.status === "sent" ? { linkPath: `/l/${latest.token}` } : {}),
+    } : null,
+  });
+});
+
+/** What Logan does next for a client, as a plain sentence: the first thing that applies. */
+function nextStep(o: { keywords: number; waiting: { replies: number; content: number; flagged: number }; report: { status: string; period: string } | null }): string {
+  const { keywords, waiting, report } = o;
+  if (keywords === 0) return "Add the search terms to track.";
+  if (waiting.flagged > 0) return `Answer ${waiting.flagged === 1 ? "the low-rated review" : `the ${waiting.flagged} low-rated reviews`}.`;
+  const drafts = waiting.replies + waiting.content;
+  if (drafts > 0) return `Look at the ${drafts === 1 ? "draft" : `${drafts} drafts`} waiting for you.`;
+  if (report?.status === "ready") return `Approve the ${report.period} report.`;
+  if (report === null) return "Start last month's report once a rank check is in.";
+  return "Nothing waiting.";
+}
+
+/**
+ * One row per client whose Local SEO watch is on (a profile with `active` status; a rehearsal client and an archived one are left out), by name: the client, what to do next in plain words, how many drafts wait
+ * (review replies and content), how many low-rated reviews still need an answer, and last month's report (`period` and its status, or null when it has not been started).
+ */
+seoRoutes.get("/seo/board", async (c) => {
+  const db = c.env.DB;
+  const period = previousMonth(new Date(), zoneOf(await getSettings(db)));
+  const clients = (await db.prepare(
+    `SELECT b.id AS id, b.name AS name FROM seo_profiles sp JOIN businesses b ON b.id = sp.business_id
+     WHERE sp.status = 'active' AND b.archived_at IS NULL AND ${clientSql("b")} AND NOT ${testClientSql("b")} ORDER BY LOWER(b.name), b.id`,
+  ).all<{ id: string; name: string }>()).results;
+  const rows = await Promise.all(clients.map(async (b) => {
+    const waiting = await waitingFor(db, b.id);
+    const found = await listSeoReports(db, { businessId: b.id, period });
+    const report = found[0] ? { period: found[0].period, status: found[0].status, id: found[0].id } : null;
+    const keywords = (await listKeywords(db, b.id, { activeOnly: true })).length;
+    return { clientId: b.id, client: b.name, next: nextStep({ keywords, waiting, report }), draftsWaiting: waiting.replies + waiting.content, flaggedReviews: waiting.flagged, report };
+  }));
+  return c.json({ period, rows });
+});
+
+/**
+ * The month's reports (`?period=YYYY-MM`, default last month in the booking zone), oldest first, each with its client, status, words, priorities, how often the client opened it and, only for a `ready` or `sent` report,
+ * the link to copy. `?clientId=` narrows to one client; with no `period` it is every month of that client, newest first (`period` is then null). 400 for a period that is not `YYYY-MM`. Never a bare token.
+ */
+seoRoutes.get("/seo/reports", async (c) => {
+  const tz = zoneOf(await getSettings(c.env.DB));
+  const wanted = c.req.query("clientId");
+  const asked = c.req.query("period");
+  if (asked !== undefined && !MONTH.test(asked)) return c.json({ error: "period must look like 2026-11." }, 400);
+  const period = asked ?? (wanted === undefined ? previousMonth(new Date(), tz) : null);
+  const reports = await listSeoReports(c.env.DB, { ...(period !== null ? { period } : {}), ...(wanted !== undefined ? { businessId: wanted } : {}) });
+  if (period === null) reports.sort((x, y) => y.period.localeCompare(x.period));
+  return c.json({ period, reports: await Promise.all(reports.map((r) => seoReportRow(c.env, r, tz))) });
+});
+
+/** The report's id, or the 404 to send back when it does not exist or its business is not a client. */
+async function reportOf(c: Ctx): Promise<string | Response> {
+  const report = await getSeoReport(c.env.DB, c.req.param("id") ?? "");
+  return report && (await isClient(c.env.DB, report.businessId)) ? report.id : c.json(NOT_FOUND, 404);
+}
+
+/**
+ * Logan's edit of a `ready` report's words (summary, recommendation and exactly three priorities), with the very same text rules as Claude's words. 400 with a sentence for words that break them, nothing changed;
+ * 409 for a report that is not `ready`; 404 for an unknown one. The pending approval's card is rewritten to show the new words.
+ */
+seoRoutes.put("/seo/reports/:id", async (c) => {
+  const id = await reportOf(c);
+  if (id instanceof Response) return id;
+  const words = checkSeoWords(await c.req.json().catch(() => null));
+  if (!words.ok) return c.json({ error: words.error }, 400);
+  const done = await editSeoReport(c.env, id, words);
+  if (!done.ok) return c.json(done.status === 404 ? NOT_FOUND : { error: done.error }, done.status);
+  return c.json({ report: await seoReportRow(c.env, done.report, zoneOf(await getSettings(c.env.DB))) });
+});
+
+/** Takes a `ready` or `sent` report back: its link stops working, its queued Claude job is closed and its pending approval rejected. 409 for any other state, 404 for an unknown report. */
+seoRoutes.post("/seo/reports/:id/revoke", async (c) => {
+  const id = await reportOf(c);
+  if (id instanceof Response) return id;
+  const done = await revokeSeoReportNow(c.env, id, new Date());
+  if (!done.ok) return c.json(done.status === 404 ? NOT_FOUND : { error: done.error }, done.status);
+  return c.json({ report: await seoReportRow(c.env, done.report, zoneOf(await getSettings(c.env.DB))) });
 });
