@@ -276,8 +276,9 @@ describe("the seo.review_reply result", () => {
   });
 
   it("refuses an offer of free work but not the stock phrases 'feel free' and 'hassle-free'", () => {
-    for (const ok of ["Please feel free to call us and we will talk it through.", "We aim for a hassle-free visit every time.", "Carefree is how we like our customers to feel."]) expect(replyProblem(ok), ok).toBeNull();
-    for (const bad of ["We will send a free estimate.", "It would be a free repair for you.", "Come back for free.", "A complimentary visit is on us.", "There is no charge for the call-out.", "Free of charge, of course.", "We offer a free quote.", "Some free work for you."]) expect(replyProblem(bad), bad).toMatch(/offer/);
+    for (const ok of ["Please feel free to call us and we will talk it through.", "We aim for a hassle-free visit every time.", "Carefree is how we like our customers to feel.", "We offer toll-free support, worry-free service and sugar-free cake.", "Feel free to stop by."]) expect(replyProblem(ok), ok).toBeNull();
+    for (const bad of ["We will send a free estimate.", "It would be a free repair for you.", "Come back for free.", "A complimentary visit is on us.", "There is no charge for the call-out.", "Free of charge, of course.", "We offer a free quote.", "Some free work for you.", "We would love to do a free inspection.", "A free consultation is yours.", "Free parts are on us.",
+      "We can do it at no cost.", "It will be no-cost to you.", "The visit is on the house.", "We will waive the fee.", "We'll waive that charge."]) expect(replyProblem(bad), bad).toMatch(/offer/);
   });
 
   it("refuses a bad reply through the queue and leaves the task claimed and the reviews drafting", async () => {

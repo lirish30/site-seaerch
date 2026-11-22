@@ -25,7 +25,8 @@ const EMAIL = /@/;
 // A ten-digit number in any of the usual shapes, a seven-digit one with a dash, and any long run of digits.
 const PHONE = /(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}|\b\d{3}[\s.-]\d{4}\b|\d{7,}/;
 const MONEY = /\$\s?\d|\b\d[\d,.]*\s*(?:dollars?|bucks|usd)\b/i;
-const OFFER = /refund|compensat|free (?:of charge|service|repair|estimate|quote|work)|for free|complimentary|no charge|discount|guarantee/i;
+// Any standalone "free" is an offer, bar the stock "feel free" and compounds such as "hassle-free" or "toll-free". "No cost", "on the house" and waiving a fee are offers too.
+const OFFER = /refund|compensat|(?<!feel )(?<![\w-])free(?![\w-])|complimentary|no[ -]charge|no[ -]cost|on the house|waiv(?:e|ed|es|ing)\b|discount|guarantee/i;
 const MARKDOWN = /[`#*_]{2}|[`*]|\]\(|^\s*(?:#|[-*]\s)/m;
 const BLANK_LINES = /(?:\r?\n){3,}/;
 
