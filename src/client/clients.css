@@ -222,3 +222,16 @@
 .bt-client { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; min-width:0; overflow-wrap:anywhere; }
 .bt-client a { display:inline-flex; align-items:center; min-height:44px; color:inherit; }
 .bt-meta { display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; color:var(--text-2); }
+
+/* The post-launch ladder on a client's page. */
+.lp-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:12px; }
+.lp-step { display:flex; flex-direction:column; gap:6px; min-width:0; padding-bottom:12px; border-bottom:1px solid var(--border); }
+.lp-step:last-child { border-bottom:0; padding-bottom:0; }
+.lp-head { display:flex; flex-wrap:wrap; align-items:center; gap:8px; min-width:0; }
+.lp-step p { margin:0; overflow-wrap:anywhere; }
+.lp-done, .lp-skipped { opacity:.7; }
+.lp-link { display:flex; flex-direction:column; align-items:flex-start; gap:6px; }
+.lp-link .deal-field { width:100%; }
+.lp-link input { width:100%; min-width:0; }
+.lp-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.lp-actions .btn, .lp-link .btn { min-height:44px; }

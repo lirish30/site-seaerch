@@ -9,6 +9,7 @@ import MeetingsPanel from "../components/MeetingsPanel";
 import CarePanel from "../components/client/CarePanel";
 import GradePanel, { GradeChip } from "../components/client/GradePanel";
 import ClientSeoPanel from "../components/client/ClientSeoPanel";
+import LadderPanel from "../components/client/LadderPanel";
 import LinkedPanel from "../components/client/LinkedPanel";
 import SitePanel from "../components/client/SitePanel";
 import { hasSeoOnboarding, hasSeoPlan } from "../seoView";
@@ -158,6 +159,7 @@ export default function ClientPage() {
           <div className="cl-col">
             <GradePanel businessId={b.id} grade={client.grade} onChanged={refresh} />
             <CarePanel businessId={b.id} health={client.health} sites={client.sites.map(({ site, monitoring }) => ({ site, monitoring }))} zone={tz} onChanged={refresh} />
+            <LadderPanel businessId={b.id} today={today} />
             <MeetingsPanel businessId={b.id} />
             <section className="cl-card" aria-label="Timeline">
               <h2>Timeline</h2>

@@ -16,6 +16,7 @@ import type { NapResult } from "../worker/seo/nap";
 import type { GridRow } from "../worker/seo/overview";
 import type { PlaceCandidate } from "../worker/seo/places";
 import type { SeoReportRow } from "../worker/seo/reportAdmin";
+import type { LadderRow } from "../worker/db/ladder";
 export class ApiError extends Error { constructor(public status: number, message: string, public fields: string[] = [], public code = "", public body: unknown = undefined) { super(message); } }
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -127,6 +128,17 @@ export interface SeoBoardRow {
 }
 export interface SeoProfileInput { placeId: string; trade: string; towns: string[]; gridKm: number; siteId?: string }
 export interface SeoContentEdit { title?: string; metaTitle?: string; metaDescription?: string; body?: string }
+
+/** The post-launch ladder routes (Plan 15). Nothing here sends mail: a mail goes out only when its approval is approved. */
+export const ladderApi = {
+  list: (clientId: string) => api.get<{ rows: LadderRow[] }>(`/clients/${encodeURIComponent(clientId)}/ladder`).then((r) => r.rows),
+  done: (id: string) => api.post<{ row: LadderRow }>(`/ladder/${encodeURIComponent(id)}/done`).then((r) => r.row),
+  skip: (id: string, note = "") => api.post<{ row: LadderRow }>(`/ladder/${encodeURIComponent(id)}/skip`, { note }).then((r) => r.row),
+  /** Sets the https link a step carries, or clears it with null. */
+  setLink: (id: string, link: string | null) => api.put<{ row: LadderRow }>(`/ladder/${encodeURIComponent(id)}/link`, { link }).then((r) => r.row),
+  /** Starts a case study post for the client in the Studio (Plan 15, Task 9). */
+  startCaseStudy: (businessId: string) => api.post<unknown>(`/studio`, { kind: "case_study", businessId }),
+};
 
 /** The Local SEO routes (Plan 14). A refusal is an ApiError whose message is a plain sentence; nothing here ever posts or publishes anywhere. Types only come from the worker. */
 export const seoApi = {
