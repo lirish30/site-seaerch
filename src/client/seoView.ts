@@ -20,6 +20,16 @@ export function hasSeoPlan(subs: { packageKey: string; status: string; test?: bo
   return subs.some((s) => SEO_PLANS.includes(s.packageKey) && (s.status === "active" || s.status === "past_due") && !s.test);
 }
 
+/** The template key of the Local SEO onboarding project (`SEO_ONBOARDING_KEY` in the worker; a test checks they match, and it is not imported here so no worker code reaches the browser). */
+export const SEO_ONBOARDING = "SEO-0";
+/**
+ * True when the client has a Local SEO onboarding project that is not cancelled and not a rehearsal. The profile and the baseline are set up in SEO-0 before billing is live, so the panel has to open then.
+ * A done SEO-0 counts (it is the ongoing service) and a paused one still shows the panel.
+ */
+export function hasSeoOnboarding(projects: { templateKey: string | null; status: string; test: boolean }[]): boolean {
+  return projects.some((p) => p.templateKey === SEO_ONBOARDING && p.status !== "cancelled" && !p.test);
+}
+
 /** The grid is nine points: three rows of three from the north-west. */
 export const GRID_POINTS = 9;
 

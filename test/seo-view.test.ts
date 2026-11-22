@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { SEO_ONBOARDING_KEY } from "../src/worker/db/projects";
 import {
-  boardReportLine, citationLabel, contentByMonth, contentCopy, contentStatusLabel, gridCells, hasSeoPlan, keywordLimitLeft, kindLabel, movement, napPartLine, replyStatusLabel, reportWordsForm, sortReviews, starsLabel, termMovement, wordsReady,
+  boardReportLine, citationLabel, contentByMonth, contentCopy, contentStatusLabel, gridCells, hasSeoOnboarding, hasSeoPlan, SEO_ONBOARDING, keywordLimitLeft, kindLabel, movement, napPartLine, replyStatusLabel, reportWordsForm, sortReviews, starsLabel, termMovement, wordsReady,
 } from "../src/client/seoView";
 
 const pt = (pos: number | null, ok = true) => ({ pos, ok });
@@ -179,5 +180,23 @@ describe("hasSeoPlan", () => {
     expect(hasSeoPlan([{ packageKey: "care", status: "active" }])).toBe(false);
     expect(hasSeoPlan([{ packageKey: "local_seo", status: "cancelled" }])).toBe(false);
     expect(hasSeoPlan([{ packageKey: "local_seo", status: "active", test: true }])).toBe(false);
+  });
+});
+
+describe("hasSeoOnboarding", () => {
+  const proj = (o: Partial<{ templateKey: string | null; status: string; test: boolean }> = {}) => ({ templateKey: "SEO-0", status: "active", test: false, ...o });
+  it("uses the worker's template key", () => {
+    expect(SEO_ONBOARDING).toBe(SEO_ONBOARDING_KEY);
+  });
+  it("is true for an SEO-0 project that is active, done or paused, so the profile can be set up before billing is live", () => {
+    expect(hasSeoOnboarding([proj()])).toBe(true);
+    expect(hasSeoOnboarding([proj({ status: "done" })])).toBe(true);
+    expect(hasSeoOnboarding([proj({ status: "paused" })])).toBe(true);
+  });
+  it("is false for a cancelled one, a rehearsal one, another project or none", () => {
+    expect(hasSeoOnboarding([proj({ status: "cancelled" })])).toBe(false);
+    expect(hasSeoOnboarding([proj({ test: true })])).toBe(false);
+    expect(hasSeoOnboarding([proj({ templateKey: null }), proj({ templateKey: "CARE-0" })])).toBe(false);
+    expect(hasSeoOnboarding([])).toBe(false);
   });
 });
