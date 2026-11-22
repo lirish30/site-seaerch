@@ -86,8 +86,9 @@ const seoReviewReply: TaskKindDef<SeoReviewReplyPayload, SeoReviewReplyResult> =
   },
 
   /**
-   * Stores each reply as a draft. A result that leaves out a review of the task, names one that is not in it, or names one twice is refused (the task stays claimed). A review Logan skipped or wrote
-   * himself while Claude was working is no longer `drafting` and is left as he left it. A crash-retry finds the drafts already stored and changes nothing.
+   * Stores each reply as a draft. A result that names a review that is not in the task, or names one twice, is refused (the task stays claimed), and so is one that leaves out a review Claude was shown
+   * (a payload review still `drafting` for this business, which is exactly what `build` shows). A review Logan skipped or wrote himself while Claude was working is no longer `drafting`: `build` hid it,
+   * so a reply for it is ignored and the review is left as he left it. When no review is still `drafting` the task is stale.
    */
   async apply(env, p, r) {
     const wanted = new Set(p.reviewIds);
@@ -97,7 +98,13 @@ const seoReviewReply: TaskKindDef<SeoReviewReplyPayload, SeoReviewReplyResult> =
       if (seen.has(x.reviewId)) throw new TaskRefused(`reviewId ${x.reviewId} has more than one reply. Send exactly one reply for each review.`);
       seen.add(x.reviewId);
     }
-    const missing = p.reviewIds.filter((id) => !seen.has(id));
+    const shown: string[] = [];
+    for (const id of p.reviewIds) {
+      const review = await getReview(env.DB, id);
+      if (review && review.businessId === p.businessId && review.replyStatus === "drafting") shown.push(id);
+    }
+    if (!shown.length) return { stale: "none of the reviews is waiting for a reply any more" };
+    const missing = shown.filter((id) => !seen.has(id));
     if (missing.length) throw new TaskRefused(`No reply was given for reviewId ${missing.join(", ")}. Send one reply for each review in the task.`);
     let drafted = 0;
     for (const x of r.replies) {

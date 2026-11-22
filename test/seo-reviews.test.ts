@@ -291,10 +291,41 @@ describe("the seo.review_reply result", () => {
     expect((await getTask(env.DB, task.id))!.status).toBe("done");
   });
 
+  it("accepts the answers for the reviews Claude was shown when Logan skipped or wrote one meanwhile, and leaves that one alone", async () => {
+    const { task, rows, businessId } = await watched();
+    await env.DB.prepare(`UPDATE seo_reviews SET reply_status = 'skipped' WHERE id = ?`).bind(rows[2].id).run();
+    await env.DB.prepare(`UPDATE seo_reviews SET reply_status = 'drafted', reply_draft = 'Mine' WHERE id = ?`).bind(rows[1].id).run();
+    // Claude is shown only the first review, so it answers only that one.
+    const built = await kind().build(e, task.payload, task);
+    if ("stale" in built) throw new Error(built.stale);
+    const shown = built.untrusted.map((p) => (p.type === "text" ? p.text : "")).join("\n");
+    expect([rows[0].id, rows[1].id, rows[2].id].map((id) => shown.includes(id))).toEqual([true, false, false]);
+    expect(await completeTask(e, task.id, { replies: [reply(rows[0].id, "Only the one shown.")] })).toEqual({ ok: true });
+    expect((await listReviews(env.DB, businessId)).map((x) => [x.replyStatus, x.replyDraft])).toEqual([["drafted", "Only the one shown."], ["drafted", "Mine"], ["skipped", ""]]);
+    expect((await getTask(env.DB, task.id))!.status).toBe("done");
+  });
+
+  it("still refuses a result that leaves out a review Claude was shown, and one that names a review outside the task", async () => {
+    const { task, rows } = await watched();
+    await env.DB.prepare(`UPDATE seo_reviews SET reply_status = 'skipped' WHERE id = ?`).bind(rows[2].id).run();
+    expect((await completeTask(e, task.id, { replies: [reply(rows[0].id)] })).ok).toBe(false);
+    expect((await completeTask(e, task.id, { replies: [reply(rows[0].id), reply(rows[1].id), reply("elsewhere")] })).ok).toBe(false);
+    expect((await getTask(env.DB, task.id))!.status).toBe("claimed");
+  });
+
+  it("is stale when no review is waiting any more", async () => {
+    const { task, rows, businessId } = await watched();
+    await env.DB.prepare(`UPDATE seo_reviews SET reply_status = 'skipped' WHERE business_id = ?`).bind(businessId).run();
+    expect(await completeTask(e, task.id, { replies: [reply(rows[0].id)] })).toEqual({ ok: true });
+    expect((await getTask(env.DB, task.id))!.status).toBe("stale");
+    expect((await listReviews(env.DB, businessId)).every((x) => x.replyStatus === "skipped" && x.replyDraft === "")).toBe(true);
+  });
+
   it("does not overwrite a review Logan skipped or wrote himself while Claude was working", async () => {
     const { task, rows, businessId } = await watched();
     await env.DB.prepare(`UPDATE seo_reviews SET reply_status = 'skipped' WHERE id = ?`).bind(rows[0].id).run();
     await env.DB.prepare(`UPDATE seo_reviews SET reply_status = 'drafted', reply_draft = 'Mine' WHERE id = ?`).bind(rows[1].id).run();
+    // A reply for a review that is no longer drafting is ignored.
     expect(await completeTask(e, task.id, { replies: rows.map((x) => reply(x.id)) })).toEqual({ ok: true });
     const after = await listReviews(env.DB, businessId);
     expect(after.map((x) => [x.replyStatus, x.replyDraft])).toEqual([["skipped", ""], ["drafted", "Mine"], ["drafted", "Thank you for the kind words. We are glad we could help."]]);
