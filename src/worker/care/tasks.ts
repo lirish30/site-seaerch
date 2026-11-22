@@ -9,6 +9,8 @@ import { completeTask } from "../projects/service";
 
 export type Care1Step = "1.1" | "1.2" | "1.3" | "1.4" | "1.5" | "1.6";
 const CARE_1 = "CARE-1";
+/** The monthly report's recurring task. Claude never works it through the step queue: the report builder (`care/reportSweep.ts`) does. */
+export const CARE_4 = "CARE-4";
 const FINAL_RAN = ["ok", "changed", "rolled_back", "failed"];
 
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e)).slice(0, 200);
@@ -16,22 +18,22 @@ const guarded = async (what: string, fn: () => Promise<unknown>): Promise<void> 
   try { await fn(); } catch (e) { console.error(`care tasks: could not ${what}`, msg(e)); }
 };
 
-/** The client's CARE-1 task ids for the week (one per Care project, normally one). */
-async function care1Ids(env: Env, businessId: string, period: string): Promise<string[]> {
-  return (await env.DB.prepare(`SELECT id FROM tasks WHERE business_id = ? AND cadence_key = ? AND period_key = ? AND is_step = 0`).bind(businessId, CARE_1, period).all<{ id: string }>()).results.map((r) => r.id);
+/** The client's task ids of a recurring template for the period (one per Care project, normally one). */
+async function cadenceIds(env: Env, key: string, businessId: string, period: string): Promise<string[]> {
+  return (await env.DB.prepare(`SELECT id FROM tasks WHERE business_id = ? AND cadence_key = ? AND period_key = ? AND is_step = 0`).bind(businessId, key, period).all<{ id: string }>()).results.map((r) => r.id);
 }
 
 /**
- * Ticks the checklist items for `steps` on the client's CARE-1 task of `period`, found by its template order in the current CARE-1 template. Does nothing for a task that is done or skipped, and nothing at all when
+ * Ticks the checklist items for `steps` on the client's task of the recurring template `key` for `period`, found by their template order in the current template. Does nothing for a task that is done or skipped, and nothing at all when
  * the template no longer has one of the steps (or the task's checklist is shorter than the template). Never un-ticks. Returns whether anything changed.
  */
-export async function tickCare1(env: Env, businessId: string, period: string, steps: Care1Step[], now: Date): Promise<boolean> {
-  const tpl = await getTemplate(env.DB, CARE_1);
+async function tickChecklist(env: Env, key: string, businessId: string, period: string, steps: string[], now: Date): Promise<boolean> {
+  const tpl = await getTemplate(env.DB, key);
   if (!tpl) return false;
   const idx = steps.map((k) => tpl.steps.findIndex((s) => s.key === k));
   if (idx.some((i) => i < 0)) return false;
   let changed = false;
-  for (const id of await care1Ids(env, businessId, period)) {
+  for (const id of await cadenceIds(env, key, businessId, period)) {
     const task = await getTask(env.DB, id);
     if (!task || task.status === "done" || task.status === "skipped") continue;
     // The checklist is a snapshot of the template when the task was made: only a task that still lines up with the template (same length, item text starts with the step's title) is ticked.
@@ -46,9 +48,24 @@ export async function tickCare1(env: Env, businessId: string, period: string, st
   return changed;
 }
 
+/** Ticks CARE-1 steps (see `tickChecklist`). */
+export const tickCare1 = (env: Env, businessId: string, period: string, steps: Care1Step[], now: Date): Promise<boolean> => tickChecklist(env, CARE_1, businessId, period, steps, now);
+
+export type Care4Step = "1.1" | "1.2" | "1.3" | "1.4";
+
+/** Ticks CARE-4 steps of the client's monthly task of `period` (the month the task is for, not the month reported). Same rules as `tickCare1`; an error is logged and swallowed (false), so it can never break the report. */
+export async function tickCare4(env: Env, businessId: string, period: string, steps: Care4Step[], now: Date): Promise<boolean> {
+  try {
+    return await tickChecklist(env, CARE_4, businessId, period, steps, now);
+  } catch (e) {
+    console.error("care tasks: could not tick the monthly report task", msg(e));
+    return false;
+  }
+}
+
 /** Marks the task done through `completeTask` when every checklist item is ticked. */
 async function finishIfTicked(env: Env, businessId: string, period: string, now: Date): Promise<void> {
-  for (const id of await care1Ids(env, businessId, period)) {
+  for (const id of await cadenceIds(env, CARE_1, businessId, period)) {
     const task = await getTask(env.DB, id);
     if (!task || task.status === "done" || task.status === "skipped" || task.checklist.length === 0 || !task.checklist.every((c) => c.done)) continue;
     await completeTask(env, id, { by: "system", now });

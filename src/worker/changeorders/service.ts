@@ -83,7 +83,7 @@ async function syncTasks(env: Env, co: ChangeOrder): Promise<void> {
   const rows: NewTask[] = plan.map((p, i) => ({
     projectId: co.projectId, businessId: co.businessId, isStep: false, stepKey: null, phaseKey: "change_orders", phaseTitle: "Change orders", position: first + i, title: p.title,
     description: p.description, owner: "logan", status: "locked", doneWhen: "", estMinutes: p.estMinutes, dueOn: null, billable: true, skippable: false, requires: [], milestone: null,
-    clientSummary: null, docTemplate: null, emailTemplate: null, checklist: [], changeOrderId: co.id, cadenceKey: null, periodKey: null,
+    clientSummary: null, docTemplate: null, emailTemplate: null, checklist: [], changeOrderId: co.id, cadenceKey: null, periodKey: null, editRequest: false,
   }));
   await insertTasks(db, rows);
 }

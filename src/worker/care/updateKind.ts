@@ -92,7 +92,7 @@ export const carePageKeys = (runId: string, i: number): { before: string; after:
 const EXPIRED_SUMMARY = "your Mac helper didn't pick this up in time";
 const BACKUP_NOTE = "the backup failed, nothing was updated";
 /** The helper's note on an update it put back only because ANOTHER update failed: nothing is wrong with this one, so it waits again (I3). */
-const COLLATERAL_NOTE = "put back because another update failed";
+export const COLLATERAL_NOTE = "put back because another update failed";
 const FINAL: readonly RunStatus[] = ["ok", "changed", "rolled_back", "failed", "dropped"];
 const OPEN: RunStatus[] = ["queued", "running"];
 

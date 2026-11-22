@@ -105,6 +105,9 @@ describe("canBulkApprove", () => {
     expect(canBulkApprove("invoice.send")).toBe(false);
     expect(canBulkApprove("subscription.start")).toBe(false);
   });
+  it("a care report is approved on its own: its words go to a client and the preview says who wrote them", () => {
+    expect(canBulkApprove("care.report")).toBe(false);
+  });
   it("everything else can be approved as a group", () => {
     for (const k of ["email.send", "lead.note", "lead.status"]) expect(canBulkApprove(k), k).toBe(true);
   });

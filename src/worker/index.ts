@@ -62,6 +62,7 @@ import "./approvals/termNotice";
 import "./approvals/invoiceReminder";
 import "./approvals/pauseNotice";
 import "./approvals/careUpdates";
+import "./approvals/careReport";
 import "./billing/milestones"; // registers the hook that drafts and proposes a milestone invoice when a project reaches one
 import "./billing/subscriptions"; // registers the hook that proposes a launch subscription when its build project is done
 import "./projects/dispatch"; // registers the hook that sends the next ready Claude step when a task changes

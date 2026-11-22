@@ -4,6 +4,7 @@ import type { Env } from "../env";
 import { recordDomainExpiry, recordProbe } from "./incidents";
 import { ERROR_TEXT, monitorableUrl, PROBE_TIMEOUT_MS, probeSite, type ProbeResult } from "./probe";
 import { fetchDomainExpiry } from "./rdap";
+import { rollupUptime } from "./rollup";
 
 // The Care sweeps the existing crons run: the uptime probe every five minutes and the domain-expiry lookup once a day.
 // They send nothing to anyone and create no task, approval or mail; the incidents and the activity line are the whole output (see incidents.ts).
@@ -93,7 +94,7 @@ export async function sweepUptime(env: Env, now: Date): Promise<UptimeSweepResul
   return out;
 }
 
-/** Looks up the expiry of each monitored site's domain that has not been looked up for DOMAIN_RECHECK_DAYS, then deletes checks older than CHECK_KEEP_DAYS. */
+/** Looks up the expiry of each monitored site's domain that has not been looked up for DOMAIN_RECHECK_DAYS, rolls the recent days of checks up into site_uptime_days, then deletes checks older than CHECK_KEEP_DAYS. */
 export async function sweepDomains(env: Env, now: Date): Promise<DomainSweepResult> {
   const out: DomainSweepResult = { checked: 0, opened: 0, closed: 0, pruned: 0 };
   try {
@@ -119,6 +120,12 @@ export async function sweepDomains(env: Env, now: Date): Promise<DomainSweepResu
     });
   } catch (e) {
     console.error("domain sweep failed", e);
+  }
+  // The rollup keeps the uptime of a day after its checks are pruned. Its failure is logged and never stops the prune.
+  try {
+    await rollupUptime(env, now);
+  } catch (e) {
+    console.error("uptime rollup failed", e);
   }
   try {
     out.pruned = await pruneChecks(env.DB, new Date(now.getTime() - CHECK_KEEP_DAYS * DAY_MS).toISOString());

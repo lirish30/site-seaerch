@@ -1,12 +1,21 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { isTestClient } from "../clients/record";
+import { isClient, isTestClient } from "../clients/record";
+import { editLedger } from "../care/ledger";
+import { getBusiness } from "../db/businesses";
+import { getSettings } from "../db/settings";
+import { zoneOf } from "../sop/cadence";
+import { localDay } from "../monitoring/rollup";
 import { closeUnmonitoredIncidents, getIncident, listIncidents, recentChecks, setMonitoring } from "../db/monitoring";
+import { listReports } from "../db/careReports";
 import { getPageCheck, getRun, setReview, setUpdateFlag } from "../db/careUpdates";
 import { getSite, type Site } from "../db/sites";
 import type { Env } from "../env";
 import { CareRunRefused, onRunDone, startBatchNow, startSingleRun } from "../care/batch";
 import { closeUpdateIncident } from "../care/incidents";
+import { createEditRequest } from "../care/editRequest";
+import { checkWords, editReport, reportRow, revokeReport } from "../care/reportAdmin";
+import { CareReportRefused, previousMonth, startReport } from "../care/reportSweep";
 import { careUpdatesBoard, runDetail, updateView } from "../care/views";
 import { serveObject } from "../video/media";
 import { cancelTasksFor } from "../queue/db";
@@ -82,6 +91,83 @@ careRoutes.post("/care/checks/:id/ok", async (c) => {
   const run = await getRun(c.env.DB, check.runId);
   if (run) await onRunDone(c.env, run.batchId);
   return c.json({ ok: true });
+});
+
+// --- Care reports (Plan 13) --------------------------------------------------------------------------------------------------------------------------------------------
+
+const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+/**
+ * A client's edit hours for one month (`?month=YYYY-MM`, default this month in the booking zone): `{ ledger }`, which is null when the client has no live Care plan.
+ * 404 for an unknown client or a rehearsal one; 400 for a month that is not `YYYY-MM`.
+ */
+careRoutes.get("/clients/:id/edit-ledger", async (c) => {
+  const id = c.req.param("id");
+  if (!(await getBusiness(c.env.DB, id)) || (await isTestClient(c.env.DB, id))) return c.json(NOT_FOUND, 404);
+  const tz = zoneOf(await getSettings(c.env.DB));
+  const month = c.req.query("month") ?? localDay(new Date().toISOString(), tz).slice(0, 7);
+  if (!MONTH.test(month)) return c.json({ error: "month must look like 2026-11." }, 400);
+  return c.json({ ledger: await editLedger(c.env, id, month, tz) });
+});
+
+/**
+ * Starts the report of last month for the client by hand, any day (a rehearsal client too): 201 with `{ report: { id, status, period } }`, or 200 with the one that is already there.
+ * 404 for an unknown client; 409 with a plain sentence for a client with no live Care project.
+ */
+careRoutes.post("/clients/:id/care-report", async (c) => {
+  const id = c.req.param("id");
+  if (!(await isClient(c.env.DB, id))) return c.json(NOT_FOUND, 404);
+  try {
+    const { report, created } = await startReport(c.env, id, { test: await isTestClient(c.env.DB, id), now: new Date() });
+    return c.json({ report: { id: report.id, status: report.status, period: report.period } }, created ? 201 : 200);
+  } catch (e) {
+    if (e instanceof CareReportRefused) return c.json({ error: e.message }, 409);
+    throw e;
+  }
+});
+
+/**
+ * The month's reports (`?period=YYYY-MM`, default last month in the booking zone), oldest first, each with its client, status, words, how often the client opened it, its edit hours and, only for a `ready` or
+ * `sent` report, the link to copy. `?clientId=` narrows to one client; with no `period` it is every month of that client, newest first (`period` is then null). 400 for a period that is not `YYYY-MM`. Never a bare token.
+ */
+careRoutes.get("/care/reports", async (c) => {
+  const tz = zoneOf(await getSettings(c.env.DB));
+  const clientId = c.req.query("clientId");
+  const asked = c.req.query("period");
+  if (asked !== undefined && !MONTH.test(asked)) return c.json({ error: "period must look like 2026-11." }, 400);
+  const period = asked ?? (clientId === undefined ? previousMonth(new Date(), tz) : null);
+  const reports = await listReports(c.env.DB, { ...(period !== null ? { period } : {}), ...(clientId !== undefined ? { businessId: clientId } : {}) });
+  if (period === null) reports.sort((x, y) => y.period.localeCompare(x.period));
+  return c.json({ period, reports: await Promise.all(reports.map((r) => reportRow(c.env, r, tz))) });
+});
+
+/** Logan's edit of a `ready` report's summary and recommendation, with the same text rules as Claude's words. 400 for words that break them, 409 for a report that is not `ready`, 404 for an unknown one. */
+careRoutes.put("/care/reports/:id", async (c) => {
+  const words = checkWords(await c.req.json().catch(() => null));
+  if (!words.ok) return c.json({ error: words.error }, 400);
+  const done = await editReport(c.env, c.req.param("id"), words);
+  if (!done.ok) return c.json(done.status === 404 ? NOT_FOUND : { error: done.error }, done.status);
+  return c.json({ report: await reportRow(c.env, done.report, zoneOf(await getSettings(c.env.DB))) });
+});
+
+/** Takes a `ready` or `sent` report back: its link stops working, its queued Claude job is closed and its pending approval rejected. 409 for any other state, 404 for an unknown report. */
+careRoutes.post("/care/reports/:id/revoke", async (c) => {
+  const done = await revokeReport(c.env, c.req.param("id"), new Date());
+  if (!done.ok) return c.json(done.status === 404 ? NOT_FOUND : { error: done.error }, done.status);
+  return c.json({ report: await reportRow(c.env, done.report, zoneOf(await getSettings(c.env.DB))) });
+});
+
+const EditRequestBody = z.object({ title: z.string("title must be text.").trim().min(1, "Give the edit request a title.") }).strict();
+
+/** A client's edit request: one non-billable task on their live Care project, checklist from CARE-3. 201 with `{ taskId }`; 409 with a plain sentence when it is refused (no live Care project, a billing hold); 404 for an unknown client. */
+careRoutes.post("/clients/:id/edit-requests", async (c) => {
+  const body = await bodyOf(c, EditRequestBody);
+  if (body instanceof Response) return body;
+  const id = c.req.param("id");
+  if (!(await isClient(c.env.DB, id))) return c.json(NOT_FOUND, 404);
+  const made = await createEditRequest(c.env, id, { title: body.title, now: new Date() });
+  if ("refused" in made) return c.json({ error: made.refused }, 409);
+  return c.json({ taskId: made.taskId }, 201);
 });
 
 // --- Care updates (Plan 12) --------------------------------------------------------------------------------------------------------------------------------------------

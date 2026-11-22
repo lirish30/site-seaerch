@@ -267,3 +267,38 @@
 .sb .btn { min-height:44px; font-size:16px; }
 .sb .pp-submit { height:auto; min-height:48px; }
 .sb .rp-card h1 { overflow-wrap:anywhere; }
+
+/* ---------- Client monthly Care report (.mr) ---------- */
+.mr-wrap { width:min(680px,100%); }
+.mr-text { font:400 16px/25px var(--font); color:var(--text); white-space:pre-line; overflow-wrap:anywhere; }
+.mr-suggest { display:flex; flex-direction:column; gap:8px; padding:16px; border-radius:12px; background:var(--bg-muted); }
+.mr-suggest h2 { font:600 15px/22px var(--font); letter-spacing:-.1px; color:var(--text); }
+.mr-section { display:flex; flex-direction:column; gap:12px; }
+.mr-h { margin:0; font:600 13px/19px var(--font); letter-spacing:.4px; text-transform:uppercase; color:var(--text-2); }
+.mr-site { gap:14px; }
+.mr-site h3 { margin:0; font:600 18px/26px var(--font); letter-spacing:-.3px; color:var(--text); overflow-wrap:anywhere; }
+.mr-rows { display:flex; flex-direction:column; margin:0; }
+.mr-row { display:grid; grid-template-columns:120px minmax(0,1fr); gap:4px 16px; padding:10px 0; border-top:1px solid var(--border); font:400 15px/22px var(--font); }
+.mr-row:first-child { border-top:0; padding-top:0; }
+.mr-row dt { color:var(--text-2); }
+.mr-row dd { margin:0; color:var(--text); overflow-wrap:anywhere; }
+.mr-edits { gap:12px; }
+.mr-edits-line { font:600 22px/30px var(--font); letter-spacing:-.4px; color:var(--text); font-variant-numeric:tabular-nums; }
+.mr-bar-warn > span { background:var(--warning); }
+.mr-bar-over > span { background:var(--critical); }
+.mr-note { font:400 14px/21px var(--font); color:var(--text-2); }
+.mr-next { gap:0; }
+.mr-renewals { margin:0; padding:0; list-style:none; display:flex; flex-direction:column; }
+.mr-renewals li { display:flex; align-items:baseline; justify-content:space-between; gap:16px; padding:12px 0; border-top:1px solid var(--border); font:400 15px/22px var(--font); }
+.mr-renewals li:first-child { border-top:0; padding-top:0; }
+.mr-renewals li:last-child { padding-bottom:0; }
+.mr-renewal-title { min-width:0; overflow-wrap:anywhere; color:var(--text); }
+.mr-renewal-date { flex:none; color:var(--text-2); font-variant-numeric:tabular-nums; }
+.mr-foot { margin:0; font:400 13px/19px var(--font); color:var(--text-3); text-align:center; }
+.mr .btn { min-height:44px; }
+@media (max-width:640px) {
+  .mr-text { font-size:16px; }
+  .mr-row { grid-template-columns:1fr; gap:2px; }
+  .mr-edits-line { font-size:20px; line-height:28px; }
+  .mr-site { gap:12px; }
+}

@@ -10,6 +10,7 @@ import Proposal from "./pages/Proposal";
 import Onboard from "./pages/Onboard";
 import ChangeOrder from "./pages/ChangeOrder";
 import Subscribe from "./pages/Subscribe";
+import CareReportPage from "./pages/CareReportPage";
 import Radar from "./pages/Radar";
 import Promising from "./pages/Promising";
 import Import from "./pages/Import";
@@ -48,6 +49,7 @@ import BillingSettings from "./pages/settings/Billing";
 import Billing from "./pages/Billing";
 import Money from "./pages/Money";
 import Care from "./pages/Care";
+import CareReports from "./pages/CareReports";
 import CareUpdates, { CareRunPage } from "./pages/CareUpdates";
 import Sops from "./pages/settings/Sops";
 import Work from "./pages/settings/Work";
@@ -65,6 +67,7 @@ export default function App() {
       <Route path="/o/*" element={<Onboard />} />
       <Route path="/c/*" element={<ChangeOrder />} />
       <Route path="/s/*" element={<Subscribe />} />
+      <Route path="/m/*" element={<CareReportPage />} />
       <Route path="*" element={
         <Shell>
           <Routes>
@@ -89,6 +92,7 @@ export default function App() {
             <Route path="/money" element={<Money />} />
             <Route path="/care" element={<Care />} />
             <Route path="/care/updates" element={<CareUpdates />} />
+            <Route path="/care/reports" element={<CareReports />} />
             <Route path="/care/runs/:id" element={<CareRunPage />} />
             <Route path="/clients" element={<Clients />} />
             <Route path="/clients/:id" element={<ClientPage />} />

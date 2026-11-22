@@ -1,3 +1,4 @@
+import { CARE_4 } from "../care/tasks";
 import type { Env } from "../env";
 import { holdFreeSql, isOnHold } from "../db/holds";
 import { getProject, liveProjectSql, projectIsLive } from "../db/projects";
@@ -86,7 +87,7 @@ async function reclaimStranded(env: Env): Promise<void> {
 /**
  * Queues every Claude step that is ready, for real projects that are active, not waiting on the client and whose client has no billing hold (an invoice unpaid past the pause day), up to `MAX_IN_FLIGHT` jobs in flight in all (and `limit` new ones when given).
  * A test project is never dispatched (a rehearsal must not spend subscription time unasked): "Ask Claude" works on it. Running it twice queues once, because a step handed to Claude
- * is no longer to do. A step whose jobs have failed or expired `MAX_AUTO_RETRIES` times is skipped. Returns how many steps it handed over.
+ * is no longer to do. The monthly Care report task (CARE-4) is never dispatched here. A step whose jobs have failed or expired `MAX_AUTO_RETRIES` times is skipped. Returns how many steps it handed over.
  */
 export async function dispatchReady(env: Env, now: Date, o: { limit?: number } = {}): Promise<{ queued: number }> {
   const db = env.DB;
@@ -102,6 +103,8 @@ export async function dispatchReady(env: Env, now: Date, o: { limit?: number } =
     if (await projectWaiting(db, project, now)) continue;
     for (const t of readyClaudeTasks(await listTasks(db, id), { projectActive: true, waiting: false })) {
       if (queued >= cap) break;
+      // The monthly Care report is built by the report sweep (its own `care.report` job writes the summary): handing its task to Claude as a step would make a second, unrelated job for the same work. Ask Claude still works on it.
+      if (t.cadenceKey === CARE_4) continue;
       // Claude has failed this step enough times: it waits for Logan (Ask Claude still works).
       if ((await failedJobCount(db, t.id)) >= MAX_AUTO_RETRIES) continue;
       try { if ((await requestClaudeStep(env, t.id)).queued) queued++; }

@@ -4,6 +4,7 @@ import { isSocialOnlyUrl } from "../crawler/extract";
 import { namesSimilar } from "../import/names";
 import { activityStmt } from "./activity";
 import { liveProjectSql } from "./projects";
+import { CARE_SUBSCRIPTION_SQL } from "./monitoring";
 import { deleteDraftDocumentStmts } from "./documents";
 
 export function domainOf(url: string | null): string | null {
@@ -135,6 +136,7 @@ export async function listTodayCandidates(db: D1Database, nowIso: string, minQui
       OR EXISTS (SELECT 1 FROM projects pr WHERE pr.business_id = businesses.id AND ${liveProjectSql("pr")} AND pr.test = 0)
       OR EXISTS (SELECT 1 FROM invoices iv WHERE iv.business_id = businesses.id AND iv.test = 0 AND iv.status IN ('draft','open','failed'))
       OR EXISTS (SELECT 1 FROM billing_holds bh WHERE bh.business_id = businesses.id AND bh.lifted_at IS NULL)
+      OR ${CARE_SUBSCRIPTION_SQL("businesses")}
       OR EXISTS (SELECT 1 FROM site_incidents si JOIN sites st ON st.id = si.site_id WHERE si.business_id = businesses.id AND si.closed_at IS NULL AND st.test = 0 AND st.archived_at IS NULL AND st.url IS NOT NULL AND st.url <> '')
     ) ORDER BY created_at, id`;
   const res = (await db.prepare(sql).bind(nowIso, minQuickScore).all<BusinessRow & { latest_draft_at: string | null; latest_score: number | null }>()).results;

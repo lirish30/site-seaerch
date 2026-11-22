@@ -24,9 +24,9 @@ export function groupApprovals(items: ApprovalItem[]): ApprovalGroup[] {
 /**
  * Whether a kind can be approved with "Approve all" on its group. A video is published only after the owner has watched it, one at a time, and a proposal
  * is sent only after he has read it (his approval is also his signature on it), an onboarding welcome asks him to add a video link first, a step Claude
- * did is marked done only after he has looked at the work, and a change order is read and checked against the legal gate before it goes to a client, so those groups have no bulk button; the individual Approve stays.
+ * did is marked done only after he has looked at the work, and a change order is read and checked against the legal gate before it goes to a client, a care report carries free text (Claude's or his own) to a client and its preview says who wrote it, so those groups have no bulk button; the individual Approve stays.
  */
-export const canBulkApprove = (kind: string): boolean => kind !== "video.publish" && kind !== "proposal.send" && kind !== "onboarding.welcome" && kind !== "sop.review" && kind !== "change_order.send" && kind !== "invoice.send" && kind !== "subscription.start" && kind !== "care.updates";
+export const canBulkApprove = (kind: string): boolean => kind !== "video.publish" && kind !== "proposal.send" && kind !== "onboarding.welcome" && kind !== "sop.review" && kind !== "change_order.send" && kind !== "invoice.send" && kind !== "subscription.start" && kind !== "care.updates" && kind !== "care.report";
 
 /** Where to open the thing an approval is about, when the inbox can show a way in: a publish approval opens the lead's video editor, a proposal opens its deal, a step Claude did opens its project and a change order opens its project's change orders. */
 export function approvalLink(a: Pick<ApprovalItem, "kind" | "record_type" | "record_id">): { to: string; label: string } | null {
