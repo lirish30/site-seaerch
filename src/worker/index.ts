@@ -71,6 +71,7 @@ import "./billing/milestones"; // registers the hook that drafts and proposes a 
 import "./billing/subscriptions"; // registers the hook that proposes a launch subscription when its build project is done
 import "./projects/dispatch"; // registers the hook that sends the next ready Claude step when a task changes
 import "./projects/start"; // registers the hook that starts Care when the build it waited for is done
+import "./ladder/hooks"; // registers the hook that adds the retention ladder when a build is done
 import { mcpRoute } from "./mcp/route";
 import { runScheduled } from "./schedule";
 
