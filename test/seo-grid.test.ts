@@ -183,11 +183,24 @@ describe("runRankGrid", () => {
     expect(searches).toHaveLength(9);
   });
 
-  it("does not count errors that cannot be retried towards stopping the run", async () => {
+  it("does not count errors that cannot be retried, and are not about the key, towards stopping the run", async () => {
     const s = await ready();
-    stub(google(() => new Response("", { status: 403 })));
+    stub(google(() => new Response("", { status: 400 })));
     expect(await runRankGrid(e, s.businessId, NOW)).toEqual({ checked: 1, unmeasured: 1 });
     expect(searches).toHaveLength(9);
+  });
+
+  it("stops the whole run at the first 401 or 403 (a key Google refuses): one call for the first keyword, nothing for the others, and the day's row says 'not checked' everywhere", async () => {
+    for (const status of [401, 403]) {
+      const s = await ready([{ term: "plumber", town: "Tigard" }, { term: "drain cleaning", town: "Tigard" }]);
+      stub(google(() => new Response("{}", { status })));
+      expect(await runRankGrid(e, s.businessId, NOW)).toEqual({ checked: 1, unmeasured: 2 });
+      expect(searches, String(status)).toHaveLength(1);
+      const rows = await rankChecksFor(env.DB, s.businessId, {});
+      expect(rows).toHaveLength(1);
+      expect(rows[0].points.every((p) => !p.ok && p.pos === null)).toBe(true);
+      await env.DB.prepare(`DELETE FROM seo_rank_checks`).run();
+    }
   });
 
   it("keeps one row per keyword when run twice on one local day, and the second run's points win", async () => {
@@ -214,9 +227,9 @@ describe("runRankGrid", () => {
 
   it("keeps the earlier measurement where a rerun's point failed, and takes the rerun's where it measured", async () => {
     const s = await ready();
-    stub(google((n) => (n === 0 || n === 8 ? new Response("", { status: 403 }) : found(3))));
+    stub(google((n) => (n === 0 || n === 8 ? new Response("", { status: 400 }) : found(3))));
     await runRankGrid(e, s.businessId, NOW);
-    stub(google((n) => (n === 2 || n === 4 || n === 8 ? new Response("", { status: 403 }) : found(1))));
+    stub(google((n) => (n === 2 || n === 4 || n === 8 ? new Response("", { status: 400 }) : found(1))));
     await runRankGrid(e, s.businessId, new Date("2026-12-02T20:00:00.000Z"));
     const [row] = await rankChecksFor(env.DB, s.businessId, {});
     expect(row.points.map((p) => [p.ok, p.pos])).toEqual([[true, 1], [true, 1], [true, 3], [true, 1], [true, 3], [true, 1], [true, 1], [true, 1], [false, null]]);

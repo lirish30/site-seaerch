@@ -13,9 +13,9 @@ const DETAILS_MASK = [
   "location", "primaryTypeDisplayName", "photos", "regularOpeningHours", "reviews",
 ].join(",");
 
-/** A Google Places failure. `retryable` is true for a 429, a 5xx, a timeout or a dropped connection: another try may work. */
+/** A Google Places failure. `status` is Google's HTTP status when it answered. `retryable` is true for a 429, a 5xx, a timeout or a dropped connection: another try may work. */
 export class PlacesError extends Error {
-  constructor(message: string, readonly retryable: boolean) {
+  constructor(message: string, readonly retryable: boolean, readonly status?: number) {
     super(message);
     this.name = "PlacesError";
   }
@@ -72,7 +72,7 @@ async function call(env: Env, f: Fetcher, url: string, init: { method: "GET" | "
   if (!res.ok) {
     let detail = body.slice(0, 200);
     try { detail = (JSON.parse(body) as { error?: { message?: string } }).error?.message ?? detail; } catch { /* not JSON: keep the raw text */ }
-    throw new PlacesError(scrub(`Google Places HTTP ${res.status}: ${detail || "no body"}`), res.status === 429 || res.status >= 500);
+    throw new PlacesError(scrub(`Google Places HTTP ${res.status}: ${detail || "no body"}`), res.status === 429 || res.status >= 500, res.status);
   }
   let json: unknown;
   try { json = JSON.parse(body); } catch { throw new PlacesError(scrub(`Google Places returned non-JSON: ${body.slice(0, 200)}`), true); }

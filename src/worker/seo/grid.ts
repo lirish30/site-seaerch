@@ -36,7 +36,7 @@ export const isUsable = (points: RankPoint[]): boolean => points.filter((p) => p
 
 /**
  * Checks every active keyword of the client from the 9 grid points and stores one check per keyword for the booking-zone day of `now` (a second run that day replaces it, but a point that failed this time keeps the measurement an earlier run made from the same spot, and nothing is written when that changes nothing).
- * The calls are made one after another. A call that throws leaves its point `{ pos: null, ok: false }` (not found is `pos: null, ok: true`). After 3 retryable errors in a row the run stops:
+ * The calls are made one after another. A call that throws leaves its point `{ pos: null, ok: false }` (not found is `pos: null, ok: true`). After 3 retryable errors in a row, or at the first 401 or 403 (a key Google refuses), the run stops:
  * the keyword in progress is stored with the points it measured and the rest `ok: false`, and the keywords not reached are not stored at all.
  * `checked` is the keywords stored; `unmeasured` is the active keywords that ended without a usable check (stored with too few points, or not reached).
  * Refused, with nothing requested, when the profile has no place or location yet or the Places key is not set.
@@ -74,7 +74,9 @@ export async function runRankGrid(
         retryableInARow = 0;
         points.push({ lat: p.lat, lng: p.lng, pos, ok: true });
       } catch (e) {
-        retryableInARow = e instanceof PlacesError && e.retryable ? retryableInARow + 1 : 0;
+        // A key Google refuses (401 or 403) fails every call of the day the same way: stop at the first one, as after three throttled calls in a row.
+        const refused = e instanceof PlacesError && (e.status === 401 || e.status === 403);
+        retryableInARow = refused ? MAX_RETRYABLE_IN_A_ROW : e instanceof PlacesError && e.retryable ? retryableInARow + 1 : 0;
         points.push({ lat: p.lat, lng: p.lng, pos: null, ok: false });
       }
     }

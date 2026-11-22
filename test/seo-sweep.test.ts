@@ -346,6 +346,17 @@ describe("sweepSeo", () => {
     }
   });
 
+  it("does not try a client again the same day when Google refuses the key: one rank call, and the next run that day makes none", async () => {
+    const s = await seoClient({ keywords: 3 });
+    await generateRecurring(e, NOW);
+    search = () => jsonRes({ error: { message: "API key not valid" } }, 403);
+    await sweepSeo(e, NOW);
+    expect(searchCalls()).toBe(1);
+    expect(await rankChecksFor(env.DB, s.businessId, {})).toHaveLength(1);
+    await sweepSeo(e, NOW);
+    expect(searchCalls()).toBe(1);
+  });
+
   it("ticks 1.1 when a usable check arrives after the slots were made", async () => {
     const s = await seoClient({ keywords: 1 });
     await generateRecurring(e, NOW);
