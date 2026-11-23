@@ -24,12 +24,12 @@ export default function SnoozeMenu({ name, disabled, onPick }: { name: string; d
     return () => { document.removeEventListener("mousedown", down); document.removeEventListener("keydown", key); };
   }, [open]);
   return (
-    <span className="hm-snooze" ref={root}>
-      <button ref={trigger} type="button" className="hm-icon-btn" aria-label={`Snooze ${name}`} aria-haspopup="menu" aria-expanded={open} title="Snooze" disabled={disabled} onClick={() => setOpen((o) => !o)}>
+    <span className="hox-snooze" ref={root}>
+      <button ref={trigger} type="button" className="ds-icon-btn" aria-label={`Snooze ${name}`} aria-haspopup="menu" aria-expanded={open} title="Snooze" disabled={disabled} onClick={() => setOpen((o) => !o)}>
         <Icon name="clock" size={14} />
       </button>
       {open && (
-        <div className="hm-menu" role="menu" aria-label={`Snooze ${name} for`}>
+        <div className="hox-menu" role="menu" aria-label={`Snooze ${name} for`}>
           <p>Snooze for</p>
           {SNOOZE_DAYS.map((d) => (
             <button key={d} type="button" role="menuitem" aria-label={snoozeLabel(name, d)} onClick={() => { setOpen(false); onPick(d); }}>{snoozeButtonLabel(d)}</button>

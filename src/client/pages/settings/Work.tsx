@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
-import SettingsPage, { Callout, Card, Field, Row, Segmented } from "../../components/SettingsPage";
-import { parseDollars } from "../../packagesView";
+import { Chip } from "../../components/ds";
+import Icon from "../../components/Icon";
+import SettingsPage, { Card, Field, Segmented } from "../../components/SettingsPage";
+import { dollars, parseDollars } from "../../packagesView";
 import { useSettingsDoc } from "../../settingsData";
 import { clientLimitProblem, costRateProblem, hoursToMinutes, readWorkDraft, timerCapProblem, weeklyHoursProblem } from "../../settingsPagesView";
 import type { WorkConfig } from "../../../worker/time/config";
@@ -10,7 +12,7 @@ export default function Work() {
   const doc = useSettingsDoc();
   const cfg = readWorkDraft(doc.value("work_config"));
   const update = (patch: Partial<WorkConfig>) => doc.set("work_config", JSON.stringify({ ...cfg, ...patch }));
-  // What is typed in the two boxes (null: show the saved or edited value). A save or a Discard empties the edits, and then the boxes follow the stored values again.
+  // What is typed in the boxes (null: show the saved or edited value). A save or a Discard empties the edits, and then the boxes follow the stored values again.
   const [rate, setRate] = useState<string | null>(null);
   const [cap, setCap] = useState<string | null>(null);
   const [weekly, setWeekly] = useState<string | null>(null);
@@ -26,41 +28,43 @@ export default function Work() {
   const clientsBad = clientLimitProblem(clientsText);
 
   return (
-    <SettingsPage title="Work" width={760} doc={doc} blocked={rateBad ?? capBad ?? weeklyBad ?? clientsBad ?? undefined} sub="How your time is counted on projects and the timesheet.">
-      <div className="wk">
+    <SettingsPage title="Work" width={760} doc={doc} blocked={rateBad ?? capBad ?? weeklyBad ?? clientsBad ?? undefined} sub="How your time is counted on projects and the timesheet."
+      badge={doc.loaded ? (cfg.costRateCentsPerHour > 0 ? <Chip tone="positive" dot>Cost rate {dollars(cfg.costRateCentsPerHour)}/hr</Chip> : <Chip tone="warning" dot>Cost rate not set</Chip>) : undefined}>
+      <div className="bx sox">
         <Card title="Cost rate" sub="What an hour of your time costs you. A project's profit is its payments less your time at this rate.">
-          <Callout tone="info">The cost rate is yours alone and never appears on a client page. It is not the rate on a change order.</Callout>
           <Field label="Cost of an hour (USD)" htmlFor="wk-rate" error={rateBad ?? undefined} help="Leave it blank to leave your time out of a project's profit. At most $500.">
-            <input id="wk-rate" className="in" inputMode="decimal" autoComplete="off" value={rateText} aria-invalid={!!rateBad}
-              onChange={(e) => {
-                setRate(e.target.value);
-                if (e.target.value.trim() === "") update({ costRateCentsPerHour: 0 });
-                else { const c = parseDollars(e.target.value); if (c !== null) update({ costRateCentsPerHour: c }); }
-              }} />
+            <span className="sox-money sox-w"><span aria-hidden="true">$</span>
+              <input id="wk-rate" inputMode="decimal" autoComplete="off" placeholder="Not set" value={rateText} aria-invalid={!!rateBad}
+                onChange={(e) => {
+                  setRate(e.target.value);
+                  if (e.target.value.trim() === "") update({ costRateCentsPerHour: 0 });
+                  else { const c = parseDollars(e.target.value); if (c !== null) update({ costRateCentsPerHour: c }); }
+                }} /></span>
           </Field>
+          <p className="sox-foot"><Icon name="eye" size={14} />Only you see this. It never appears on a client page and it is not the rate on a change order.</p>
         </Card>
-        <Card title="Timesheet">
-          <Row>
+        <Card title="Timesheet" sub="How the week is laid out and what happens to a timer you forget.">
+          <div className="sox-grid">
             <Field label="The week starts on" help="Used by the timesheet grid.">
               <Segmented label="The week starts on" value={String(cfg.weekStartsOn) as "0" | "1"} options={[{ value: "1", label: "Monday" }, { value: "0", label: "Sunday" }]} onChange={(v) => update({ weekStartsOn: v === "0" ? 0 : 1 })} />
             </Field>
-            <Field label="A timer left running stops after (hours)" htmlFor="wk-cap" error={capBad ?? undefined} help="From 1 to 24. A timer left on is saved at this length with a note.">
-              <input id="wk-cap" className="in" inputMode="decimal" value={capText} aria-invalid={!!capBad}
+            <Field label="A timer left running stops after (hours)" htmlFor="wk-cap" error={capBad ?? undefined} help="1 to 24. A timer left on is saved at this length with a note.">
+              <input id="wk-cap" className="sox-w" inputMode="decimal" value={capText} aria-invalid={!!capBad}
                 onChange={(e) => { setCap(e.target.value); const m = hoursToMinutes(e.target.value); if (m !== null) update({ timerCapMinutes: m }); }} />
             </Field>
-          </Row>
+          </div>
         </Card>
         <Card title="Capacity" sub="How much you want to carry. Going past a limit only shows a warning; nothing is ever blocked.">
-          <Row>
+          <div className="sox-grid">
             <Field label="Hours of your work in a week" htmlFor="wk-weekly" error={weeklyBad ?? undefined} help="Whole hours, 1 to 80. This week and next week are checked against it.">
-              <input id="wk-weekly" className="in" inputMode="numeric" value={weeklyText} aria-invalid={!!weeklyBad}
+              <input id="wk-weekly" className="sox-w" inputMode="numeric" value={weeklyText} aria-invalid={!!weeklyBad}
                 onChange={(e) => { setWeekly(e.target.value); if (!weeklyHoursProblem(e.target.value)) update({ weeklyHoursLimit: Number(e.target.value.trim()) }); }} />
             </Field>
             <Field label="Live clients at once" htmlFor="wk-clients" error={clientsBad ?? undefined} help="A whole number, 1 to 200. Test clients are never counted.">
-              <input id="wk-clients" className="in" inputMode="numeric" value={clientsText} aria-invalid={!!clientsBad}
+              <input id="wk-clients" className="sox-w" inputMode="numeric" value={clientsText} aria-invalid={!!clientsBad}
                 onChange={(e) => { setClients(e.target.value); if (!clientLimitProblem(e.target.value)) update({ clientLimit: Number(e.target.value.trim()) }); }} />
             </Field>
-          </Row>
+          </div>
         </Card>
       </div>
     </SettingsPage>

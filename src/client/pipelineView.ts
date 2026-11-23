@@ -149,3 +149,15 @@ export function cardStatus(d: BoardDeal, ctx: CardContext, now: Date, tz?: strin
   }
   return { icon: "calendar", text: "Call booked", tone: "neutral" };
 }
+
+/** The page's one-line summary when no deal is open: says so plainly, then how many have been won (and lost), instead of "$0 · $0". */
+export function quietSummary(deals: Pick<BoardDeal, "stage">[]): string {
+  const won = deals.filter((d) => d.stage === "won").length;
+  const lost = deals.filter((d) => d.stage === "lost").length;
+  return ["No open deals", won ? `${won} won so far` : null, lost ? `${lost} lost` : null].filter(Boolean).join(" · ");
+}
+
+/** Closed deals, newest close first (won and lost), for the list under a quiet board. */
+export function closedDeals<T extends Pick<BoardDeal, "stage" | "closedAt" | "updatedAt">>(deals: T[]): T[] {
+  return deals.filter((d) => d.stage === "won" || d.stage === "lost").sort((a, b) => (b.closedAt ?? b.updatedAt).localeCompare(a.closedAt ?? a.updatedAt));
+}

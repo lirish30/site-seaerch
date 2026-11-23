@@ -4,7 +4,8 @@ import { api, ApiError } from "../api";
 import Icon from "../components/Icon";
 import StartSequence from "../components/StartSequence";
 import { announceLeadsChanged } from "../components/Shell";
-import { Badge, LeadScore } from "../components/Score";
+import { LeadScore } from "../components/Score";
+import { Empty } from "../components/ds";
 import { PURPOSE_LABEL, snippet, type Draft } from "../emailView";
 import { initials } from "../scoreView";
 import type { LeadRow, OutreachCounts, OutreachView } from "../types";
@@ -18,6 +19,14 @@ const EMPTY: Record<OutreachView, string> = {
   followups: "No follow-ups are due. Set a follow-up date on a lead to see it here.",
   contacted: "Nobody is waiting on a reply yet.", replied: "No replies logged yet.",
 };
+/** What each empty view teaches, and the button that fills it. */
+const EMPTY_TITLE: Record<OutreachView, string> = { drafts: "No drafts waiting", followups: "No follow-ups due", contacted: "Nobody contacted yet", replied: "No replies yet" };
+const EMPTY_ACTION: Record<OutreachView, { to: string; label: string }> = {
+  drafts: { to: "/leads", label: "Browse leads" }, followups: { to: "/outreach?view=contacted", label: "See who you contacted" },
+  contacted: { to: "/outreach", label: "Open drafts ready" }, replied: { to: "/outreach?view=contacted", label: "See who you contacted" },
+};
+/** A long list gets a search box so one lead is easy to find. */
+const SEARCH_FROM = 8;
 const DAY = 86_400_000;
 /** "2d", "Today": how long ago the draft was written, for the list. */
 const age = (iso: string | undefined, now = Date.now()) => { if (!iso) return null; const d = Math.floor((now - Date.parse(iso)) / DAY); return { days: d, label: d <= 0 ? "Today" : `${d}d` }; };
@@ -36,6 +45,7 @@ export default function Outreach() {
   const [busy, setBusy] = useState("");
   const [note, setNote] = useState("");
   const [reloads, setReloads] = useState(0);
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -45,16 +55,18 @@ export default function Outreach() {
       .catch((e) => { if (!cancelled) setErr(e instanceof ApiError ? e.message : "Couldn't load your drafts."); });
     return () => { cancelled = true; };
   }, [view, reloads]);
-  useEffect(() => { setPicked(null); setSkipped(new Set()); setNote(""); }, [view]);
+  useEffect(() => { setPicked(null); setSkipped(new Set()); setNote(""); setQuery(""); }, [view]);
 
   const sorted = useMemo(() => {
-    const list = [...(items ?? [])].filter((i) => !skipped.has(i.row.business.id));
+    const q = query.trim().toLowerCase();
+    const hit = (i: Item) => !q || `${i.row.business.name} ${i.draft?.subject ?? ""} ${i.row.business.category ?? ""}`.toLowerCase().includes(q);
+    const list = [...(items ?? [])].filter((i) => !skipped.has(i.row.business.id) && hit(i));
     const at = (i: Item) => Date.parse(i.draft?.created_at ?? i.row.business.created_at);
     const by: Record<Sort, (a: Item, b: Item) => number> = {
       best: (a, b) => (b.row.score ?? -1) - (a.row.score ?? -1), newest: (a, b) => at(b) - at(a), oldest: (a, b) => at(a) - at(b),
     };
-    return list.sort(by[sort]).concat((items ?? []).filter((i) => skipped.has(i.row.business.id)));
-  }, [items, sort, skipped]);
+    return list.sort(by[sort]).concat((items ?? []).filter((i) => skipped.has(i.row.business.id) && hit(i)));
+  }, [items, sort, skipped, query]);
   const current = sorted.find((i) => i.row.business.id === picked) ?? sorted[0] ?? null;
   const index = current ? sorted.indexOf(current) : -1;
 
@@ -80,9 +92,15 @@ export default function Outreach() {
           <h1>{TITLE[view]}</h1>
           <label className="sort"><select value={sort} onChange={(e) => setSort(e.target.value as Sort)} aria-label="Sort drafts">{SORTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select><Icon name="chevron-down" size={12} /></label>
         </header>
+        {items && items.length >= SEARCH_FROM && (
+          <div className="hox-o-search">
+            <Icon name="search" size={14} />
+            <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={`Search ${items.length} by name or subject`} aria-label="Search this list" />
+          </div>
+        )}
         <div className="o-items">
           {items === null && !err && <p className="o-empty">Loading…</p>}
-          {items && sorted.length === 0 && <p className="o-empty">{EMPTY[view]}</p>}
+          {items && sorted.length === 0 && <p className="o-empty">{query.trim() ? `Nothing matches "${query.trim()}".` : "Nothing here right now."}</p>}
           {sorted.map((it) => {
             const b = it.row.business, a = age(it.draft?.created_at ?? undefined);
             return (
@@ -90,7 +108,7 @@ export default function Outreach() {
                 <span className="o-top"><b>{b.name}</b>{a && <time className={a.days >= 6 ? "late" : undefined} dateTime={it.draft?.created_at}>{a.label}</time>}</span>
                 <span className="o-sub">{it.draft?.subject ?? (it.row.topFinding ?? "No draft yet")}</span>
                 <span className="o-snip">{it.draft ? snippet(it.draft.body.replace(/^\s*(hi|hello|hey|dear)\b[^\n]{0,40},?\s*\n+/i, ""), 70) : "Follow-up due. Open the lead to write an email."}</span>
-                <span className="o-tags"><LeadScore score={it.row.score} />{it.draft && <Badge tone="outline">{PURPOSE_LABEL[it.draft.purpose]}</Badge>}</span>
+                <span className="o-tags"><LeadScore score={it.row.score} /></span>
               </button>
             );
           })}
@@ -100,7 +118,9 @@ export default function Outreach() {
       <section className="o-read" aria-label="Draft">
         {current ? <Reading it={current} index={index} total={sorted.length} counts={counts} view={view} busy={busy} note={note} err={err}
           onCopy={() => void copyMark(current)} onSkip={() => { setSkipped((s) => new Set(s).add(current.row.business.id)); next(current); }} />
-          : <div className="o-none"><Icon name="mail" size={20} /><p>{err || (items ? EMPTY[view] : "Loading…")}</p></div>}
+          : err ? <div className="o-none" role="alert"><Icon name="alert" size={20} /><p>{err}</p><button type="button" className="btn sm" onClick={reload}>Try again</button></div>
+          : items && !query.trim() ? <div className="hox-o-empty"><Empty icon="mail" title={EMPTY_TITLE[view]} action={<Link to={EMPTY_ACTION[view].to} className="btn sm">{EMPTY_ACTION[view].label}</Link>}>{EMPTY[view]}</Empty></div>
+          : <div className="o-none"><Icon name="mail" size={20} /><p>{items ? "Pick a lead on the left." : "Loading…"}</p></div>}
       </section>
     </div>
   );
@@ -137,12 +157,19 @@ function Reading({ it, index, total, view, busy, note, err, onCopy, onSkip }: {
         </>
       ) : (
         <div className="o-body">
-          <div className="o-text"><p className="muted">There's no draft for this lead yet.</p></div>
+          <div className="hox-o-nodraft">
+            <span className="ds-tile warning" aria-hidden="true"><Icon name="pen" size={16} /></span>
+            <div>
+              <b>No draft for this lead yet</b>
+              <p>{view === "followups" ? "Their follow-up is due. Write a short note from the lead's Email tab, or ask Claude to draft one there." : "Write one from the lead's Email tab, or ask Claude to draft one there."}</p>
+              {row.topFinding && <p className="hox-o-finding"><Icon name="sparkles" size={14} />Something to mention: {row.topFinding}</p>}
+            </div>
+          </div>
           {err && <p className="error" role="alert">{err}</p>}
         </div>
       )}
       <footer className="o-foot">
-        <Link className="btn" to={`/leads/${b.id}?tab=email`}><Icon name="pen" size={16} />{draft ? "Edit" : "Write email"}</Link>
+        <Link className={`btn${draft ? "" : " primary"}`} to={`/leads/${b.id}?tab=email`}><Icon name="pen" size={16} />{draft ? "Edit" : "Write email"}</Link>
         <button className="btn-plain" onClick={onSkip} disabled={total < 2}><Icon name="clock" size={16} />Skip for now</button>
         <span className="grow" />
         <span className="o-count">{index + 1} of {total}</span>

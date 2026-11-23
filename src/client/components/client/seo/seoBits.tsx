@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError } from "../../../api";
-import Icon from "../../Icon";
+import Icon, { type IconName } from "../../Icon";
 
 /** A server's plain sentence when it sent one, else `fallback`. A status line or a bare "invalid body" is never shown to the owner. */
 export const sentence = (e: unknown, fallback: string): string => {
@@ -48,16 +48,25 @@ export function CopyButton({ text, label, disabled }: { text: string; label: str
   );
 }
 
-/** A section of the panel: a heading, an optional line of help under it and the content. */
-export function Part({ title, help, children, actions, id }: { title: string; help?: string; children: React.ReactNode; actions?: React.ReactNode; id?: string }) {
+const PART_ICON: Record<string, IconName> = {
+  "Google listing and search area": "pin", "Search terms": "search", "Where the business shows": "grid", "Google profile": "star", "Name, address and phone": "phone",
+  Directories: "list", "Monthly report": "file-text", Reviews: "star", Content: "pen",
+};
+
+/** A section of the Local SEO tab as a card: an icon and title, its buttons on the right, an optional line of help and the content. */
+export function Part({ title, help, children, actions, id, note }: { title: string; help?: string; children: React.ReactNode; actions?: React.ReactNode; id?: string; note?: React.ReactNode }) {
   return (
-    <section className="sx-part" aria-label={title} id={id}>
-      <div className="sx-part-head">
-        <h3>{title}</h3>
-        {actions && <div className="sx-part-actions">{actions}</div>}
+    <section className="ds-card sx-part" aria-label={title} id={id}>
+      <header className="ds-card-head">
+        <Icon name={PART_ICON[title] ?? "target"} size={16} />
+        <h2>{title}</h2>
+        {note !== undefined && <span className="ds-card-note">{note}</span>}
+        {actions}
+      </header>
+      <div className="ds-card-body">
+        {help && <p className="sx-help">{help}</p>}
+        {children}
       </div>
-      {help && <p className="small muted sx-help">{help}</p>}
-      {children}
     </section>
   );
 }

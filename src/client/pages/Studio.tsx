@@ -5,6 +5,7 @@ import { latestOnly } from "../clientView";
 import Icon, { type IconName } from "../components/Icon";
 import { Banner, Card, Chip, Empty, Note, PageHeader, type Tone } from "../components/ds";
 import { KIND_LABEL, captionWithTags, copyEdit, copyOf, imageName, isOpen, nextAction, newPostBody, pickerKey, statusLabel, statusTone, type StudioKind, type StudioPost } from "../studioView";
+import { SwitchRow } from "../components/StepFields";
 import type { ClientRow } from "../../worker/clients/record";
 
 const sentence = (e: unknown, fallback: string): string => (e instanceof ApiError ? e.message : fallback);
@@ -31,8 +32,8 @@ const KINDS: { kind: StudioKind; text: string; mock: string[] }[] = [
 ];
 
 /** The New post panel: the three kinds as cards, what the kind needs, the two pictures for a before and after, and the anonymous box (unticked only once the client agreed). */
-function NewPost({ clients, initialAudit, onMade, onClose }: { clients: ClientRow[]; initialAudit: string; onMade: () => Promise<void>; onClose: () => void }) {
-  const [kind, setKind] = useState<StudioKind>("audit_tip");
+function NewPost({ clients, initialAudit, initialKind = "audit_tip", onMade, onClose }: { clients: ClientRow[]; initialAudit: string; initialKind?: StudioKind; onMade: () => Promise<void>; onClose: () => void }) {
+  const [kind, setKind] = useState<StudioKind>(initialKind);
   const [auditId, setAuditId] = useState(initialAudit);
   const [businessId, setBusinessId] = useState("");
   const [anonymous, setAnonymous] = useState(true);
@@ -85,13 +86,13 @@ function NewPost({ clients, initialAudit, onMade, onClose }: { clients: ClientRo
         </fieldset>
         <div className="crx-new-fields">
           {kind === "audit_tip" && (
-            <label className="crx-field wide"><span>Which audit</span>
+            <label className="crx-field wide crx-short"><span>Which audit</span>
               <input value={auditId} onChange={(e) => setAuditId(e.target.value)} autoComplete="off" autoCapitalize="off" spellCheck={false} placeholder="Audit id" />
               <small>{auditId ? "Filled in from the lead you came from." : <>Open a lead with real findings and press <b>Post a tip</b> on its Website issues tab: it brings you back here with this filled in. <Link to="/leads">Go to leads</Link></>}</small>
             </label>
           )}
           {kind === "case_study" && (
-            <label className="crx-field wide"><span>Client</span>
+            <label className="crx-field wide crx-short"><span>Client</span>
               <select value={businessId} onChange={(e) => setBusinessId(e.target.value)}>
                 <option value="">Choose a client</option>
                 {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -103,13 +104,12 @@ function NewPost({ clients, initialAudit, onMade, onClose }: { clients: ClientRo
             <PicturePicker key={pickerKey("after", pickerEpoch)} label="After picture" onPick={setAfter} />
           </>}
           <div className="crx-consent wide">
-            <b>Naming the business</b>
-            <label className="crx-check"><input className="cb" type="checkbox" checked={agreed} onChange={(e) => { setAgreed(e.target.checked); if (!e.target.checked) setAnonymous(true); }} />The client agreed to be named</label>
-            <label className="crx-check"><input className="cb" type="checkbox" checked={anonymous} disabled={!agreed} onChange={(e) => setAnonymous(e.target.checked)} />Keep it anonymous (no business name, address or phone)</label>
-            <small>{anonymous ? "The post will not say who the business is." : "The post names the business. Only do this with their OK in writing."}</small>
+            <SwitchRow checked={agreed} onChange={(v) => { setAgreed(v); if (!v) setAnonymous(true); }} label="The client agreed to be named" help="Only with their OK in writing." />
+            {agreed && <SwitchRow checked={anonymous} onChange={setAnonymous} label="Keep it anonymous anyway" help="No business name, address or phone on the slides." />}
+            <small>{anonymous ? "The post will not say who the business is." : "The post names the business."}</small>
           </div>
         </div>
-        <div className="crx-actions">
+        <div className="crx-actions crx-form-foot">
           <button type="submit" className="btn primary" disabled={busy}><Icon name="sparkles" size={16} />{busy ? "Making…" : "Make the post"}</button>
           <span className="crx-ok">It stays a draft until you ask Claude for the words.</span>
         </div>
@@ -238,8 +238,13 @@ function PostCard({ p, onChanged }: { p: StudioPost; onChanged: () => Promise<vo
 
         {p.kind === "before_after" && open && (
           <div className="crx-pick">
-            <PicturePicker label="Replace the before picture" onPick={(f) => void pick("before", f)} />
-            <PicturePicker label="Replace the after picture" onPick={(f) => void pick("after", f)} />
+            <span className="crx-pick-text"><b>Pictures</b><small>PNG, JPEG or WebP, up to 1 MB. Slides are drawn again after a change.</small></span>
+            {(["before", "after"] as const).map((slot) => (
+              <label key={slot} className={`btn sm crx-file-btn${busy ? " is-busy" : ""}`}>
+                <Icon name="upload" size={14} />Replace {slot}
+                <input type="file" accept={IMAGE_TYPES} disabled={busy} aria-label={`Replace the ${slot} picture`} onChange={(e) => { void pick(slot, e.target.files?.[0] ?? null); e.currentTarget.value = ""; }} />
+              </label>
+            ))}
           </div>
         )}
 
@@ -275,6 +280,7 @@ export default function Studio() {
   const [clients, setClients] = useState<ClientRow[]>([]);
   const [failed, setFailed] = useState(false);
   const [making, setMaking] = useState(!!audit);
+  const [startKind, setStartKind] = useState<StudioKind>("audit_tip");
   const [guard] = useState(latestOnly);
   const load = useCallback(async () => {
     const ticket = guard.next();
@@ -323,7 +329,7 @@ export default function Studio() {
               <li key={f.title} className={`${f.count > 0 ? "on" : ""}${f.count > 0 && f.wait ? " wait" : ""}`}>
                 <span className={`ds-tile ${f.count > 0 && f.wait ? "signal" : "neutral"}`}><Icon name={f.icon} size={16} /></span>
                 <div><b>{i + 1}. {f.title}</b><small>{f.text}</small></div>
-                <span className="crx-count" aria-label={`${f.count} ${f.count === 1 ? "post" : "posts"}`}>{f.count}</span>
+                {f.count > 0 && <span className="crx-count" aria-label={`${f.count} ${f.count === 1 ? "post" : "posts"}`}>{f.count}</span>}
               </li>
             ))}
           </ol>
@@ -337,7 +343,7 @@ export default function Studio() {
           <Banner tone="signal" icon="upload" title={`${plural(approved, "post")} approved and ready to post`}>Download the slides, copy the caption, post it yourself, then press Mark posted.</Banner>
         ) : null}
 
-        {making && <NewPost clients={clients} initialAudit={audit} onMade={load} onClose={() => setMaking(false)} />}
+        {making && <NewPost key={startKind} clients={clients} initialAudit={audit} initialKind={startKind} onMade={load} onClose={() => setMaking(false)} />}
 
         {failed && <Banner tone="critical" title="Couldn't load the posts" action={<button type="button" className="btn sm" onClick={() => void load()}>Try again</button>}>{posts ? "What you see may be out of date." : "Check your connection and try again."}</Banner>}
         {posts === null && !failed && <p className="crx-loading">Loading posts…</p>}
@@ -349,7 +355,23 @@ export default function Studio() {
         {open.length > 0 && (
           <section className="crx-section" aria-label="In progress">
             <div className="ds-section-head"><h2>In progress</h2><span className="crx-dim">{plural(open.length, "post")}</span></div>
-            <ul className="crx-posts">{open.map((p) => <PostCard key={p.id} p={p} onChanged={load} />)}</ul>
+            <ul className="crx-posts">
+              {open.map((p) => <PostCard key={p.id} p={p} onChanged={load} />)}
+              {open.length < 3 && !making && (
+                <li className="crx-post-new">
+                  <span className="ds-tile signal big"><Icon name="plus" size={18} /></span>
+                  <b>Make another post</b>
+                  <small>Pick what it is made from. It stays a draft until you ask Claude for the words.</small>
+                  <span className="crx-post-new-kinds">
+                    {KINDS.map((k) => (
+                      <button key={k.kind} type="button" className="btn sm" onClick={() => { setStartKind(k.kind); setMaking(true); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
+                        <Icon name={KIND_ICON[k.kind]} size={14} />{KIND_LABEL[k.kind]}
+                      </button>
+                    ))}
+                  </span>
+                </li>
+              )}
+            </ul>
           </section>
         )}
         {done.length > 0 && (

@@ -10,6 +10,7 @@ export default function OwnerFields({ o, act }: { o: OwnerOnboarding; act: Act }
   const [kickoff, setKickoff] = useState(kickoffToInput(o.kickoffAt));
   const [problem, setProblem] = useState("");
   const closed = !!o.closedAt;
+  const dirty = video !== (o.welcomeVideoUrl ?? "") || kickoff !== kickoffToInput(o.kickoffAt);
 
   const save = () => {
     const bad = videoProblem(video);
@@ -25,16 +26,14 @@ export default function OwnerFields({ o, act }: { o: OwnerOnboarding; act: Act }
   };
 
   return (
-    <div>
-      <div className="slx-field-row">
-        <label className="slx-field"><span>Welcome video link (https, anyone can open it)</span>
-          <input type="url" maxLength={300} value={video} disabled={closed} placeholder="https://www.loom.com/share/…" onChange={(e) => { setVideo(e.target.value); setProblem(""); }} /></label>
-        <label className="slx-field"><span>Kickoff call</span>
-          <input type="datetime-local" value={kickoff} disabled={closed} onChange={(e) => { setKickoff(e.target.value); setProblem(""); }} /></label>
-      </div>
-      {o.welcomeSentAt && <p className="slx-hint">The welcome has gone out. A new video link shows on the client's page but is not mailed again.</p>}
-      {problem && <p className="slx-error" role="alert">{problem}</p>}
-      <div className="slx-actions"><button type="button" className="btn sm" disabled={closed} onClick={save}>Save video and kickoff</button></div>
-    </div>
+    <form className="ds-form slx-owner-fields" onSubmit={(e) => { e.preventDefault(); void save(); }}>
+      <label className="deal-field wide"><span>Welcome video link</span>
+        <input type="url" maxLength={300} value={video} disabled={closed} placeholder="https://www.loom.com/share/…" aria-invalid={!!problem && !!videoProblem(video)} onChange={(e) => { setVideo(e.target.value); setProblem(""); }} />
+        <small>{o.welcomeSentAt ? "The welcome has gone out. A new link shows on the client’s page but is not mailed again." : "An https link anyone can open, like Loom."}</small></label>
+      <label className="deal-field wide slx-mid"><span>Kickoff call</span>
+        <input type="datetime-local" value={kickoff} disabled={closed} onChange={(e) => { setKickoff(e.target.value); setProblem(""); }} /></label>
+      {problem && <p className="slx-error wide" role="alert">{problem}</p>}
+      <div className="ds-form-actions"><button type="submit" className="btn sm primary" disabled={closed || !dirty}>Save video and kickoff</button></div>
+    </form>
   );
 }

@@ -92,10 +92,13 @@ function Card({ co, onChanged }: { co: OwnerChangeOrder; onChanged: () => Promis
       </div>
       {co.status === "signed" && !paid && <p className="muted small">Its tasks stay locked until the money is in. Press “Mark paid” only after you have been paid.</p>}
       {voiding && (
-        <div className="wk-inline">
-          <label className="deal-field"><span>Why void it? (3 to 300 characters, kept in the history)</span><input value={reason} maxLength={300} onChange={(e) => setReason(e.target.value)} /></label>
-          <button type="button" className="btn primary" disabled={busy || reason.trim().length < 3} onClick={() => void voidIt()}>Void this change order</button>
-        </div>
+        <form className="ds-form wkx-void" onSubmit={(e) => { e.preventDefault(); if (reason.trim().length >= 3) void voidIt(); }}>
+          <label className="deal-field wide"><span>Why void it?</span><input value={reason} maxLength={300} autoFocus onChange={(e) => setReason(e.target.value)} /><small>3 to 300 characters. It is kept in the history.</small></label>
+          <div className="ds-form-actions">
+            <button type="submit" className="btn primary" disabled={busy || reason.trim().length < 3}>Void this change order</button>
+            <button type="button" className="btn" disabled={busy} onClick={() => { setVoiding(false); setReason(""); }}>Cancel</button>
+          </div>
+        </form>
       )}
       </div>
     </li>
@@ -143,28 +146,30 @@ function NewForm({ projectId, rates, onDone, onCancel }: { projectId: string; ra
   };
 
   return (
-    <form className="co-form wkx-co-form" aria-label="New change order" onSubmit={(e) => { e.preventDefault(); void create(); }}>
-      <label className="deal-field"><span>Title</span><input value={title} maxLength={120} onChange={(e) => setTitle(e.target.value)} /></label>
-      <label className="deal-field"><span>What is changing <small>{summary.length} / 1500</small></span><textarea rows={3} value={summary} maxLength={1500} onChange={(e) => setSummary(e.target.value)} /></label>
-      <label className="deal-field"><span>Why it is outside the scope <small>{reason.length} / 600</small></span><textarea rows={2} value={reason} maxLength={600} onChange={(e) => setReason(e.target.value)} /></label>
-      <div className="sp-grid">
-        <label className="deal-field"><span>Hours (in quarter hours)</span><input inputMode="decimal" value={hoursRaw} aria-invalid={hoursRaw.trim() !== "" && hours === null} onChange={(e) => setHoursText(e.target.value)} /></label>
-        <label className="deal-field"><span>Rate per hour (USD){rates ? `, usually ${dollars(rates.hourlyCents)}` : ""}</span>
-          <input inputMode="decimal" value={rateText} placeholder={rates ? String(rates.hourlyCents / 100) : "The standard hourly rate"} aria-invalid={rateTyped && rateCents === null} onChange={(e) => setRateText(e.target.value)} /></label>
-        <label className="deal-field"><span>Your own price, if not hours × rate (USD)</span><input inputMode="decimal" value={priceText} aria-invalid={priceText.trim() !== "" && price === null} onChange={(e) => setPriceText(e.target.value)} /></label>
-        <label className="deal-field"><span>Days it adds to the schedule</span><input inputMode="numeric" value={daysText} aria-invalid={days === undefined} onChange={(e) => setDaysText(e.target.value)} /></label>
+    <form className="ds-form wkx-co-form" aria-label="New change order" onSubmit={(e) => { e.preventDefault(); void create(); }}>
+      <label className="deal-field wide"><span>Title</span><input value={title} maxLength={120} placeholder="Like: Add a financing page" onChange={(e) => setTitle(e.target.value)} /></label>
+      <label className="deal-field wide"><span>What is changing</span><textarea rows={3} value={summary} maxLength={1500} placeholder="What the client asked for, in their words if you can" onChange={(e) => setSummary(e.target.value)} /><small>{summary.length} of 1,500 characters</small></label>
+      <label className="deal-field wide"><span>Why it is outside the scope</span><textarea rows={2} value={reason} maxLength={600} placeholder="Like: not in the Growth Site page list" onChange={(e) => setReason(e.target.value)} /><small>{reason.length} of 600 characters</small></label>
+      <div className="wide wkx-co-price">
+        <p className="wkx-label">Price</p>
+        <div className="wkx-co-nums">
+          <label className="deal-field"><span>Hours</span><input inputMode="decimal" value={hoursRaw} placeholder="2.5" aria-invalid={hoursRaw.trim() !== "" && hours === null} onChange={(e) => setHoursText(e.target.value)} /><small>In quarter hours</small></label>
+          <label className="deal-field"><span>Rate per hour</span>
+            <span className="wkx-money-in"><i>$</i><input inputMode="decimal" value={rateText} placeholder={rates ? String(rates.hourlyCents / 100) : "95"} aria-invalid={rateTyped && rateCents === null} onChange={(e) => setRateText(e.target.value)} /></span><small>{rates ? `Usually ${dollars(rates.hourlyCents)}` : "Your standard rate"}</small></label>
+          <label className="deal-field"><span>Your own price</span><span className="wkx-money-in"><i>$</i><input inputMode="decimal" value={priceText} placeholder="Optional" aria-invalid={priceText.trim() !== "" && price === null} onChange={(e) => setPriceText(e.target.value)} /></span><small>Leave blank for hours × rate</small></label>
+          <label className="deal-field"><span>Days added</span><input inputMode="numeric" value={daysText} placeholder="0" aria-invalid={days === undefined} onChange={(e) => setDaysText(e.target.value)} /><small>To the schedule</small></label>
+        </div>
+        {(preview || hint) && <p className="wkx-co-preview" role="status">{preview && <b>{preview.line}</b>}{hint && <span>{hint}</span>}</p>}
       </div>
-      {hint && <p className="muted small">{hint}</p>}
-      {preview && <p className="co-preview" role="status">{preview.line}</p>}
-      <label className="deal-field"><span>What is not included (one per line)</span><textarea rows={3} value={notIncluded} onChange={(e) => setNotIncluded(e.target.value)} /></label>
-      <label className="deal-field"><span>What gets delivered (one per line; each becomes a task, locked until the order is signed and paid)</span><textarea rows={3} value={deliverables} onChange={(e) => setDeliverables(e.target.value)} /></label>
-      {error && <p className="warn small" role="alert">{error}</p>}
-      <div className="wkx-actions">
+      <label className="deal-field"><span>What gets delivered</span><textarea rows={4} value={deliverables} placeholder={"Write the financing page\nBuild the financing page"} onChange={(e) => setDeliverables(e.target.value)} /><small>One per line. Each becomes a task, locked until the order is signed and paid.</small></label>
+      <label className="deal-field"><span>What is not included</span><textarea rows={4} value={notIncluded} placeholder="Lender integration" onChange={(e) => setNotIncluded(e.target.value)} /><small>One per line.</small></label>
+      {error && <p className="warn small wide" role="alert">{error}</p>}
+      {problem && (title.trim() || hoursRaw.trim()) && <p className="warn small wide" role="alert">{problem}</p>}
+      <div className="ds-form-actions">
         <button type="submit" className="btn primary" disabled={busy || !!problem}>{busy ? "Saving…" : "Save the draft"}</button>
         <button type="button" className="btn" disabled={busy} onClick={onCancel}>Cancel</button>
+        <span className="ds-help wkx-push">Saving makes a draft only. Nothing reaches the client until you send it and approve it.</span>
       </div>
-      {problem && (title.trim() || hoursRaw.trim()) && <p className="warn small" role="alert">{problem}</p>}
-      <p className="muted small">Saving makes a draft only. Nothing reaches the client until you send it for approval and approve it.</p>
     </form>
   );
 }
@@ -188,10 +193,12 @@ export default function ChangeOrdersPanel({ projectId, changeOrders, projectStat
 
   return (
     <section className="wkx-co-panel" aria-label="Change orders">
-      <div className="ds-section-head">
-        <h2>{changeOrders.length ? `${changeOrders.length} change ${changeOrders.length === 1 ? "order" : "orders"}` : "Change orders"}</h2>
-        {open && !adding && changeOrders.length > 0 && <button type="button" className="btn primary" onClick={() => setAdding(true)}><Icon name="plus" size={16} />New change order</button>}
-      </div>
+      {changeOrders.length > 0 && (
+        <div className="ds-section-head">
+          <h2>{changeOrders.length} change {changeOrders.length === 1 ? "order" : "orders"}</h2>
+          {open && !adding && <button type="button" className="btn primary" onClick={() => setAdding(true)}><Icon name="plus" size={16} />New change order</button>}
+        </div>
+      )}
       {!open && <p className="muted small">This project is {projectStatus}, so it cannot take a new change order.</p>}
       {adding && <div className="ds-card"><header className="ds-card-head"><Icon name="plus" size={16} /><h2>New change order</h2><span className="ds-card-note">Saved as a draft</span></header><div className="ds-card-body"><NewForm projectId={projectId} rates={rates} onCancel={() => setAdding(false)} onDone={async () => { setAdding(false); await onChanged(); }} /></div></div>}
       {changeOrders.length === 0 && !adding && (

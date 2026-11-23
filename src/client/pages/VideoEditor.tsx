@@ -3,9 +3,10 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { pollDelay } from "../poll";
 import type { Segment, VideoPlan } from "../../worker/video/plan";
-import { approveBlockers, canCancel, canReopen, canUnpublish, editorMode, hasPlayer, isWatching, lastAttemptNotice, mergeSaved, publishState, replaceSegment, scriptSummary, videoStateLine, type VideoResponse } from "../videoView";
+import { approveBlockers, canCancel, canReopen, canUnpublish, clock, editorMode, hasPlayer, isWatching, lastAttemptNotice, lineTimeline, lineVoice, mergeSaved, publishState, replaceSegment, scriptSummary, shotLabel, statusChip, videoStateLine, type VideoResponse } from "../videoView";
 import Icon from "../components/Icon";
-import { Badge } from "../components/Score";
+import { Banner, Card, Chip, Empty, PageHeader, Seg } from "../components/ds";
+import { SwitchRow } from "../components/StepFields";
 import ShotCanvas from "../components/video/ShotCanvas";
 import SegmentList from "../components/video/SegmentList";
 
@@ -29,6 +30,7 @@ export default function VideoEditor() {
   const [blockers, setBlockers] = useState<string[] | null>(null); // the server's list, after an approve it refused
   const [note, setNote] = useState("");
   const [tick, setTick] = useState(0);
+  const [tab, setTab] = useState<"script" | "voice">("script");
   const planRef = useRef<VideoPlan | null>(null);
   const dirty = useRef(false);
   const chain = useRef<Promise<void>>(Promise.resolve());
@@ -139,102 +141,156 @@ export default function VideoEditor() {
   const rejectVideo = () => act("reject", () => api.post(`/approvals/${encodeURIComponent(publishApproval!.id)}/reject`), () => load(false));
   const reopen = () => act("reopen", () => api.post(`/video-audits/${videoId}/reopen`), () => load(false));
 
-  const back = <Link to={`/leads/${leadId}`} className="vd-back"><Icon name="chevron-left" size={14} />{data?.business?.name ?? "Lead"}</Link>;
+  const name = data?.business?.name ?? "Lead";
+  const crumbs = [{ label: "Leads", to: "/leads" }, { label: name, to: `/leads/${leadId}` }, { label: "Video audit" }];
 
   if (none) return (
-    <>
-      <header className="page-header"><div>{back}<h1>Video audit</h1></div></header>
-      <div className="page-body"><div className="card"><p>This lead has no video yet. Start one from the Video audit panel on the lead.</p></div></div>
-    </>
+    <div className="ds-page hox-vd">
+      <PageHeader crumbs={crumbs} title="Video audit" />
+      <div className="ds-body">
+        <div className="ds-card"><Empty icon="eye" title="No video for this lead yet" action={<Link to={`/leads/${leadId}`} className="btn sm primary">Open the lead</Link>}>
+          A video audit is a short narrated screen recording of what is wrong with their site. Start one from the Video audit panel on the lead.
+        </Empty></div>
+      </div>
+    </div>
   );
-  if (!data) return <div className="page-body">{error ? <p className="error" role="alert">{error}</p> : <p>Loading…</p>}</div>;
+  if (!data) return (
+    <div className="ds-page hox-vd">
+      <PageHeader crumbs={crumbs} title="Video audit" />
+      <div className="ds-body">{error ? <Banner tone="critical" title="Couldn't load the video">{error}</Banner> : <div className="ds-card hox-pad"><i className="hox-skel" style={{ width: "40%", height: 16 }} /></div>}</div>
+    </div>
+  );
 
   const attempt = lastAttemptNotice(data.video.status, data.video.error);
   const waitingForNewScript = data.video.status === "scripting" && mode !== "state";
   const shown = blockers ?? live;
+  const chip = statusChip(data.video.status);
+  const times = plan ? lineTimeline(plan) : [];
+  const total = times.length ? times[times.length - 1].start + times[times.length - 1].seconds : 0;
+  const at = current ? times.find((t) => t.id === current.id) : undefined;
+  const sceneNo = current && plan ? plan.segments.indexOf(current) + 1 : 0;
+  const needVoice = plan ? plan.segments.filter((sg) => lineVoice(sg, plan.narration).needsWork).length : 0;
+  const STATE_TITLE: Record<string, string> = { capturing: "Taking screenshots of the site", scripting: "Claude hasn't written the script yet", producing: "Your Mac is making the video",
+    failed: "The video didn't get made", cancelled: "This video was cancelled", published: "This video is live" };
+  const sub = mode === "state" ? "A short narrated look at what is wrong with their site, made from a script you approve." : stateLine || (editable
+    ? "Claude wrote the script and placed the markups. Change any line, move a markup or record your own voice, then approve to make the video."
+    : "The script as it was approved.");
+
+  // The strip under the screenshot: where this line sits in the video, and every line as a block sized by its length. Click one to open it.
+  const timeline = plan && (
+    <footer className="hox-vd-timeline">
+      <div className="hox-vd-tl-head">
+        <span className="hox-vd-clock"><b>{clock(at?.start ?? 0)}</b> / {clock(total)}</span>
+        <span className="ds-grow" />
+        <span className="hox-vd-tl-note">Narration: {plan.narration === "clone" ? "your cloned voice" : "you record every line"}</span>
+        {needVoice > 0 ? <Chip tone="warning" dot>{needVoice} to record</Chip> : <Chip tone="positive" dot>Voice ready</Chip>}
+      </div>
+      <div className="hox-vd-blocks" role="group" aria-label="Lines in order">
+        {times.map((t) => (
+          <button key={t.id} type="button" className={t.id === current?.id ? "on" : ""} style={{ flexGrow: t.seconds }} aria-pressed={t.id === current?.id} onClick={() => setSelected(t.id)}>
+            <b>{t.name}</b><span>{clock(t.seconds)}</span>
+          </button>
+        ))}
+      </div>
+    </footer>
+  );
+
   return (
-    <>
-      <header className="page-header vd-header">
-        <div>
-          {back}
-          <h1>Video audit</h1>
-          {stateLine && <p className="vd-state" role="status">{stateLine}</p>}
-        </div>
-        <div className="vd-header-actions">
-          {mode !== "state" && summary && <span className={`vd-summary${summary.inWindow ? "" : " off"}`} title="The video should run 80 to 130 seconds">{summary.words} words · about {summary.seconds} seconds{summary.inWindow ? "" : " (outside 80 to 130)"}</span>}
-          <span className="vd-save" aria-live="polite">{save === "saving" ? "Saving…" : save === "saved" ? "Saved" : save === "failed" ? "Not saved" : ""}</span>
+    <div className="ds-page hox-vd">
+      <PageHeader
+        crumbs={crumbs}
+        title={`Video audit · ${name}`}
+        chips={<>
+          <Chip tone={chip.tone}>{chip.label}</Chip>
+          {mode !== "state" && summary && <Chip tone={summary.inWindow ? "outline" : "warning"} title="A video should run 80 to 130 seconds">{clock(summary.seconds)}{summary.inWindow ? "" : " · aim for 1:20 to 2:10"}</Chip>}
+        </>}
+        sub={<span role="status">{sub}</span>}
+        actions={<>
+          <span className="hox-vd-save" aria-live="polite">{save === "saving" ? "Saving…" : save === "saved" ? <><Icon name="check" size={14} />Saved</> : save === "failed" ? "Not saved" : ""}</span>
           {canCancel(data.video.status) && <button type="button" className="btn" onClick={cancel} disabled={!!busy}>Cancel video</button>}
           {canUnpublish(data.video.status) && <button type="button" className="btn" onClick={unpublish} disabled={!!busy}>{busy === "unpublish" ? "Unpublishing…" : "Unpublish"}</button>}
-          {editable && <button type="button" className="btn primary" onClick={() => void approve()} disabled={!!busy || shown.length > 0 || save === "saving"} aria-describedby="vd-blockers">{busy === "approve" ? "Approving…" : "Approve and make the video"}</button>}
-        </div>
-      </header>
+          {editable && <button type="button" className="btn primary" onClick={() => void approve()} disabled={!!busy || shown.length > 0 || save === "saving"} aria-describedby="vd-blockers"><Icon name="send" size={16} />{busy === "approve" ? "Approving…" : "Approve and make the video"}</button>}
+        </>}
+      />
 
-      <div className="page-body vd-body">
-        {error && <p className="error" role="alert">{error}</p>}
-        {attempt && <div className="notice" role="status"><span><Icon name="alert" size={14} /> {attempt}</span></div>}
+      <div className="ds-body">
+        {error && <Banner tone="critical" title="Something didn't work">{error}</Banner>}
+        {attempt && <Banner tone="warning" title="The last try didn't finish">{attempt}</Banner>}
         {waitingForNewScript && (
-          <div className="notice" role="status">
-            <span><Icon name="clock" size={14} /> Claude is writing a new script. It arrives in your next queue session and will replace this one.</span>
-            <button type="button" className="btn sm" onClick={() => void writeMyself()} disabled={!!busy}>Write it myself</button>
+          <Banner tone="info" icon="clock" title="Claude is writing a new script" action={<button type="button" className="btn sm" onClick={() => void writeMyself()} disabled={!!busy}>Write it myself</button>}>
+            It arrives in your next queue session and replaces this one.
+          </Banner>
+        )}
+        {editable && (
+          <div id="vd-blockers" aria-live="polite">
+            {shown.length === 0
+              ? <Banner tone="positive" title="Ready to approve">Approving sends the script to your Mac, which makes the voice and the video. You publish it after you watch it.</Banner>
+              : <Banner tone="warning" title={`Before you can approve, fix ${shown.length === 1 ? "this" : `these ${shown.length}`}`}><span className="hox-vd-blockers">{shown.map((b, i) => <span key={i}>{b}</span>)}</span></Banner>}
           </div>
         )}
+
         {hasPlayer(data.video) && (
-          <section className="vd-player" aria-label="Made video">
-            <video controls preload="metadata" playsInline className="vd-video"
+          <Card icon="eye" title="The video" className="hox-vd-player" note={data.video.duration_ms ? clock(data.video.duration_ms / 1000) : undefined}>
+            <video controls preload="metadata" playsInline className="hox-vd-video"
               src={`/api/video-audits/${data.video.id}/media/video.mp4`} poster={`/api/video-audits/${data.video.id}/media/poster.jpg`}>
               Your browser can't play this video.
             </video>
-            <div className="vd-player-acts">
-              {pstate === "waiting" && <button type="button" className="btn primary" onClick={() => void publishVideo()} disabled={!!busy}>{busy === "publish" ? "Publishing…" : "Approve and publish"}</button>}
+            {pstate === "rejected" && <p role="status">You rejected this video{publishApproval?.decision_note ? `: ${publishApproval.decision_note}` : ""}. Edit it and render it again to try once more.</p>}
+            <div className="hox-vd-acts">
+              {pstate === "waiting" && <button type="button" className="btn primary" onClick={() => void publishVideo()} disabled={!!busy}><Icon name="check" size={16} />{busy === "publish" ? "Publishing…" : "Approve and publish"}</button>}
               {pstate === "waiting" && <button type="button" className="btn" onClick={() => void rejectVideo()} disabled={!!busy}>Reject</button>}
-              {canReopen(data.video.status) && <button type="button" className={`btn${pstate === "rejected" ? " primary" : ""}`} onClick={() => void reopen()} disabled={!!busy}>{busy === "reopen" ? "Reopening…" : "Edit and re-render"}</button>}
+              {canReopen(data.video.status) && <button type="button" className={`btn${pstate === "rejected" ? " primary" : ""}`} onClick={() => void reopen()} disabled={!!busy}><Icon name="pen" size={16} />{busy === "reopen" ? "Reopening…" : "Edit and re-render"}</button>}
             </div>
-            {pstate === "rejected" && <p className="vd-note" role="status">You rejected this video{publishApproval?.decision_note ? `: ${publishApproval.decision_note}` : ""}. Edit it and render it again to try once more.</p>}
-          </section>
+          </Card>
         )}
-        {mode === "state" && !stateLine && <div className="card"><p>There is no script to edit yet.</p></div>}
+        {mode === "state" && (
+          <div className="ds-card">
+            <Empty icon={data.video.status === "failed" ? "alert" : data.video.status === "cancelled" ? "x" : "clock"} title={STATE_TITLE[data.video.status] ?? "No script yet"}
+              action={<Link to={`/leads/${leadId}`} className="btn sm">Back to the lead</Link>}>
+              {stateLine || "There is no script to edit yet."} {isWatching(data.video.status) && "This page updates by itself."}
+            </Empty>
+          </div>
+        )}
 
         {mode !== "state" && plan && (
-          <div className="vd-split">
-            <section className="vd-left" aria-label="Script">
-              {editable && (
-                <div className="vd-narration">
-                  <label htmlFor="vd-narration">Who speaks</label>
-                  <select id="vd-narration" value={plan.narration} onChange={(e) => { edit({ ...plan, narration: e.target.value as VideoPlan["narration"] }); void commit(); }}>
-                    <option value="recorded">I record every line</option>
-                    <option value="clone">My cloned voice (record a line to use your own)</option>
-                  </select>
+          <div className="hox-vd-cols">
+            <div className="ds-col">
+              {current && shot
+                ? <ShotCanvas key={`${current.id}:${shot.id}`} videoId={data.video.id} shot={shot} segment={current} readOnly={!editable}
+                    title={`Scene ${sceneNo} · ${at?.name ?? ""}`} shotName={shotLabel(plan.shots, shot.id)} footer={timeline} onChange={editSegment} onCommit={() => void commit()} />
+                : <section className="ds-card hox-vd-scene"><Banner tone="warning" title="This line's screenshot isn't in the video">Choose another screenshot for it in the script.</Banner>{timeline}</section>}
+            </div>
+            <section className="ds-card hox-vd-script" aria-label="Script">
+              <header className="ds-card-head">
+                <Icon name="file-text" size={16} />
+                <h2>Script</h2>
+                <Seg label="Show" value={tab} onChange={setTab} options={[{ key: "script", label: "Script" }, { key: "voice", label: "Voice", count: needVoice || undefined }]} />
+              </header>
+              {tab === "voice" && editable && (
+                <div className="hox-vd-narration">
+                  <SwitchRow checked={plan.narration === "clone"} label="Use my cloned voice"
+                    help={plan.narration === "clone" ? "Your Mac speaks every line in your cloned voice. Record a line to use your own voice for it." : "Off: you record every line yourself before you can approve."}
+                    onChange={(on) => { edit({ ...plan, narration: on ? "clone" : "recorded" }); void commit(); }} />
                 </div>
               )}
-              <SegmentList videoId={data.video.id} plan={plan} selectedId={current?.id ?? null} readOnly={!editable} onSelect={setSelected} onChange={editSegment} onCommit={() => void commit()} onPlan={serverPlan} onError={setError} />
+              <SegmentList videoId={data.video.id} plan={plan} selectedId={current?.id ?? null} readOnly={!editable} tab={tab} onSelect={setSelected} onChange={editSegment} onCommit={() => void commit()} onPlan={serverPlan} onError={setError} />
               {editable && (
-                <details className="vd-regen">
-                  <summary>Write a different script</summary>
-                  <label htmlFor="vd-note" className="vd-note">What should change? (optional)</label>
-                  <textarea id="vd-note" rows={2} value={note} maxLength={1000} onChange={(e) => setNote(e.target.value)} placeholder="Lead with the speed problem" />
-                  <button type="button" className="btn sm" onClick={regenerate} disabled={!!busy}>Ask Claude for a new script</button>
+                <details className="hox-vd-regen">
+                  <summary><Icon name="refresh" size={14} />Write a different script</summary>
+                  <div className="hox-vd-regen-body">
+                    <label className="deal-field">
+                      <span>What should change? (optional)</span>
+                      <textarea id="vd-note" rows={2} value={note} maxLength={1000} onChange={(e) => setNote(e.target.value)} placeholder="Lead with the speed problem" />
+                      <small>Claude writes a new script in your next queue session. It replaces this one, edits included.</small>
+                    </label>
+                    <div><button type="button" className="btn sm" onClick={regenerate} disabled={!!busy}>Ask Claude for a new script</button></div>
+                  </div>
                 </details>
               )}
             </section>
-            <section className="vd-right" aria-label="Screenshot">
-              {current && shot
-                ? <ShotCanvas key={`${current.id}:${shot.id}`} videoId={data.video.id} shot={shot} segment={current} readOnly={!editable} onChange={editSegment} onCommit={() => void commit()} />
-                : <p className="vd-note">This line uses a screenshot that isn't in the video. Choose another for it.</p>}
-            </section>
-          </div>
-        )}
-
-        {editable && (
-          <div id="vd-blockers" className="vd-blockers" aria-live="polite">
-            {shown.length === 0 ? <Badge tone="positive" dot>Ready to approve</Badge> : (
-              <>
-                <b>Before you can approve:</b>
-                <ul>{shown.map((b, i) => <li key={i}>{b}</li>)}</ul>
-              </>
-            )}
           </div>
         )}
       </div>
-    </>
+    </div>
   );
 }

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { ApiError, careApi } from "../../api";
-import { dayLabel } from "../../careReportPageView";
+import { dayLabel, hours } from "../../careReportPageView";
+import { Card, Score } from "../ds";
+import Icon from "../Icon";
 import { editHoursLine, ledgerBar, statusChip, statusTone, type LedgerBar as Bar, type ReportRow } from "../../careReportsView";
 import type { EditLedger } from "../../../worker/care/ledger";
 import { periodLabel } from "../../../worker/sop/cadence";
@@ -34,19 +36,21 @@ function AddEditRequest({ businessId, onAdded }: { businessId: string; onAdded: 
     finally { setBusy(false); }
   }
   return (
-    <div className="rp-add">
-      {!open && <button type="button" className="btn" onClick={() => { setOpen(true); setAdded(null); }}>Add an edit request</button>}
+    <div className="clx-edit-add">
+      {!open && <button type="button" className="btn sm" onClick={() => { setOpen(true); setAdded(null); }}><Icon name="plus" size={14} />Add an edit request</button>}
       {open && (
-        <form onSubmit={(e) => void submit(e)} className="rp-add-form">
-          <label htmlFor={`edit-${businessId}`} className="small">What does the client want changed?</label>
-          <input id={`edit-${businessId}`} value={title} maxLength={120} autoFocus onChange={(e) => setTitle(e.target.value)} placeholder="Change the phone number in the footer" />
-          <div className="rp-actions">
-            <button type="submit" className="btn primary" aria-disabled={busy || !title.trim()}>Add it</button>
-            <button type="button" className="btn-plain" onClick={() => { setOpen(false); setError(""); }}>Cancel</button>
+        <form onSubmit={(e) => void submit(e)} className="clx-edit-form">
+          <label htmlFor={`edit-${businessId}`} className="deal-field"><span>What does the client want changed?</span>
+            <input id={`edit-${businessId}`} value={title} maxLength={120} autoFocus onChange={(e) => setTitle(e.target.value)} placeholder="Change the phone number in the footer" />
+            <small>It becomes a task on their Care project, with the edit checklist.</small>
+          </label>
+          <div className="ds-row">
+            <button type="submit" className="btn primary sm" aria-disabled={busy || !title.trim()}>{busy ? "Adding…" : "Add request"}</button>
+            <button type="button" className="btn sm" onClick={() => { setOpen(false); setError(""); }}>Cancel</button>
           </div>
         </form>
       )}
-      {added && <p className="small" role="status">Added to this client’s Care tasks. <Link to={`/tasks/${encodeURIComponent(added)}`}>Open it</Link></p>}
+      {added && <p className="clx-saved" role="status"><Icon name="check" size={14} />Added to this client’s Care tasks. <Link to={`/tasks/${encodeURIComponent(added)}`}>Open it</Link></p>}
       {error && <p className="error small" role="alert">{error}</p>}
     </div>
   );
@@ -65,31 +69,32 @@ export default function CareEditHours({ businessId }: { businessId: string }) {
   }, [businessId]);
   useEffect(() => { setLedger(undefined); setLast(undefined); void load(); }, [load]);
   const bar = ledger ? ledgerBar(ledger) : null;
+  const tone = bar ? (bar.tone === "over" ? "critical" : bar.tone === "warn" ? "warning" : "signal") : "signal";
   return (
     <>
       {ledger && bar && (
-        <>
-          <h3 className="cr-sub">Edit hours</h3>
-          <p className="small muted rp-bar-month">{periodLabel("monthly", ledger.month)}: {editHoursLine(ledger)}</p>
-          <LedgerBar bar={bar} label="Edit hours used this month" />
+        <Card icon="clock" title="Edit hours" note={periodLabel("monthly", ledger.month)}>
+          <Score size="md" value={hours(ledger.usedMinutes)} unit={`of ${hours(ledger.allowanceMinutes)} used`} meter={{ value: bar.width, max: 100, tone }} />
+          <p className={`clx-help${bar.tone === "over" ? " clx-bad" : ""}`} role="note" aria-label="Edit hours used this month">{bar.note || (ledger.usedMinutes === 0 ? "None used yet this month." : `${editHoursLine(ledger)}.`)} Extra time is quoted as a change order.</p>
           <AddEditRequest businessId={businessId} onAdded={load} />
-        </>
+        </Card>
       )}
       {(last || ledger) && last !== undefined && (
-        <>
-          <h3 className="cr-sub">Last report</h3>
+        <Card icon="file-text" title="Monthly report" flush>
           {last === null
-            ? <p className="muted small">No monthly report yet.</p>
+            ? <div className="clx-calm"><span className="ds-tile neutral"><Icon name="file-text" size={15} /></span><span className="clx-setup-text"><b>No report yet</b><small>The first Care report is drafted at the start of next month, for you to approve.</small></span></div>
             : (
-              <p className="small rp-last">
-                <b>{periodLabel("monthly", last.period)}</b>{" "}
+              <Link to="/care/reports" className="clx-proj">
+                <span className={`ds-tile ${last.status === "sent" ? "positive" : "signal"}`}><Icon name="file-text" size={15} /></span>
+                <span className="clx-setup-text">
+                  <b>{periodLabel("monthly", last.period)}</b>
+                  <small>{[last.sentOn ? `Sent ${dayLabel(last.sentOn) ?? last.sentOn}` : null, last.status === "sent" ? (last.views === 0 ? "not opened yet" : `opened ${last.views} ${last.views === 1 ? "time" : "times"}`) : null].filter(Boolean).join(" · ") || "All reports"}</small>
+                </span>
                 <span className={`badge2${statusTone(last.status) ? ` ${statusTone(last.status)}` : ""}`}><i className="dot" aria-hidden="true" />{statusChip(last.status)}</span>
-                {last.sentOn && <> sent {dayLabel(last.sentOn) ?? last.sentOn}</>}
-                {last.status === "sent" && <> · {last.views === 0 ? "not opened yet" : `opened ${last.views} ${last.views === 1 ? "time" : "times"}`}</>}
-                {" "}<Link to="/care/reports">All reports</Link>
-              </p>
+                <Icon name="chevron-right" size={14} className="ds-chev" />
+              </Link>
             )}
-        </>
+        </Card>
       )}
     </>
   );

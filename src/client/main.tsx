@@ -23,5 +23,8 @@ import "./screens/money.css";
 import "./screens/sales.css";
 import "./screens/approvals.css";
 import "./screens/care.css";
+import "./screens/public-os.css";
+import "./screens/home-os.css";
+import "./screens/settings-os.css";
 
 createRoot(document.getElementById("root")!).render(<BrowserRouter><App /></BrowserRouter>);

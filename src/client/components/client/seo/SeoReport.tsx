@@ -102,7 +102,7 @@ export function SeoReport({ clientId }: { clientId: string }) {
   const canBuild = rows !== null && (r === null || r.status === "revoked" || r.status === "cancelled");
   return (
     <Part title="Monthly report" help="The report goes out only after you approve it on Today. Ranks are only ever “in our check”; nothing in it looks forward."
-      actions={canBuild ? <button type="button" className="btn" aria-disabled={!!busy} onClick={() => void build()}>{busy === "build" ? "Starting…" : "Build report now"}</button> : undefined}>
+      actions={canBuild ? <button type="button" className="btn sm" aria-disabled={!!busy} onClick={() => void build()}>{busy === "build" ? "Starting…" : "Build report now"}</button> : undefined}>
       {failed && <p className="error small" role="alert">Couldn’t load the report. <button type="button" className="btn-plain" onClick={() => void load()}>Try again</button></p>}
       {rows === null && !failed && <p className="small muted">Loading…</p>}
       {rows !== null && r === null && <p className="small muted">No report yet. It starts by itself in the first days of the month, or build last month’s now once a rank check is in.</p>}

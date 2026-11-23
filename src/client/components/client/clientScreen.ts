@@ -120,3 +120,34 @@ export function recordBanner(c: Pick<ClientRecord, "held" | "invoices" | "health
   if (missing > 0) return { tone: "warning", title: `${missing} access ${missing === 1 ? "item is" : "items are"} still missing`, text: "Ask the client for them, then mark each one received on Sites & access.", tab: "sites" };
   return null;
 }
+
+/** One line of the record's setup checklist. `to` opens another page; otherwise `tab` is the record's own tab that does it. */
+export interface SetupStep { key: string; icon: IconName; title: string; sub: string; done: boolean; action: string; tab: "sites" | "care" | "followups"; to?: string }
+
+/**
+ * What a client still needs before the work runs by itself, from the record alone: a person to talk to, a site with its platform and way in, the access, the uptime watch and,
+ * while there is one, the Care onboarding. Done lines stay in the list (ticked) so the count reads true.
+ */
+export function setupSteps(c: Pick<ClientRecord, "business" | "people" | "sites" | "projects">): SetupStep[] {
+  const id = encodeURIComponent(c.business.id);
+  const out: SetupStep[] = [];
+  const poc = c.people.find((p) => p.is_poc) ?? c.people[0];
+  out.push({ key: "contact", icon: "user", title: "Point of contact", sub: poc ? `${poc.name}${poc.role ? `, ${poc.role}` : ""}` : "Nobody to email or call yet", done: !!poc, action: "Add", tab: "followups", to: `/leads/${id}` });
+  if (c.sites.length === 0) {
+    out.push({ key: "site", icon: "globe", title: "The client’s site", sub: "No site saved yet", done: false, action: "Add", tab: "sites" });
+  } else {
+    const unknown = c.sites.filter((s) => s.site.cms === "unknown" || s.site.accessMethod === "unknown").length;
+    out.push({ key: "details", icon: "code", title: "Site details", sub: unknown === 0 ? "Platform and way in are known" : "Platform not set yet", done: unknown === 0, action: "Fill in", tab: "sites" });
+    const items = c.sites.flatMap((s) => s.access).filter((a) => a.status !== "not_applicable");
+    const inHand = items.filter((a) => a.status === "received" || a.status === "verified").length;
+    out.push({ key: "access", icon: "key", title: "Site access", sub: `${inHand} of ${items.length} logins in`, done: items.length > 0 && inHand === items.length, action: inHand === 0 ? "Ask" : "Open", tab: "sites" });
+    const watched = c.sites.some((s) => s.monitoring.monitored);
+    out.push({ key: "watch", icon: "gauge", title: "Uptime watch", sub: watched ? "Checked every few minutes" : "Nobody is watching the site yet", done: watched, action: "Turn on", tab: "care" });
+  }
+  const onboarding = c.projects.find((p) => p.kind === "care_onboarding" && (p.status === "active" || p.status === "paused"));
+  if (onboarding) {
+    const total = onboarding.doneTasks + onboarding.openTasks;
+    out.push({ key: "onboarding", icon: "briefcase", title: "Care onboarding", sub: `${onboarding.doneTasks} of ${total} steps done`, done: false, action: "Open", tab: "sites", to: `/projects/${encodeURIComponent(onboarding.id)}` });
+  }
+  return out;
+}

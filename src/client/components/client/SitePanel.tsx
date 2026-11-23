@@ -52,12 +52,6 @@ function localProblem(d: Record<TextKey, string>, changed: TextKey[]): string | 
   return null;
 }
 
-/** A link only when the address is a plain http or https one; anything else is shown as text and never becomes an href. */
-function SafeLink({ url, children }: { url: string | null; children: React.ReactNode }) {
-  const href = safeHref(url);
-  return href ? <a href={href} target="_blank" rel="noopener noreferrer">{children}</a> : <>{url ? <span>{url}</span> : null}</>;
-}
-
 /** One site: its fields (text fields save together, the three choices save the moment you pick), the warnings, and the access checklist. */
 export default function SitePanel({ clientId, site, access, flags, onChanged }: {
   clientId: string; site: Site; access: ClientAccessItem[]; flags: SiteFlag[]; onChanged: () => Promise<void>;
@@ -70,6 +64,7 @@ export default function SitePanel({ clientId, site, access, flags, onChanged }: 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const [editing, setEditing] = useState(false);
   // The record was reloaded (a choice was made, or a save went through): fields you have not touched follow the server (a changed address re-works the domain); fields you are typing in stay as typed.
   if (seen !== site.updatedAt) {
     setSeen(site.updatedAt); setBase(original);
@@ -93,7 +88,7 @@ export default function SitePanel({ clientId, site, access, flags, onChanged }: 
       const { site: next } = await clientsApi.patchSite(clientId, site.id, patch);
       setDraft(draftOf(next)); setBase(draftOf(next));
       await onChanged();
-      setSaved(true);
+      setSaved(true); setEditing(false);
     } catch (err) { setError(err instanceof ApiError ? problemText(err, "Could not save.") : "Could not save."); }
     finally { setBusy(false); }
   }
@@ -113,70 +108,127 @@ export default function SitePanel({ clientId, site, access, flags, onChanged }: 
     finally { setBusy(false); }
   }
 
-  return (
-    <article className="ds-card clx-site" aria-label={`Site ${title}`}>
-      <header className="ds-card-head">
-        <Icon name="globe" size={16} />
-        <h2>{title}</h2>
-        {site.test && <Chip tone="info">Test</Chip>}
-        <Chip tone="outline">{label(TIERS, site.hostingTier)}</Chip>
-        <span className="clx-site-links">
-          {safeHref(site.url) && <SafeLink url={site.url}>Open site</SafeLink>}
-          {safeHref(site.adminUrl) && <SafeLink url={site.adminUrl}>Open admin</SafeLink>}
-        </span>
-      </header>
-      <div className="ds-card-body">
+  const facts: { label: string; value: string | null; href?: string | null }[] = [
+    { label: "Platform", value: site.cms !== "unknown" ? label(CMS, site.cms) : null },
+    { label: "Hosting", value: site.hostingTier !== "unknown" ? label(TIERS, site.hostingTier) : null },
+    { label: "Way in", value: site.accessMethod !== "unknown" ? label(METHODS, site.accessMethod) : null },
+    { label: "Address", value: site.url, href: safeHref(site.url) },
+    { label: "Admin", value: site.adminUrl, href: safeHref(site.adminUrl) },
+    { label: "Host", value: site.hostProvider },
+    { label: "Registrar", value: site.registrar },
+    { label: "DNS", value: site.dnsProvider },
+    { label: "SSH alias", value: site.wpSshAlias },
+    { label: "WP folder", value: site.wpPath },
+    { label: "Pages", value: (site.carePaths ?? []).join("  ") || null },
+    { label: "Notes", value: site.notes },
+  ];
+  const known = facts.filter((f) => f.value).length;
+  const otherFlags = flags.filter((f) => f.code !== "access_missing");
+  const field = (k: TextKey) => {
+    const f = TEXT.find((t) => t.key === k)!;
+    const id = `${site.id}-${f.key}`;
+    const common = {
+      id, value: draft[f.key], "aria-label": `${f.label} for ${title}`, "aria-describedby": f.hint ? `${id}-hint` : undefined,
+      onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => { setDraft((d) => ({ ...d, [f.key]: e.target.value })); setSaved(false); setError(""); },
+    };
+    return (
+      <label key={f.key} className={`deal-field${f.multiline ? " wide" : ""}`} htmlFor={id}><span>{f.label}</span>
+        {f.multiline
+          ? <textarea {...common} rows={f.key === "carePaths" ? 3 : 2} maxLength={600} />
+          : <input {...common} type="text" inputMode={f.type === "url" ? "url" : undefined} autoComplete="off" autoCapitalize="off" spellCheck={false} maxLength={320} />}
+        {f.hint && <small id={`${id}-hint`}>{f.hint}</small>}
+      </label>
+    );
+  };
+  const cancel = () => { setDraft(original); setError(""); setSaved(false); setEditing(false); };
 
-      {flags.length > 0 && (
+  return (
+    <section className="clx-site" aria-label={`Site ${title}`}>
+      <div className="clx-site-head">
+        <span className="ds-tile info"><Icon name="globe" size={16} /></span>
+        <span className="clx-site-title"><b>{title}</b><small>{[site.cms !== "unknown" ? label(CMS, site.cms) : null, label(TIERS, site.hostingTier)].filter(Boolean).join(" · ")}</small></span>
+        {site.test && <Chip tone="info">Test</Chip>}
+        <span className="ds-grow" />
+        {safeHref(site.url) && <a className="btn sm" href={safeHref(site.url)!} target="_blank" rel="noopener noreferrer"><Icon name="external" size={14} />Open site</a>}
+        {safeHref(site.adminUrl) && <a className="btn sm" href={safeHref(site.adminUrl)!} target="_blank" rel="noopener noreferrer"><Icon name="key" size={14} />Open admin</a>}
+      </div>
+
+      {otherFlags.length > 0 && (
         <div className="clx-flags" role="group" aria-label={`Warnings for ${title}`}>
-          {flags.map((f) => <p key={f.code}><Icon name="alert" size={14} />{f.text}</p>)}
+          {otherFlags.map((f) => <p key={f.code}><Icon name="alert" size={14} />{f.text}</p>)}
         </div>
       )}
 
-      <div className="cl-choices">
-        <label className="deal-field"><span>Platform</span>
-          <select aria-label={`Platform for ${title}`} value={site.cms} disabled={busy} onChange={(e) => void choose({ cms: e.target.value as Cms })}>
-            {CMS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-          </select>
-        </label>
-        <label className="deal-field"><span>Hosting</span>
-          <select aria-label={`Hosting tier for ${title}`} value={site.hostingTier} disabled={busy} onChange={(e) => void choose({ hostingTier: e.target.value as HostingTier })}>
-            {TIERS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-          </select>
-        </label>
-        <label className="deal-field"><span>Access method</span>
-          <select aria-label={`Access method for ${title}`} value={site.accessMethod} disabled={busy} onChange={(e) => void choose({ accessMethod: e.target.value as AccessMethod })}>
-            {METHODS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-          </select>
-        </label>
-      </div>
+      <div className="clx-site-grid">
+        <AccessChecklist clientId={clientId} siteId={site.id} siteName={title} items={access} onChanged={onChanged} />
+        <section className="ds-card clx-details" aria-label={`Details for ${title}`}>
+          <header className="ds-card-head">
+            <Icon name="code" size={16} />
+            <h2>Site details</h2>
+            {!editing && <span className="ds-card-note">{known} of {facts.length} filled in</span>}
+            {!editing && <button type="button" className="btn sm" onClick={() => { setEditing(true); setSaved(false); }}><Icon name="pen" size={14} />Edit details</button>}
+          </header>
+          <div className="ds-card-body">
+            {!editing && (
+              <>
+                {saved && <p className="clx-saved" role="status"><Icon name="check" size={14} />Saved.</p>}
+                <dl className="ds-facts clx-site-facts">
+                  {facts.map((f) => (
+                    <div key={f.label}><dt>{f.label}</dt><dd>{f.value ? (f.href ? <a href={f.href} target="_blank" rel="noopener noreferrer">{f.value.replace(/^https?:\/\//i, "")}</a> : f.value) : <span className="clx-unset">Not set</span>}</dd></div>
+                  ))}
+                </dl>
+                {known < 6 && <p className="clx-help">Fill these in as the client sends access. The platform and way in decide whether Care can update the site by itself.</p>}
+              </>
+            )}
+            {editing && (
+              <>
+                <div className="ds-form clx-choices">
+                  <label className="deal-field"><span>Platform</span>
+                    <select aria-label={`Platform for ${title}`} value={site.cms} disabled={busy} onChange={(e) => void choose({ cms: e.target.value as Cms })}>
+                      {CMS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                    </select>
+                  </label>
+                  <label className="deal-field"><span>Hosting</span>
+                    <select aria-label={`Hosting tier for ${title}`} value={site.hostingTier} disabled={busy} onChange={(e) => void choose({ hostingTier: e.target.value as HostingTier })}>
+                      {TIERS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                    </select>
+                  </label>
+                  <label className="deal-field"><span>Access method</span>
+                    <select aria-label={`Access method for ${title}`} value={site.accessMethod} disabled={busy} onChange={(e) => void choose({ accessMethod: e.target.value as AccessMethod })}>
+                      {METHODS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                    </select>
+                  </label>
+                  <p className="ds-help wide">These three save as soon as you pick.</p>
+                </div>
+                <form className="ds-form clx-site-form" onSubmit={(e) => void save(e)} noValidate>
+                  <p className="clx-overline wide">Addresses</p>
+                  <div className="wide">{field("url")}</div>
+                  {field("domain")}
+                  {field("adminUrl")}
+                  <p className="clx-overline wide">Who holds what</p>
+                  {field("hostProvider")}
+                  {field("registrar")}
+                  {field("dnsProvider")}
+                  <span />
+                  <p className="clx-overline wide">For Care updates</p>
+                  {field("wpSshAlias")}
+                  {field("wpPath")}
+                  {field("carePaths")}
+                  {field("notes")}
+                  {error && <p className="error small wide" role="alert">{error}</p>}
+                  <div className="ds-form-actions">
+                    <button type="submit" className="btn primary" disabled={busy || dirty.length === 0} aria-label={`Save changes to ${title}`}>Save changes</button>
+                    <button type="button" className="btn" disabled={busy} onClick={cancel}>{dirty.length > 0 ? "Cancel" : "Done"}</button>
+                    <span className="ds-grow" />
+                    <button type="button" className="btn-plain clx-danger" disabled={busy} onClick={() => void archive()} aria-label={`Archive site ${title}`}>Archive site</button>
+                  </div>
+                </form>
+              </>
+            )}
+          </div>
+        </section>
 
-      <form className="cl-fields" onSubmit={(e) => void save(e)} noValidate>
-        {TEXT.map((f) => {
-          const id = `${site.id}-${f.key}`;
-          const common = {
-            id, value: draft[f.key], "aria-label": `${f.label} for ${title}`, "aria-describedby": f.hint ? `${id}-hint` : undefined,
-            onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => { setDraft((d) => ({ ...d, [f.key]: e.target.value })); setSaved(false); setError(""); },
-          };
-          return (
-            <label key={f.key} className={`deal-field${f.multiline ? " wide" : ""}`} htmlFor={id}><span>{f.label}</span>
-              {f.multiline
-                ? <textarea {...common} rows={2} maxLength={600} />
-                : <input {...common} type="text" inputMode={f.type === "url" ? "url" : undefined} autoComplete="off" autoCapitalize="off" spellCheck={false} maxLength={320} />}
-              {f.hint && <small id={`${id}-hint`} className="muted">{f.hint}</small>}
-            </label>
-          );
-        })}
-        {error && <p className="error small cl-fields-msg" role="alert">{error}</p>}
-        <div className="cl-fields-actions">
-          <button type="submit" className="btn primary" disabled={busy || dirty.length === 0} aria-label={`Save changes to ${title}`}>Save changes</button>
-          {saved && dirty.length === 0 && <span className="small muted" role="status">Saved.</span>}
-          <button type="button" className="btn" disabled={busy} onClick={() => void archive()} aria-label={`Archive site ${title}`}>Archive site</button>
-        </div>
-      </form>
-
-      <AccessChecklist clientId={clientId} siteId={site.id} siteName={title} items={access} onChanged={onChanged} />
       </div>
-    </article>
+    </section>
   );
 }

@@ -123,3 +123,99 @@ export function ago(iso: string, now = Date.now()): string {
 
 /** How a recent-activity row reads, reusing the lead page's wording ("Stage changed: Contacted → Replied"). */
 export const recentView = (a: RecentActivity) => describeActivity({ kind: a.kind,detail: a.detail });
+
+// ---- Home v2 (Figma 57:3846) ----
+
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** What an approval is, in one word, from its kind: "email.send" → draft. Used to sum up the "Waiting on you" number. */
+export function approvalNoun(kind: string): "draft" | "invoice" | "proposal" | "video" | "report" | "other" {
+  const head = kind.split(".")[0];
+  return head === "email" ? "draft" : head === "invoice" || head === "subscription" ? "invoice" : head === "proposal" || head === "change_order" ? "proposal"
+    : head === "video" ? "video" : head === "care" || head === "seo" ? "report" : "other";
+}
+
+/** The "Waiting on you" stat: approvals plus Up next items, and the one line that says what they are ("4 drafts · 2 invoices · 7 to do"). */
+export function waitingStat(approvalKinds: readonly string[], itemCount: number): { total: number; sub: string } {
+  const counts = new Map<string, number>();
+  for (const k of approvalKinds) { const n = approvalNoun(k); counts.set(n, (counts.get(n) ?? 0) + 1); }
+  const order: [string, string][] = [["draft", "draft"], ["invoice", "invoice"], ["proposal", "proposal"], ["video", "video"], ["report", "report"], ["other", "other approval"]];
+  const parts = order.filter(([k]) => counts.get(k)).map(([k, w]) => plural(counts.get(k)!, w));
+  if (itemCount > 0) parts.push(`${itemCount} to do`);
+  const total = approvalKinds.length + itemCount;
+  return { total, sub: total === 0 ? "Nothing waiting. Nice." : parts.join(" · ") };
+}
+
+/** The second line of an approval row: for an email, who it goes to and the subject; otherwise the first line of the preview. */
+export function approvalSub(preview: string): string {
+  const lines = preview.split("\n").map((l) => l.trim()).filter(Boolean);
+  const to = lines.find((l) => l.startsWith("To:"))?.slice(3).trim();
+  const subject = lines.find((l) => l.startsWith("Subject:"))?.slice(8).trim();
+  if (to || subject) return [to && `To ${to}`, subject].filter(Boolean).join(" · ");
+  return lines[0] ?? "";
+}
+
+/** The chip on an approval row: what kind of thing it is, coloured by what approving it does. */
+export function approvalChip(kind: string): { label: string; tone: "info" | "warning" | "signal" | "positive" | "neutral" } {
+  switch (approvalNoun(kind)) {
+    case "draft": return { label: "Email", tone: "info" };
+    case "invoice": return { label: "Invoice", tone: "warning" };
+    case "proposal": return { label: kind.startsWith("change_order") ? "Change order" : "Proposal", tone: "info" };
+    case "video": return { label: "Video", tone: "signal" };
+    case "report": return { label: "Report", tone: "positive" };
+    default: return { label: "Approval", tone: "neutral" };
+  }
+}
+
+/** The icon tile for an approval row. */
+export function approvalIcon(kind: string): { icon: IconName; tone: "info" | "warning" | "signal" | "positive" | "neutral" } {
+  const n = approvalNoun(kind);
+  return n === "draft" ? { icon: "mail", tone: "info" } : n === "invoice" ? { icon: "card", tone: "warning" } : n === "proposal" ? { icon: "file-text", tone: "info" }
+    : n === "video" ? { icon: "eye", tone: "signal" } : n === "report" ? { icon: "check", tone: "positive" } : { icon: "sparkles", tone: "neutral" };
+}
+
+/** One subscription row as GET /billing/subscriptions returns it (only the fields Home reads). */
+export interface SubLite { packageKey: string; monthlyCents: number; status: string; test?: boolean }
+const LIVE_SUBS = ["active", "past_due"];
+
+/** The Freedom number card: monthly recurring revenue against the goal, how far along, and the mix of plans that makes it up. */
+export function freedomView(f: { targetCents: number; mrrCents: number }, subs: readonly SubLite[] | null, names: ReadonlyMap<string, string>) {
+  const live = (subs ?? []).filter((s) => !s.test && LIVE_SUBS.includes(s.status));
+  const byPlan = new Map<string, { count: number; cents: number }>();
+  for (const s of live) { const p = byPlan.get(s.packageKey) ?? { count: 0, cents: 0 }; p.count += 1; p.cents += s.monthlyCents; byPlan.set(s.packageKey, p); }
+  const rows = [...byPlan.entries()].sort((a, b) => b[1].cents - a[1].cents)
+    .map(([key, p]) => ({ key, label: `${names.get(key) ?? key.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase())} · ${plural(p.count, "client")}`, cents: p.cents }));
+  const pct = f.targetCents > 0 ? Math.min(100, (100 * f.mrrCents) / f.targetCents) : 0;
+  const gap = Math.max(0, f.targetCents - f.mrrCents);
+  const avg = live.length > 0 ? f.mrrCents / live.length : 0;
+  const more = avg > 0 ? Math.ceil(gap / avg) : null;
+  const line = f.targetCents <= 0 ? "Set a monthly goal on the Money page to track it here."
+    : gap === 0 ? "Goal reached. Everything from here is extra."
+    : `${Math.round(pct)}% there${more !== null ? ` · about ${plural(more, "more client")} at the current mix` : ""}`;
+  return { mrr: moneyWhole(f.mrrCents / 100), goal: moneyWhole(f.targetCents / 100), pct, line, rows: rows.map((r) => ({ ...r, value: moneyWhole(r.cents / 100) })) };
+}
+
+/** The "Calls this week" stat: how many are coming up and the next one ("Next: Thu 10:00 · Rose City Electric"). */
+export function callsStat<T extends { startAt: string; businessName: string }>(upcoming: readonly { booking: T; when: string }[]): { count: number; sub: string } {
+  if (upcoming.length === 0) return { count: 0, sub: "Nothing booked in the next 7 days" };
+  const next = upcoming[0];
+  return { count: upcoming.length, sub: `Next: ${next.when} · ${next.booking.businessName}` };
+}
+
+/** Recent activity in Figma's groups: Today, This week, Earlier (by the viewer's local day). */
+export function activityGroups<T extends { at: string }>(rows: readonly T[], now = new Date()): { label: string; rows: T[] }[] {
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const week = start - 6 * 86_400_000;
+  const groups = [{ label: "Today", rows: [] as T[] }, { label: "This week", rows: [] as T[] }, { label: "Earlier", rows: [] as T[] }];
+  for (const r of rows) { const t = Date.parse(r.at); groups[t >= start ? 0 : t >= week ? 1 : 2].rows.push(r); }
+  return groups.filter((g) => g.rows.length > 0);
+}
+
+/** The one thing to point at on Home, when there is one: late follow-ups first, then drafts that are ready but unsent. */
+export function homeBanner(s: { lateFollowUps: number; approvals: number; draftsReady: number; draftsWaiting: number }):
+  { tone: "warning" | "info"; title: string; body: string; action: "follow_ups" | "outreach" } | null {
+  if (s.lateFollowUps > 0) return { tone: "warning", title: `${plural(s.lateFollowUps, "follow-up is", "follow-ups are")} late`, body: "The longer a lead waits, the colder it gets. Send these first.", action: "follow_ups" };
+  if (s.approvals === 0 && s.draftsReady > 0) return { tone: "info", title: `${plural(s.draftsReady, "draft is", "drafts are")} ready to send`,
+    body: s.draftsWaiting > 0 ? `${s.draftsWaiting} of them have waited 2+ days. Review and send them from Outreach.` : "Review and send them from Outreach.", action: "outreach" };
+  return null;
+}

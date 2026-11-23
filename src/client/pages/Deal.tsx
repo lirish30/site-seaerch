@@ -337,11 +337,13 @@ function NotesTab({ deal, form, setForm, audit, dirty, onChange }: {
       </Card>
       <div className="ds-col">
         <Card icon="trending" title="What is at stake" note="From their numbers">
+          <div className="ds-form slx-stake-form">
+            <label className="deal-field"><span>Average job</span>
+              <span className="slx-money-in"><i>$</i><input inputMode="decimal" value={form.avgJob} disabled={closed} placeholder="450" onChange={(e) => set({ avgJob: e.target.value })} /></span><small>What one job is worth</small></label>
+            <label className="deal-field"><span>Jobs missed</span>
+              <input inputMode="numeric" value={form.missed} disabled={closed} placeholder="6" onChange={(e) => set({ missed: e.target.value })} /><small>In a month, in their words</small></label>
+          </div>
           <div className="slx-form">
-            <label className="slx-field"><span>Average job is worth (dollars)</span>
-              <input inputMode="decimal" value={form.avgJob} disabled={closed} onChange={(e) => set({ avgJob: e.target.value })} /></label>
-            <label className="slx-field"><span>Jobs missed in a month</span>
-              <input inputMode="numeric" value={form.missed} disabled={closed} onChange={(e) => set({ missed: e.target.value })} /></label>
             <p className={atStake !== null ? "slx-stake" : "slx-hint"}>{atStake !== null ? <><b>{dollars(atStake)}</b> a month at stake</> : "Fill in both numbers to see what is at stake each month. Nothing is estimated."}</p>
           </div>
         </Card>
@@ -364,7 +366,7 @@ function NotesTab({ deal, form, setForm, audit, dirty, onChange }: {
                 <option value="wordpress">WordPress</option><option value="other">Something else (Wix, Squarespace, GoDaddy…)</option>
               </select><small className="slx-hint">Care is only offered for WordPress sites.</small></label>
             <label className="slx-field"><span>Who decides</span>
-              <input maxLength={300} value={form.decisionMakers} disabled={closed} onChange={(e) => set({ decisionMakers: e.target.value })} /></label>
+              <input maxLength={300} value={form.decisionMakers} disabled={closed} placeholder="Like: Tom and his wife Carla" onChange={(e) => set({ decisionMakers: e.target.value })} /><small className="slx-hint">Anyone who should be on the next call.</small></label>
           </div>
         </Card>
       </div>
@@ -553,7 +555,7 @@ function OptionsEditor({ deal, options, catalog, onSaved }: { deal: Deal; option
       <p className="slx-hint">The middle option is the recommended one. A discount comes off a setup fee only, never a monthly price.</p>
       <div className="slx-options">
         {draft.map((o) => (
-          <fieldset key={o.id} className="slx-option">
+          <fieldset key={o.id} className={`slx-option${o.recommended ? " rec" : ""}`}>
             <legend>Option {o.id.toUpperCase()}{o.recommended ? " (recommended)" : ""}</legend>
             <label className="slx-field"><span>Name</span><input maxLength={60} value={o.label} onChange={(e) => edit(o.id, { label: e.target.value })} /></label>
             <label className="slx-field"><span>One line</span><input maxLength={150} value={o.tagline} onChange={(e) => edit(o.id, { tagline: e.target.value })} /></label>
@@ -561,10 +563,10 @@ function OptionsEditor({ deal, options, catalog, onSaved }: { deal: Deal; option
               const on = o.items.some((i) => i.key === p.key);
               return (
                 <div key={p.key} className="slx-pkg">
-                  <label><input type="checkbox" className="cb" checked={on} onChange={() => toggle(o, p.key)} /> {p.name} <span className="slx-hint">{formatPrice(p)}</span></label>
+                  <label className="ds-check"><input type="checkbox" checked={on} onChange={() => toggle(o, p.key)} /><span>{p.name}<small>{formatPrice(p)}</small></span></label>
                   {on && (p.setupCents > 0 || p.kind === "one_time") && (
-                    <input aria-label={`Setup discount on ${p.name} (dollars)`} placeholder="Setup discount, $" inputMode="decimal" value={disc[`${o.id}:${p.key}`] ?? ""}
-                      onChange={(e) => setDisc({ ...disc, [`${o.id}:${p.key}`]: e.target.value })} />
+                    <span className="slx-disc"><span className="slx-money-in"><i>$</i><input aria-label={`Setup discount on ${p.name} (dollars)`} placeholder="0" inputMode="decimal" value={disc[`${o.id}:${p.key}`] ?? ""}
+                      onChange={(e) => setDisc({ ...disc, [`${o.id}:${p.key}`]: e.target.value })} /></span><small>off the setup</small></span>
                   )}
                 </div>
               );

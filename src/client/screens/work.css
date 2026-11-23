@@ -229,3 +229,143 @@
   .wkx-batch-table { table-layout:fixed; }
   .wkx-batch-table thead th:nth-child(2) { width:170px; } .wkx-batch-table thead th:nth-child(3) { width:150px; } .wkx-batch-table thead th:nth-child(4) { width:120px; }
 }
+
+/* =====================================================================================================
+   Round 2 (design QA): table header alignment, sparse states, task panel, forms, billing rows.
+   ===================================================================================================== */
+/* The global `th { vertical-align:top }` pushed header labels to the top of the 36px header row. */
+.wkx .ds-table thead th { vertical-align:middle; }
+.wkx .ds-table tbody td, .wkx .ds-table tbody th { vertical-align:middle; }
+.wkx-projects tr.wkx-group > td { padding-top:0; padding-bottom:0; }
+.wkx-quiet { margin:0; font:400 13px/19px var(--font); color:var(--text-3); }
+.wkx-push { margin-left:auto; text-align:right; }
+.wkx-bad { color:var(--critical) !important; }
+.wkx-short { max-width:200px; }
+.wkx-label-top { margin-top:6px; }
+
+/* Projects list: what fills the page under a short list */
+.wkx-quiet-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:16px; align-items:start; margin-top:8px; }
+.wkx-how { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:14px; }
+.wkx-how li { display:flex; align-items:flex-start; gap:12px; }
+.wkx-how li > span:last-child { display:flex; flex-direction:column; gap:2px; min-width:0; }
+.wkx-how b { font:500 13px/19px var(--font); color:var(--text); }
+.wkx-how small { font:400 12px/16px var(--font); color:var(--text-3); }
+
+/* Project: Next up and who does the rest */
+.wkx-next-card { border-color:color-mix(in srgb, var(--signal) 28%, var(--border)); }
+.wkx-next-step { display:flex; align-items:center; gap:12px; }
+.wkx-next-step .ds-link-text b { white-space:normal; font-size:14px; line-height:20px; }
+.wkx-done-when { display:flex; flex-direction:column; gap:4px; padding:10px 12px; border-radius:8px; background:var(--bg-muted); font:400 12px/17px var(--font) !important; color:var(--text-2) !important; }
+.wkx-done-when .wkx-label { margin:0; }
+.wkx-owners { padding-top:12px; border-top:1px solid var(--border); }
+.wkx-owners dt, .wkx-money-lines dt { display:inline-flex; align-items:center; gap:8px; }
+.wkx-owners dd, .wkx-money-lines dd { font:500 12px/18px var(--font-mono); color:var(--text-2); }
+.wkx-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--text-3); flex:none; }
+.wkx-dot.logan { background:var(--info); } .wkx-dot.claude { background:var(--signal); } .wkx-dot.claude_drafts { background:color-mix(in srgb, var(--info) 45%, var(--signal)); }
+.wkx-dot.paid { background:var(--positive); } .wkx-dot.owed { background:var(--warning); } .wkx-dot.draft { background:var(--text-3); }
+.wkx-money-lines dd { font-size:13px; color:var(--text); }
+
+/* Task row, opened: facts, checklist, notes, Claude */
+.wkx-task-more { gap:0; padding:0; background:var(--bg-surface); overflow:hidden; }
+.wkx-more-facts { display:flex; flex-direction:column; gap:8px; margin:0; padding:14px 16px; background:var(--bg-muted); border-bottom:1px solid var(--border); }
+.wkx-more-facts > div { display:grid; grid-template-columns:110px minmax(0,1fr); gap:12px; }
+.wkx-more-facts dt { font:600 11px/19px var(--font); letter-spacing:.6px; text-transform:uppercase; color:var(--text-3); }
+.wkx-more-facts dd { margin:0; font:400 13px/19px var(--font); color:var(--text); }
+.wkx-more-sec { display:flex; flex-direction:column; gap:10px; padding:14px 16px; border-bottom:1px solid var(--border); }
+.wkx-sec-head { display:flex; align-items:center; gap:8px; margin:0; font:600 13px/19px var(--font); color:var(--text); }
+.wkx-sec-head .icon { color:var(--text-3); }
+.wkx-sec-head small { margin-left:auto; font:500 12px/16px var(--font); color:var(--text-3); }
+.wkx-task-more .wkx-checks { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px 18px; }
+.wkx-note-form { display:flex; flex-direction:column; gap:8px; }
+.wkx-note-actions { display:flex; align-items:center; gap:10px; }
+.wkx-note-actions small { flex:1; font:400 12px/16px var(--font); color:var(--text-3); }
+.wkx-task-more .wkx-note-form textarea { height:64px; min-height:64px; }
+.wkx-claude { display:flex; align-items:flex-start; gap:12px; padding:14px 16px; background:color-mix(in srgb, var(--signal-soft) 40%, var(--bg-surface)); }
+.wkx-claude-main { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+.wkx-claude-main b { font:500 13px/19px var(--font); color:var(--text); }
+.wkx-claude-main small { font:400 12px/16px var(--font); color:var(--text-3); }
+.wkx-claude-form { display:flex; gap:8px; margin-top:8px; }
+.wkx-claude-form input { flex:1; min-width:0; }
+.wkx-claude-form .btn { height:34px; flex:none; }
+.wkx-skip { padding:14px 16px; border:1px solid var(--border); border-radius:10px; background:var(--bg-surface); }
+
+/* SOP tab: plan summary, folding phases, the grouped Waits for */
+.wkx-plan-sum { display:flex; flex-wrap:wrap; align-items:center; gap:8px 18px; padding-top:12px; border-top:1px solid var(--border); font:400 13px/19px var(--font); color:var(--text-2); }
+.wkx-plan-sum > span { display:inline-flex; align-items:center; gap:6px; }
+.wkx-plan-sum b { font-weight:600; color:var(--text); }
+.wkx-sop-phase > summary { list-style:none; }
+.wkx-sop-phase > summary::-webkit-details-marker { display:none; }
+.wkx-sop-phase[open] > summary { background:var(--bg-muted); border-bottom:1px solid var(--border); }
+.wkx-sop-chev { transition:transform .15s; }
+.wkx-sop-phase[open] > summary .wkx-sop-chev { transform:rotate(90deg); }
+.wkx-sop-phase:first-child > summary { border-radius:11px 11px 0 0; }
+.wkx-sop-phase:last-child:not([open]) > summary { border-radius:0 0 11px 11px; }
+.wkx-waits-picked { padding-bottom:4px; }
+.wkx-waits-box { display:flex; flex-direction:column; border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+.wkx-waits-find { display:flex; align-items:center; gap:8px; padding:8px 12px; border-bottom:1px solid var(--border); color:var(--text-3); }
+.wkx-waits-find input { border:0 !important; box-shadow:none !important; height:28px !important; padding:0 !important; }
+.wkx-waits-group + .wkx-waits-group { border-top:1px solid var(--border); }
+.wkx-waits-head { display:flex; align-items:center; gap:8px; width:100%; height:36px; padding:0 12px; border:0; border-radius:0; background:var(--bg-sidebar); box-shadow:none; color:var(--text); text-align:left; cursor:pointer; }
+.wkx-waits-head:hover { background:var(--bg-hover); }
+.wkx-waits-head .icon { color:var(--text-3); }
+.wkx-waits-head b { font:500 12px/16px var(--font); }
+.wkx-waits-head small { margin-left:auto; font:500 11px/14px var(--font); color:var(--text-3); }
+.wkx-waits-group > .ds-waits-list { padding:10px 12px; }
+.wkx-sop .sp-confirm { display:flex; flex-direction:column; gap:8px; padding:14px 16px; border:1px solid var(--border); border-radius:10px; background:var(--bg-muted); }
+.wkx-sop .sp-confirm p { margin:0; color:var(--text); }
+.wkx-sop .co-ul { margin:0; padding-left:18px; color:var(--text-2); }
+.wkx-sop .sp-problems { padding:10px 12px; border-radius:8px; background:var(--critical-soft); color:var(--critical); }
+
+/* Forms on the Project page */
+.wkx-add-task select { max-width:260px; }
+.wkx-co-price { display:flex; flex-direction:column; gap:10px; padding:14px; border:1px solid var(--border); border-radius:10px; background:var(--bg-sidebar); }
+.wkx-co-price .wkx-label { margin:0; }
+.wkx-co-nums { display:grid; grid-template-columns:repeat(4,minmax(0,160px)); gap:12px; }
+.wkx-money-in { position:relative; display:block; }
+.wkx-money-in i { position:absolute; left:10px; top:50%; transform:translateY(-50%); font:400 13px/1 var(--font); font-style:normal; color:var(--text-3); pointer-events:none; }
+.wkx .wkx-money-in input { padding-left:22px !important; }
+.wkx-co-preview { display:flex; flex-wrap:wrap; gap:4px 12px; margin:0; font:400 12px/16px var(--font); color:var(--text-2); }
+.wkx-co-preview b { font:500 13px/19px var(--font); color:var(--text); }
+.wkx-void { margin-top:4px; padding:14px 16px; border:1px solid var(--border); border-radius:10px; background:var(--bg-sidebar); }
+.wkx-co .co-ul { margin:0; padding-left:18px; font:400 13px/19px var(--font); color:var(--text-2); }
+.wkx-co .co-signed { padding:10px 12px; border-radius:8px; background:var(--positive-soft); font:400 13px/19px var(--font); }
+.wkx-co .co-signed p { margin:0; color:var(--text); }
+.wkx-co .co-link { display:flex; gap:8px; }
+.wkx-co .co-link input { flex:1; font-family:var(--font-mono); font-size:12px; color:var(--text-2); }
+
+/* Billing tab: invoices as rows */
+.wkx-inv-list { list-style:none; margin:0; padding:0; }
+.wkx-inv + .wkx-inv { border-top:1px solid var(--border); }
+.wkx-inv-row { display:flex; align-items:center; gap:12px; width:100%; min-height:60px; padding:10px 18px; border:0; border-radius:0; background:var(--bg-surface); box-shadow:none; color:var(--text); text-align:left; cursor:pointer; }
+.wkx-inv-row:hover { background:var(--bg-hover); }
+.wkx-inv.open > .wkx-inv-row { background:var(--bg-muted); }
+.wkx-inv-hint { font:500 12px/16px var(--font); color:var(--warning); white-space:nowrap; }
+.wkx-inv-amt { min-width:84px; text-align:right; }
+.wkx-inv-detail { padding:0 18px 14px; background:var(--bg-muted); }
+.wkx-inv-detail .mnx-inv.in-table { margin-left:46px; background:var(--bg-surface); }
+.wkx-bill-row .ds-link-text b { white-space:normal; }
+
+@media (max-width: 1000px) { .wkx-quiet-grid { grid-template-columns:minmax(0,1fr); } }
+@media (max-width: 640px) {
+  .wkx-more-facts > div { grid-template-columns:minmax(0,1fr); gap:2px; }
+  .wkx-task-more .wkx-checks { grid-template-columns:minmax(0,1fr); }
+  .wkx-claude-form { flex-wrap:wrap; }
+  .wkx-co-nums { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .wkx-inv-row { flex-wrap:wrap; padding:12px 16px; }
+  .wkx-inv-row .ds-link-text { flex:1 1 calc(100% - 50px); }
+  .wkx-inv-hint { display:none; }
+  .wkx-inv-detail { padding:0 16px 12px; }
+  .wkx-inv-detail .mnx-inv.in-table { margin-left:0; }
+  .wkx-push { margin-left:0; text-align:left; flex-basis:100%; }
+  .wkx-short { max-width:none; }
+}
+.wkx-owners:first-child { padding-top:0; border-top:0; }
+.wkx-task.open .wkx-task-text small:not(.blocked) { display:none; }
+.wkx-inv-detail { list-style:none; margin:0; }
+.wkx-co-form textarea { min-height:84px; }
+.wkx-add-time.ds-form { align-items:start; }
+.wkx-owners dd { white-space:nowrap; }
+.wkx-owners dt { min-width:0; }
+/* ds.css gives every field height:34px with a stronger selector than its own textarea rule, so textareas ignored rows. Let them grow. */
+.wkx textarea { height:auto !important; }
+.wkx .ds-form-actions { flex-wrap:wrap; }

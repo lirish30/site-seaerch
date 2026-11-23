@@ -1,46 +1,21 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import Icon from "../components/Icon";
+import { Facts, PubBar, PubContact, PubError, PubGone, PubNote, PubSkeleton, Tile, useNoIndex } from "../components/PublicPage";
 import ReportVideo from "../components/ReportVideo";
 import TrafficSection from "../components/TrafficSection";
 import { publicSeoReport } from "../api";
 import { dayLabel } from "../careReportPageView";
 import { isReportToken } from "../reportView";
 import { trafficView } from "../trafficView";
-import { seoReportPageView, type PublicSeoReport } from "../seoReportPageView";
+import { seoGlance, seoReportPageView, type PublicSeoReport } from "../seoReportPageView";
 
 type Load = "loading" | "ok" | "gone" | "error";
 
-/** A page that is only a message: link gone, load failed. */
-function Notice({ icon, title, children }: { icon: "link" | "alert"; title: string; children?: React.ReactNode }) {
-  return (
-    <main className="rp mr">
-      <div className="rp-wrap rp-wrap-narrow">
-        <section className="rp-card rp-notice">
-          <span className="rp-notice-icon" aria-hidden="true"><Icon name={icon} size={20} /></span>
-          <h1>{title}</h1>
-          {children}
-        </section>
-      </div>
-    </main>
-  );
-}
-
-function Skeleton() {
-  return (
-    <main className="rp mr" aria-busy="true">
-      <div className="rp-wrap mr-wrap">
-        <div className="rp-card" role="status" aria-label="Loading your report">
-          <span className="rp-sk" style={{ height: 28, width: "60%" }} />
-          <span className="rp-sk" style={{ height: 120, borderRadius: 12 }} />
-        </div>
-      </div>
-    </main>
-  );
-}
+const KIND = "Local SEO report";
 
 /** The band a cell text is in, for its colour. The words in the cell say the same, so the colour is never the only signal. */
 const band = (text: string) => (text === "1-3" ? "top" : text === "4-10" ? "mid" : text === "11-20" ? "low" : text === "not checked" ? "off" : "none");
+const cellWords = (text: string) => (text === "not in the top 20" ? "Not in top 20" : text === "not checked" ? "Not checked" : text);
 
 // Public page: no session and no Shell. Every word that came from a person or from Claude (the summary, the recommendation, the priorities, the search terms, the content titles, the searches and page paths Google counted) is shown as React text, which
 // escapes it, and the page loads no script but the app's own. The summary and what we suggest come first; the figures follow. Nothing on it looks forward: a rank is only what our own check saw.
@@ -50,17 +25,7 @@ export default function SeoReportPage() {
   const [load, setLoad] = useState<Load>("loading");
   const [page, setPage] = useState<PublicSeoReport | null>(null);
   const [attempt, setAttempt] = useState(0);
-
-  useEffect(() => {
-    const prevTitle = document.title;
-    document.title = "Your Local SEO report";
-    let meta = document.querySelector<HTMLMetaElement>('meta[name="robots"]');
-    const created = !meta;
-    if (!meta) { meta = document.createElement("meta"); meta.name = "robots"; document.head.appendChild(meta); }
-    const prevContent = meta.content;
-    meta.content = "noindex, nofollow";
-    return () => { document.title = prevTitle; if (created) meta.remove(); else meta.content = prevContent; };
-  }, []);
+  useNoIndex("Your Local SEO report");
 
   useEffect(() => {
     if (!token) { setLoad("gone"); return; }
@@ -75,106 +40,98 @@ export default function SeoReportPage() {
     return () => { cancelled = true; };
   }, [token, attempt]);
 
-  if (load === "loading") return <Skeleton />;
-  if (load === "error") return (
-    <Notice icon="alert" title="Couldn't load this page">
-      <p>Something went wrong on our side, or your connection dropped. Please try again.</p>
-      <button type="button" className="btn" onClick={() => setAttempt((n) => n + 1)}>Try again</button>
-    </Notice>
-  );
-  if (load === "gone" || !page) return <Notice icon="link" title="This link isn't available"><p>It may have expired or been turned off. Reply to the email you got and we'll sort it out.</p></Notice>;
+  if (load === "loading") return <PubSkeleton kind={KIND} label="Loading your report" />;
+  if (load === "error") return <PubError kind={KIND} what="your report" onRetry={() => setAttempt((n) => n + 1)} />;
+  if (load === "gone" || !page) return <PubGone kind={KIND} />;
 
   const v = seoReportPageView(page, { summary: page.summary, recommendation: page.recommendation, priorities: page.priorities });
   const sent = dayLabel(page.sentOn);
   // Search Console's average position is Google's own figure, not our rank check: it is only ever shown here, named as Google Search's.
   const traffic = trafficView(page.traffic, { positionLabel: "Average position in Google Search" });
+  const glance = seoGlance(page);
 
   return (
-    <main className="rp mr sr">
-      <div className="rp-wrap mr-wrap">
-        {page.clientName && <header className="sr-for"><span className="rp-bar-name">For {page.clientName}</span></header>}
-
-        <article className="rp-card mr-lead">
-          <div className="rp-head">
-            <span className="rp-eyebrow">Local SEO report</span>
-            <h1>{page.label}</h1>
-            {sent && <p className="rp-based">Sent {sent}</p>}
+    <main className="ds-page pbx">
+      <PubBar name={KIND} right={<>
+        {page.clientName && <span className="pbx-bar-meta hide-sm">For {page.clientName}</span>}
+        {sent && <span className="ds-chip outline">Sent {sent}</span>}
+      </>} />
+      <div className="pbx-wrap">
+        <article className="pbx-card pbx-intro">
+          <p className="pbx-eyebrow">Local SEO report{page.clientName ? ` for ${page.clientName}` : ""}</p>
+          <h1>{page.label}</h1>
+          <p className="pbx-lede">Where you showed on Google this month, what we published and what we will work on next.</p>
+          <div className="pbx-strip">
+            <b>{glance.headline}</b>
+            {glance.chips.length > 0 && <span className="pbx-chips">{glance.chips.map((c) => <span key={c.text} className={`ds-chip ${c.tone}`}><i className="ds-dot" />{c.text}</span>)}</span>}
           </div>
           {page.video && token && <ReportVideo src={`/api/public/l/${token}/video.mp4`} />}
-          {v.summary && <p className="mr-text">{v.summary}</p>}
+          {v.summary && <p className="pbx-text">{v.summary}</p>}
           {v.recommendation && (
-            <section className="mr-suggest" aria-labelledby="sr-suggest-h">
-              <h2 id="sr-suggest-h">What we suggest</h2>
-              <p className="mr-text">{v.recommendation}</p>
+            <section className="pbx-callout" aria-label="What we suggest">
+              <span>What we suggest</span>
+              <p className="pbx-text">{v.recommendation}</p>
             </section>
           )}
           {v.priorities.length > 0 && (
-            <section className="mr-suggest" aria-labelledby="sr-next-h">
-              <h2 id="sr-next-h">Next month, we will work on</h2>
-              <ol className="sr-priorities">
-                {v.priorities.map((p, i) => <li key={i} className="mr-text">{p}</li>)}
-              </ol>
+            <section aria-labelledby="sr-next-h" className="pbx-col" style={{ gap: 10 }}>
+              <p className="pbx-label" id="sr-next-h">Next month, we will work on</p>
+              <ol className="pbx-prio">{v.priorities.map((p, i) => <li key={i}><span>{i + 1}</span><span>{p}</span></li>)}</ol>
             </section>
           )}
         </article>
 
-        <section className="mr-section" aria-labelledby="sr-where-h">
-          <h2 id="sr-where-h" className="mr-h">Where you showed on Google{v.rankLine ? `, ${v.rankLine}` : ""}</h2>
-          <p className="mr-note">{v.gridNote}</p>
-          {v.hasGrids && v.terms.length === 0 && <div className="rp-card"><p className="mr-note">No search terms are being checked yet.</p></div>}
-          {v.terms.map((t, i) => (
-            <article key={`${t.heading}-${i}`} className="rp-card mr-site">
-              <h3>{t.heading}</h3>
-              <table className="sr-grid">
-                <caption className="sr-sr">Where {t.heading} showed at nine points around the business, north-west first</caption>
-                <tbody>
-                  {t.rows.map((row, r) => (
-                    <tr key={r}>{row.map((cell, c) => <td key={c} className={`sr-cell sr-${band(cell)}`}>{cell}</td>)}</tr>
-                  ))}
-                </tbody>
+        <div className="pbx-section-h"><h2 id="sr-where-h">Where you showed on Google</h2>{v.rankLine && <span>{v.rankLine[0].toUpperCase() + v.rankLine.slice(1)}</span>}</div>
+        {!v.hasGrids && <article className="pbx-card tight"><div className="pbx-card-head"><Tile icon="target" /><div><h2>No rank check this month</h2><small>{v.gridNote}</small></div></div></article>}
+        {v.hasGrids && v.terms.length === 0 && <article className="pbx-card tight"><div className="pbx-card-head"><Tile icon="target" /><div><h2>No search terms yet</h2><small>No search terms are being checked yet. Once we agree on them with you, each one gets a grid here.</small></div></div></article>}
+        {v.terms.map((t, i) => (
+          <article key={`${t.heading}-${i}`} className="pbx-card tight" aria-label={t.heading}>
+            <div className="pbx-card-head"><Tile icon="pin" tone="signal" /><div><h2>{t.heading}</h2><small>Searched from nine points around the business</small></div></div>
+            <div className="pbx-term">
+              <table className="pbx-grid9">
+                <caption className="pbx-sr">Where {t.heading} showed at nine points around the business, north-west first</caption>
+                <tbody>{t.rows.map((row, r) => <tr key={r}>{row.map((cell, c) => <td key={c} className={`pbx-cell ${band(cell)}`}>{cellWords(cell)}</td>)}</tr>)}</tbody>
               </table>
-              <p className="mr-text sr-line">{t.summaryLine}</p>
-              {t.movement && <p className="mr-note">{t.movement}</p>}
-            </article>
-          ))}
-          {v.terms.length > 0 && <p className="mr-note">The numbers in a cell are the places the business showed in Google's results from that point: 1-3 is the top three.</p>}
-        </section>
-
-        <section className="mr-section" aria-labelledby="sr-profile-h">
-          <h2 id="sr-profile-h" className="mr-h">Your Google profile</h2>
-          <div className="rp-card mr-site">
-            <dl className="mr-rows">
-              {v.profile.map((row) => <div key={row.label} className="mr-row"><dt>{row.label}</dt><dd>{row.value}</dd></div>)}
-            </dl>
+              <div className="pbx-term-side">
+                <b>{t.summaryLine}</b>
+                {t.movement && <p className="pbx-sub">{t.movement}</p>}
+              </div>
+            </div>
+          </article>
+        ))}
+        {v.terms.length > 0 && (
+          <div className="pbx-col" style={{ gap: 8 }}>
+            <ul className="pbx-legend" aria-label="What the colours mean">
+              <li><i className="top" />1-3, the top three</li><li><i className="mid" />4-10</li><li><i className="low" />11-20</li><li><i className="none" />Not in the top 20</li><li><i className="off" />Not checked</li>
+            </ul>
+            <PubNote>{v.gridNote}</PubNote>
           </div>
-        </section>
+        )}
+
+        <article className="pbx-card tight">
+          <div className="pbx-card-head"><Tile icon="star" tone="warning" /><div><h2>Your Google profile</h2><small>Your rating and reviews on Google</small></div></div>
+          <Facts rows={v.profile} />
+        </article>
+
+        <article className="pbx-card flush">
+          <div className="pbx-card-head"><Tile icon="file-text" tone="info" /><div><h2>What we published</h2><small>{v.content.line}</small></div><span className="pbx-count">{v.content.titles.length}</span></div>
+          {v.content.titles.length > 0
+            ? <ul className="pbx-rows">{v.content.titles.map((c, i) => <li key={i}><span className="pbx-row-text"><b>{c.title}</b></span><span className="ds-chip neutral">{c.kind}</span></li>)}</ul>
+            : <div className="pbx-body"><p className="pbx-sub">New pages, blog posts and Google posts we put live for you will be listed here.</p></div>}
+        </article>
+
+        {v.citations.length > 0 && (
+          <article className="pbx-card tight">
+            <div className="pbx-card-head"><Tile icon="list" tone="neutral" /><div><h2>Directory listings</h2><small>Your name, address and phone on other sites</small></div></div>
+            <div className="pbx-stats">
+              {v.citations.map((c) => <div key={c.label} className={`pbx-stat ${c.label === "Confirmed" ? "positive" : c.label === "Need fixing" && c.value !== "0" ? "warning" : ""}`}><span>{c.label}</span><b>{c.value}</b></div>)}
+            </div>
+          </article>
+        )}
 
         {traffic && <TrafficSection view={traffic} />}
 
-        <section className="mr-section" aria-labelledby="sr-content-h">
-          <h2 id="sr-content-h" className="mr-h">What we published</h2>
-          <div className="rp-card mr-site">
-            <p className="mr-text">{v.content.line}</p>
-            {v.content.titles.length > 0 && (
-              <ul className="mr-renewals">
-                {v.content.titles.map((c, i) => <li key={i}><span className="mr-renewal-title">{c.title}</span><span className="mr-renewal-date">{c.kind}</span></li>)}
-              </ul>
-            )}
-          </div>
-        </section>
-
-        {v.citations.length > 0 && (
-          <section className="mr-section" aria-labelledby="sr-dir-h">
-            <h2 id="sr-dir-h" className="mr-h">Directory listings</h2>
-            <div className="rp-card mr-site">
-              <dl className="mr-rows">
-                {v.citations.map((row) => <div key={row.label} className="mr-row"><dt>{row.label}</dt><dd>{row.value}</dd></div>)}
-              </dl>
-            </div>
-          </section>
-        )}
-
-        <p className="mr-foot">Reply to the email this came with if you have a question.</p>
+        <PubContact />
       </div>
     </main>
   );

@@ -49,7 +49,7 @@ export function Ranks({ clientId, data, canCheck, onChanged }: { clientId: strin
   const takenOn = data.latestGrid.map((g) => g.takenOn).sort().at(-1) ?? null;
   return (
     <Part title="Where the business shows" help={takenOn ? `In our check on ${dayLabel(takenOn) ?? takenOn}. Google was searched from nine points around the business; each cell says which part of the results the business was in from that point.` : "No rank check yet."}
-      actions={canCheck ? <button type="button" className="btn" aria-disabled={busy} onClick={() => void check()}>{busy ? "Checking…" : "Check ranks now"}</button> : undefined}>
+      actions={canCheck ? <button type="button" className="btn sm" aria-disabled={busy} onClick={() => void check()}>{busy ? "Checking…" : "Check ranks now"}</button> : undefined}>
       {data.latestGrid.length === 0 && <p className="small muted">{data.keywords.some((k) => k.active) ? "Nothing has been checked yet. Take the baseline, or check the ranks now." : "Add a search term first."}</p>}
       <ul className="sx-terms">{data.latestGrid.map((g) => <Grid key={`${g.term}|${g.town ?? ""}`} row={g} />)}</ul>
       <Say ok={ok} error={error} />
@@ -82,7 +82,7 @@ export function NapBlock({ clientId, nap, canCheck, onChecked }: { clientId: str
   }
   return (
     <Part title="Name, address and phone" help="Does the client’s own site say what the Google listing says?"
-      actions={canCheck ? <button type="button" className="btn" aria-disabled={busy} onClick={() => void check()}>{busy ? "Checking…" : "Check the site now"}</button> : undefined}>
+      actions={canCheck ? <button type="button" className="btn sm" aria-disabled={busy} onClick={() => void check()}>{busy ? "Checking…" : "Check the site now"}</button> : undefined}>
       {!nap && <p className="small muted">Not checked yet.</p>}
       {nap && (
         <>

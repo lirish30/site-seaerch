@@ -120,3 +120,23 @@
 /* A global .lg rule (the login screen's wrapper) also matches ds Empty's `.ds-tile.lg`; undo it here so the empty state keeps its 40px tile. */
 .apx .ds-empty .ds-tile.lg { min-height:0; display:grid; gap:0; padding:0; justify-content:center; }
 .apx .ds-card-body > .apx-open { align-self:flex-start; }
+.apx.ds-page textarea { height:auto !important; }
+
+/* ---- round 2: tinted tiles, no empty gutters when nothing can be ticked, a short explainer under a short list */
+.apx-list.no-bulk .apx-check-gap, .apx-list.no-bulk .apx-tick-gap { display:none; }
+.apx-what { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; }
+.apx-what-card { display:flex; align-items:flex-start; gap:12px; padding:16px 18px; border:1px solid var(--border); border-radius:12px; background:var(--bg-surface); box-shadow:var(--shadow-card); color:var(--text); text-decoration:none; min-width:0; }
+a.apx-what-card:hover { border-color:var(--border-strong); }
+.apx-what-card > span:not(.ds-tile) { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+.apx-what-card b { font:600 14px/20px var(--font); }
+.apx-what-card small { font:400 12px/17px var(--font); color:var(--text-2); }
+.apx-what-card .ds-chev { margin-top:3px; color:var(--text-3); }
+@media (max-width: 900px) { .apx-what { grid-template-columns:minmax(0,1fr); } }
+@media (max-width: 640px) { .apx-list.no-bulk .apx-row { grid-template-columns:34px minmax(0,1fr) auto; } .apx-list.no-bulk .apx-tile { grid-column:1; } .apx-list.no-bulk .apx-row-main { grid-column:2 / -1; } .apx-list.no-bulk .apx-chip { grid-column:2; } .apx-list.no-bulk .apx-review { grid-column:3; } }
+.apx-field.num input { max-width:160px; }
+.apx-field > span { font:500 12px/16px var(--font) !important; color:var(--text-2) !important; }
+.apx .apx-field :is(input, textarea) { font-size:13px; line-height:20px; }
+.apx-doc-head { display:flex; align-items:center; gap:12px; padding-bottom:14px; border-bottom:1px solid var(--border); }
+.apx-doc-head > span:last-child { display:flex; flex-direction:column; min-width:0; }
+.apx-doc-head b { font:500 14px/20px var(--font); color:var(--text); }
+.apx-doc-head small { font:400 12px/16px var(--font); color:var(--text-3); }

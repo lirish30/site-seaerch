@@ -1,4 +1,4 @@
-import { MAX_MARKUPS, SCRIPT_MS, approvalBlockers, hashText, planDurationMs, wordCount, type Markup, type Segment, type VideoPlan } from "../worker/video/plan";
+import { GAP_MS, MAX_MARKUPS, SCRIPT_MS, approvalBlockers, hashText, planDurationMs, wordCount, type Markup, type Segment, type VideoPlan } from "../worker/video/plan";
 
 /** Pure helpers for the video editor and the lead's video panel. Every coordinate is a fraction 0-1 of the shot. */
 
@@ -191,3 +191,41 @@ export const lastAttemptNotice = (status: string, error: string | null | undefin
 
 /** Whether there is a made video to play: rendered or published, with its file stored. */
 export const hasPlayer = (v: { status: string; video_key: string | null }): boolean => (v.status === "rendered" || v.status === "published") && !!v.video_key;
+
+// ---- Video audit editor v2 (Figma 59:4263) ----
+
+/** "1:04": seconds as minutes and seconds, for the script's timestamps and the timeline. */
+export const clock = (seconds: number): string => `${Math.floor(Math.max(0, seconds) / 60)}:${String(Math.round(Math.max(0, seconds)) % 60).padStart(2, "0")}`;
+
+/** Each line's name in the video: "Hook", "Problem 2", "Offer", "Call to action" (problems are numbered in order). */
+export function lineNames(segments: Pick<Segment, "role">[]): string[] {
+  let p = 0;
+  return segments.map((s) => (s.role === "problem" ? `Problem ${++p}` : roleLabel(s.role)));
+}
+
+/** Where each line starts and how long it runs, from the expected reading time (a current recording's real length wins), with the gap between lines. */
+export function lineTimeline(plan: Pick<VideoPlan, "segments">): { id: string; name: string; start: number; seconds: number }[] {
+  const names = lineNames(plan.segments);
+  let at = 0;
+  return plan.segments.map((s, i) => {
+    const take = s.audio && s.audio.textHash === hashText(s.text) ? s.audio.durationMs / 1000 : expectedSeconds(s.text);
+    const row = { id: s.id, name: names[i], start: at, seconds: Math.max(1, Math.round(take)) };
+    at += take + GAP_MS / 1000;
+    return row;
+  });
+}
+
+/** The chip beside the editor's title: where the video stands, in one word, toned by what it asks of you. */
+export function statusChip(status: string): { label: string; tone: "info" | "warning" | "positive" | "critical" | "neutral" | "signal" } {
+  switch (status) {
+    case "capturing": return { label: "Taking screenshots", tone: "neutral" };
+    case "scripting": return { label: "Waiting for Claude", tone: "neutral" };
+    case "review": return { label: "Draft", tone: "info" };
+    case "producing": return { label: "Being made", tone: "signal" };
+    case "rendered": return { label: "Ready to publish", tone: "warning" };
+    case "published": return { label: "Live", tone: "positive" };
+    case "failed": return { label: "Failed", tone: "critical" };
+    case "cancelled": return { label: "Cancelled", tone: "neutral" };
+    default: return { label: status, tone: "neutral" };
+  }
+}

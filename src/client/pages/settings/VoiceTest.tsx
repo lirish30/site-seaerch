@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../../api";
+import { Chip } from "../../components/ds";
+import Icon from "../../components/Icon";
 import SettingsPage, { Callout, Card, Field } from "../../components/SettingsPage";
-import { Toggle } from "../../components/settingsBits";
+import { SwitchRow } from "../../components/StepFields";
 import { useSettingsDoc } from "../../settingsData";
 import { RECORD_OWN_STEPS, engineName, referenceProblem, voiceTestLine } from "../../voiceTestView";
 
@@ -103,73 +105,102 @@ export default function VoiceTest() {
   // With no cloned voice and no test under way, say how to narrate the lines yourself.
   const ownLines = !!voice && !voice.voice_engine && (none || !t);
 
+  const badge = voice ? (voice.voice_engine ? <Chip tone="positive" dot>Voice picked · {engineName(voice.voice_engine)}</Chip> : hasRef ? <Chip tone="warning" dot>Run the voice test</Chip> : <Chip tone="outline" dot>Not set up</Chip>) : undefined;
+
   return (
-    <SettingsPage title="Video voice" width={720} doc={doc}
+    <SettingsPage title="Video voice" width={760} doc={doc} badge={badge}
       sub="Your videos can speak in a clone of your voice. Record yourself once, then listen to three engines read the same line and pick the one that sounds most like you. You don't see which is which until you choose.">
-      <Card title="Your reference recording" sub="Talk naturally for 30 seconds to 2 minutes, in a quiet room. The three engines copy the voice they hear here.">
-        {voice === false && <Callout tone="critical" icon="alert">Couldn't load your settings.</Callout>}
-        {hasRef && <p className="vt-ref"><audio controls src={`/api/settings/voice-reference?v=${refStamp}`} aria-label="Your reference recording" /></p>}
-        {voice && !hasRef && <p className="st-loading">No reference recording yet.</p>}
-        <div className="vt-actions">
-          {recording
-            ? <button type="button" className="btn danger-ghost" onClick={stopRecording}>Stop and save ({seconds}s)</button>
-            : <button type="button" className="btn" disabled={busy || !canRecord()} onClick={() => void startRecording()}>{hasRef ? "Record again" : "Record now"}</button>}
-          <label className={`btn${busy || recording ? " disabled" : ""}`}>
-            Upload a file
-            <input type="file" accept="audio/wav,audio/webm,audio/mpeg,audio/mp4,audio/x-m4a,.wav,.webm,.mp3,.m4a" hidden disabled={busy || recording}
-              onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; void pickFile(f); }} />
-          </label>
-        </div>
-        {!canRecord() && <p className="help">This browser can't record. Use Chrome or Edge, or upload a wav, mp3 or m4a file (up to 15 MB).</p>}
-        {refMsg && <p className="help err" role="alert">{refMsg}</p>}
-      </Card>
+      <div className="bx sox">
+        <section className="st-card">
+          <header><div><h2>1. Your reference recording</h2><p>Talk naturally for 30 seconds to 2 minutes, in a quiet room. The three engines copy the voice they hear here.</p></div></header>
+          <ul className="sox-list">
+            <li className="sox-row">
+              <span className={`sox-tile ${recording ? "critical" : hasRef ? "positive" : ""}`}><Icon name={recording ? "radar" : hasRef ? "check" : "upload"} size={16} /></span>
+              <div className="sox-main">
+                {voice === false && <b className="bad">Couldn't load your settings.</b>}
+                {voice === null && <small>Loading…</small>}
+                {recording ? <><b>Recording… {seconds}s</b><small>Stop between 30 seconds and 2 minutes.</small></>
+                  : hasRef ? <><b>Recording saved</b><audio controls src={`/api/settings/voice-reference?v=${refStamp}`} aria-label="Your reference recording" /></>
+                  : voice && <><b>No reference recording yet</b><small>Record now in the browser, or upload a wav, webm, mp3 or m4a file (up to 15 MB).</small></>}
+                {!canRecord() && <small>This browser can't record. Use Chrome or Edge, or upload a file.</small>}
+                {refMsg && <small className="bad" role="alert">{refMsg}</small>}
+              </div>
+              <div className="sox-side">
+                {recording
+                  ? <button type="button" className="btn primary" onClick={stopRecording}>Stop and save ({seconds}s)</button>
+                  : <button type="button" className={`btn${hasRef ? "" : " primary"}`} disabled={busy || !canRecord()} onClick={() => void startRecording()}>{hasRef ? "Record again" : "Record now"}</button>}
+                <label className={`btn sox-file${busy || recording ? " disabled" : ""}`}>
+                  Upload a file
+                  <input type="file" accept="audio/wav,audio/webm,audio/mpeg,audio/mp4,audio/x-m4a,.wav,.webm,.mp3,.m4a" hidden disabled={busy || recording}
+                    onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; void pickFile(f); }} />
+                </label>
+              </div>
+            </li>
+          </ul>
+        </section>
 
-      <Card title="Voice test" sub="The same line, read three ways.">
-        {test === false && <Callout tone="critical" icon="alert">Couldn't load the test.</Callout>}
-        {!t && test !== false && <p className="st-loading">{test === null ? "Loading…" : "No test yet."}</p>}
-        {t && (
-          <>
-            <p className="vt-line" role="status">{voiceTestLine({ pending: t.pending, chosen: t.chosen })}</p>
-            {!t.helperOnline && t.chosen === null && t.pending > 0 && <Callout tone="warn" icon="alert">Your Mac helper is offline. Start it and the clips will appear here.</Callout>}
-            {failed.length > 0 && <Callout tone="critical" icon="alert">{failed[0].error ?? "A clip couldn't be made."} Run the test again.</Callout>}
-            <ul className="st-list vt-clips">
-              {t.clips.map((c) => (
-                <li key={c.label} className="st-list-row">
-                  <div className="vt-clip">
-                    <b>{c.label}{t.engines ? ` · ${engineName(t.engines[c.label])}` : ""}{t.chosen === c.label ? " · your pick" : ""}</b>
-                    {c.status === "ready" ? <audio controls preload="none" src={c.url} aria-label={`Clip ${c.label}`} /> : <span>{c.status === "failed" ? "Couldn't be made" : "Waiting for your Mac"}</span>}
-                  </div>
-                  {t.chosen === null && <button type="button" className="btn" disabled={busy || !ready} onClick={() => void choose(c.label)}>This one</button>}
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-        <div className="vt-actions">
-          <button type="button" className={`btn${!t ? " primary" : ""}`} disabled={busy || !hasRef} onClick={() => void start()}>{t ? "Run a new test" : "Run the test"}</button>
-          <button type="button" className="btn-plain" disabled={busy} onClick={() => void noneOfThese()}>None of these: I'll record my own</button>
-        </div>
-        {!hasRef && <p className="help">Add a reference recording first.</p>}
-        {msg && <p className="help err" role="alert">{msg}</p>}
-        {voice && voice.voice_engine && <p className="help">New videos use the cloned voice ({engineName(voice.voice_engine)}).</p>}
-        {voice && !voice.voice_engine && <p className="help">No cloned voice is set. New videos are narrated from your own recordings.</p>}
-        {ownLines && (
-          <Callout icon="info">
-            Recording your own lines:
-            <ol>{RECORD_OWN_STEPS.map((s) => <li key={s}>{s}</li>)}</ol>
-          </Callout>
-        )}
-      </Card>
+        <section className="st-card">
+          <header>
+            <div><h2>2. Voice test</h2><p>The same line, read three ways. Pick the one that sounds most like you.</p></div>
+            <button type="button" className={`btn${!t && hasRef ? " primary" : ""}`} disabled={busy || !hasRef} onClick={() => void start()}>{t ? "Run a new test" : "Run the test"}</button>
+          </header>
+          {test === false && <div className="st-card-body"><Callout tone="critical" icon="alert">Couldn't load the test.</Callout></div>}
+          {!t && test !== false && (
+            <div className="sox-row">
+              <span className="sox-tile"><Icon name="sparkles" size={16} /></span>
+              <div className="sox-main"><b>{test === null ? "Loading…" : "No test yet"}</b><small>{hasRef ? "Run the test and your Mac makes three clips. They show here, labelled A, B and C." : "Add a reference recording first, then run the test."}</small></div>
+            </div>
+          )}
+          {t && (
+            <>
+              <div className="sox-row" style={{ paddingBottom: 0 }}><p className="sox-desc" role="status" style={{ font: "500 13px/19px var(--font)" }}>{voiceTestLine({ pending: t.pending, chosen: t.chosen })}</p></div>
+              {(!t.helperOnline && t.chosen === null && t.pending > 0) || failed.length > 0 ? (
+                <div className="st-card-body" style={{ paddingBottom: 0 }}>
+                  {!t.helperOnline && t.chosen === null && t.pending > 0 && <Callout tone="warn" icon="alert">Your Mac helper is offline. Start it and the clips will appear here.</Callout>}
+                  {failed.length > 0 && <Callout tone="critical" icon="alert">{failed[0].error ?? "A clip couldn't be made."} Run the test again.</Callout>}
+                </div>
+              ) : null}
+              <ul className="sox-list" style={{ marginTop: 14, borderTop: "1px solid var(--border)" }}>
+                {t.clips.map((c) => (
+                  <li key={c.label} className={`sox-row sox-clip${t.chosen === c.label ? " chosen" : ""}`}>
+                    <span className={`sox-tile ${t.chosen === c.label ? "signal" : c.status === "failed" ? "critical" : ""}`}>{c.label}</span>
+                    <div className="sox-main">
+                      <div className="sox-title"><b>Clip {c.label}{t.engines ? ` · ${engineName(t.engines[c.label])}` : ""}</b>{t.chosen === c.label && <Chip tone="signal" dot>Your pick</Chip>}</div>
+                      {c.status === "ready" ? <audio controls preload="none" src={c.url} aria-label={`Clip ${c.label}`} /> : <small className={c.status === "failed" ? "bad" : undefined}>{c.status === "failed" ? "Couldn't be made" : "Waiting for your Mac"}</small>}
+                    </div>
+                    {t.chosen === null && <button type="button" className="btn sm" disabled={busy || !ready} onClick={() => void choose(c.label)}>This one</button>}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          <div className="sox-card-foot">
+            <span className="sox-sub" style={{ flex: 1 }}>
+              {voice && voice.voice_engine ? `New videos use the cloned voice (${engineName(voice.voice_engine)}).` : voice ? "No cloned voice is set. New videos are narrated from your own recordings." : ""}
+            </span>
+            <button type="button" className="btn-plain" disabled={busy} onClick={() => void noneOfThese()}>None of these: I'll record my own</button>
+          </div>
+          {(msg || ownLines) && (
+            <div className="st-card-body" style={{ borderTop: "1px solid var(--border)" }}>
+              {msg && <p className="bx-err" role="alert">{msg}</p>}
+              {ownLines && (
+                <Callout icon="info">
+                  Recording your own lines:
+                  <ol>{RECORD_OWN_STEPS.map((s) => <li key={s}>{s}</li>)}</ol>
+                </Callout>
+              )}
+            </div>
+          )}
+        </section>
 
-      <Card title="In your videos">
-        <Field label="Booking link" htmlFor="vt-book" error={doc.errors.booking_url} help="Where a video sends people to book a call. An https:// link, or leave it empty.">
-          <input id="vt-book" type="url" inputMode="url" maxLength={500} placeholder="https://cal.com/you" value={doc.value("booking_url")} onChange={(e) => doc.set("booking_url", e.target.value)} />
-        </Field>
-        <div className="vt-note">
-          <div><b>Say the voice is AI</b><span>A short note on the video's page that the voice is a clone of yours. Leave it on unless you narrate every video yourself.</span></div>
-          <Toggle checked={doc.value("ai_voice_note") !== "0"} onChange={(v) => doc.set("ai_voice_note", v ? 1 : 0)} label="Say the voice is AI" />
-        </div>
-      </Card>
+        <Card title="In your videos" sub="Where a video sends people, and what it says about the voice.">
+          <Field label="Booking link" htmlFor="vt-book" error={doc.errors.booking_url} help="Where a video sends people to book a call. An https:// link, or leave it empty.">
+            <input id="vt-book" className="sox-w l" type="url" inputMode="url" maxLength={500} placeholder="https://cal.com/you" value={doc.value("booking_url")} onChange={(e) => doc.set("booking_url", e.target.value)} />
+          </Field>
+          <SwitchRow checked={doc.value("ai_voice_note") !== "0"} onChange={(v) => doc.set("ai_voice_note", v ? 1 : 0)} label="Say the voice is AI"
+            help="A short note on the video's page that the voice is a clone of yours. Leave it on unless you narrate every video yourself." />
+        </Card>
+      </div>
     </SettingsPage>
   );
 }

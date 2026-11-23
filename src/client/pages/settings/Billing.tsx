@@ -1,14 +1,16 @@
 import { useEffect, useState } from "react";
 import { api } from "../../api";
+import { Chip } from "../../components/ds";
 import Icon from "../../components/Icon";
-import SettingsPage, { Callout, Card, Field, Row } from "../../components/SettingsPage";
+import SettingsPage, { Card, Field } from "../../components/SettingsPage";
 import { billingTermsProblem, offsetsText, parseOffsets, readBillingTerms, stripeRows, WEBHOOK_EVENTS, WEBHOOK_PATH, type BillingTerms, type StripeStatus } from "../../billingView";
 import { useSettingsDoc } from "../../settingsData";
 
 type NumKey = "netDays" | "pauseAfterDays" | "termNoticeDays";
-const NUM_KEYS: NumKey[] = ["netDays", "pauseAfterDays", "termNoticeDays"];
 /** A whole number typed in a box; NaN for blank or anything else, which `billingTermsProblem` refuses. */
 const whole = (raw: string): number => (/^-?\d+$/.test(raw.trim()) ? Number(raw) : Number.NaN);
+/** One reminder day as words on the schedule strip. */
+const dayWords = (d: number) => (d === 0 ? "On the due date" : d < 0 ? `${-d} ${d === -1 ? "day" : "days"} before` : `${d} ${d === 1 ? "day" : "days"} late`);
 
 /** Settings > Billing: the four invoice numbers (saved as one JSON document the worker checks again), Stripe's status as booleans, and the events to switch on in Stripe. No key is ever shown. */
 export default function Billing() {
@@ -34,47 +36,70 @@ export default function Billing() {
   const [stripe, setStripe] = useState<StripeStatus | null | false>(null);
   useEffect(() => { api.get<StripeStatus>("/billing/stripe-status").then(setStripe).catch(() => setStripe(false)); }, []);
   const rows = stripe ? stripeRows(stripe) : [];
+  const missing = rows.filter((r) => !r.ok).length;
+  const origin = typeof location === "undefined" ? "" : location.origin;
 
   return (
-    <SettingsPage title="Billing" width={760} doc={doc} blocked={problem ?? undefined} sub="How long a client has to pay, when reminders go, and what is set up in Stripe.">
-      <div className="bx">
+    <SettingsPage title="Billing" width={760} doc={doc} blocked={problem ?? undefined} sub="How long a client has to pay, when reminders go, and what is set up in Stripe."
+      badge={stripe ? (stripe.mode === "live" ? <Chip tone="warning" dot>Stripe live</Chip> : stripe.mode ? <Chip tone="info" dot>Stripe test mode</Chip> : <Chip tone="outline" dot>Stripe not set up</Chip>) : undefined}>
+      <div className="bx sox">
         <Card title="Invoice terms" sub="Saved as one document. The worker checks it again when you save and says which number is wrong.">
-          <Row>
+          <div className="sox-grid">
             <Field label="Days to pay an invoice" htmlFor="bl-net" help="1 to 60. The due date is this many days after an invoice is sent.">
-              <input id="bl-net" className="in" inputMode="numeric" value={text("netDays")} aria-invalid={Number.isNaN(terms.netDays)} onChange={num("netDays")} />
+              <input id="bl-net" className="sox-w" inputMode="numeric" value={text("netDays")} aria-invalid={Number.isNaN(terms.netDays)} onChange={num("netDays")} />
             </Field>
             <Field label="Term notice (days before the term ends)" htmlFor="bl-notice" help="7 to 90. The client is told a subscription's term is ending this many days ahead.">
-              <input id="bl-notice" className="in" inputMode="numeric" value={text("termNoticeDays")} aria-invalid={Number.isNaN(terms.termNoticeDays)} onChange={num("termNoticeDays")} />
+              <input id="bl-notice" className="sox-w" inputMode="numeric" value={text("termNoticeDays")} aria-invalid={Number.isNaN(terms.termNoticeDays)} onChange={num("termNoticeDays")} />
             </Field>
-          </Row>
-          <Field label="Reminder days" htmlFor="bl-offsets" help="Days from the due date, in order, 1 to 6 of them (-30 to 60). Negative is before it: -3, 0, 3, 7 is three days before, on the day, then 3 and 7 days late. Each reminder is a mail you approve.">
-            <input id="bl-offsets" className="in" inputMode="text" autoComplete="off" value={text("reminderOffsets")} aria-invalid={offsets === null}
-              onChange={(e) => { setTyped((t) => ({ ...t, reminderOffsets: e.target.value })); const o = parseOffsets(e.target.value); if (o) save({ reminderOffsets: o }); }} />
-          </Field>
-          <Field label="Pause work after (days past due)" htmlFor="bl-pause" help="7 to 60, and after the last reminder. Your tasks and Claude's for that client stop (a hold). The client's site and hosting are never touched.">
-            <input id="bl-pause" className="in" inputMode="numeric" value={text("pauseAfterDays")} aria-invalid={Number.isNaN(terms.pauseAfterDays)} onChange={num("pauseAfterDays")} />
-          </Field>
+            <Field label="Reminder days" htmlFor="bl-offsets" help="Days from the due date, 1 to 6 of them (-30 to 60). Negative is before it. Each reminder is a mail you approve.">
+              <input id="bl-offsets" className="sox-w l" inputMode="text" autoComplete="off" value={text("reminderOffsets")} aria-invalid={offsets === null}
+                onChange={(e) => { setTyped((t) => ({ ...t, reminderOffsets: e.target.value })); const o = parseOffsets(e.target.value); if (o) save({ reminderOffsets: o }); }} />
+            </Field>
+            <Field label="Pause work after (days past due)" htmlFor="bl-pause" help="7 to 60, and after the last reminder. Your tasks and Claude's for that client stop. The site and hosting are never touched.">
+              <input id="bl-pause" className="sox-w" inputMode="numeric" value={text("pauseAfterDays")} aria-invalid={Number.isNaN(terms.pauseAfterDays)} onChange={num("pauseAfterDays")} />
+            </Field>
+          </div>
+          {offsets && offsets.length > 0 && (
+            <div className="sox-sched" aria-label="What happens to an unpaid invoice">
+              <Chip tone="outline">Sent</Chip><i className="sep" />
+              <Chip tone="neutral">Due after {Number.isNaN(terms.netDays) ? "?" : terms.netDays} days</Chip>
+              {offsets.map((d, i) => <span key={i} style={{ display: "contents" }}><i className="sep" /><Chip tone={d > 0 ? "warning" : "info"}>{dayWords(d)}</Chip></span>)}
+              <i className="sep" /><Chip tone="critical" dot>Work pauses {Number.isNaN(terms.pauseAfterDays) ? "?" : terms.pauseAfterDays} days late</Chip>
+            </div>
+          )}
           {problem && <p className="bx-err" role="alert">{problem}</p>}
         </Card>
 
-        <Card title="Stripe" sub="What is set up, as yes or no. The key and the webhook secret are Worker secrets: this page never shows them.">
-          {stripe === null && <p className="bx-muted">Checking…</p>}
-          {stripe === false && <Callout tone="warn" icon="alert">Couldn’t read the Stripe status. Reload the page to try again.</Callout>}
-          {stripe && stripe.mode === "live" && <Callout tone="warn" icon="alert">Live mode: an approved invoice charges a real client.</Callout>}
-          {stripe && (
-            <ul className="st-list bl-stripe">
-              {rows.map((r) => (
-                <li key={r.label} className="st-list-row bl-stripe-row">
-                  <div><b>{r.label}</b><p className="bx-muted">{r.hint}</p></div>
-                  <span className={`bl-ok${r.ok ? " yes" : ""}`}><Icon name={r.ok ? "check" : "alert"} size={14} />{r.text}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Card>
+        <section className="st-card">
+          <header>
+            <div><h2>Stripe</h2><p>What is set up, as yes or no. The key and the webhook secret are Worker secrets: this page never shows them.</p></div>
+            {stripe && <Chip tone={missing ? "warning" : "positive"} dot>{missing ? `${missing} to set up` : "All set"}</Chip>}
+          </header>
+          <div className="st-card-body flush">
+            {stripe === null && <p className="sox-row sox-sub">Checking…</p>}
+            {stripe === false && <p className="sox-row bx-err" role="alert">Couldn’t read the Stripe status. Reload the page to try again.</p>}
+            {stripe && (
+              <ul className="sox-list">
+                {rows.map((r) => {
+                  // Live mode is set up, but it is the one state that charges real money, so it reads amber.
+                  const live = r.label === "Stripe key" && stripe.mode === "live";
+                  const tone = live || !r.ok ? "warning" : "positive";
+                  return (
+                    <li key={r.label} className="sox-row">
+                      <span className={`sox-tile ${tone}`}><Icon name={live ? "card" : r.ok ? "check" : "alert"} size={16} /></span>
+                      <div className="sox-main"><b>{r.label}</b><small>{live ? "Live mode: an approved invoice charges a real client. " : ""}{r.hint}</small></div>
+                      <Chip tone={tone} dot>{r.text}</Chip>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        </section>
 
-        <Card title="Events to switch on in Stripe" sub={<>In Stripe, add a webhook endpoint at <code>{WEBHOOK_PATH}</code> on this app’s address ({typeof location === "undefined" ? "" : location.origin}) and enable exactly these seven events. Its signing secret is the webhook secret above.</>}>
-          <ul className="bl-events">{WEBHOOK_EVENTS.map((e) => <li key={e}><code>{e}</code></li>)}</ul>
+        <Card title="Events to switch on in Stripe" sub={`In Stripe, add a webhook endpoint at this address and enable exactly these ${WEBHOOK_EVENTS.length} events. Its signing secret is the webhook secret above.`}>
+          <div className="sox-endpoint"><Icon name="link" size={14} /><code>{origin}{WEBHOOK_PATH}</code></div>
+          <div className="sox-events">{WEBHOOK_EVENTS.map((e) => <code key={e}>{e}</code>)}</div>
         </Card>
       </div>
     </SettingsPage>

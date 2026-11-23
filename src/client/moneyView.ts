@@ -80,3 +80,11 @@ export function clientsToGoal(mrrCents: number, clients: number, gapCents: numbe
   if (gapCents <= 0 || clients <= 0 || mrrCents <= 0) return null;
   return Math.ceil(gapCents / (mrrCents / clients));
 }
+
+/** The share of a cap in words for a running-cost line: "Under 1% of the cap" for a few cents, "12% of the cap", "Over the cap", or "No cap set" when there is none. */
+export function capShare(spentUsd: number, limitUsd: number | null): string {
+  if (!limitUsd || limitUsd <= 0) return "No cap set";
+  if (spentUsd >= limitUsd) return "At or over the cap";
+  const pct = Math.round((spentUsd / limitUsd) * 100);
+  return spentUsd > 0 && pct < 1 ? "Under 1% of the cap" : `${pct}% of the cap`;
+}

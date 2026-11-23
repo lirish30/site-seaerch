@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import Icon from "../../components/Icon";
-import { canSubmit, dueLabel, type PublicOnboarding } from "../../onboardView";
+import { Tile } from "../../components/PublicPage";
+import { answeredCount, canSubmit, dueLabel, dueTone, type PublicOnboarding } from "../../onboardView";
 import type { OnboardApi } from "./api";
 import SaveNote from "./SaveNote";
 import { useSaver } from "./useSaver";
@@ -10,35 +11,45 @@ type Question = PublicOnboarding["questionnaire"]["questions"][number];
 export interface PageHooks { onSubmitted: () => void; onLocked: () => void; onGone: () => void; onSaved: () => void }
 
 /** One question. The question text is the owner's and the answer is the client's own: both are shown as React text. */
-function Field({ q, value, error, disabled, onChange, onBlur }: {
-  q: Question; value: string; error?: string; disabled: boolean; onChange: (v: string) => void; onBlur: () => void;
+function Field({ q, n, value, error, disabled, onChange, onBlur }: {
+  q: Question; n: number; value: string; error?: string; disabled: boolean; onChange: (v: string) => void; onBlur: () => void;
 }) {
   const id = useId();
   const hint = q.help ? `${id}-help` : undefined;
   const err = error ? `${id}-err` : undefined;
   const describedBy = [hint, err].filter(Boolean).join(" ") || undefined;
-  const label = <>{q.label}{!q.required && <span className="ob-opt"> (optional)</span>}</>;
+  const label = <>{q.label}{!q.required && <span className="pbx-opt"> (optional)</span>}</>;
+  const state = error ? " bad" : value.trim() ? " done" : "";
+  const num = <span className="pbx-qn" aria-hidden="true">{error ? "!" : value.trim() ? <Icon name="check" size={13} /> : n}</span>;
   if (q.type === "choice") {
     return (
-      <fieldset className="ob-field ob-choice" aria-describedby={describedBy}>
-        <legend>{label}</legend>
-        {q.help && <small id={hint}>{q.help}</small>}
-        {(q.options ?? []).map((opt) => (
-          <label key={opt} className="ob-radio"><input type="radio" name={id} checked={value === opt} disabled={disabled} onChange={() => onChange(opt)} /><span>{opt}</span></label>
-        ))}
-        {error && <p className="ob-err" id={err} role="alert">{error}</p>}
+      <fieldset className={`pbx-q${state}`} aria-describedby={describedBy}>
+        {num}
+        <div className="pbx-q-body">
+          <legend className="pbx-q-label">{label}</legend>
+          {q.help && <small id={hint}>{q.help}</small>}
+          <div className="pbx-choices">
+            {(q.options ?? []).map((opt) => (
+              <label key={opt} className="pbx-choice"><input type="radio" name={id} checked={value === opt} disabled={disabled} onChange={() => onChange(opt)} /><span>{opt}</span></label>
+            ))}
+          </div>
+          {error && <p className="pbx-err" id={err} role="alert">{error}</p>}
+        </div>
       </fieldset>
     );
   }
   const common = { id, value, disabled, onBlur, "aria-describedby": describedBy, "aria-invalid": error ? true : undefined, autoComplete: "off" as const };
   return (
-    <div className="ob-field">
-      <label htmlFor={id}>{label}</label>
-      {q.help && <small id={hint}>{q.help}</small>}
-      {q.type === "long"
-        ? <textarea {...common} rows={5} maxLength={3000} onChange={(e) => onChange(e.target.value)} />
-        : <input {...common} type="text" maxLength={300} onChange={(e) => onChange(e.target.value)} />}
-      {error && <p className="ob-err" id={err} role="alert">{error}</p>}
+    <div className={`pbx-q${state}`}>
+      {num}
+      <div className="pbx-q-body">
+        <label htmlFor={id} className="pbx-q-label">{label}</label>
+        {q.help && <small id={hint}>{q.help}</small>}
+        {q.type === "long"
+          ? <textarea {...common} rows={4} maxLength={3000} onChange={(e) => onChange(e.target.value)} />
+          : <input {...common} type="text" maxLength={300} style={{ maxWidth: 420 }} onChange={(e) => onChange(e.target.value)} />}
+        {error && <p className="pbx-err" id={err} role="alert">{error}</p>}
+      </div>
     </div>
   );
 }
@@ -46,8 +57,8 @@ function Field({ q, value, error, disabled, onChange, onBlur }: {
 /** What they sent, read-only: after the questionnaire is handed in, or when the onboarding is closed. */
 function Sent({ q }: { q: PublicOnboarding["questionnaire"] }) {
   return (
-    <dl className="ob-answers">
-      {q.questions.map((x) => <div key={x.id}><dt>{x.label}</dt><dd>{(q.answers[x.id] ?? "").trim() || "No answer"}</dd></div>)}
+    <dl className="pbx-answers">
+      {q.questions.map((x) => { const a = (q.answers[x.id] ?? "").trim(); return <div key={x.id}><dt>{x.label}</dt><dd className={a ? "" : "none"}>{a || "No answer"}</dd></div>; })}
     </dl>
   );
 }
@@ -131,49 +142,59 @@ export default function Questionnaire({ page, api, now, closed, hooks }: { page:
     if (e.key === "Enter" && (e.target as HTMLElement).tagName === "INPUT") e.preventDefault();
   }
 
+  const answered = answeredCount(q, answers);
+  const due = dueLabel(q.dueAt, now, page.timezone);
   return (
-    <section className="rp-card ob-card" aria-labelledby="ob-q-title">
-      <div className="ob-card-head">
-        <h2 id="ob-q-title">Your questions</h2>
-        <span className={`ob-badge${submitted ? " ob-badge-done" : ""}`}>{submitted ? "Sent" : dueLabel(q.dueAt, now, page.timezone)}</span>
+    <section className="pbx-card flush" id="ob-q" aria-labelledby="ob-q-title">
+      <div className="pbx-card-head">
+        <Tile icon={submitted ? "check" : "pen"} tone={submitted ? "positive" : "signal"} />
+        <div>
+          <h2 id="ob-q-title">Your questions</h2>
+          <small>{submitted ? "Thank you, we have your answers" : closed ? "This page is read-only now" : `${answered} of ${q.questions.length} answered · saves as you type`}</small>
+        </div>
+        <span className={`ds-chip ${submitted ? "positive" : dueTone(due)}`}>{submitted ? "Sent" : due}</span>
       </div>
       {submitted || closed ? (
         <>
-          {submitted && <p className="ob-lead" role="status">{sentNow && !q.submittedAt ? "Sent. Thank you." : "Thank you, we have your answers."}</p>}
+          {submitted && <p className="pbx-sr" role="status">{sentNow && !q.submittedAt ? "Sent. Thank you." : "Thank you, we have your answers."}</p>}
           <Sent q={sentNow && !q.submittedAt ? { ...q, answers } : q} />
         </>
       ) : (
-        <form className="ob-form" onSubmit={(e) => e.preventDefault()} onKeyDown={noEnterSubmit} noValidate>
-          <p className="ob-lead">Answer in your own words. Your answers save as you type, so you can close this page and come back.</p>
-          {q.questions.map((x) => (
-            <Field key={x.id} q={x} value={answers[x.id] ?? ""} error={errors[x.id]} disabled={submitting}
-              onChange={(v) => change(x.id, v, x.type === "choice")} onBlur={() => void saver.flush()} />
-          ))}
-          <SaveNote state={saver.state} onRetry={() => void saver.flush()} />
-          {confirming ? (
-            <div className="ob-confirm" ref={confirmBox} tabIndex={-1} role="alertdialog" aria-labelledby="ob-confirm-title" aria-describedby="ob-confirm-text"
-              onKeyDown={(e) => { if (e.key === "Escape" && !submitting) { e.stopPropagation(); keep(); } }}>
-              <p id="ob-confirm-title" className="ob-confirm-title">Send now?</p>
-              <p id="ob-confirm-text">You won't be able to change your answers after this.</p>
-              <div className="ob-confirm-actions">
-                <button type="button" className="btn primary ob-send" disabled={submitting} onClick={() => void submit()}>{submitting ? "Sending..." : "Yes, send"}</button>
-                <button type="button" className="btn ob-keep" disabled={submitting} onClick={keep}>Keep editing</button>
+        <form onSubmit={(e) => e.preventDefault()} onKeyDown={noEnterSubmit} noValidate>
+          <div className="pbx-qs">
+            {q.questions.map((x, i) => (
+              <Field key={x.id} q={x} n={i + 1} value={answers[x.id] ?? ""} error={errors[x.id]} disabled={submitting}
+                onChange={(v) => change(x.id, v, x.type === "choice")} onBlur={() => void saver.flush()} />
+            ))}
+          </div>
+          <div className="pbx-q-foot">
+            <SaveNote state={saver.state} onRetry={() => void saver.flush()} />
+            {confirming ? (
+              <div className="pbx-confirm" ref={confirmBox} tabIndex={-1} role="alertdialog" aria-labelledby="ob-confirm-title" aria-describedby="ob-confirm-text"
+                onKeyDown={(e) => { if (e.key === "Escape" && !submitting) { e.stopPropagation(); keep(); } }}>
+                <b id="ob-confirm-title">Send now?</b>
+                <p id="ob-confirm-text">You won't be able to change your answers after this.</p>
+                <div className="pbx-actions">
+                  <button type="button" className="btn primary" disabled={submitting} onClick={() => void submit()}>{submitting ? "Sending..." : "Yes, send"}</button>
+                  <button type="button" className="btn" disabled={submitting} onClick={keep}>Keep editing</button>
+                </div>
               </div>
-            </div>
-          ) : (
-            <div className="ob-actions">
-              <button ref={sendButton} type="button" className="btn primary ob-send" disabled={!canSend} onClick={() => setConfirming(true)}>Send answers</button>
-            </div>
-          )}
-          {submitError && <p className="ob-err" role="alert">{submitError}</p>}
-          {refused && <p className="ob-err">Fix the answers marked above before you send.</p>}
-          {!ok && (
-            <div className="ob-missing">
-              <p>Still needed before you can send:</p>
-              <ul>{missing.map((id) => <li key={id}>{q.questions.find((x) => x.id === id)?.label ?? id}</li>)}</ul>
-            </div>
-          )}
-          <p className="ob-fine"><Icon name="info" size={14} />Once you send them, they are locked. If something needs to change later, reply to the email you were sent.</p>
+            ) : (
+              <div className="pbx-actions">
+                <button ref={sendButton} type="button" className="btn primary" disabled={!canSend} onClick={() => setConfirming(true)}><Icon name="send" size={16} />Send answers</button>
+                {ok && !refused && <span className="pbx-fine">Everything needed is answered.</span>}
+              </div>
+            )}
+            {submitError && <p className="pbx-err" role="alert">{submitError}</p>}
+            {refused && <p className="pbx-err">Fix the answers marked above before you send.</p>}
+            {!ok && (
+              <div className="pbx-col" style={{ gap: 6 }}>
+                <p className="pbx-fine">Still needed before you can send:</p>
+                <ul className="pbx-missing">{missing.map((id) => <li key={id}>{q.questions.find((x) => x.id === id)?.label ?? id}</li>)}</ul>
+              </div>
+            )}
+            <p className="pbx-note"><Icon name="info" size={14} /><span>Once you send them, they are locked. If something needs to change later, reply to the email you were sent.</span></p>
+          </div>
         </form>
       )}
     </section>

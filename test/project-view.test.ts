@@ -292,3 +292,24 @@ describe("Work screen helpers", () => {
     expect(decimalHours(40)).toBe("0.7");
   });
 });
+
+describe("nextUp, ownerSplit and earlierSteps", async () => {
+  const { nextUp, ownerSplit, earlierSteps } = await import("../src/client/projectView");
+  it("nextUp is the first open task nobody waits on, skipping blocked and client-waiting ones", () => {
+    const a = task({ stepKey: "1.1", position: 1, status: "done" });
+    const b = task({ stepKey: "1.2", position: 2, status: "waiting_client" });
+    const c = task({ stepKey: "1.3", position: 3, requires: ["1.4"] });
+    const d = task({ stepKey: "1.4", position: 4 });
+    expect(nextUp([c, a, b, d])?.stepKey).toBe("1.4");
+    expect(nextUp([a])).toBeNull();
+  });
+  it("ownerSplit counts open work by who does it and leaves out owners with nothing open", () => {
+    const s = ownerSplit([task({ owner: "logan", estMinutes: 10 }), task({ owner: "claude", estMinutes: 20 }), task({ owner: "claude", estMinutes: 15 }), task({ owner: "claude_drafts", status: "done" })]);
+    expect(s.map((o) => [o.owner, o.count, o.minutes])).toEqual([["logan", 1, 10], ["claude", 2, 35]]);
+  });
+  it("earlierSteps offers only steps before this one, grouped by phase, plus any already chosen", () => {
+    const steps = [task({ stepKey: "1.1", position: 1 }), task({ stepKey: "2.1", position: 2, phaseKey: "2", phaseTitle: "Design" }), task({ stepKey: "3.1", position: 9, phaseKey: "3", phaseTitle: "Build" })];
+    expect(earlierSteps(steps, { position: 5 }, []).map((g) => [g.phaseKey, g.steps.map((s) => s.key)])).toEqual([["1", ["1.1"]], ["2", ["2.1"]]]);
+    expect(earlierSteps(steps, { position: 5 }, ["3.1"]).map((g) => g.phaseKey)).toEqual(["1", "2", "3"]);
+  });
+});

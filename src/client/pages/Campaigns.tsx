@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { api, ApiError } from "../api";
 import { Fragment } from "react";
 import { Link } from "react-router-dom";
-import { Field, Row } from "../components/SettingsPage";
 import { Banner, Card, Chip, Empty, Meter, Note, PageHeader } from "../components/ds";
 import Icon from "../components/Icon";
 import { campaignStats, fieldErrors, parseTowns, runResultTone, runSearchesConfirm, runSearchesLines, townsLine, type CampaignSearch } from "../campaignView";
@@ -42,17 +41,19 @@ function CreateForm({ onCreated, onClose }: { onCreated: (c: Campaign) => void; 
   return (
     <Card icon="plus" title="New campaign" note="Five follow-up steps come with it" action={<button type="button" className="ds-icon-btn" aria-label="Close" onClick={onClose}><Icon name="x" size={14} /></button>}>
       <p>Searches one niche across a list of towns, then runs the five-step sequence on what it finds.</p>
-      <form className="slx-form slx-campaign-form" onSubmit={(e) => void submit(e)} noValidate>
-        <Field label="Name" htmlFor="cp-new-name" error={errs.name}><input id="cp-new-name" value={f.name} maxLength={100} autoComplete="off" placeholder="Home services, Sherwood area" onChange={(e) => set("name", e.target.value)} /></Field>
-        <Row>
-          <Field label="Niche" htmlFor="cp-new-niche" error={errs.niche}><input id="cp-new-niche" value={f.niche} maxLength={100} autoComplete="off" placeholder="Plumbers" onChange={(e) => set("niche", e.target.value)} /></Field>
-          <Field label="Region" htmlFor="cp-new-region" error={errs.region}><input id="cp-new-region" value={f.region} maxLength={100} autoComplete="off" placeholder="Oregon" onChange={(e) => set("region", e.target.value)} /></Field>
-        </Row>
-        <Field label="Towns" htmlFor="cp-new-towns" error={errs.towns} help="One per line or separated by commas. 1 to 10 towns.">
-          <textarea id="cp-new-towns" rows={4} value={f.towns} onChange={(e) => set("towns", e.target.value)} />
-        </Field>
-        <div className="slx-actions"><button type="submit" className="btn primary" disabled={busy}>{busy ? "Creating…" : "Create campaign"}</button>
-          <span className={msg?.bad ? "slx-error" : "slx-ok"} aria-live="polite" aria-atomic="true">{msg?.text}</span></div>
+      <form className="ds-form slx-campaign-form" onSubmit={(e) => void submit(e)} noValidate>
+        <label className="deal-field wide" htmlFor="cp-new-name"><span>Name</span><input id="cp-new-name" value={f.name} maxLength={100} autoComplete="off" placeholder="Home services, Sherwood area" aria-invalid={!!errs.name} onChange={(e) => set("name", e.target.value)} />
+          {errs.name ? <small className="slx-bad">{errs.name}</small> : <small>Only you see this.</small>}</label>
+        <label className="deal-field" htmlFor="cp-new-niche"><span>Kind of business</span><input id="cp-new-niche" value={f.niche} maxLength={100} autoComplete="off" placeholder="Plumbers" aria-invalid={!!errs.niche} onChange={(e) => set("niche", e.target.value)} />
+          {errs.niche ? <small className="slx-bad">{errs.niche}</small> : <small>What the search looks for on Google Maps.</small>}</label>
+        <label className="deal-field" htmlFor="cp-new-region"><span>State or region</span><input id="cp-new-region" value={f.region} maxLength={100} autoComplete="off" placeholder="Oregon" aria-invalid={!!errs.region} onChange={(e) => set("region", e.target.value)} />
+          {errs.region && <small className="slx-bad">{errs.region}</small>}</label>
+        <label className="deal-field wide" htmlFor="cp-new-towns"><span>Towns</span>
+          <textarea id="cp-new-towns" rows={4} value={f.towns} placeholder={"Sherwood\nTigard\nTualatin"} aria-invalid={!!errs.towns} onChange={(e) => set("towns", e.target.value)} />
+          {errs.towns ? <small className="slx-bad">{errs.towns}</small> : <small>{parseTowns(f.towns).length ? `${parseTowns(f.towns).length} of up to 10 towns. ` : ""}One per line or separated by commas. Each town is one search.</small>}</label>
+        <div className="ds-form-actions"><button type="submit" className="btn primary" disabled={busy}>{busy ? "Creating…" : "Create campaign"}</button>
+          <button type="button" className="btn" onClick={onClose}>Cancel</button>
+          <span className={`slx-msg${msg?.bad ? " bad" : ""}`} aria-live="polite" aria-atomic="true">{msg?.text}</span></div>
       </form>
     </Card>
   );
@@ -104,12 +105,20 @@ export default function Campaigns() {
           : !list ? <p className="slx-muted">Loading the campaigns…</p>
           : list.length === 0 ? (
             !creating && (
-              <div className="ds-card">
-                <Empty icon="target" title="No campaigns yet" action={newBtn}>
-                  A campaign is one kind of business (plumbers, roofers) in up to ten towns. It searches each town for leads, scores them, and runs a
-                  five-step follow-up (emails, a call, a check-in) on the ones you start. Campaigns you make show here with the leads they found.
-                </Empty>
-              </div>
+              <>
+                <div className="ds-card">
+                  <Empty icon="target" title="No campaigns yet" action={newBtn}>
+                    A campaign is one kind of business in up to ten towns. Campaigns you make show here with the leads they found.
+                  </Empty>
+                </div>
+                <Card icon="info" title="How a campaign works">
+                  <ol className="slx-flow slx-flow-row">
+                    <li><span className="ds-tile info"><Icon name="search" size={16} /></span><span><b>1. It searches each town</b><small>Google Maps, for the kind of business you name.</small></span></li>
+                    <li><span className="ds-tile signal"><Icon name="gauge" size={16} /></span><span><b>2. It scores every lead</b><small>A quick look at each site shows who needs you most.</small></span></li>
+                    <li><span className="ds-tile positive"><Icon name="mail" size={16} /></span><span><b>3. It follows up for you</b><small>Two emails, a call and a check-in, on the leads you start.</small></span></li>
+                  </ol>
+                </Card>
+              </>
             )
           ) : (
             <>

@@ -98,19 +98,45 @@
 .ds-link-row > .mnx-mono { font-size:13px; }
 
 /* ---------- InvoiceItem: a card in a list (project billing), or a row's opened detail (invoices table) ---------- */
-.mnx-inv { display:flex; flex-direction:column; gap:8px; min-width:0; padding:14px 16px; border:1px solid var(--border); border-radius:12px; background:var(--bg-surface); box-shadow:var(--shadow-card); list-style:none; font:400 13px/19px var(--font); color:var(--text); }
+.mnx-inv { display:flex; flex-direction:column; gap:14px; min-width:0; padding:14px 16px; border:1px solid var(--border); border-radius:12px; background:var(--bg-surface); box-shadow:var(--shadow-card); list-style:none; font:400 13px/19px var(--font); color:var(--text); }
 .mnx-inv p { margin:0; }
-.mnx-inv a:not(.btn) { color:var(--link); text-decoration:none; } .mnx-inv a:not(.btn):hover { text-decoration:underline; }
-.mnx-inv.in-table { margin-left:40px; padding:12px 16px; box-shadow:none; white-space:normal; }
+.mnx-inv.in-table { margin-left:40px; padding:16px 18px; box-shadow:none; white-space:normal; }
 .mnx-inv-head { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
 .mnx-inv-title { flex:1; min-width:180px; display:flex; flex-direction:column; }
 .mnx-inv-title b { font:500 14px/20px var(--font); color:var(--text); }
 .mnx-inv-title small { font:400 12px/16px var(--font); color:var(--text-3); }
 .mnx-inv-amt { font-size:14px; }
-.mnx-inv-links, .mnx-inv-sub { font:400 12px/16px var(--font); color:var(--text-3); }
-.mnx-inv .mnx-lines { padding:8px 0; border-top:1px solid var(--border); border-bottom:1px solid var(--border); font-size:12px; }
+.mnx-inv-sub { font:400 12px/16px var(--font); color:var(--text-3); }
+.mnx-inv-grid { display:grid; grid-template-columns:minmax(0,1fr) 280px; gap:20px; align-items:start; }
+.mnx-inv-grid:not(:has(.mnx-inv-side)) { grid-template-columns:minmax(0,1fr); }
+.mnx-inv-main { display:flex; flex-direction:column; gap:12px; min-width:0; }
+.mnx-inv-side { display:flex; flex-direction:column; border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+.mnx-inv-rec { display:flex; align-items:center; gap:10px; padding:10px 12px; border-bottom:1px solid var(--border); color:var(--text); text-decoration:none; }
+.mnx-inv-rec:last-child { border-bottom:0; }
+.mnx-inv-rec:hover { background:var(--bg-hover); }
+.mnx-inv-rec .ds-avatar { display:inline-grid; }
+.mnx-rec-tile { width:28px; height:28px; border-radius:8px; }
+/* The invoice's journey: four steps on a line, green when done, amber when it waits on someone, red when late */
+.mnx-steps { display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:0; margin:0; padding:0; list-style:none; }
+.mnx-steps li { position:relative; display:flex; flex-direction:column; gap:8px; min-width:0; padding-right:10px; }
+.mnx-steps li::before { content:""; position:absolute; top:10px; left:22px; right:0; height:2px; border-radius:1px; background:var(--border); }
+.mnx-steps li:last-child::before { display:none; }
+.mnx-steps li.done::before { background:var(--positive); opacity:.45; }
+.mnx-step-dot { position:relative; z-index:1; display:grid; place-items:center; width:20px; height:20px; border-radius:50%; background:var(--bg-surface); box-shadow:inset 0 0 0 1.5px var(--border-strong); color:#fff; }
+.mnx-steps li.done .mnx-step-dot { background:var(--positive); box-shadow:none; }
+.mnx-steps li.now .mnx-step-dot { box-shadow:inset 0 0 0 1.5px var(--signal), 0 0 0 3px var(--signal-soft); }
+.mnx-steps li.now .mnx-step-dot::after { content:""; width:8px; height:8px; border-radius:50%; background:var(--signal); }
+.mnx-steps li.bad .mnx-step-dot { background:var(--critical); box-shadow:none; }
+.mnx-step-text { display:flex; flex-direction:column; min-width:0; }
+.mnx-step-text b { font:500 13px/19px var(--font); color:var(--text); }
+.mnx-step-text small { font:400 12px/16px var(--font); color:var(--text-3); }
+.mnx-steps li.bad .mnx-step-text small { color:var(--critical); }
+.mnx-steps li.now .mnx-step-text small { color:var(--signal-strong); }
+.mnx-steps li.todo .mnx-step-text b { color:var(--text-3); }
+.mnx-inv-lines { padding:8px 12px; border-radius:8px; background:var(--bg-muted); font-size:12px; }
+.mnx-inv-lines li.total { margin-top:2px; padding-top:6px; border-top:1px solid var(--border); color:var(--text); font-weight:500; }
 .mnx-link { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-.mnx-link .in { flex:1; min-width:200px; height:28px; font-family:var(--font-mono); font-size:12px; color:var(--text-2); }
+.mnx-link .in { flex:1; min-width:200px; height:30px; font-family:var(--font-mono); font-size:12px; color:var(--text-2); }
 .mnx-inv-actions { display:flex; gap:8px; flex-wrap:wrap; }
 .co-list > .mnx-inv { margin:0; }
 
@@ -123,6 +149,83 @@
   .mnx-plot { gap:6px; height:200px; }
   .mnx-col-val { font-size:10px; }
   .mnx-inv.in-table { margin-left:0; }
+  .mnx-inv-grid { grid-template-columns:minmax(0,1fr); }
+  .mnx-steps { grid-template-columns:repeat(2,minmax(0,1fr)); row-gap:12px; }
+  .mnx-steps li:nth-child(2n)::before { display:none; }
   .mnx-goal-pop { right:auto; left:-180px; width:250px; }
   .mnx-scope { flex-wrap:wrap; }
 }
+
+/* ---------- Under a short invoices table: where it stands, and where invoices come from ---------- */
+.mnx-after { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; align-items:stretch; }
+.mnx-after > .ds-card { display:flex; flex-direction:column; }
+.mnx-tally, .mnx-how { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:12px; }
+.mnx-tally li, .mnx-how li { display:flex; align-items:center; gap:12px; min-width:0; }
+.mnx-tally .ds-tile, .mnx-how .ds-tile { width:30px; height:30px; border-radius:8px; }
+.mnx-tally .mnx-cell-2, .mnx-how li > span:not(.ds-tile) { flex:1; min-width:0; display:flex; flex-direction:column; }
+.mnx-tally .mnx-cell-2 b, .mnx-how b { font:500 13px/19px var(--font); color:var(--text); }
+.mnx-tally .mnx-cell-2 small, .mnx-how small { font:400 12px/16px var(--font); color:var(--text-3); }
+.mnx-good { display:flex; align-items:center; gap:6px; margin:4px 0 0 !important; padding-top:12px; border-top:1px solid var(--border); font:500 13px/19px var(--font); color:var(--positive) !important; }
+@media (max-width: 900px) { .mnx-after { grid-template-columns:minmax(0,1fr); } }
+.mnx-sum { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin:4px 0 0 !important; padding-top:12px; border-top:1px solid var(--border); font:400 12px/16px var(--font); color:var(--text-3) !important; }
+.mnx-sum b { font-size:15px; } .mnx-sum b small { font:400 12px/16px var(--font); color:var(--text-3); }
+.mnx-hold-steps .mnx-step-dot .icon { color:#fff; }
+.mnx-hold-steps li.done:first-child .mnx-step-dot { background:var(--text-2); }
+.mnx-hold-steps li:first-child::before { background:var(--border); opacity:1; }
+.mnx-hold-steps .mnx-step-text small { color:var(--text-3) !important; }
+
+/* ---------- Dashboard round 2: labelled meters, a clear "nobody owes you" state, project rows, per-service costs ---------- */
+.mnx-stat .ds-stat-label .mnx-goal .icon { box-sizing:border-box; width:14px; height:14px; padding:0; border-radius:0; background:none !important; color:inherit !important; }
+.mnx-stat .ds-stat-label .mnx-goal > summary.btn { display:inline-flex; align-items:center; gap:4px; }
+.mnx-clear { display:flex; align-items:center; gap:12px; }
+.mnx-clear .mnx-cell-2, .mnx-svc .mnx-cell-2 { flex:1; min-width:0; display:flex; flex-direction:column; }
+.mnx-clear .mnx-cell-2 b, .mnx-svc .mnx-cell-2 b { font:500 13px/19px var(--font); color:var(--text); }
+.mnx-clear .mnx-cell-2 small, .mnx-svc .mnx-cell-2 small { font:400 12px/16px var(--font); color:var(--text-3); }
+.mnx-clear .mnx-cell-2 b { color:var(--positive); }
+.mnx-oldest { gap:8px; }
+.mnx-oldest li { display:block; }
+.mnx-late-text { color:var(--critical) !important; }
+.mnx-ltv-row .ds-chev { margin-left:2px; }
+.mnx-proj { display:flex; align-items:center; gap:10px; color:inherit; text-decoration:none; min-width:0; }
+.mnx-proj .ds-tile { width:30px; height:30px; border-radius:8px; }
+.mnx-proj:hover b { text-decoration:underline; }
+.mnx-profit td.mnx-idle { text-align:left; }
+.mnx-idle { white-space:normal !important; }
+.mnx-idle .ds-chip { margin-right:10px; }
+.mnx-idle small { font:400 12px/16px var(--font); color:var(--text-3); }
+.mnx-pos { color:var(--positive) !important; }
+.mnx-profit td { height:56px; }
+.mnx-row-meter { display:flex; flex-direction:column; gap:6px; }
+.mnx-svc { list-style:none; margin:4px 0 0; padding:12px 0 0; border-top:1px solid var(--border); display:flex; flex-direction:column; gap:12px; }
+.mnx-svc li { display:flex; align-items:center; gap:12px; }
+.mnx-svc .ds-tile { width:30px; height:30px; border-radius:8px; }
+.mnx-svc .mnx-mono { min-width:64px; text-align:right; }
+.mnx .ds-card-head .btn.sm { height:26px; }
+.mnx-ok-text { color:var(--positive); font-weight:500; }
+.mnx-profit td:first-child { min-width:260px; }
+.mnx-proj .mnx-cell-2 b { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.mnx-oldest a.mnx-ltv-row { color:var(--text); } .mnx-oldest a.mnx-ltv-row:hover { text-decoration:none; }
+.mnx-start-steps li { padding-bottom:12px; border-bottom:1px solid var(--border); }
+.mnx-start-steps li:last-child { padding-bottom:0; border-bottom:0; }
+.mnx-start-steps .mnx-goal-pop { right:0; }
+.mnx-start-steps .mnx-goal > summary.btn { height:28px; font-size:12px; }
+@media (max-width: 640px) {
+  .mnx .ds-card-head { flex-wrap:wrap; row-gap:2px; }
+  .mnx .ds-card-head .ds-card-note { order:5; flex-basis:100%; padding-left:24px; }
+  .mnx .ds-card-head > .btn { order:4; }
+  .mnx-svc .ds-meter { display:none; }
+  .mnx-profit thead { display:none; }
+  .mnx-profit, .mnx-profit tbody { display:block; }
+  .mnx-profit tr { display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; padding:12px 16px; border-bottom:1px solid var(--border); }
+  .mnx .mnx-profit td { display:block; height:auto; padding:0 !important; border:0; min-width:0; }
+  .mnx-profit td:first-child { flex:1 1 100%; }
+  .mnx-profit td:nth-child(2), .mnx-profit td:nth-child(4) { display:none !important; }
+  .mnx-profit td:nth-child(3)::after { content:" logged"; font-family:var(--font); color:var(--text-3); }
+  .mnx-profit td:nth-child(5)::before { content:"profit "; font-family:var(--font); color:var(--text-3); }
+  .mnx-profit td:nth-child(6)::after { content:" an hour"; font-family:var(--font); color:var(--text-3); }
+  .mnx-profit td.mnx-idle { flex:1 1 100%; padding-left:40px !important; }
+  .mnx-idle small { display:block; margin-top:4px; }
+  .mnx-stat .ds-stat-label { font-size:12px; }
+}
+@media (max-width: 640px) { .mnx .ds-banner { flex-wrap:wrap; } .mnx .ds-banner-text { flex-basis:calc(100% - 40px); } .mnx .ds-banner > .btn, .mnx .ds-banner > a { margin-left:28px; } }
+@media (max-width: 640px) { .mnx-inv-table tr:not(.mnx-detail-row) > :is(th, td):is(:nth-child(2), :nth-child(5), :nth-child(6)) { display:none; } .mnx-inv-table .mnx-chev-cell { width:auto; } }

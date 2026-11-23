@@ -111,3 +111,13 @@ describe("small labels", () => {
     expect(PLAN_FOR_DELAYS).toBe("Plan for client delays of 15–25% in every timeline (spec §9.5)");
   });
 });
+
+describe("silenceLine and PLAN_FOR_DELAYS_PLAIN", async () => {
+  const { silenceLine, PLAN_FOR_DELAYS_PLAIN } = await import("../src/client/onboardingView");
+  it("says how long the client has been quiet and what the contract allows, in plain words", () => {
+    expect(silenceLine(0)).toEqual({ text: "The client was in touch today.", late: false });
+    expect(silenceLine(1).text).toBe("No reply for 1 day. After 14 days without one, the contract lets you move them to the back of the queue.");
+    expect(silenceLine(14)).toEqual({ text: "No reply for 14 days. The contract now lets you move them to the back of the queue.", late: true });
+    expect(PLAN_FOR_DELAYS_PLAIN).not.toMatch(/§|spec/);
+  });
+});

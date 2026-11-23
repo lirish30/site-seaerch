@@ -3,7 +3,7 @@ import { api, ApiError } from "../../api";
 import { announceLeadsChanged } from "../Shell";
 import { fullScanErrorText } from "../../promising";
 import { actionErrorText, actionPath, withoutItem } from "../../todayView";
-import type { TodaySummary, UsageRow } from "../../todayHome";
+import type { SubLite, TodaySummary, UsageRow } from "../../todayHome";
 import type { LeadRow, TodayItem } from "../../types";
 import { APPROVE_BATCH, canBulkApprove, type ApprovalItem, type SpendLevel } from "../../approvalsView";
 import type { QueueStatus } from "../../queueView";
@@ -26,6 +26,8 @@ export interface Spend {
   month: string; variableUsd: number; fixedUsd: number; spentUsd: number; limitUsd: number; level: SpendLevel; ok: boolean;
   fixedCosts: { id: string; name: string; monthly_usd: number; active: 0 | 1 }[];
 }
+/** The Freedom number card: GET /money's `freedom` (recurring revenue against the goal) and the live plans behind it (GET /billing/subscriptions, named by GET /packages). */
+export interface Freedom { targetCents: number; mrrCents: number; subs: SubLite[] | null; names: Map<string, string> }
 /** The quick-scan row's Run full scan button: request in flight, or accepted. */
 export type ScanState = "starting" | "started";
 
@@ -42,6 +44,7 @@ export function useHome() {
   const [helper, setHelper] = useState<Part<HelperStatus>>(empty);
   const [watched, setWatched] = useState<Part<WatchedLead[]>>(empty);
   const [calls, setCalls] = useState<Part<CallRow[]>>(empty);
+  const [freedom, setFreedom] = useState<Part<Freedom>>(empty);
   const [approvalErrs, setApprovalErrs] = useState<Readonly<Record<string, string>>>({});
   const [pending, setPending] = useState(0);
   const [reloads, setReloads] = useState(0);
@@ -62,7 +65,7 @@ export function useHome() {
     };
     // A reload keeps what is on screen until the new data arrives; only the error is cleared.
     const keep = <T,>(set: (f: (p: Part<T>) => Part<T>) => void) => set((p) => ({ ...p, error: "" }));
-    keep(setItems); keep(setCapacity); keep(setSummary); keep(setLeads); keep(setMoney); keep(setApprovals); keep(setSpend); keep(setQueue); keep(setHelper); keep(setWatched); keep(setCalls);
+    keep(setItems); keep(setCapacity); keep(setSummary); keep(setLeads); keep(setMoney); keep(setApprovals); keep(setSpend); keep(setQueue); keep(setHelper); keep(setWatched); keep(setCalls); keep(setFreedom);
     // One request carries the list and the capacity beside it, so a failure of /today shows on both.
     run(() => api.get<{ items: TodayItem[]; capacity: Capacity | null }>("/today"), (r) => { setItems({ data: r.items, error: "" }); setCapacity(capacityPart(r.capacity)); },
       (m) => { setItems((p) => ({ ...p, error: m })); setCapacity((p) => ({ ...p, error: m })); }, "Couldn't load your list.");
@@ -82,6 +85,16 @@ export function useHome() {
       (m) => setWatched((p) => ({ ...p, error: m })), "Couldn't load who watched your videos.");
     run(() => api.get<{ calls: CallRow[] }>("/today/calls"), (r) => setCalls({ data: r.calls, error: "" }),
       (m) => setCalls((p) => ({ ...p, error: m })), "Couldn't load your booked calls.");
+    // The plan mix is a nice-to-have under the number: if either list fails the card still shows the total.
+    run(async () => {
+      const [money, subs, pkgs] = await Promise.all([
+        api.get<{ freedom: { targetCents: number; mrrCents: number } }>("/money"),
+        api.get<{ subscriptions: SubLite[] }>("/billing/subscriptions").catch(() => null),
+        api.get<{ key: string; name: string }[]>("/packages").catch(() => null),
+      ]);
+      return { targetCents: money.freedom.targetCents, mrrCents: money.freedom.mrrCents, subs: subs && Array.isArray(subs.subscriptions) ? subs.subscriptions : null,
+        names: new Map((Array.isArray(pkgs) ? pkgs : []).map((p) => [p.key, p.name])) };
+    }, (r) => setFreedom({ data: r, error: "" }), (m) => setFreedom((p) => ({ ...p, error: m })), "Couldn't load your recurring revenue.");
     return () => { cancelled = true; };
   }, [reloads]);
 
@@ -164,5 +177,5 @@ export function useHome() {
     ids.forEach((id) => mark(id, false));
   }, []);
 
-  return { approvals, spend, queue, helper, watched, calls, approvalErrs, approveOne, rejectOne, approveAll, items, capacity, summary, leads, money, loading: pending > 0, reload, act, fullScan, errs, busy, scans };
+  return { approvals, freedom, spend, queue, helper, watched, calls, approvalErrs, approveOne, rejectOne, approveAll, items, capacity, summary, leads, money, loading: pending > 0, reload, act, fullScan, errs, busy, scans };
 }

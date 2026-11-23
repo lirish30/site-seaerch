@@ -207,3 +207,14 @@ export function neighbours(ids: string[], id: string): { index: number; prev: st
   if (index < 0) return { index, prev: null, next: null };
   return { index, prev: index > 0 ? ids[index - 1] : null, next: index < ids.length - 1 ? ids[index + 1] : null };
 }
+
+/** The tint of a bucket's icon tile, so the inbox reads at a glance: money green, mail blue, documents and posts Signal, reports green, work amber, the rest plain. */
+export function bucketTone(b: Bucket): "positive" | "info" | "signal" | "warning" | "neutral" {
+  switch (b) {
+    case "invoices": case "reports": return "positive";
+    case "emails": case "videos": return "info";
+    case "documents": case "posts": return "signal";
+    case "work": return "warning";
+    default: return "neutral";
+  }
+}

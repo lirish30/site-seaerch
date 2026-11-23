@@ -56,8 +56,12 @@ export default function CallPrepPanel({ leadId, findings }: { leadId: string; fi
   }
 
   function print() {
+    // Every part prints, so the folded groups are opened first and put back afterwards.
+    const groups = [...document.querySelectorAll<HTMLDetailsElement>(".callprep details.clx-lead-cp-more")];
+    const was = groups.map((g) => g.open);
+    groups.forEach((g) => { g.open = true; });
     document.body.classList.add("print-callprep");
-    const done = () => { document.body.classList.remove("print-callprep"); window.removeEventListener("afterprint", done); };
+    const done = () => { document.body.classList.remove("print-callprep"); groups.forEach((g, i) => { g.open = was[i]; }); window.removeEventListener("afterprint", done); };
     window.addEventListener("afterprint", done);
     window.print();
   }
@@ -65,39 +69,37 @@ export default function CallPrepPanel({ leadId, findings }: { leadId: string; fi
   const prep = deal.callPrep;
   const v = prepForDisplay(prep, catalog);
   const drafted = prep ? new Date(prep.generatedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : null;
+  const tailoredCount = v.questions.filter((q) => q.tailored).length;
   return (
-    <details className="prop-sec callprep" open>
-      <summary><Icon name="sparkles" size={15} /><span className="grow">Call prep</span><Icon name="chevron-down" size={14} className="chev" /></summary>
+    <details className="prop-sec callprep clx-lead-cp" open>
+      <summary><Icon name="sparkles" size={15} /><span className="grow">Call prep</span>
+        <span className={`clx-lead-chip ${queued ? "info" : prep ? "signal" : "neutral"}`}>{queued ? "Queued" : prep ? "Tailored" : "Not tailored yet"}</span>
+        <Icon name="chevron-down" size={14} className="chev" /></summary>
       <div className="prop-body">
+        <p className="clx-lead-cp-status" role="status">
+          {queued ? "Queued. Claude writes it the next time it works the queue."
+            : drafted ? `Claude tailored this ${drafted}.`
+            : "Claude has not tailored this yet. The plan and the ten questions below work as they are."}
+        </p>
         <div className="cp-actions">
-          <button type="button" className="btn sm" onClick={draft} disabled={busy || queued}>{prep ? "Draft prep again" : "Draft prep"}</button>
-          <button type="button" className="btn-ghost-sm" onClick={print}>Print</button>
+          <button type="button" className="btn sm" onClick={draft} disabled={busy || queued}><Icon name="sparkles" size={14} />{prep ? "Draft prep again" : "Draft prep"}</button>
+          <button type="button" className="btn-ghost-sm" onClick={print}><Icon name="file-text" size={14} />Print</button>
         </div>
-        {queued && <p className="muted small" role="status">Queued. Claude writes it the next time it works the queue.</p>}
-        {!queued && !prep && <p className="muted small">Claude has not tailored this yet. The 20 minutes and the ten questions are below.</p>}
-        {drafted && <p className="muted small">Tailored by Claude {drafted}.</p>}
         {error && <p className="warn small" role="alert">{error}</p>}
 
-        {prep && <section><h4>Open with</h4><p>{prep.opener}</p></section>}
-
-        <section>
-          <h4>The 20 minutes</h4>
-          <ol className="cp-list">
-            {v.structure.map((b) => <li key={b.fromMin}><strong>{b.fromMin} to {b.toMin} min, {b.title}.</strong> {b.detail}</li>)}
-          </ol>
-        </section>
+        {prep && <section className="clx-lead-cp-open"><h4>Open with</h4><p>{prep.opener}</p></section>}
 
         {v.flags.length > 0 && (
           <section>
             <h4>Worth raising</h4>
-            <ul className="cp-list">
+            <ul className="clx-lead-cp-flags">
               {v.flags.map((f, i) => {
                 const evidence = evidenceFor(findings, f.findingCode);
                 return (
                   <li key={`${f.findingCode}-${i}`}>
                     <p>{f.talkingPoint}</p>
-                    <p className="muted small">Ask: {f.askThis}</p>
-                    {evidence && <p className="muted small">Evidence: {evidence}</p>}
+                    <p className="clx-lead-cp-ask"><b>Ask</b> {f.askThis}</p>
+                    {evidence && <p className="clx-lead-cp-ev"><Icon name="alert" size={12} />{evidence}</p>}
                   </li>
                 );
               })}
@@ -105,31 +107,37 @@ export default function CallPrepPanel({ leadId, findings }: { leadId: string; fi
           </section>
         )}
 
-        <section>
-          <h4>The ten questions</h4>
-          <ol className="cp-list">
-            {v.questions.map((q) => (
-              <li key={q.n} value={q.n}>
-                <p>{q.text}</p>
-                {q.tailored && <p className="cp-note">{q.tailored}</p>}
-              </li>
-            ))}
-          </ol>
-        </section>
-
-        <section>
-          <h4>If they push back</h4>
-          <ul className="cp-list">
-            {v.pushbacks.map((p, i) => <li key={i}><p><strong>{p.objection}</strong></p><p>{p.answer}</p></li>)}
-          </ul>
-        </section>
-
-        {prep && prep.watchFor.length > 0 && (
-          <section>
-            <h4>Watch for</h4>
-            <ul className="cp-list">{prep.watchFor.map((w, i) => <li key={i}>{w}</li>)}</ul>
-          </section>
-        )}
+        <div className="clx-lead-cp-groups">
+          <details className="clx-lead-cp-more">
+            <summary><Icon name="clock" size={14} /><span className="grow">The 20 minutes</span><small>{v.structure.length} parts</small><Icon name="chevron-down" size={14} className="chev" /></summary>
+            <ol className="cp-list">
+              {v.structure.map((b) => <li key={b.fromMin}><strong>{b.fromMin} to {b.toMin} min, {b.title}.</strong> {b.detail}</li>)}
+            </ol>
+          </details>
+          <details className="clx-lead-cp-more">
+            <summary><Icon name="list" size={14} /><span className="grow">The ten questions</span><small>{tailoredCount > 0 ? `${tailoredCount} with notes` : "10"}</small><Icon name="chevron-down" size={14} className="chev" /></summary>
+            <ol className="cp-list">
+              {v.questions.map((q) => (
+                <li key={q.n} value={q.n}>
+                  <p>{q.text}</p>
+                  {q.tailored && <p className="cp-note">{q.tailored}</p>}
+                </li>
+              ))}
+            </ol>
+          </details>
+          <details className="clx-lead-cp-more">
+            <summary><Icon name="shield" size={14} /><span className="grow">If they push back</span><small>{v.pushbacks.length}</small><Icon name="chevron-down" size={14} className="chev" /></summary>
+            <ul className="cp-list">
+              {v.pushbacks.map((p, i) => <li key={i}><p><strong>{p.objection}</strong></p><p>{p.answer}</p></li>)}
+            </ul>
+          </details>
+          {prep && prep.watchFor.length > 0 && (
+            <details className="clx-lead-cp-more">
+              <summary><Icon name="eye" size={14} /><span className="grow">Watch for</span><small>{prep.watchFor.length}</small><Icon name="chevron-down" size={14} className="chev" /></summary>
+              <ul className="cp-list">{prep.watchFor.map((w, i) => <li key={i}>{w}</li>)}</ul>
+            </details>
+          )}
+        </div>
       </div>
     </details>
   );

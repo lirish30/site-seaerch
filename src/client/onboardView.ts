@@ -227,3 +227,36 @@ export function unloadPlan<T>(o: UnloadState<T> & { url: string; bodyOf: (v: T) 
   if (new TextEncoder().encode(body).length > (o.limit ?? KEEPALIVE_LIMIT_BYTES)) return { action: "paced" };
   return { action: "keepalive", url: o.url, method: "PUT", body, supersede: queued };
 }
+
+// ---------- Layout helpers for the page ----------
+
+/** How many questions have an answer (blank or only spaces is none). */
+export const answeredCount = (q: PublicOnboarding["questionnaire"], answers: Record<string, string>): number =>
+  q.questions.filter((x) => (answers[x.id] ?? "").trim()).length;
+
+/** The one thing to do next: the questions while they are not sent, else the first item still waiting, else null (nothing is waiting on the client). `target` is the element id to jump to. */
+export function nextStep(page: Pick<PublicOnboarding, "closed" | "questionnaire" | "items">): { label: string; target: string } | null {
+  if (page.closed) return null;
+  if (!page.questionnaire.submittedAt) return { label: "Answer your questions", target: "ob-q" };
+  const item = page.items.find((i) => i.status === "waiting");
+  return item ? { label: item.label, target: `ob-item-${item.id}` } : null;
+}
+
+export type StateTone = "neutral" | "positive" | "warning" | "critical" | "info";
+
+/** The colour of an item's state chip. The chip's words say the same thing. */
+export function itemTone(item: { status: ItemStatus; dueAt: string | null }, now: Date, tz: string): StateTone {
+  if (item.status === "accepted") return "positive";
+  if (item.status === "received") return "info";
+  if (item.status === "not_applicable") return "neutral";
+  return dueLabel(item.dueAt, now, tz).startsWith("Overdue") ? "critical" : "warning";
+}
+
+/** The colour of a due label: overdue is critical, a date is a warning, no date is neutral. */
+export const dueTone = (label: string): StateTone => (label.startsWith("Overdue") ? "critical" : label.startsWith("Due") ? "warning" : "neutral");
+
+/** A site build asks for more than the six access items (keyed `access_…`); a light onboarding (Care, a quick fix) asks for those alone. */
+export const isBuildOnboarding = (items: { key: string }[]): boolean => items.some((i) => !i.key.startsWith("access_"));
+
+/** A phase's heading as the page shows it: a light onboarding's one group is about access, not pages. */
+export const phaseHeading = (g: { title: string }, build: boolean): string => (build ? g.title : "Access to your site and accounts");
