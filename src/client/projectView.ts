@@ -301,3 +301,30 @@ export function pagerOf<T extends { id: string }>(list: T[], id: string): { inde
   if (i < 0) return null;
   return { index: i + 1, total: list.length, prev: list[i - 1] ?? null, next: list[i + 1] ?? null };
 }
+
+/** The first open task nobody is waiting on: what to do next on this project. A task waiting on the client or locked is skipped; null when nothing is ready. */
+export function nextUp(tasks: Task[]): Task | null {
+  const open = [...tasks].sort((a, b) => a.position - b.position).filter((t) => t.status === "todo" || t.status === "in_progress" || t.status === "in_review");
+  return open.find((t) => t.status !== "todo" || taskState(t, tasks).blockedBy.length === 0) ?? null;
+}
+
+/** The open work split by who does it (you, Claude, Claude drafts and you approve): how many tasks and their estimated minutes. Owners with nothing open are left out. */
+export function ownerSplit(tasks: Pick<Task, "owner" | "status" | "estMinutes">[]): { owner: OwnerTag; label: string; count: number; minutes: number }[] {
+  const order: { owner: OwnerTag; label: string }[] = [{ owner: "logan", label: "You" }, { owner: "claude", label: "Claude on its own" }, { owner: "claude_drafts", label: "Claude drafts, you approve" }];
+  return order.map((o) => {
+    const list = tasks.filter((t) => t.owner === o.owner && !isClosed(t));
+    return { ...o, count: list.length, minutes: list.reduce((n, t) => n + t.estMinutes, 0) };
+  }).filter((o) => o.count > 0);
+}
+
+/** Which earlier steps a step may wait on, grouped by phase in plan order: only steps before it (a step cannot wait on a later one), plus any it already waits on wherever they sit. */
+export function earlierSteps(steps: Pick<Task, "stepKey" | "title" | "position" | "phaseKey" | "phaseTitle">[], self: { position: number }, chosen: string[]): { phaseKey: string; title: string; steps: { key: string; title: string }[] }[] {
+  const out: { phaseKey: string; title: string; steps: { key: string; title: string }[] }[] = [];
+  for (const s of [...steps].sort((a, b) => a.position - b.position)) {
+    if (!s.stepKey || (s.position >= self.position && !chosen.includes(s.stepKey))) continue;
+    let g = out.find((x) => x.phaseKey === s.phaseKey);
+    if (!g) { g = { phaseKey: s.phaseKey, title: s.phaseTitle, steps: [] }; out.push(g); }
+    g.steps.push({ key: s.stepKey, title: s.title });
+  }
+  return out;
+}

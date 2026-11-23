@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
-import { Banner, Card, Chip, Empty, Note } from "../components/ds";
+import { Banner, Card, Chip, Empty, Facts, Meter, Note } from "../components/ds";
 import Icon from "../components/Icon";
-import { PLAN_FOR_DELAYS, silenceNote, stageLabel, stageTone, welcomeLine } from "../onboardingView";
+import { PLAN_FOR_DELAYS_PLAIN, silenceLine, stageLabel, stageTone, welcomeLine } from "../onboardingView";
+import { day, when } from "./onboarding/shared";
 import { SILENCE_DAYS } from "../../worker/onboarding/schedule";
 import type { OnboardingState } from "../../worker/onboarding/owner";
 import AddItem from "./onboarding/AddItem";
@@ -55,7 +56,7 @@ export default function OnboardingTab({ dealId, data, onReload }: { dealId: stri
           </Empty>
           {data.canStartTest && <p className="slx-hint slx-pad">A test onboarding sends its welcome to your own address only, never to the client. It can only be made on a deal that has a signed test proposal and no real one, and it stays on its deal: a deal has one onboarding, so a test one cannot be replaced by a real one.</p>}
         </div>
-        <Note>{PLAN_FOR_DELAYS}</Note>
+        <Note>{PLAN_FOR_DELAYS_PLAIN}</Note>
       </>
     );
   }
@@ -65,10 +66,12 @@ export default function OnboardingTab({ dealId, data, onReload }: { dealId: stri
   const quiet = !!o.welcomeSentAt && !closed;
   const waiting = data.items.filter((i) => i.status === "waiting").length;
   const toCheck = data.items.filter((i) => i.status === "received").length;
+  const settled = data.items.filter((i) => i.status === "accepted" || i.status === "not_applicable").length;
+  const silence = silenceLine(data.silentDays);
   return (
     <>
       {messages}
-      {quiet && data.silentDays >= SILENCE_DAYS && <Banner tone="warning" icon="clock" title={silenceNote(data.silentDays)}>Nudge the client, or move them to the back of the queue as the contract says.</Banner>}
+      {quiet && data.silentDays >= SILENCE_DAYS && <Banner tone="warning" icon="clock" title={`No reply for ${data.silentDays} days`}>Nudge the client, or move them to the back of the queue as the contract says.</Banner>}
       {toCheck > 0 && <Banner tone="signal" icon="inbox" title={`${toCheck} ${toCheck === 1 ? "thing has" : "things have"} come in to check`}>Accept each one in the checklist, or ask again.</Banner>}
       <div className="ds-cols c2">
         <div className="ds-col">
@@ -86,8 +89,18 @@ export default function OnboardingTab({ dealId, data, onReload }: { dealId: stri
               {data.stage && <Chip tone={TONE[stageTone(data.stage)]} dot>{stageLabel(data.stage)}</Chip>}
               <Chip tone="outline">{o.kind === "build" ? "Site build" : "Light onboarding"}{o.test ? ", test" : ""}</Chip>
             </div>
-            {quiet && <p className={data.silentDays >= SILENCE_DAYS ? "slx-error" : "slx-hint"} role="status">{silenceNote(data.silentDays)}</p>}
-            <p className="slx-hint">{PLAN_FOR_DELAYS}</p>
+            {data.items.length > 0 && (
+              <div className="slx-onb-meter">
+                <span><b>{settled} of {data.items.length}</b> checklist items done</span>
+                <Meter value={settled} max={data.items.length} tone={settled === data.items.length ? "positive" : "signal"} label={`Checklist ${settled} of ${data.items.length} done`} />
+              </div>
+            )}
+            <Facts rows={[
+              { label: "Questions", value: o.questionnaireSubmittedAt ? `Handed in ${day(o.questionnaireSubmittedAt)}` : o.questionnaireDueAt ? `Due ${day(o.questionnaireDueAt)}` : "Not handed in" },
+              { label: "Kickoff", value: o.kickoffAt ? when(o.kickoffAt) : "Not set yet" },
+              ...(quiet ? [{ label: "Last heard", value: <span className={silence.late ? "slx-error" : ""}>{silence.text}</span> }] : []),
+            ]} />
+            <p className="slx-hint">{PLAN_FOR_DELAYS_PLAIN}</p>
           </Card>
           <Card icon="mail" title="Welcome">
             <p>{welcome.text}{welcome.kind === "pending" && <> <Link to="/">Open Home to approve it</Link></>}</p>

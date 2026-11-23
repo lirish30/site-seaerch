@@ -172,8 +172,8 @@
 .ds-table { width:100%; border-collapse:separate; border-spacing:0; background:var(--bg-surface); font:400 13px/19px var(--font); }
 .ds-table thead th { height:36px; padding:0 12px; border-bottom:1px solid var(--border); background:var(--bg-muted); font:600 11px/14px var(--font); letter-spacing:.6px; text-transform:uppercase; color:var(--text-3); text-align:left; white-space:nowrap; }
 .ds-table td, .ds-table tbody th { height:52px; padding:8px 12px; border-bottom:1px solid var(--border); text-align:left; vertical-align:middle; color:var(--text-2); font-weight:400; }
-.ds-table th:first-child, .ds-table td:first-child { padding-left:24px; }
-.ds-table th:last-child, .ds-table td:last-child { padding-right:24px; }
+.ds-table th:first-child, .ds-table td:first-child { padding-left:28px; }
+.ds-table th:last-child, .ds-table td:last-child { padding-right:28px; }
 .ds-table tbody tr:hover > * { background:var(--bg-hover); }
 .ds-table tbody tr.ds-group-row > * { height:40px; background:var(--bg-sidebar); }
 .ds-table .num { text-align:right; font-family:var(--font-mono); font-variant-numeric:tabular-nums; color:var(--text); white-space:nowrap; }
@@ -207,3 +207,76 @@
 .ds-page input[type=file] { width:100%; height:auto; min-height:0; padding:6px; border:1px dashed var(--border-strong); border-radius:8px; background:var(--bg-surface); font:400 12px/16px var(--font); color:var(--text-3); cursor:pointer; }
 .ds-page input[type=file]::file-selector-button { margin-right:10px; height:28px; padding:0 10px; border:1px solid var(--border-strong); border-radius:7px; background:var(--bg-surface); color:var(--text); font:500 12px/16px var(--font); box-shadow:var(--shadow-card); cursor:pointer; }
 .ds-page input[type=file]:hover { border-color:var(--text-3); }
+
+/* =====================================================================================================
+   Forms on every rebuilt page (.ds-page). Figma inputs: 34px, 13px regular, 1px --border, 8px radius.
+   Overrides the old global base (15px, 10px padding) and stops fields inheriting a bold <label>.
+   ===================================================================================================== */
+.ds-page label { margin:0; font-weight:400; }
+.ds-page :where(input:not([type=checkbox]):not([type=radio]):not([type=file]):not([type=range]), select, textarea) {
+  width:100%; height:34px; min-height:0; padding:0 10px; border:1px solid var(--border); border-radius:8px; background-color:var(--bg-surface);
+  color:var(--text); font:400 13px/19px var(--font); box-shadow:none; transition:border-color .12s, box-shadow .12s;
+}
+.ds-page textarea { height:auto; min-height:64px; padding:8px 10px; line-height:20px; resize:vertical; }
+.ds-page select { appearance:none; -webkit-appearance:none; padding-right:30px; cursor:pointer;
+  background:var(--bg-surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%238b8b94' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E") right 10px center/14px 14px no-repeat; }
+.ds-page :is(input, select, textarea)::placeholder { color:var(--text-3); opacity:1; }
+.ds-page :is(input:not([type=checkbox]):not([type=radio]), select, textarea):hover:not(:disabled) { border-color:var(--border-strong); }
+.ds-page :is(input:not([type=checkbox]):not([type=radio]), select, textarea):focus-visible { outline:0; border-color:var(--text); box-shadow:0 0 0 3px rgb(23 23 26 / .08); }
+.ds-page :is(input, select, textarea):disabled { background-color:var(--bg-muted); color:var(--text-3); cursor:not-allowed; }
+.ds-page :is(input, select, textarea)[aria-invalid=true] { border-color:var(--critical); box-shadow:0 0 0 3px var(--critical-soft); }
+/* Field labels: the span/legend that names a field */
+.ds-page .deal-field { display:flex; flex-direction:column; gap:6px; min-width:0; font-size:13px; }
+.ds-page .deal-field > span:first-child, .ds-page .deal-field > legend, .ds-page .ds-label { font:500 12px/16px var(--font); color:var(--text-2); }
+.ds-page .deal-field small, .ds-page .ds-help { font:400 12px/16px var(--font); color:var(--text-3); }
+/* Checkboxes and radios: 16px, ink when on (as .cb in ui.css) */
+.ds-page input[type=checkbox]:not(.switch input), .ds-page input[type=radio] {
+  appearance:none; -webkit-appearance:none; flex:none; width:16px; height:16px; min-height:0; margin:0; padding:0;
+  border:1px solid var(--border-strong); background:var(--bg-surface); cursor:pointer; display:inline-grid; place-items:center; vertical-align:middle;
+}
+.ds-page input[type=checkbox]:not(.switch input) { border-radius:4px; }
+.ds-page input[type=radio] { border-radius:50%; }
+.ds-page input[type=checkbox]:not(.switch input):checked { background:var(--bg-inverse) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 8.5l2.5 2.5L12 5.5'/%3E%3C/svg%3E") center/12px no-repeat; border-color:var(--bg-inverse); }
+.ds-page input[type=radio]:checked { border:5px solid var(--bg-inverse); }
+.ds-page :is(input[type=checkbox], input[type=radio]):focus-visible { outline:2px solid var(--border-focus); outline-offset:2px; }
+.ds-page :is(input[type=checkbox], input[type=radio]):disabled { opacity:.45; cursor:not-allowed; }
+/* A checkbox or radio with its words: one row, box first, words beside it */
+.ds-page .ds-check { display:flex; align-items:flex-start; gap:10px; padding:2px 0; font:400 13px/19px var(--font); color:var(--text); cursor:pointer; }
+.ds-page .ds-check > input { margin-top:2px; }
+.ds-page .ds-check small { display:block; color:var(--text-3); font-size:12px; line-height:16px; }
+/* A form laid out in a card: two columns, wide fields span both, actions at the bottom on a hairline */
+.ds-form { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px 16px; }
+.ds-form .wide { grid-column:1 / -1; }
+.ds-form-actions { grid-column:1 / -1; display:flex; align-items:center; gap:8px; padding-top:14px; border-top:1px solid var(--border); }
+@media (max-width: 640px) { .ds-form { grid-template-columns:minmax(0,1fr); } .ds-page :is(input:not([type=checkbox]):not([type=radio]), select, textarea) { font-size:16px; height:40px; } .ds-page textarea { height:auto; } }
+@media (max-width: 640px) { .ds-table th:first-child, .ds-table td:first-child { padding-left:16px; } .ds-table th:last-child, .ds-table td:last-child { padding-right:16px; } }
+
+/* ---------- Stat cards with a tinted icon tile. The tile follows the card's meaning line:
+   warning → amber, critical → red, positive → green, otherwise a calm neutral. ---------- */
+.ds-stat { gap:4px; padding:16px 18px 16px; }
+.ds-stat-label { gap:10px; margin-bottom:6px; }
+.ds-stat-label .icon { box-sizing:content-box; width:16px; height:16px; padding:7px; border-radius:8px; background:var(--bg-muted); color:var(--text-2); }
+.ds-stat:has(.ds-stat-sub.warning) .ds-stat-label .icon { background:var(--warning-soft); color:var(--warning); }
+.ds-stat:has(.ds-stat-sub.critical) .ds-stat-label .icon { background:var(--critical-soft); color:var(--critical); }
+.ds-stat:has(.ds-stat-sub.positive) .ds-stat-label .icon { background:var(--positive-soft); color:var(--positive); }
+.ds-stat:first-child .ds-stat-label .icon { background:var(--signal-soft); color:var(--signal-strong); }
+.ds-stat-value { font-size:24px; line-height:30px; }
+.ds-stat-sub { display:flex; align-items:center; gap:6px; }
+/* Card headers: the icon reads as part of the title */
+.ds-card-head > .icon { color:var(--text-2); }
+
+/* ---------- Step editor pieces (components/StepFields.tsx) ---------- */
+.ds-switch-row { display:flex; align-items:center; gap:16px; padding:12px 14px; border:1px solid var(--border); border-radius:10px; background:var(--bg-sidebar); cursor:pointer; }
+.ds-switch-text { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+.ds-switch-text b { font:500 13px/19px var(--font); color:var(--text); }
+.ds-switch-text small { font:400 12px/16px var(--font); color:var(--text-3); }
+.ds-waits { margin:0; padding:0; border:0; min-width:0; display:flex; flex-direction:column; gap:8px; }
+.ds-waits legend { padding:0; margin-bottom:8px; display:flex; gap:6px; align-items:baseline; }
+.ds-waits-list { display:flex; flex-wrap:wrap; gap:6px; }
+.ds-wait { display:inline-flex; align-items:center; gap:6px; height:28px; padding:0 10px 0 4px; border:1px solid var(--border); border-radius:8px; background:var(--bg-surface); box-shadow:none; color:var(--text-2); font:500 12px/16px var(--font); cursor:pointer; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ds-wait:hover { border-color:var(--border-strong); color:var(--text); background:var(--bg-surface); }
+.ds-wait-key { display:inline-grid; place-items:center; height:20px; padding:0 6px; border-radius:5px; background:var(--bg-muted); color:var(--text-3); font:500 11px/1 var(--font-mono); }
+.ds-wait[aria-pressed=true] { border-color:var(--text); background:var(--text); color:#fff; }
+.ds-wait[aria-pressed=true] .ds-wait-key { background:rgb(255 255 255 / .16); color:#fff; }
+.ds-step-form { padding:18px; border-top:1px solid var(--border); background:var(--bg-surface); }
+.ds-table thead th, .ds-table td, .ds-table tbody th { vertical-align:middle; }

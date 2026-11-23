@@ -6,7 +6,7 @@ import { bandLabel, bandOfScore } from "../careView";
 import { filterByGrade, GRADE_FILTERS, isGradeFilter, latestOnly, moneyLabel, sortClients, type ClientSort, type GradeFilter } from "../clientView";
 import { filterByPlan, filterByView, healthTone, isListView, isPlanFilter, listSummary, nextThing, PLAN_LABEL, planOf, planOptions, planTone, VIEW_TITLE, type PlanFilter } from "../components/client/clientScreen";
 import { GradeChip } from "../components/client/GradePanel";
-import { Avatar, Chip, Empty, Meter, Note, PageHeader, Seg, Stat, Stats } from "../components/ds";
+import { Avatar, Card, Chip, Empty, Meter, Note, PageHeader, Seg, Stat, Stats } from "../components/ds";
 import Icon from "../components/Icon";
 import type { ClientRow } from "../../worker/clients/record";
 import type { MoneyDashboard } from "../../worker/money/dashboard";
@@ -56,6 +56,10 @@ export default function Clients() {
   const access = all.filter((r) => r.accessMissing > 0 && !(r.openInvoiceCents > 0 || r.held)).length;
   const attention = owing + access;
   const gap = extras && extras.freedom.targetCents > 0 ? extras.freedom.targetCents - sum.mrrCents : null;
+  // With only a few clients the filters have nothing to sort through, so they step aside and the space below the table shows what is next and the room to grow.
+  const few = all.length > 0 && all.length <= 4 && !view;
+  const due = all.map((r) => ({ r, next: nextThing(r, today) })).filter((x) => x.next !== null);
+  const avgMrr = all.filter((r) => r.mrrCents > 0).length ? Math.round(sum.mrrCents / all.filter((r) => r.mrrCents > 0).length) : 0;
   const heading = view ? VIEW_TITLE[view] : gradeFilter === "all" ? "Clients" : gradeFilter === "none" ? "Clients with no grade" : `${gradeFilter} clients`;
 
   return (
@@ -73,7 +77,7 @@ export default function Clients() {
               sub={gap === null ? "What every live plan bills each month" : gap > 0 ? `${moneyLabel(gap)} to the ${moneyLabel(extras!.freedom.targetCents)} goal` : `Past the ${moneyLabel(extras!.freedom.targetCents)} goal`}
               tone={gap !== null && gap <= 0 ? "positive" : undefined} />
             <Stat icon="building" label="Clients" value={all.length}
-              sub={extras && extras.clients.limit > 0 ? (extras.clients.limit > extras.clients.count ? `Room for ${extras.clients.limit - extras.clients.count} more at ${extras.clients.limit}` : `At your limit of ${extras.clients.limit}`) : `${all.reduce((n, r) => n + r.siteCount, 0)} sites between them`} />
+              sub={extras && extras.clients.limit > 0 ? (extras.clients.limit > extras.clients.count ? `Room for ${extras.clients.limit - extras.clients.count} more at ${extras.clients.limit}` : `At your limit of ${extras.clients.limit}`) : (() => { const n = all.reduce((t, r) => t + r.siteCount, 0); return `${n} ${n === 1 ? "site" : "sites"} between them`; })()} />
             <Stat icon="gauge" label="Average health" value={sum.avgHealth ?? "–"}
               sub={sum.avgHealth === null ? "No client has a score yet" : atRisk > 0 ? `${atRisk} at risk (under 60)` : "Nobody is at risk"} tone={atRisk > 0 ? "critical" : sum.avgHealth !== null ? "positive" : undefined} />
             <Stat icon="alert" label="Needs attention" value={attention}
@@ -84,13 +88,15 @@ export default function Clients() {
 
         {rows && rows.length > 0 && (
           <div className="ds-toolbar">
-            <Seg label="Show clients on plan" options={planOptions(all)} value={plan} onChange={(k) => setParam("plan", k === "all" ? null : k)} />
+            {(!few || plan !== "all") && <Seg label="Show clients on plan" options={planOptions(all)} value={plan} onChange={(k) => setParam("plan", k === "all" ? null : k)} />}
+            {few && plan === "all" && <h2 className="clx-list-title">{all.length === 1 ? "Your client" : `Your ${all.length} clients`}</h2>}
             {view && <Chip tone="signal">{VIEW_TITLE[view]} <button type="button" className="clx-chip-x" aria-label={`Stop showing only ${VIEW_TITLE[view].toLowerCase()}`} onClick={() => setParam("view", null)}><Icon name="x" size={12} /></button></Chip>}
             <span className="ds-grow" />
-            <label className="clx-toggle">
-              <input type="checkbox" className="cb" checked={showTest} aria-label="Show test clients" onChange={(e) => setParam("test", e.target.checked ? "1" : null)} />
+            <label className="ds-check clx-toggle">
+              <input type="checkbox" checked={showTest} aria-label="Show test clients" onChange={(e) => setParam("test", e.target.checked ? "1" : null)} />
               <span>Show test clients</span>
             </label>
+            {(!few || gradeFilter !== "all" || sort !== "name") && <>
             <label className="clx-select"><span>Grade</span>
               <select aria-label="Show clients with grade" value={gradeFilter} onChange={(e) => setParam("grade", e.target.value === "all" ? null : e.target.value)}>
                 {GRADE_FILTERS.map(([k, l]) => <option key={k} value={k}>{k === "all" ? "Any" : l}</option>)}
@@ -101,6 +107,7 @@ export default function Clients() {
                 {SORTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
               </select>
             </label>
+            </>}
           </div>
         )}
 
@@ -157,6 +164,42 @@ export default function Clients() {
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+        {few && shown.length > 0 && (
+          <div className="clx-list-more">
+            <Card icon="list" title="What’s next" note={due.length ? `${due.length} to do` : undefined} flush>
+              {due.length === 0
+                ? <div className="clx-calm"><span className="ds-tile positive"><Icon name="check" size={15} /></span><span className="clx-setup-text"><b>Nothing due</b><small>No money owed, no access missing and no renewal coming up.</small></span></div>
+                : due.map(({ r, next }) => {
+                  const to = next!.text.includes("access") ? `/clients/${encodeURIComponent(r.id)}?tab=sites` : next!.tone === "critical" ? `/billing?businessId=${encodeURIComponent(r.id)}` : `/clients/${encodeURIComponent(r.id)}`;
+                  return (
+                    <Link key={r.id} to={to} className="clx-proj">
+                      <span className={`ds-tile ${next!.tone === "critical" ? "critical" : next!.tone === "warning" ? "warning" : "neutral"}`}><Icon name={next!.text.includes("access") ? "key" : next!.tone === "critical" ? "card" : "calendar"} size={15} /></span>
+                      <span className="clx-setup-text"><b>{next!.text}</b><small>{r.name}</small></span>
+                      <span className="clx-setup-go">{next!.text.includes("access") ? "Open access" : next!.tone === "critical" ? "Open billing" : "Open"}<Icon name="chevron-right" size={14} /></span>
+                    </Link>
+                  );
+                })}
+            </Card>
+            <Card icon="trending" title="Room to grow" flush>
+              <div className="clx-grow">
+                {extras && extras.freedom.targetCents > 0 && (
+                  <div className="clx-grow-row">
+                    <span className="clx-grow-label"><b>Monthly income</b><small>{moneyLabel(sum.mrrCents)} of the {moneyLabel(extras.freedom.targetCents)} goal</small></span>
+                    <Meter value={sum.mrrCents} max={extras.freedom.targetCents} tone="signal" label={`Monthly income: ${moneyLabel(sum.mrrCents)} of ${moneyLabel(extras.freedom.targetCents)}`} />
+                  </div>
+                )}
+                {extras && extras.clients.limit > 0 && (
+                  <div className="clx-grow-row">
+                    <span className="clx-grow-label"><b>Clients</b><small>{extras.clients.count} of the {extras.clients.limit} you can take on</small></span>
+                    <Meter value={extras.clients.count} max={extras.clients.limit} tone="positive" label={`Clients: ${extras.clients.count} of ${extras.clients.limit}`} />
+                  </div>
+                )}
+                <p className="clx-help">{gap !== null && gap > 0 && avgMrr > 0 ? `At about ${moneyLabel(avgMrr)} a month each, ${Math.ceil(gap / avgMrr)} more clients like these reach the goal.` : "New clients come from leads you win: a signed proposal turns a lead into a client here."}</p>
+              </div>
+              <div className="clx-grow-foot"><Link to="/leads" className="btn sm"><Icon name="users" size={14} />Open leads</Link></div>
+            </Card>
           </div>
         )}
         {shown.length > 0 && (

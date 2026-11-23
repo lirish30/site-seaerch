@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { api } from "../api";
 import type { Contact, Person } from "../types";
+import { initials } from "../scoreView";
+import Icon from "./Icon";
 
 const blank = { name: "", role: "", email: "", phone: "", linkedin: "" };
 
@@ -24,51 +26,68 @@ export default function PeoplePanel({ leadId, people, contacts, onChange, onErro
     setForm(blank); setOpen(false);
   }
 
+  const field = (key: keyof typeof blank, label: string, o: { type?: string; placeholder?: string; wide?: boolean; required?: boolean } = {}) => (
+    <label className={`clx-lead-field${o.wide ? " wide" : ""}`}>
+      <span>{label}{o.required && <i aria-hidden="true"> *</i>}</span>
+      <input type={o.type ?? "text"} value={form[key]} placeholder={o.placeholder} required={o.required} autoComplete="off" aria-label={label}
+        onChange={(e) => setForm({ ...form, [key]: e.target.value })} />
+    </label>
+  );
+
   return (
-    <div className="people">
-      <ul className="people-list">
-        {people.map((p) => (
-          <li key={p.id} className={p.is_poc ? "poc" : ""}>
-            <div>
-              <strong>{p.name}</strong>{p.role && <span className="muted"> · {p.role}</span>}
-              {p.is_poc && <span className="tag poc-tag">POC</span>}
-              <div className="person-meta">
-                {p.email && <a href={`mailto:${p.email}`}>{p.email}</a>}
-                {p.phone && <a href={`tel:${p.phone}`}>{p.phone}</a>}
-                {p.linkedin && /^https?:\/\//.test(p.linkedin) && <a href={p.linkedin} target="_blank" rel="noreferrer">LinkedIn</a>}
-              </div>
-            </div>
-            <div className="row">
-              {!p.is_poc && <button className="link-btn" onClick={() => run(() => api.patch(`/leads/${leadId}/people/${p.id}`, { is_poc: true }))}>Make POC</button>}
-              <button className="link-btn danger" aria-label={`Remove ${p.name}`} onClick={() => run(() => api.del(`/leads/${leadId}/people/${p.id}`))}>Remove</button>
-            </div>
-          </li>
-        ))}
-        {!people.length && <li className="muted">No point of contact yet.</li>}
-      </ul>
+    <div className="people clx-lead-people">
+      {people.length > 0 ? (
+        <ul className="clx-lead-plist" aria-label="Saved people">
+          {people.map((p) => (
+            <li key={p.id}>
+              <span className="avatar-sm" aria-hidden="true">{initials(p.name)}</span>
+              <span className="clx-lead-ptext">
+                <span className="clx-lead-pname"><b>{p.name}</b>{p.is_poc && <span className="clx-lead-chip signal">POC</span>}</span>
+                {p.role && <small>{p.role}</small>}
+                {(p.email || p.phone || (p.linkedin && /^https?:\/\//.test(p.linkedin))) && (
+                  <span className="clx-lead-pmeta">
+                    {p.email && <a href={`mailto:${p.email}`}>{p.email}</a>}
+                    {p.phone && <a href={`tel:${p.phone}`}>{p.phone}</a>}
+                    {p.linkedin && /^https?:\/\//.test(p.linkedin) && <a href={p.linkedin} target="_blank" rel="noreferrer">LinkedIn</a>}
+                  </span>
+                )}
+                <span className="clx-lead-pacts">
+                  {!p.is_poc && <button type="button" className="link-btn" onClick={() => run(() => api.patch(`/leads/${leadId}/people/${p.id}`, { is_poc: true }))}>Make point of contact</button>}
+                  <button type="button" className="link-btn danger" aria-label={`Remove ${p.name}`} onClick={() => run(() => api.del(`/leads/${leadId}/people/${p.id}`))}>Remove</button>
+                </span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : <p className="clx-lead-pnone">No one saved yet. The first person you save becomes the point of contact, and drafts are addressed to them.</p>}
 
       {found.length > 0 && <>
-        <h4 className="sub">Found on their site</h4>
-        <ul className="people-list found">
+        <p className="clx-lead-over">Found on their site</p>
+        <ul className="clx-lead-plist found" aria-label="Found on their site">
           {found.map((c) => (
             <li key={c.id}>
-              <div><strong>{c.person_name}</strong>{c.role && <span className="muted"> · {c.role}</span>}<div className="person-meta">{c.value}</div></div>
-              <button className="link-btn" onClick={() => add({ name: c.person_name!, role: c.role, email: c.value, source: "site", is_poc: people.length === 0 })}>Save</button>
+              <span className="clx-lead-found-ico" aria-hidden="true"><Icon name="sparkles" size={13} /></span>
+              <span className="clx-lead-ptext"><b>{c.person_name}</b><small>{[c.role, c.value].filter(Boolean).join(" · ")}</small></span>
+              <button type="button" className="btn sm" onClick={() => add({ name: c.person_name!, role: c.role, email: c.value, source: "site", is_poc: people.length === 0 })}>Save</button>
             </li>
           ))}
         </ul>
       </>}
 
       {open ? (
-        <form className="person-form" onSubmit={submit}>
-          <input placeholder="Name *" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required aria-label="Name" />
-          <input placeholder="Role" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} aria-label="Role" />
-          <input placeholder="Email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} aria-label="Email" />
-          <input placeholder="Phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} aria-label="Phone" />
-          <input placeholder="LinkedIn URL" value={form.linkedin} onChange={(e) => setForm({ ...form, linkedin: e.target.value })} aria-label="LinkedIn URL" />
-          <div className="row"><button className="primary" type="submit">Add person</button><button type="button" onClick={() => setOpen(false)}>Cancel</button></div>
+        <form className="clx-lead-form" onSubmit={submit} aria-label="Add a person">
+          <p className="clx-lead-over wide">Add a person</p>
+          {field("name", "Name", { required: true })}
+          {field("role", "Role", { placeholder: "Owner, office manager" })}
+          {field("email", "Email", { type: "email", wide: true })}
+          {field("phone", "Phone", { type: "tel" })}
+          {field("linkedin", "LinkedIn", { placeholder: "https://…" })}
+          <div className="clx-lead-form-actions">
+            <button className="btn primary sm" type="submit" disabled={!form.name.trim()}>Add person</button>
+            <button className="btn sm" type="button" onClick={() => { setOpen(false); setForm(blank); }}>Cancel</button>
+          </div>
         </form>
-      ) : <button className="link-btn" onClick={() => setOpen(true)}>+ Add a person</button>}
+      ) : <button type="button" className="btn sm clx-lead-padd" onClick={() => setOpen(true)}><Icon name="plus" size={14} />Add a person</button>}
     </div>
   );
 }

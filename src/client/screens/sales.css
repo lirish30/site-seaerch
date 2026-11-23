@@ -350,3 +350,138 @@ fieldset.slx-field input + input { margin-top:0; }
 .slx-col-head { flex-wrap:wrap; height:auto; padding:10px 4px 4px; row-gap:0; }
 .slx-col-head h2 { white-space:normal; }
 .slx-col-total { flex-basis:100%; }
+
+/* =====================================================================================================
+   Round 2 (design QA): header alignment, campaign editor and its step line, sparse states, forms.
+   ===================================================================================================== */
+/* The global `th { vertical-align:top }` pushed header labels to the top of the 36px header row. */
+.ds-page[class*="slx"] .ds-table thead th { vertical-align:middle; }
+.slx-bad { color:var(--critical) !important; }
+.slx-short { max-width:180px; }
+.slx-mid { max-width:260px; }
+.slx-msg { font:400 12px/16px var(--font); color:var(--positive); }
+.slx-msg.bad { color:var(--critical); }
+.slx-msg:empty { display:none; }
+.slx-money-in { position:relative; display:block; }
+.slx-money-in > i { position:absolute; left:10px; top:50%; transform:translateY(-50%); font:400 13px/1 var(--font); font-style:normal; color:var(--text-3); pointer-events:none; }
+.ds-page .slx-money-in > input { padding-left:22px !important; }
+.slx-link-btn { height:auto; padding:0; border:0; background:none; box-shadow:none; font:500 12px/16px var(--font); color:var(--text-3); cursor:pointer; }
+.slx-link-btn:hover { color:var(--critical); background:none; }
+
+/* Campaign editor: settings, then the step line */
+.slx-camp-editor { gap:0; padding:0; max-width:900px; overflow:hidden; }
+.slx-camp-sec { display:flex; flex-direction:column; gap:14px; padding:18px 20px; }
+.slx-camp-sec + .slx-camp-sec { border-top:1px solid var(--border); }
+.slx-camp-editor .slx-camp-h { display:flex; align-items:center; gap:8px; margin:0; font:600 11px/14px var(--font); letter-spacing:.6px; text-transform:uppercase; color:var(--text-3); }
+.slx-camp-h small { margin-left:auto; font:400 12px/16px var(--font); letter-spacing:0; text-transform:none; color:var(--text-3); }
+.slx-camp-editor .ds-form { align-items:start; }
+.slx-merge { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:0; font:400 12px/16px var(--font); color:var(--text-3); }
+.slx-merge code { padding:2px 6px; border-radius:5px; background:var(--bg-muted); font:500 11px/16px var(--font-mono); color:var(--text-2); }
+.slx-merge span { margin-left:6px; }
+.slx-seq-list { list-style:none; margin:0; padding:0; border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+.slx-seq + .slx-seq { border-top:1px solid var(--border); }
+.slx-seq-row { position:relative; display:flex; align-items:center; gap:12px; width:100%; min-height:58px; padding:10px 16px; border:0; border-radius:0; background:var(--bg-surface); box-shadow:none; color:var(--text); text-align:left; cursor:pointer; }
+.slx-seq-row:hover { background:var(--bg-hover); }
+.slx-seq.open > .slx-seq-row { background:var(--bg-muted); border-bottom:1px solid var(--border); }
+/* the line that joins the steps */
+.slx-seq:not(.last):not(.open) > .slx-seq-row::after { content:""; position:absolute; left:32px; top:calc(50% + 17px); bottom:calc(-50% + 17px); width:1px; background:var(--border); }
+.slx-seq-text { flex:1; min-width:0; display:flex; flex-direction:column; gap:1px; }
+.slx-seq-text b { font:500 13px/19px var(--font); color:var(--text); }
+.slx-seq-text small { font:400 12px/16px var(--font); color:var(--text-3); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.slx-seq-form { margin:0; padding:16px; border:0; min-width:0; background:var(--bg-surface); }
+.slx-seq-when { display:flex; gap:16px; flex-wrap:wrap; }
+.slx-seq-when .deal-field { flex:1 1 160px; }
+.slx-seq-note { display:flex; align-items:center; gap:8px; padding:10px 12px; border-radius:8px; background:var(--signal-soft); font:400 13px/19px var(--font); color:var(--text); }
+.slx-seq-note .icon { color:var(--signal-strong); flex:none; }
+.slx-variant-head { display:flex; align-items:center; gap:10px; }
+.slx-variant-head label { flex:1; font:500 12px/16px var(--font); color:var(--text-2); }
+.slx-variant textarea { min-height:110px; }
+.slx-camp-panel .ds-banner { margin-top:2px; }
+
+@media (max-width: 640px) {
+  .slx-camp-sec { padding:14px; }
+  .slx-camp-h small { display:none; }
+  .slx-seq-row .ds-chip { display:none; }
+  .slx-short, .slx-mid { max-width:none; }
+}
+/* ds.css gives every field height:34px with a stronger selector than its own textarea rule, so textareas ignored rows. Let them grow. */
+.ds-page[class*="slx"] textarea { height:auto !important; }
+.ds-page .slx-variant textarea { min-height:110px; }
+/* Field labels and fields match the design system's forms (12px label, 13px field, 34px tall); the call-notes questions stay 13px ink. */
+.ds-page .slx-field > span, .ds-page .slx-field > legend { font:500 12px/16px var(--font); color:var(--text-2); }
+.ds-page .slx-field > span:has(.slx-qn) { font:500 13px/19px var(--font); color:var(--text); }
+.ds-page .slx-field :is(input, select) { height:34px; font-size:13px; }
+.ds-page .slx-field textarea { font-size:13px; }
+.slx-stake-form { margin-bottom:4px; }
+/* New deal: the search box draws one border, not two */
+.ds-page .slx-search input { border:0 !important; box-shadow:none !important; height:32px !important; padding:0 !important; background:transparent !important; }
+/* Onboarding: checklist rows, answers, the link */
+.slx-onb-items { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; }
+.slx-onb-item { display:flex; align-items:flex-start; gap:12px; padding:14px 0; border-bottom:1px solid var(--border); }
+.slx-onb-item:first-child { padding-top:0; }
+.slx-onb-main { flex:1; min-width:0; display:flex; flex-direction:column; gap:4px; }
+.slx-onb-head { display:flex; align-items:center; flex-wrap:wrap; gap:6px 10px; }
+.slx-onb-head b { font:500 14px/20px var(--font); color:var(--text); }
+.slx-onb-text { margin:4px 0 0; padding:10px 12px; border-radius:8px; background:var(--bg-muted); font:400 13px/19px var(--font); color:var(--text); white-space:pre-wrap; }
+.slx-onb-files { list-style:none; margin:4px 0 0; padding:0; display:flex; flex-direction:column; gap:4px; }
+.slx-onb-files li { display:flex; align-items:center; gap:8px; font:400 13px/19px var(--font); }
+.slx-onb-files .icon { color:var(--text-3); }
+.slx-onb-files a { color:var(--text); font-weight:500; text-decoration:none; } .slx-onb-files a:hover { text-decoration:underline; }
+.slx-onb-acts { display:flex; flex-direction:column; align-items:stretch; gap:6px; flex:none; width:104px; }
+.slx-onb-item.accepted .slx-onb-head b, .slx-onb-item.not_applicable .slx-onb-head b { color:var(--text-2); }
+.slx-add-row { display:flex; align-items:center; gap:10px; padding-top:14px; }
+.slx-add-form { padding:14px; margin-top:14px; border:1px solid var(--border); border-radius:10px; background:var(--bg-sidebar); }
+.slx-answer-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:14px; }
+.slx-answer-list li { display:flex; gap:10px; }
+.slx-q-num { display:inline-grid; place-items:center; flex:none; width:20px; height:20px; border-radius:6px; background:var(--bg-muted); font:500 11px/1 var(--font-mono); color:var(--text-3); }
+.slx-answer-list li > div { flex:1; min-width:0; display:flex; flex-direction:column; gap:4px; }
+.slx-q { margin:0; font:500 13px/19px var(--font); color:var(--text); }
+.slx-a { margin:0; padding:10px 12px; border-radius:8px; background:var(--bg-muted); font:400 13px/19px var(--font); color:var(--text); white-space:pre-wrap; }
+.slx-answers { display:flex; flex-direction:column; gap:14px; }
+.slx-onb-meter { display:flex; flex-direction:column; gap:6px; font:400 13px/19px var(--font); color:var(--text-2); }
+.slx-onb-meter b { color:var(--text); font-weight:600; }
+.slx-owner-fields { margin-top:6px; padding-top:14px; border-top:1px solid var(--border); grid-template-columns:minmax(0,1fr); }
+.slx-link-panel { display:flex; flex-direction:column; gap:10px; }
+.slx-copy-row { display:flex; gap:8px; }
+.slx-copy-row input { flex:1; min-width:0; font-family:var(--font-mono) !important; font-size:12px !important; color:var(--text-2) !important; }
+.slx-copy-row .btn { height:34px; }
+.slx-link-close { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding-top:12px; border-top:1px solid var(--border); }
+.slx-link-close .slx-hint { flex:1; min-width:160px; }
+@media (max-width: 640px) {
+  .slx-onb-item { flex-wrap:wrap; }
+  .slx-onb-acts { flex-direction:row; width:100%; padding-left:46px; }
+}
+.slx-center { justify-content:center; }
+.slx-flow { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:12px; }
+.slx-flow li { display:flex; align-items:center; gap:12px; }
+.slx-flow li > span:last-child { display:flex; flex-direction:column; min-width:0; }
+.slx-flow b { font:500 13px/19px var(--font); color:var(--text); }
+.slx-flow small { font:400 12px/16px var(--font); color:var(--text-3); }
+.slx-more { display:flex; align-items:center; gap:4px; padding:12px 18px; font:500 12px/16px var(--font); color:var(--text-2); text-decoration:none; }
+.slx-more:hover { color:var(--text); }
+.slx-pipeline .ds-cols.c2 { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+@media (max-width: 1000px) { .slx-pipeline .ds-cols.c2 { grid-template-columns:minmax(0,1fr); } }
+.slx-flow-row { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; }
+.slx-flow-row li { align-items:flex-start; }
+@media (max-width: 800px) { .slx-flow-row { grid-template-columns:minmax(0,1fr); } }
+/* Options editor: the recommended option is marked, each package is a checkbox with its price under it, a discount is a short dollar field */
+.slx-option.rec { border-color:color-mix(in srgb, var(--signal) 55%, var(--border)) !important; }
+.slx-option.rec > legend { color:var(--signal-strong); }
+.slx-pkg { display:flex; flex-direction:column; gap:6px; }
+.slx-disc { display:flex; align-items:center; gap:8px; padding-left:26px; }
+.slx-disc .slx-money-in { width:110px; }
+.slx-disc small { font:400 12px/16px var(--font); color:var(--text-3); }
+.slx-option > legend { padding:0 6px; margin-left:-6px; background:var(--bg-surface); }
+/* Campaigns on a phone: each campaign is a stacked card row, so its open editor fits the screen instead of scrolling sideways inside the table. */
+@media (max-width: 640px) {
+  .slx-camp-table thead { display:none; }
+  .slx-camp-table, .slx-camp-table tbody { display:block; }
+  .slx-camp-table tbody tr:not(.slx-camp-panel) { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:6px 12px; padding:12px 16px; border-bottom:1px solid var(--border); }
+  .slx-camp-table tbody tr:not(.slx-camp-panel) > td { display:block; height:auto !important; padding:0 !important; border:0 !important; white-space:normal; }
+  .slx-camp-table tbody tr:not(.slx-camp-panel) > td:first-child { grid-column:1 / -1; }
+  .slx-camp-table tbody tr:not(.slx-camp-panel) > td.num { text-align:left; }
+  .slx-camp-table tbody tr:not(.slx-camp-panel) > td.num::after { content:" leads"; color:var(--text-3); }
+  .slx-camp-panel, .slx-camp-panel > td { display:block; }
+  .slx-camp-table tr.open > td { background:transparent; }
+}
+.ds-page[class*="slx"] .ds-form-actions { flex-wrap:wrap; }

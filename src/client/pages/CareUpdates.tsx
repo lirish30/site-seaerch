@@ -9,6 +9,9 @@ import Icon, { type IconName } from "../components/Icon";
 import { Banner, Card, Chip, Empty, Note, PageHeader, Stat, Stats, type Tone } from "../components/ds";
 import type { CareRunDetail, CareRunView, CareSiteView, CareUpdateView, CareUpdatesBoard } from "../../worker/care/views";
 
+/** What a site needs before it can take updates, matched against the server's reason ("no SSH access", "not WordPress", "no path"). */
+const NEEDS = [{ match: "ssh", label: "SSH access" }, { match: "path", label: "Folder path" }, { match: "wordpress", label: "WordPress" }];
+
 const sentence = (e: unknown, fallback: string): string => (e instanceof ApiError ? e.message : fallback);
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 const dayOf = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -168,7 +171,7 @@ export default function CareUpdates() {
           <button type="button" className="ds-icon-btn crx-refresh" aria-label="Refresh" title="Refresh" onClick={() => void load()}><Icon name="refresh" size={16} /></button>
           <Link className="btn" to="/care"><Icon name="shield" size={16} />Care board</Link>
           <Link className="btn" to="/care/reports"><Icon name="file-text" size={16} />Reports</Link>
-          {board !== null && <button type="button" className="btn primary" aria-disabled={starting} onClick={() => void start()}><Icon name="zap" size={16} />{starting ? "Starting…" : "Start this week’s batch now"}</button>}
+          {board !== null && <button type="button" className={`btn${updatable.length > 0 ? " primary" : ""}`} aria-disabled={starting} onClick={() => void start()}><Icon name="zap" size={16} />{starting ? "Starting…" : "Start this week’s batch now"}</button>}
         </>}
       />
       <div className="ds-body">
@@ -188,7 +191,13 @@ export default function CareUpdates() {
               <Banner tone="warning" title={`${plural(ticks, "update")} ${ticks === 1 ? "needs" : "need"} your OK`}>Major updates wait a week, then need a tick. Hold any you are not sure about.</Banner>
             ) : null}
 
-            {sites.length > 0 && (
+            {updatable.length === 0 && blocked.length > 0 && incidents.length === 0 && (
+              <Banner tone="warning" icon="key" title={blocked.length === 1 ? `${blocked[0].domain ?? "Your Care site"} can't take updates yet` : `None of your ${blocked.length} Care sites can take updates yet`}
+                action={<Link className="btn sm" to="/clients?view=access">See missing access</Link>}>
+                Weekly updates need SSH access, the site's folder path and WordPress. Add what is missing on the client's Sites tab and the site joins the next batch.
+              </Banner>
+            )}
+            {updatable.length > 0 && (
               <Stats label="This week">
                 <Stat icon="zap" label="This week’s batch" value={batch ? batchLabel(batch.status) : "Not started"} sub={batch ? `Started ${dayOf(batch.createdAt)}` : "Starts on its own each week, or press Start"} />
                 <Stat icon="refresh" label="Updates waiting" value={waiting.length} sub={`across ${plural(updatable.length, "site")}${held ? ` · ${held} held` : ""}`} />
@@ -206,13 +215,19 @@ export default function CareUpdates() {
             {updatable.map((s) => <SiteCard key={s.siteId} s={s} now={now} zone={tz} onUpdate={replace} onReload={load} />)}
 
             {blocked.length > 0 && (
-              <Card icon="ban" title="Sites that can’t take updates" note={plural(blocked.length, "site")} flush>
+              <Card icon="key" title="Sites that can’t take updates" note={plural(blocked.length, "site")} flush>
                 {blocked.map((s) => (
                   <div key={s.siteId}>
                     <IncidentStrip s={s} now={now} zone={tz} onReload={load} />
                     <div className="crx-blocked-row">
                       <span className="ds-tile warning"><Icon name="key" size={14} /></span>
                       <div><b>{s.domain ?? "Site with no domain yet"}</b><small>{whyLabel(s.why)}</small></div>
+                      <ul className="crx-needs" aria-label="What a site needs for updates">
+                        {NEEDS.map((n) => {
+                          const missing = (s.why ?? "").toLowerCase().includes(n.match);
+                          return <li key={n.match} className={missing ? "bad" : ""} title={missing ? "Missing" : "Also needed"}>{missing && <Icon name="x" size={12} />}{n.label}</li>;
+                        })}
+                      </ul>
                       {s.group && <Chip tone="outline">{s.group}</Chip>}
                       {s.lastRun && <Link className="btn sm" to={`/care/runs/${encodeURIComponent(s.lastRun.id)}`}>Last run</Link>}
                     </div>
@@ -220,7 +235,14 @@ export default function CareUpdates() {
                 ))}
               </Card>
             )}
-            {sites.length > 0 && <Note>Hold keeps an update out of every batch until you switch it off. Security marks it as a security fix: it goes in the next batch at once, even a major one.</Note>}
+            {updatable.length === 0 && blocked.length > 0 && (
+              <section className="crx-what" aria-label="How weekly updates work">
+                <div className="crx-what-card"><span className="ds-tile info"><Icon name="shield" size={16} /></span><span><b>A backup first</b><small>Every run takes a backup of the site before anything changes.</small></span></div>
+                <div className="crx-what-card"><span className="ds-tile signal"><Icon name="eye" size={16} /></span><span><b>Pictures before and after</b><small>Key pages are photographed and compared; a changed page waits for your look.</small></span></div>
+                <div className="crx-what-card"><span className="ds-tile positive"><Icon name="check" size={16} /></span><span><b>You approve each wave</b><small>On Today. Majors wait a week; security fixes go straight in.</small></span></div>
+              </section>
+            )}
+            {waiting.length > 0 && <Note>Hold keeps an update out of every batch until you switch it off. Security marks it as a security fix: it goes in the next batch at once, even a major one.</Note>}
           </>
         )}
       </div>

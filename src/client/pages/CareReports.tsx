@@ -203,7 +203,7 @@ export default function CareReports() {
     <div className="ds-page crx">
       <PageHeader
         title="Care reports"
-        sub={loaded && lines.length > 0 ? `${month} · ${sentAll} of ${due} sent · the monthly proof each Care client gets that their site was looked after.` : "The monthly proof each Care client gets that their site was looked after."}
+        sub={loaded && lines.length > 0 ? `${month} · ${sentAll === 0 && count("none") === due ? "none built yet" : `${sentAll} of ${due} sent`} · the monthly proof each Care client gets that their site was looked after.` : "The monthly proof each Care client gets that their site was looked after."}
         actions={<>
           <button type="button" className="ds-icon-btn crx-refresh" aria-label="Refresh" title="Refresh" onClick={() => void load()}><Icon name="refresh" size={16} /></button>
           <Link className="btn" to="/care"><Icon name="shield" size={16} />Care board</Link>
@@ -232,26 +232,52 @@ export default function CareReports() {
               </Banner>
             )}
 
-            <Card icon="calendar" title={`${month} at a glance`} note={`Care revenue ${moneyLabel(careMrr)} a month`} flush>
-              <div className="crx-progress">
-                <div className="crx-progress-top">
-                  <p className="ds-big">{sentAll}<small>of {due} sent</small></p>
-                  <p>{sentAll === due && due > 0 ? "Every report for the month is out." : `${plural(due - sentAll, "report")} still to go.`} {count("opened")} opened by the client{sentAll > count("opened") ? "; a nudge on your next call helps the rest" : ""}.</p>
+            {count("none") === due ? (
+              <Card icon="calendar" title={`${month} reports`} note={`Care revenue ${moneyLabel(careMrr)} a month`}>
+                <div className="crx-start">
+                  <div className="crx-start-main">
+                    <p className="crx-start-lead"><b>{due === 1 ? "One report to build this month." : `${plural(due, "report")} to build this month.`}</b> {due === 1 ? "It starts" : "They start"} on {due === 1 ? "its" : "their"} own in the first days of the month, or press Build now below to make {due === 1 ? "it" : "one"} straight away.</p>
+                    <ol className="crx-journey" aria-label="How a report goes out">
+                      <li className="now"><span className="crx-jdot" aria-hidden="true" /><b>Built</b><small>Numbers collected</small></li>
+                      <li><span className="crx-jdot" aria-hidden="true" /><b>Claude writes</b><small>A short summary</small></li>
+                      <li><span className="crx-jdot" aria-hidden="true" /><b>You approve</b><small>On Today</small></li>
+                      <li><span className="crx-jdot" aria-hidden="true" /><b>Client reads it</b><small>Mail and private link</small></li>
+                    </ol>
+                  </div>
+                  <div className="crx-start-side">
+                    <p className="crx-overline">What the client gets</p>
+                    <ul className="ds-reasons">
+                      <li className="ok"><Icon name="check" size={14} />Uptime and site health</li>
+                      <li className="ok"><Icon name="check" size={14} />Updates and fixes done</li>
+                      <li className="ok"><Icon name="check" size={14} />Edit hours used</li>
+                      <li className="ok"><Icon name="check" size={14} />Traffic, once Google is linked</li>
+                      <li className="ok"><Icon name="check" size={14} />One thing to do next</li>
+                    </ul>
+                  </div>
                 </div>
-                <div className="crx-stack" role="img" aria-label={MONTH_STAGES.map((s) => `${s.label} ${count(s.stage)}`).join(", ")}>
-                  {MONTH_STAGES.map((s) => count(s.stage) > 0 && <i key={s.stage} className={`t-${s.stage}`} style={{ flex: count(s.stage) }} />)}
+              </Card>
+            ) : (
+              <Card icon="calendar" title={`${month} at a glance`} note={`Care revenue ${moneyLabel(careMrr)} a month`} flush>
+                <div className="crx-progress">
+                  <div className="crx-progress-top">
+                    <p className="ds-big">{sentAll}<small>of {due} sent</small></p>
+                    <p>{sentAll === due && due > 0 ? "Every report for the month is out." : `${plural(due - sentAll, "report")} still to go.`} {count("opened")} opened by the client{sentAll > count("opened") ? "; a nudge on your next call helps the rest" : ""}.</p>
+                  </div>
+                  <div className="crx-stack" role="img" aria-label={MONTH_STAGES.map((s) => `${s.label} ${count(s.stage)}`).join(", ")}>
+                    {MONTH_STAGES.map((s) => count(s.stage) > 0 && <i key={s.stage} className={`t-${s.stage}`} style={{ flex: count(s.stage) }} />)}
+                  </div>
+                  <ul className="crx-stages">
+                    {MONTH_STAGES.filter((s) => count(s.stage) > 0).map((s) => (
+                      <li key={s.stage} className={s.stage === "ready" ? "on" : ""}>
+                        <b><i className={`crx-key crx-stack-key t-${s.stage}`} aria-hidden="true" />{count(s.stage)}</b>
+                        <span>{s.label}</span>
+                        <small>{s.hint}</small>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
-                <ul className="crx-stages">
-                  {MONTH_STAGES.map((s) => (
-                    <li key={s.stage} className={s.stage === "ready" && count("ready") > 0 ? "on" : ""}>
-                      <b><i className={`crx-key crx-stack-key t-${s.stage}`} aria-hidden="true" />{count(s.stage)}</b>
-                      <span>{s.label}</span>
-                      <small>{s.hint}</small>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </Card>
+              </Card>
+            )}
 
             <div className="ds-table-wrap">
               <table className="ds-table crx-reports">
@@ -293,7 +319,7 @@ export default function CareReports() {
                 </tbody>
               </table>
             </div>
-            <Note>A Care client with no report starts by themselves in the first days of the month; Build now makes one straight away. Each client gets a mail with your summary and a private link to the full page: uptime and health, updates and fixes, edit hours used, traffic once Google is linked, and one thing we suggest next.</Note>
+            {count("none") !== due && <Note>A Care client with no report starts by themselves in the first days of the month; Build now makes one straight away. Each client gets a mail with your summary and a private link to the full page: uptime and health, updates and fixes, edit hours used, traffic once Google is linked, and one thing we suggest next.</Note>}
           </>
         )}
       </div>

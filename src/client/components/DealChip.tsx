@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { STAGE_LABEL, type DealStage } from "../pipelineView";
-import { Pill } from "./settingsBits";
+import Icon from "./Icon";
 
 interface OpenDeal { id: string; stage: DealStage }
 
@@ -33,14 +33,25 @@ export default function DealChip({ leadId, onChanged }: { leadId: string; onChan
   }
 
   if (deal === undefined) return null;
-  if (deal) return <Link to="/pipeline" title="Open the pipeline board" style={{ textDecoration: "none" }}><Pill tone="info">Deal: {STAGE_LABEL[deal.stage]}</Pill></Link>;
-  if (!form) return <button type="button" className="chip-link" onClick={() => setForm(true)}>Start a deal</button>;
+  if (deal) return <Link to={`/deals/${encodeURIComponent(deal.id)}`} className="chip-link clx-lead-deal" title="Open the deal"><Icon name="kanban" size={13} />Deal: {STAGE_LABEL[deal.stage]}<Icon name="arrow-right" size={12} /></Link>;
   return (
-    <span className="url-edit">
-      <label><input type="checkbox" className="cb" checked={skipCall} onChange={(e) => setSkipCall(e.target.checked)} /> Skip the call, send an agreement</label>
-      <button type="button" className="btn primary sm" onClick={() => void start()} disabled={busy}>{busy ? "Starting…" : "Start deal"}</button>
-      <button type="button" className="btn sm" onClick={() => setForm(false)} disabled={busy}>Cancel</button>
-      {error && <span className="error" role="alert">{error}</span>}
+    <span className="clx-lead-dealwrap">
+      <button type="button" className="chip-link clx-lead-deal-start" aria-expanded={form} onClick={() => { setForm((f) => !f); setError(""); }}><Icon name="plus" size={13} />Start a deal</button>
+      {form && (
+        <span className="clx-lead-pop" role="dialog" aria-label="Start a deal">
+          <b>Start a deal</b>
+          <small>It goes on the pipeline board under Call booked.</small>
+          <label className="clx-lead-check">
+            <input type="checkbox" className="cb" checked={skipCall} onChange={(e) => setSkipCall(e.target.checked)} />
+            <span>Skip the call<small>Start it at Discovery done, so you can send a proposal straight away.</small></span>
+          </label>
+          {error && <span className="error small" role="alert">{error}</span>}
+          <span className="clx-lead-form-actions">
+            <button type="button" className="btn primary sm" onClick={() => void start()} disabled={busy}>{busy ? "Starting…" : "Start deal"}</button>
+            <button type="button" className="btn sm" onClick={() => setForm(false)} disabled={busy}>Cancel</button>
+          </span>
+        </span>
+      )}
     </span>
   );
 }

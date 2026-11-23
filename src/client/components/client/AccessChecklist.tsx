@@ -4,6 +4,8 @@ import { accessActions, accessTone, accessWords, problemText, serverProblem, vau
 import { ACCESS_LABELS, noteProblem, vaultNameProblem } from "../../../worker/sites/access";
 import type { AccessItem, AccessStatus } from "../../../worker/db/sites";
 import type { ClientAccessItem } from "../../../worker/clients/record";
+import { Meter } from "../ds";
+import Icon from "../Icon";
 
 const TONE = { neutral: "outline", good: "positive", warn: "warning" } as const;
 const NOTE_MAX = 500;
@@ -42,6 +44,7 @@ function Row({ clientId, siteId, siteName, item, onChanged }: { clientId: string
   const [vaultProblem, setVaultProblem] = useState<string | null>(null);
   const [noteError, setNoteError] = useState("");
   const [saved, setSaved] = useState(false);
+  const [open, setOpen] = useState(false);
   const tone = accessTone(item.status);
   const id = `${siteId}-${item.key}`;
   const vaultDirty = vault.trim() !== (item.vaultItem ?? "");
@@ -83,48 +86,66 @@ function Row({ clientId, siteId, siteName, item, onChanged }: { clientId: string
     } finally { setBusy(false); }
   }
 
+  const moves = accessActions(item.status);
+  const [next, ...rest] = moves;
+  const TILE = { neutral: "neutral", good: "positive", warn: "warning" } as const;
+  const ICON = { neutral: "ban", good: "check", warn: "key" } as const;
   return (
-    <li className={`cl-access ${tone}`} aria-label={`${meta.label} access for ${siteName}`}>
-      <div className="cl-access-head">
-        <b className="cl-access-name">{meta.label}</b>
+    <li className={`clx-acc ${tone}${open ? " open" : ""}`} aria-label={`${meta.label} access for ${siteName}`}>
+      <div className="clx-acc-row">
+        <span className={`ds-tile ${TILE[tone]}`}><Icon name={ICON[tone]} size={15} /></span>
+        <button type="button" className="clx-acc-name" aria-expanded={open} aria-controls={`${id}-more`} onClick={() => setOpen(!open)}>
+          <b>{meta.label}</b>
+          <small>{item.vaultItem ? `“${item.vaultItem}”` : when || (item.status === "needed" ? "Not asked for yet" : accessWords(item.status))}</small>
+        </button>
         <span className={`badge2 ${TONE[tone]}`}><i className="dot" />{accessWords(item.status)}</span>
-        <select className="cl-access-status" aria-label={`${meta.label} status for ${siteName}`} value={item.status} disabled={busy} onChange={(e) => void changeStatus(e.target.value as AccessStatus)}>
-          <option value={item.status} disabled>{accessWords(item.status)} (now)</option>
-          {accessActions(item.status).map((s) => <option key={s} value={s}>Mark {accessWords(s).toLowerCase()}</option>)}
-        </select>
+        {next && item.status !== "verified" && item.status !== "not_applicable" && (
+          <button type="button" className="btn sm clx-acc-next" disabled={busy} aria-label={`Mark ${accessWords(next).toLowerCase()}: ${meta.label} for ${siteName}`} onClick={() => void changeStatus(next)}>Mark {accessWords(next).toLowerCase()}</button>
+        )}
+        <button type="button" className="ds-icon-btn clx-acc-chev" aria-label={`${open ? "Hide" : "Show"} details for ${meta.label}`} aria-expanded={open} onClick={() => setOpen(!open)}><Icon name={open ? "chevron-up" : "chevron-down"} size={14} /></button>
       </div>
-      <p className="muted small cl-access-help">{meta.help}</p>
-      {when && <p className="small cl-access-when">{when}</p>}
-      {item.clientAnswer && (
-        // The client's own words: untrusted, so plain text only (React escapes it; it is never a link), cut short, and labelled as possibly wrong.
-        <blockquote className="small cl-access-answer" aria-label={`What the client wrote about ${meta.label} for ${siteName}`}>
-          <span className="muted">Client wrote (may be wrong)</span>
-          <q>{item.clientAnswer.length > ANSWER_SHOWN ? `${item.clientAnswer.slice(0, ANSWER_SHOWN).trimEnd()}…` : item.clientAnswer}</q>
-        </blockquote>
-      )}
       {statusError && <p className="error small" role="alert">{statusError}</p>}
-      <form className="cl-access-form" onSubmit={(e) => void saveDetails(e)} noValidate>
-        <label className="deal-field" htmlFor={`${id}-vault`}>
-          <span>Password manager item</span>
-          <input id={`${id}-vault`} type="text" value={vault} maxLength={VAULT_MAX + 40} autoComplete="off" autoCapitalize="off" spellCheck={false}
-            aria-label={`Password manager item for ${meta.label} on ${siteName}`} aria-describedby={`${id}-vault-hint`} aria-invalid={vaultProblem ? true : undefined}
-            onChange={(e) => { setVault(e.target.value); setVaultProblem(null); setSaved(false); }} />
-          <small id={`${id}-vault-hint`} className={vaultProblem ? "error" : "muted"} role={vaultProblem ? "alert" : undefined}>{vaultHint(vaultProblem, vault)}</small>
-        </label>
-        <label className="deal-field" htmlFor={`${id}-note`}>
-          <span>Note for you only</span>
-          <textarea id={`${id}-note`} rows={2} value={note} maxLength={NOTE_MAX + 100} aria-label={`Note for you only: ${meta.label} on ${siteName}`} aria-describedby={`${id}-note-hint`}
-            aria-invalid={noteError ? true : undefined}
-            onChange={(e) => { setNote(e.target.value); setNoteError(""); setSaved(false); }} />
-          <small id={`${id}-note-hint`} className={noteError ? "error" : "muted"} role={noteError ? "alert" : undefined}>
-            {noteError || "Describe the access in words. Never paste a password, key or login link."}
-          </small>
-        </label>
-        <div className="cl-access-save">
-          <button type="submit" className="btn" disabled={busy || (!vaultDirty && !noteDirty)} aria-label={`Save details for ${meta.label} on ${siteName}`}>Save details</button>
-          {saved && !vaultDirty && !noteDirty && <span className="small muted" role="status">Saved.</span>}
+      {open && (
+        <div className="clx-acc-more" id={`${id}-more`}>
+          <p className="clx-help">{meta.help}</p>
+          {when && <p className="clx-acc-when"><Icon name="clock" size={13} />{when}</p>}
+          {item.clientAnswer && (
+            // The client's own words: untrusted, so plain text only (React escapes it; it is never a link), cut short, and labelled as possibly wrong.
+            <blockquote className="clx-answer" aria-label={`What the client wrote about ${meta.label} for ${siteName}`}>
+              <span>Client wrote (may be wrong)</span>
+              <q>{item.clientAnswer.length > ANSWER_SHOWN ? `${item.clientAnswer.slice(0, ANSWER_SHOWN).trimEnd()}…` : item.clientAnswer}</q>
+            </blockquote>
+          )}
+          <div className="clx-acc-moves" role="group" aria-label={`Change the status of ${meta.label}`}>
+            <span className="ds-label">Mark as</span>
+            {(item.status === "verified" || item.status === "not_applicable" ? moves : rest).map((st) => (
+              <button key={st} type="button" className="btn sm" disabled={busy} onClick={() => void changeStatus(st)}>{accessWords(st)}</button>
+            ))}
+          </div>
+          <form className="ds-form" onSubmit={(e) => void saveDetails(e)} noValidate>
+            <label className="deal-field wide" htmlFor={`${id}-vault`}>
+              <span>Password manager item</span>
+              <input id={`${id}-vault`} type="text" value={vault} maxLength={VAULT_MAX + 40} autoComplete="off" autoCapitalize="off" spellCheck={false} placeholder="Acme · WP admin"
+                aria-label={`Password manager item for ${meta.label} on ${siteName}`} aria-describedby={`${id}-vault-hint`} aria-invalid={vaultProblem ? true : undefined}
+                onChange={(e) => { setVault(e.target.value); setVaultProblem(null); setSaved(false); }} />
+              <small id={`${id}-vault-hint`} className={vaultProblem ? "error" : undefined} role={vaultProblem ? "alert" : undefined}>{vaultHint(vaultProblem, vault)}</small>
+            </label>
+            <label className="deal-field wide" htmlFor={`${id}-note`}>
+              <span>Note for you only</span>
+              <textarea id={`${id}-note`} rows={2} value={note} maxLength={NOTE_MAX + 100} aria-label={`Note for you only: ${meta.label} on ${siteName}`} aria-describedby={`${id}-note-hint`}
+                aria-invalid={noteError ? true : undefined}
+                onChange={(e) => { setNote(e.target.value); setNoteError(""); setSaved(false); }} />
+              <small id={`${id}-note-hint`} className={noteError ? "error" : undefined} role={noteError ? "alert" : undefined}>
+                {noteError || "Describe the access in words. Never paste a password, key or login link."}
+              </small>
+            </label>
+            <div className="ds-form-actions">
+              <button type="submit" className="btn primary sm" disabled={busy || (!vaultDirty && !noteDirty)} aria-label={`Save details for ${meta.label} on ${siteName}`}>Save details</button>
+              {saved && !vaultDirty && !noteDirty && <span className="clx-saved" role="status"><Icon name="check" size={14} />Saved.</span>}
+            </div>
+          </form>
         </div>
-      </form>
+      )}
     </li>
   );
 }
@@ -133,10 +154,21 @@ function Row({ clientId, siteId, siteName, item, onChanged }: { clientId: string
 export default function AccessChecklist({ clientId, siteId, siteName, items, onChanged }: {
   clientId: string; siteId: string; siteName: string; items: ClientAccessItem[]; onChanged: () => Promise<void>;
 }) {
+  const counted = items.filter((i) => i.status !== "not_applicable");
+  const inHand = counted.filter((i) => i.status === "received" || i.status === "verified").length;
+  const all = counted.length > 0 && inHand === counted.length;
   return (
-    <section className="cl-checklist" aria-label={`Access checklist for ${siteName}`}>
-      <h4>Access checklist</h4>
-      <ul className="cl-access-list">
+    <section className="ds-card clx-access" aria-label={`Access checklist for ${siteName}`}>
+      <header className="ds-card-head">
+        <Icon name="key" size={16} />
+        <h2>Access</h2>
+        <span className="ds-card-note">{inHand} of {counted.length} in</span>
+      </header>
+      <div className="clx-access-top">
+        <Meter value={inHand} max={Math.max(counted.length, 1)} tone={all ? "positive" : inHand === 0 ? "warning" : "signal"} label={`Access in: ${inHand} of ${counted.length}`} />
+        <p className="clx-help">{all ? "Everything is in. Mark each one verified once you have logged in." : inHand === 0 ? "Nothing in yet. Ask the client for these, then mark each one as it arrives." : "Mark each one received as the client sends it."}</p>
+      </div>
+      <ul className="clx-acc-list">
         {items.map((item) => <Row key={item.key} clientId={clientId} siteId={siteId} siteName={siteName} item={item} onChanged={onChanged} />)}
       </ul>
     </section>

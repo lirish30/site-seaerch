@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
 import Icon from "../components/Icon";
+import { PubBar, PubError, PubGone, PubNotice, PubSkeleton, Tile, useNoIndex } from "../components/PublicPage";
 import { canSign, closedMessage, declineError, priceLine, scheduleLine, signError, splitConsent, type PublicChangeOrder } from "../changeOrderPageView";
 import { dollars } from "../packagesView";
 import { isReportToken } from "../reportView";
@@ -8,34 +9,7 @@ import { isReportToken } from "../reportView";
 type Load = "loading" | "ok" | "gone" | "error";
 
 const REASON_MAX = 300;
-
-/** A page that is only a message: link gone, load failed, order closed. */
-function Notice({ icon, title, children }: { icon: "link" | "alert"; title: string; children?: React.ReactNode }) {
-  return (
-    <main className="rp">
-      <div className="rp-wrap rp-wrap-narrow">
-        <section className="rp-card rp-notice">
-          <span className="rp-notice-icon" aria-hidden="true"><Icon name={icon} size={20} /></span>
-          <h1>{title}</h1>
-          {children}
-        </section>
-      </div>
-    </main>
-  );
-}
-
-function Skeleton() {
-  return (
-    <main className="rp" aria-busy="true">
-      <div className="rp-wrap">
-        <div className="rp-card" role="status" aria-label="Loading change order">
-          <span className="rp-sk" style={{ height: 28, width: "70%" }} />
-          <span className="rp-sk" style={{ height: 240, borderRadius: 12 }} />
-        </div>
-      </div>
-    </main>
-  );
-}
+const KIND = "Change order";
 
 /** "Wednesday, December 9, 2026" from a `YYYY-MM-DD` calendar date, or the date as it came when it does not read. */
 function longDate(day: string): string {
@@ -43,13 +17,19 @@ function longDate(day: string): string {
   if (!y || !m || !d) return day;
   return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "UTC" });
 }
+/** "Dec 9" for the chip in the bar. */
+function shortDate(day: string): string {
+  const [y, m, d] = day.split("-").map(Number);
+  if (!y || !m || !d) return day;
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+}
 
-function List({ title, items }: { title: string; items: string[] }) {
+function List({ title, items, crosses = false }: { title: string; items: string[]; crosses?: boolean }) {
   if (items.length === 0) return null;
   return (
-    <section className="co-section">
+    <section className="pbx-card tight">
       <h2>{title}</h2>
-      <ul>{items.map((t, i) => <li key={i}>{t}</li>)}</ul>
+      <ul className={crosses ? "pbx-crosses" : "pbx-checks"}>{items.map((t, i) => <li key={i}><Icon name={crosses ? "x" : "check"} size={16} />{t}</li>)}</ul>
     </section>
   );
 }
@@ -57,15 +37,27 @@ function List({ title, items }: { title: string; items: string[] }) {
 function Signed({ page }: { page: PublicChangeOrder }) {
   const at = page.signed ? new Date(page.signed.signedAt) : null;
   const when = at && !Number.isNaN(at.getTime()) ? at.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" }) : "";
+  const paid = page.payment === "paid";
   return (
-    <section className="pp-done" role="status">
-      <span className="rp-notice-icon" aria-hidden="true"><Icon name="check" size={20} /></span>
-      <div>
-        <h2>{page.payment === "paid" ? "Signed and paid" : "Signed"}</h2>
-        <p>{page.payment === "paid" ? "Thank you. The payment is in and the work is under way." : "Signed. We'll email the invoice; work starts once it's paid."}</p>
-        {page.signed && <p>Signed by {page.signed.signerName}{when ? ` on ${when}` : ""}.</p>}
+    <aside className="pbx-card pbx-sign pbx-side" aria-label="Signed" role="status">
+      <h2>{paid ? "Signed and paid" : "Signed"}</h2>
+      <div className="pbx-done">
+        <Tile icon="check" size={32} />
+        <div>
+          <b>{page.signed ? `Signed by ${page.signed.signerName}` : "Signed"}</b>
+          <p>{when ? `On ${when}.` : ""}</p>
+        </div>
       </div>
-    </section>
+      <dl className="pbx-sum">
+        <div className="due"><dt>{paid ? "Paid" : "To pay"}</dt><dd>{dollars(page.priceCents)}</dd></div>
+      </dl>
+      <ol className="pbx-steps">
+        <li><Tile icon="check" tone="positive" size={28} />You signed</li>
+        <li><Tile icon={paid ? "check" : "mail"} tone={paid ? "positive" : "warning"} size={28} />{paid ? "Payment received" : "We email you the invoice"}</li>
+        <li><Tile icon={paid ? "zap" : "clock"} tone={paid ? "signal" : "neutral"} size={28} />{paid ? "The work is under way" : "Work starts once it's paid"}</li>
+      </ol>
+      <p className="pbx-fine">{paid ? "Thank you. The payment is in." : "Nothing else to do here until the invoice arrives."}</p>
+    </aside>
   );
 }
 
@@ -81,17 +73,7 @@ export default function ChangeOrder() {
   const [declining, setDeclining] = useState(false), [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-
-  useEffect(() => {
-    const prevTitle = document.title;
-    document.title = "Your change order";
-    let meta = document.querySelector<HTMLMetaElement>('meta[name="robots"]');
-    const created = !meta;
-    if (!meta) { meta = document.createElement("meta"); meta.name = "robots"; document.head.appendChild(meta); }
-    const prevContent = meta.content;
-    meta.content = "noindex, nofollow";
-    return () => { document.title = prevTitle; if (created) meta.remove(); else meta.content = prevContent; };
-  }, []);
+  useNoIndex("Your change order");
 
   useEffect(() => {
     if (!token) { setLoad("gone"); return; }
@@ -143,91 +125,106 @@ export default function ChangeOrder() {
     finally { setBusy(false); }
   }
 
-  if (load === "loading") return <Skeleton />;
-  if (load === "error") return (
-    <Notice icon="alert" title="Couldn't load this change order">
-      <p>Something went wrong on our side, or your connection dropped. Please try again.</p>
-      <button type="button" className="btn" onClick={() => setAttempt((n) => n + 1)}>Try again</button>
-    </Notice>
-  );
-  if (load === "gone" || !page) return <Notice icon="link" title="This link isn't available"><p>It may have expired or been turned off. Reply to the email you got and we'll sort it out.</p></Notice>;
+  if (load === "loading") return <PubSkeleton kind={KIND} label="Loading change order" two />;
+  if (load === "error") return <PubError kind={KIND} what="this change order" onRetry={() => setAttempt((n) => n + 1)} />;
+  if (load === "gone" || !page) return <PubGone kind={KIND} />;
 
   if (page.state === "closed") {
+    const declined = page.closedReason === "declined";
     return (
-      <Notice icon="link" title={page.closedReason === "declined" ? "You turned this down" : "This change order is closed"}>
+      <PubNotice kind={page.ownerBusiness || KIND} icon={declined ? "check" : "link"} tone={declined ? "neutral" : "warning"} title={declined ? "You turned this down" : "This change order is closed"}>
         <p>{closedMessage(page.closedReason)}</p>
-        <p>{page.reference} for {page.clientName}</p>
-      </Notice>
+        <p className="pbx-fine">{page.reference} for {page.clientName}</p>
+      </PubNotice>
     );
   }
 
   const signed = page.state === "signed";
   const from = [page.ownerName, page.ownerBusiness].filter(Boolean).join(", ");
   return (
-    <main className="rp">
-      <div className="rp-wrap co-wrap">
-        <header className="rp-bar">
-          <span className="rp-bar-name">Change order for {page.clientName}</span>
-          {!signed && page.expiresOn && <span className="rp-expiry pp-expiry">Open until {longDate(page.expiresOn)}</span>}
-        </header>
-        <article className="rp-card">
-          {signed && <Signed page={page} />}
-          <div className="rp-head">
-            <span className="rp-eyebrow">{page.reference}{page.projectName ? ` · ${page.projectName}` : ""}</span>
+    <main className="ds-page pbx">
+      <PubBar name={page.ownerBusiness || KIND} right={<>
+        <span className="pbx-bar-meta mono hide-sm">{page.reference}</span>
+        {!signed && page.expiresOn && <span className="ds-chip warning" title={`Open until ${longDate(page.expiresOn)}`}>Open until {shortDate(page.expiresOn)}</span>}
+        {signed && <span className="ds-chip positive"><i className="ds-dot" />{page.payment === "paid" ? "Signed and paid" : "Signed"}</span>}
+      </>} />
+      <div className="pbx-grid">
+        <div className="pbx-col">
+          <article className="pbx-card pbx-intro">
+            <p className="pbx-eyebrow">Change order for {page.clientName}</p>
             <h1>{page.title}</h1>
-            {page.contactName && <p className="rp-based">Hi {page.contactName}. This is extra work on your project{from ? `, from ${from}` : ""}. Nothing starts until you sign and the invoice is paid.</p>}
-          </div>
+            {page.contactName && <p className="pbx-lede">Hi {page.contactName}. This is extra work on your project{from ? `, from ${from}` : ""}. Nothing starts until you sign and the invoice is paid.</p>}
+            <p className="pbx-chips">
+              {page.projectName && <span className="ds-chip neutral"><Icon name="briefcase" size={12} />{page.projectName}</span>}
+              <span className="ds-chip signal">{dollars(page.priceCents)}</span>
+              <span className="ds-chip outline">{page.scheduleImpactDays ? `+${page.scheduleImpactDays} ${page.scheduleImpactDays === 1 ? "day" : "days"}` : "No delay"}</span>
+            </p>
+          </article>
 
-          {page.summary && <section className="co-section"><h2>What we'd do</h2><p className="co-text">{page.summary}</p></section>}
-          {page.reason && <section className="co-section"><h2>Why</h2><p className="co-text">{page.reason}</p></section>}
+          {(page.summary || page.reason) && (
+            <section className="pbx-card tight">
+              {page.summary && <><h2>What we'd do</h2><p className="pbx-text">{page.summary}</p></>}
+              {page.reason && <><h2 style={{ marginTop: page.summary ? 6 : 0 }}>Why</h2><p className="pbx-text">{page.reason}</p></>}
+            </section>
+          )}
           <List title="What you get" items={page.deliverables} />
-          <List title="Not included" items={page.notIncluded} />
+          <List title="Not included" items={page.notIncluded} crosses />
 
-          <section className="co-price" aria-label="Price">
-            <p className="co-price-line">{priceLine(page.hours, page.rateCents, page.priceCents)}</p>
-            <p className="co-price-total">{dollars(page.priceCents)}</p>
-            <p className="co-price-note">{scheduleLine(page.scheduleImpactDays)}</p>
+          <section className="pbx-card tight" aria-label="Price">
+            <h2>Price</h2>
+            <div className="pbx-price">
+              <span className="pbx-price-total">{dollars(page.priceCents)}</span>
+              <span className="pbx-price-line">{priceLine(page.hours, page.rateCents, page.priceCents)}</span>
+            </div>
+            <p className="pbx-impact"><Icon name="clock" size={16} />{scheduleLine(page.scheduleImpactDays)}</p>
           </section>
+        </div>
 
-          {!signed && (
-            <form className="pp-sign" onSubmit={(e) => void sign(e)}>
-              <h2>Sign this change order</h2>
-              <div className="pp-disclosure" tabIndex={0} role="region" aria-label="Electronic signature disclosure">
-                {consentParts?.disclosure.map((p, i) => <p key={i}>{p}</p>)}
-              </div>
-              <label className="pp-check"><input type="checkbox" className="cb" checked={consent} onChange={(e) => setConsent(e.target.checked)} /><span>{consentParts?.consentLabel}</span></label>
-              <label className="pp-check"><input type="checkbox" className="cb" checked={authority} onChange={(e) => setAuthority(e.target.checked)} /><span>{consentParts?.authorityLabel}</span></label>
-              <label className="bk-field">
-                <span>Type your full name to sign</span>
-                <input value={name} onChange={(e) => setName(e.target.value)} maxLength={120} autoComplete="name" />
-                <small>Typing your name is your legal signature.</small>
-              </label>
-              {error && !declining && <p className="error" role="alert">{error}</p>}
-              <div className="co-actions">
-                <button type="submit" className="btn primary pp-submit" disabled={!ready.ok || busy}>{busy && !declining ? "Signing…" : "Sign"}</button>
-                <button type="button" className="btn pp-submit" disabled={busy} onClick={() => { setDeclining(true); setError(""); }}>No thanks</button>
-              </div>
-              {!ready.ok && <p className="pp-hint">{ready.missing[0]}</p>}
-            </form>
-          )}
-
-          {!signed && declining && (
-            <form className="co-decline" onSubmit={(e) => void decline(e)}>
-              <h2>No thanks</h2>
-              <p>Nothing will be done and nothing is owed. If you like, tell us why.</p>
-              <label className="bk-field">
-                <span>Your reason (optional)</span>
-                <textarea value={reason} onChange={(e) => setReason(e.target.value)} maxLength={REASON_MAX} rows={3} />
-                <small>{reason.length} of {REASON_MAX}</small>
-              </label>
-              {error && <p className="error" role="alert">{error}</p>}
-              <div className="co-actions">
-                <button type="submit" className="btn primary pp-submit" disabled={busy}>{busy ? "Sending…" : "Turn it down"}</button>
-                <button type="button" className="btn pp-submit" disabled={busy} onClick={() => { setDeclining(false); setError(""); }}>Back</button>
-              </div>
-            </form>
-          )}
-        </article>
+        {signed ? <Signed page={page} /> : (
+          <aside className="pbx-card pbx-sign pbx-side" aria-label={declining ? "No thanks" : "Sign"}>
+            {!declining ? (
+              <form onSubmit={(e) => void sign(e)}>
+                <h2>Sign this change order</h2>
+                <p className="pbx-sub" style={{ marginTop: -6 }}>Sign here, then we email you the invoice.</p>
+                <dl className="pbx-sum">
+                  <div><dt>{page.hours} {page.hours === 1 ? "hour" : "hours"} of work</dt><dd>{dollars(page.priceCents)}</dd></div>
+                  <div className="due"><dt>Total</dt><dd>{dollars(page.priceCents)}</dd></div>
+                </dl>
+                <label className="deal-field">
+                  <span>Type your full name</span>
+                  <input value={name} onChange={(e) => setName(e.target.value)} maxLength={120} autoComplete="name" />
+                  <small>Typing your name is your legal signature.</small>
+                </label>
+                <details className="pbx-terms">
+                  <summary>Read the e-signature terms</summary>
+                  <div tabIndex={0} role="region" aria-label="Electronic signature disclosure">{consentParts?.disclosure.map((p, i) => <p key={i}>{p}</p>)}</div>
+                </details>
+                <label className="ds-check"><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} /><span>{consentParts?.consentLabel}</span></label>
+                <label className="ds-check"><input type="checkbox" checked={authority} onChange={(e) => setAuthority(e.target.checked)} /><span>{consentParts?.authorityLabel}</span></label>
+                {error && <p className="pbx-error" role="alert">{error}</p>}
+                <button type="submit" className="btn primary pbx-go" disabled={!ready.ok || busy}><Icon name="check" size={16} />{busy ? "Signing…" : "Sign the change order"}</button>
+                {!ready.ok && <p className="pbx-fine">{ready.missing[0]}</p>}
+                <p className="pbx-fine">Questions first? Reply to the email this came with.</p>
+                <p className="pbx-fine">Don't want this? <button type="button" className="pbx-linkbtn" disabled={busy} onClick={() => { setDeclining(true); setError(""); }}>No thanks</button></p>
+              </form>
+            ) : (
+              <form onSubmit={(e) => void decline(e)}>
+                <h2>No thanks</h2>
+                <p className="pbx-sub">Nothing will be done and nothing is owed. If you like, tell us why.</p>
+                <label className="deal-field">
+                  <span>Your reason (optional)</span>
+                  <textarea value={reason} onChange={(e) => setReason(e.target.value)} maxLength={REASON_MAX} rows={3} />
+                  <small>{reason.length} of {REASON_MAX}</small>
+                </label>
+                {error && <p className="pbx-error" role="alert">{error}</p>}
+                <div className="pbx-actions">
+                  <button type="submit" className="btn primary" disabled={busy}>{busy ? "Sending…" : "Turn it down"}</button>
+                  <button type="button" className="btn" disabled={busy} onClick={() => { setDeclining(false); setError(""); }}>Back</button>
+                </div>
+              </form>
+            )}
+          </aside>
+        )}
       </div>
     </main>
   );

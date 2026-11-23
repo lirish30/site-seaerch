@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { api, ApiError } from "../../api";
-import { Card, Field, Row } from "../../components/SettingsPage";
-import { Pill, Toggle } from "../../components/settingsBits";
+import { Chip } from "../../components/ds";
+import Icon from "../../components/Icon";
+import { Field } from "../../components/SettingsPage";
+import { Toggle } from "../../components/settingsBits";
 import { fieldErrors } from "../../campaignView";
 import { mailboxTitle, secretCommand, secretName, syncLine, syncSummaryLine, testResultLines, warmupLine } from "../../mailboxView";
 import type { Mailbox } from "../../types";
@@ -17,7 +19,7 @@ const toForm = (mb: Mailbox): Form => ({
 const parsePort = (s: string) => (/^\d+$/.test(s.trim()) && Number(s) >= 1 && Number(s) <= 65535 ? Number(s) : null);
 const reason = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
 
-/** One mailbox: its settings, whether its password secret exists, the four actions and their results (in a polite live region). */
+/** One mailbox: a header with its state at a glance, the warm-up and reply-check status, its settings, whether its password secret exists, the four actions and their results (in a polite live region). */
 export default function MailboxCard({ mailbox, onChange }: { mailbox: Mailbox; onChange: (mb: Mailbox) => void }) {
   const [form, setForm] = useState<Form>(() => toForm(mailbox));
   const [errs, setErrs] = useState<Record<string, string>>({});
@@ -73,45 +75,78 @@ export default function MailboxCard({ mailbox, onChange }: { mailbox: Mailbox; o
 
   const off = busy !== null;
   const noTest = off || dirty;
+  const warm = warmupLine(mailbox, now);
+  const synced = syncLine(mailbox, now);
+  const syncBad = synced.startsWith("Last check failed");
+  const warmDone = warm.startsWith("Warm-up complete");
+  const [copied, setCopied] = useState(false);
+  const copy = () => void navigator.clipboard?.writeText(secretCommand(key)).then(() => setCopied(true), () => setCopied(false));
   return (
-    <Card title={mailboxTitle(key)} sub={key === "outreach" ? "Sends the cold sequence and checks for replies." : "Your everyday mailbox. Replies here also stop a sequence."}
-      action={<Toggle checked={form.enabled} onChange={(on) => set("enabled", on)} label={`${mailboxTitle(key)} enabled`} disabled={off}><span>Enabled</span></Toggle>}>
-      <Row>
-        <Field label="SMTP host" htmlFor={id("smtp_host")} error={errs.smtp_host}><input id={id("smtp_host")} value={form.smtp_host} autoComplete="off" onChange={(e) => set("smtp_host", e.target.value)} /></Field>
-        <Field label="SMTP port" htmlFor={id("smtp_port")} error={errs.smtp_port}><input id={id("smtp_port")} inputMode="numeric" value={form.smtp_port} autoComplete="off" onChange={(e) => set("smtp_port", e.target.value)} /></Field>
-      </Row>
-      <Row>
-        <Field label="IMAP host" htmlFor={id("imap_host")} error={errs.imap_host}><input id={id("imap_host")} value={form.imap_host} autoComplete="off" onChange={(e) => set("imap_host", e.target.value)} /></Field>
-        <Field label="IMAP port" htmlFor={id("imap_port")} error={errs.imap_port}><input id={id("imap_port")} inputMode="numeric" value={form.imap_port} autoComplete="off" onChange={(e) => set("imap_port", e.target.value)} /></Field>
-      </Row>
-      <Field label="Username" htmlFor={id("username")} error={errs.username}><input id={id("username")} value={form.username} autoComplete="off" onChange={(e) => set("username", e.target.value)} /></Field>
-      <Row>
-        <Field label="From name" htmlFor={id("from_name")} error={errs.from_name}><input id={id("from_name")} value={form.from_name} autoComplete="off" onChange={(e) => set("from_name", e.target.value)} /></Field>
-        <Field label="From email" htmlFor={id("from_email")} error={errs.from_email}><input id={id("from_email")} type="email" value={form.from_email} autoComplete="off" onChange={(e) => set("from_email", e.target.value)} /></Field>
-      </Row>
+    <section className="st-card" aria-label={mailboxTitle(key)}>
+      <header>
+        <div className="sox-row" style={{ padding: 0 }}>
+          <span className={`sox-tile sox-lg ${!form.enabled ? "" : syncBad || !mailbox.passwordSet ? "warning" : "positive"}`}><Icon name={key === "outreach" ? "send" : "inbox"} size={18} /></span>
+          <div className="sox-main">
+            <div className="sox-title"><h2>{mailboxTitle(key)}</h2>
+              {mailbox.from_email && <span className="sox-sub">{mailbox.from_email}</span>}
+            </div>
+            <small>{key === "outreach" ? "Sends the cold sequence and checks for replies." : "Your everyday mailbox. Replies here also stop a sequence."}</small>
+          </div>
+        </div>
+        <Toggle checked={form.enabled} onChange={(on) => set("enabled", on)} label={`${mailboxTitle(key)} enabled`} disabled={off}><span>{form.enabled ? "On" : "Off"}</span></Toggle>
+      </header>
 
-      <div className="mb-secret">
-        <Pill tone={mailbox.passwordSet ? "positive" : "warning"}>Password secret: {mailbox.passwordSet ? "set" : "missing"}</Pill>
-        <p className="bx-muted">The password is never typed here. It lives in a Worker secret. To set or change it, run this and paste the password when asked:</p>
-        <code className="mb-cmd" aria-label={`Command to set the ${secretName(key)} secret`}>{secretCommand(key)}</code>
+      <div className="sox-mb-status">
+        <div>
+          <span className={`sox-tile ${!started ? "" : warmDone ? "positive" : "info"}`}><Icon name={warmDone ? "check" : "clock"} size={16} /></span>
+          <div className="sox-main"><b>{!started ? "Warm-up" : warmDone ? "Warmed up" : "Warming up"}</b><small>{warm}</small></div>
+        </div>
+        <div>
+          <span className={`sox-tile ${syncBad ? "critical" : mailbox.last_sync_at ? "positive" : ""}`}><Icon name={syncBad ? "alert" : "refresh"} size={16} /></span>
+          <div className="sox-main"><b>Reply check</b><small className={syncBad ? "bad" : undefined}>{synced}</small></div>
+        </div>
       </div>
 
-      <div className="mb-lines">
-        <p>{warmupLine(mailbox, now)}</p>
-        <p>{syncLine(mailbox, now)}</p>
+      <div className="sox-mb-form">
+        <div className="sox-grid">
+          <div className="sox-hostport">
+            <Field label="SMTP host" htmlFor={id("smtp_host")} error={errs.smtp_host}><input id={id("smtp_host")} value={form.smtp_host} placeholder="smtp.example.com" autoComplete="off" onChange={(e) => set("smtp_host", e.target.value)} /></Field>
+            <Field label="Port" htmlFor={id("smtp_port")} error={errs.smtp_port}><input id={id("smtp_port")} inputMode="numeric" value={form.smtp_port} autoComplete="off" onChange={(e) => set("smtp_port", e.target.value)} /></Field>
+          </div>
+          <div className="sox-hostport">
+            <Field label="IMAP host" htmlFor={id("imap_host")} error={errs.imap_host}><input id={id("imap_host")} value={form.imap_host} placeholder="imap.example.com" autoComplete="off" onChange={(e) => set("imap_host", e.target.value)} /></Field>
+            <Field label="Port" htmlFor={id("imap_port")} error={errs.imap_port}><input id={id("imap_port")} inputMode="numeric" value={form.imap_port} autoComplete="off" onChange={(e) => set("imap_port", e.target.value)} /></Field>
+          </div>
+          <Field label="Username" htmlFor={id("username")} error={errs.username}><input id={id("username")} value={form.username} autoComplete="off" onChange={(e) => set("username", e.target.value)} /></Field>
+          <span aria-hidden="true" />
+          <Field label="From name" htmlFor={id("from_name")} error={errs.from_name}><input id={id("from_name")} value={form.from_name} autoComplete="off" onChange={(e) => set("from_name", e.target.value)} /></Field>
+          <Field label="From email" htmlFor={id("from_email")} error={errs.from_email}><input id={id("from_email")} type="email" value={form.from_email} autoComplete="off" onChange={(e) => set("from_email", e.target.value)} /></Field>
+        </div>
+
+        <div className="sox-secret">
+          <div className="sox-secret-top">
+            <b>Password</b>
+            <Chip tone={mailbox.passwordSet ? "positive" : "warning"} dot>Secret {mailbox.passwordSet ? "set" : "missing"}</Chip>
+          </div>
+          <p className="sox-sub" style={{ fontSize: 13, lineHeight: "19px", color: "var(--text-2)" }}>The password is never typed here. It lives in a Worker secret. To set or change it, run this and paste the password when asked:</p>
+          <div className="sox-endpoint">
+            <code aria-label={`Command to set the ${secretName(key)} secret`}>{secretCommand(key)}</code>
+            <button type="button" className="btn sm" onClick={copy}><Icon name={copied ? "check" : "copy"} size={13} />{copied ? "Copied" : "Copy"}</button>
+          </div>
+        </div>
       </div>
 
-      <div className="mb-actions">
-        <button type="button" className="btn primary" onClick={() => void save()} disabled={off || !dirty}>{busy === "save" ? "Saving…" : "Save"}</button>
+      <div className="sox-save">
+        <button type="button" className="btn primary" onClick={() => void save()} disabled={off || !dirty}>{busy === "save" ? "Saving…" : "Save changes"}</button>
         <button type="button" className="btn" onClick={() => void test()} disabled={noTest} aria-describedby={dirty ? id("hint") : undefined}>{busy === "test" ? "Testing…" : "Test connection"}</button>
-        <button type="button" className="btn" onClick={() => void send()} disabled={noTest} aria-describedby={dirty ? id("hint") : undefined}>{busy === "send" ? "Sending…" : "Send test"}</button>
+        <button type="button" className="btn" onClick={() => void send()} disabled={noTest} aria-describedby={dirty ? id("hint") : undefined}>{busy === "send" ? "Sending…" : "Send a test email"}</button>
         <button type="button" className="btn" onClick={() => void sync()} disabled={noTest} aria-describedby={dirty ? id("hint") : undefined}>{busy === "sync" ? "Checking…" : "Check for replies now"}</button>
         {key === "outreach" && <button type="button" className="btn" onClick={warmup} disabled={off || started}>{started ? "Warm-up started" : busy === "warmup" ? "Starting…" : "Start warm-up clock"}</button>}
+        {dirty && <p className="sox-sub" id={id("hint")} style={{ flexBasis: "100%" }}>Save your changes first. The tests use the saved settings.</p>}
       </div>
-      {dirty && <p className="bx-muted" id={id("hint")}>Save your changes first. The tests use the saved settings.</p>}
-      <div className={`mb-result${result?.bad ? " bad" : ""}`} aria-live="polite" aria-atomic="true">
-        {result?.lines.map((l, i) => <p key={i}>{l}</p>)}
+      <div className={`sox-result${result?.bad ? " bad" : ""}`} aria-live="polite" aria-atomic="true">
+        {result && <div className="sox-card-foot" style={{ flexDirection: "column", alignItems: "flex-start", gap: 2 }}>{result.lines.map((l, i) => <p key={i}>{i === 0 && <Icon name={result.bad ? "alert" : "check"} size={14} />}{l}</p>)}</div>}
       </div>
-    </Card>
+    </section>
   );
 }

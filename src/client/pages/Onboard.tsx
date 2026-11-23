@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import Icon from "../components/Icon";
+import { Meter, PubBar, PubContact, PubError, PubGone, PubNotice, PubSkeleton, Tile, useNoIndex } from "../components/PublicPage";
 import { formatSlot } from "../bookingView";
-import { groupByPhase, progressLabel, progressPercent, type PublicOnboarding } from "../onboardView";
+import { groupByPhase, isBuildOnboarding, nextStep, phaseHeading, progressLabel, progressPercent, type PublicOnboarding } from "../onboardView";
 import { safeHttpsUrl } from "../proposalPageView";
 import { isReportToken } from "../reportView";
 import { makeApi } from "./onboard/api";
@@ -11,33 +12,7 @@ import Questionnaire, { type PageHooks } from "./onboard/Questionnaire";
 
 type Load = "loading" | "ok" | "gone" | "busy" | "error";
 
-/** A page that is only a message: link gone, load failed. */
-function Notice({ icon, title, children }: { icon: "link" | "alert" | "check"; title: string; children?: React.ReactNode }) {
-  return (
-    <main className="rp">
-      <div className="rp-wrap rp-wrap-narrow">
-        <section className="rp-card rp-notice">
-          <span className="rp-notice-icon" aria-hidden="true"><Icon name={icon} size={20} /></span>
-          <h1>{title}</h1>
-          {children}
-        </section>
-      </div>
-    </main>
-  );
-}
-
-function Skeleton() {
-  return (
-    <main className="rp" aria-busy="true">
-      <div className="rp-wrap">
-        <div className="rp-card" role="status" aria-label="Loading your onboarding">
-          <span className="rp-sk" style={{ height: 28, width: "60%" }} />
-          <span className="rp-sk" style={{ height: 160, borderRadius: 12 }} />
-        </div>
-      </div>
-    </main>
-  );
-}
+const KIND = "Getting started";
 
 /** The kickoff as "Tue, Mar 16, 10:00 AM PDT" in the owner's zone, or null when it is not a date. */
 function kickoffText(iso: string | null, tz: string): string | null {
@@ -45,24 +20,29 @@ function kickoffText(iso: string | null, tz: string): string | null {
   try { return formatSlot(iso, tz); } catch { return null; }
 }
 
+/** The side card: who it is for, progress, the one next thing, the kickoff and the welcome video. */
 function Welcome({ page }: { page: PublicOnboarding }) {
   const video = page.welcomeVideoUrl ? safeHttpsUrl(page.welcomeVideoUrl) : null;
   const kickoff = kickoffText(page.kickoffAt, page.timezone);
+  const next = nextStep(page);
+  const pct = progressPercent(page.progress);
   return (
-    <article className="rp-card ob-card">
-      <div className="rp-head">
-        <span className="rp-eyebrow">Getting started</span>
-        <h1>{page.contactFirstName ? `Welcome, ${page.contactFirstName}` : "Welcome"}</h1>
-        <p className="rp-based">Here is everything we need from you to build your site. Do what you can, and come back for the rest. Everything saves as you go.</p>
+    <article className="pbx-card tight">
+      <div className="pbx-col" style={{ gap: 6 }}>
+        <p className="pbx-eyebrow">{page.businessName ? `Getting started · ${page.businessName}` : "Getting started"}</p>
+        <h1 style={{ fontSize: 24, lineHeight: "30px", letterSpacing: "-.5px" }}>{page.contactFirstName ? `Welcome, ${page.contactFirstName}` : "Welcome"}</h1>
+        <p className="pbx-sub">{page.closed ? "Everything we asked for, and what you sent us." : `Here is everything we need from you ${isBuildOnboarding(page.items) ? "to build your site" : "to get you set up"}. Do what you can, and come back for the rest. Everything saves as you go.`}</p>
       </div>
-      {video && <a className="btn ob-video" href={video} target="_blank" rel="noopener noreferrer"><Icon name="external" size={16} />Watch a short welcome video</a>}
-      {kickoff && <p className="ob-kickoff"><Icon name="calendar" size={16} /><span>Kickoff call: {kickoff}</span></p>}
-      <div className="ob-progress">
-        <div className="ob-progress-text"><span>Your progress</span><span>{progressLabel(page.progress)}</span></div>
-        <div className="ob-bar" role="progressbar" aria-label="Your progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent(page.progress)}>
-          <span style={{ width: `${progressPercent(page.progress)}%` }} />
-        </div>
-      </div>
+      <Meter label="Your progress" value={progressLabel(page.progress)} percent={pct} tone={pct >= 100 ? "positive" : "signal"} />
+      {next && (
+        <a className="pbx-next" href={`#${next.target}`}>
+          <div><small>Up next</small><b>{next.label}</b></div>
+          <Icon name="arrow-right" size={16} />
+        </a>
+      )}
+      {!next && !page.closed && <div className="pbx-done"><Tile icon="check" size={28} /><div><b>Nothing is waiting on you</b><p>We'll be in touch if we need anything else.</p></div></div>}
+      {kickoff && <div className="pbx-kick"><Tile icon="calendar" tone="info" size={32} /><div><small>Kickoff call</small><b>{kickoff}</b></div></div>}
+      {video && <a className="btn pbx-go" href={video} target="_blank" rel="noopener noreferrer"><Icon name="external" size={16} />Watch a short welcome video</a>}
     </article>
   );
 }
@@ -78,17 +58,7 @@ export default function Onboard() {
   const [attempt, setAttempt] = useState(0);
   const refreshTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const alive = useRef(true);
-
-  useEffect(() => {
-    const prevTitle = document.title;
-    document.title = "Your onboarding";
-    let meta = document.querySelector<HTMLMetaElement>('meta[name="robots"]');
-    const created = !meta;
-    if (!meta) { meta = document.createElement("meta"); meta.name = "robots"; document.head.appendChild(meta); }
-    const prevContent = meta.content;
-    meta.content = "noindex, nofollow";
-    return () => { document.title = prevTitle; if (created) meta.remove(); else meta.content = prevContent; };
-  }, []);
+  useNoIndex("Your onboarding");
 
   useEffect(() => {
     alive.current = true;
@@ -129,49 +99,59 @@ export default function Onboard() {
     onGone: () => setLoad("gone"),
   }), [refreshNow, refreshSoon]);
 
-  if (load === "loading") return <Skeleton />;
+  if (load === "loading") return <PubSkeleton kind={KIND} label="Loading your onboarding" two />;
   if (load === "busy") return (
-    <Notice icon="alert" title="Please wait a moment">
+    <PubNotice kind={KIND} icon="clock" tone="warning" title="Please wait a moment">
       <p>This page has been opened a lot in the last minute. Wait a minute, then try again.</p>
-      <button type="button" className="btn" onClick={() => setAttempt((n) => n + 1)}>Try again</button>
-    </Notice>
+      <button type="button" className="btn primary" onClick={() => setAttempt((n) => n + 1)}><Icon name="refresh" size={16} />Try again</button>
+    </PubNotice>
   );
-  if (load === "error") return (
-    <Notice icon="alert" title="Couldn't load this page">
-      <p>Something went wrong on our side, or your connection dropped. Please try again.</p>
-      <button type="button" className="btn" onClick={() => setAttempt((n) => n + 1)}>Try again</button>
-    </Notice>
-  );
-  if (load === "gone" || !page || !api) return <Notice icon="link" title="This link is no longer active."><p>Reply to the email you were sent.</p></Notice>;
+  if (load === "error") return <PubError kind={KIND} what="this page" onRetry={() => setAttempt((n) => n + 1)} />;
+  if (load === "gone" || !page || !api) return <PubGone kind={KIND} title="This link is no longer active."><p>Reply to the email you were sent.</p></PubGone>;
 
   const now = new Date();
   const groups = groupByPhase(page.items);
+  const next = nextStep(page);
+  const build = isBuildOnboarding(page.items);
   return (
-    <main className="rp ob">
-      <div className="rp-wrap ob-wrap">
-        <header className="rp-bar"><span className="rp-bar-name">{page.businessName ? `${page.businessName}: getting started` : "Getting started"}</span></header>
-        {page.closed && (
-          <section className="rp-card ob-card ob-closed" role="status">
-            <h2><Icon name="check" size={18} />All done</h2>
-            <p>{page.contactFirstName ? `Thank you, ${page.contactFirstName}. ` : "Thank you. "}We have what we need, and this page is now read-only.</p>
-          </section>
-        )}
-        <Welcome page={page} />
-        {!page.closed && (
-          <aside className="ob-safe" aria-label="A note about passwords">
-            <Icon name="shield" size={16} />
-            <p>Please don't type any passwords here. We'll ask for access a safer way.</p>
-          </aside>
-        )}
-        <Questionnaire page={page} api={api} now={now} closed={page.closed} hooks={hooks} />
-        {groups.map((g) => (
-          <section key={g.phase} className="rp-card ob-card" aria-labelledby={`ob-phase-${g.phase}`}>
-            <h2 id={`ob-phase-${g.phase}`}>{g.title}</h2>
-            <ul className="ob-items">
-              {g.items.map((item) => <ItemCard key={item.id} item={item} api={api} now={now} timezone={page.timezone} readOnly={page.closed} hooks={hooks} />)}
-            </ul>
-          </section>
-        ))}
+    <main className="ds-page pbx pbx-ob">
+      <PubBar name={KIND} right={<>
+        {page.businessName && <span className="pbx-bar-meta hide-sm">For {page.businessName}</span>}
+        {page.closed ? <span className="ds-chip positive"><i className="ds-dot" />All done</span> : <span className="ds-chip outline">{progressLabel(page.progress)}</span>}
+      </>} />
+      <div className="pbx-grid">
+        <aside className="pbx-side" aria-label="Your progress">
+          <Welcome page={page} />
+          {!page.closed && (
+            <aside className="pbx-safe" aria-label="A note about passwords">
+              <Icon name="shield" size={16} />
+              <p>Please don't type any passwords here. We'll ask for access a safer way.</p>
+            </aside>
+          )}
+        </aside>
+        <div className="pbx-col">
+          {page.closed && (
+            <section className="pbx-card tight" role="status">
+              <div className="pbx-done"><Tile icon="check" size={32} /><div><b>All done</b><p>{page.contactFirstName ? `Thank you, ${page.contactFirstName}. ` : "Thank you. "}We have what we need, and this page is now read-only.</p></div></div>
+            </section>
+          )}
+          <Questionnaire page={page} api={api} now={now} closed={page.closed} hooks={hooks} />
+          {groups.map((g) => {
+            const done = g.items.filter((i) => i.status !== "waiting").length;
+            return (
+              <section key={g.phase} className="pbx-card flush" aria-labelledby={`ob-phase-${g.phase}`}>
+                <div className="pbx-card-head">
+                  <Tile icon={!build ? "key" : g.phase === 1 ? "layout" : "grid"} tone={done === g.items.length ? "positive" : "neutral"} />
+                  <div><h2 id={`ob-phase-${g.phase}`}>{phaseHeading(g, build)}</h2><small>{done} of {g.items.length} done{done < g.items.length ? ". Open a row to answer or upload." : ""}</small></div>
+                </div>
+                <ul className="pbx-items">
+                  {g.items.map((item) => <ItemCard key={item.id} item={item} api={api} now={now} timezone={page.timezone} readOnly={page.closed} hooks={hooks} open={next?.target === `ob-item-${item.id}`} />)}
+                </ul>
+              </section>
+            );
+          })}
+          <PubContact text="Stuck on something, or not sure what we mean? Reply to the email you were sent." />
+        </div>
       </div>
     </main>
   );

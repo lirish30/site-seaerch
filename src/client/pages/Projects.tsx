@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, clientsApi } from "../api";
-import { Avatar, Chip, Empty, Meter, Note, PageHeader, Seg } from "../components/ds";
+import { Avatar, Card, Chip, Empty, LinkRow, Meter, Note, PageHeader, Seg } from "../components/ds";
 import Icon from "../components/Icon";
-import { bucketCounts, groupByClient, KIND_ORDER, kindChip, listProgress, sinceLabel, statusChip, visibleProjects, type Bucket, type KindKey } from "../projectView";
+import { bucketCounts, groupByClient, KIND_ORDER, kindChip, listProgress, projectBucket, sinceLabel, statusChip, visibleProjects, type Bucket, type KindKey } from "../projectView";
 import { projectIsLive } from "../../worker/db/projects";
 import { PROJECTS_CHANGED, type MyTasks, type ProjectRow } from "../workData";
 import type { Capacity } from "../../worker/capacity/compute";
@@ -125,6 +125,7 @@ export default function Projects() {
           </div>
         )}
         {groups.length > 0 && <Note>Every project starts from the SOP for its package. Each step says who does it: you, Claude, or Claude drafts and you approve.</Note>}
+        {rows !== null && view === "active" && !lead && inView.length <= 3 && <QuietList done={(rows ?? []).filter((r) => projectBucket(r) === "done")} now={now} />}
       </div>
     </div>
   );
@@ -144,5 +145,28 @@ function GroupRows({ name, businessId, plan, children }: { name: string; busines
       </tr>
       {children}
     </>
+  );
+}
+
+/**
+ * With only a few projects running, the list would float above a blank page. Under it go the projects that finished most recently (so they stay one click away)
+ * and the three things that happen on every project, so someone new knows what the rows mean.
+ */
+function QuietList({ done, now }: { done: ProjectRow[]; now: Date }) {
+  const recent = [...done].sort((a, b) => (b.completedAt ?? b.updatedAt).localeCompare(a.completedAt ?? a.updatedAt)).slice(0, 3);
+  return (
+    <div className="wkx-quiet-grid">
+      <Card icon="check" title="Finished recently" note={done.length > 3 ? <Link to="/projects?view=done" className="wkx-quiet-link">All {done.length}<Icon name="chevron-right" size={14} /></Link> : undefined} flush>
+        {recent.length === 0 ? <p className="wkx-pad wkx-quiet">Finished projects land here and under Done, with their time and profit.</p>
+          : recent.map((p) => <LinkRow key={p.id} to={`/projects/${p.id}`} icon="check" title={p.name} sub={`${p.businessName} · finished ${sinceLabel(p.completedAt ?? p.updatedAt, now).replace(/^(Just|Yesterday)/, (w) => w.toLowerCase())}`} right={<Chip tone="positive" dot>Done</Chip>} />)}
+      </Card>
+      <Card icon="info" title="How a project runs">
+        <ol className="wkx-how">
+          <li><span className="ds-tile signal"><Icon name="card" size={16} /></span><span><b>It starts when the client pays</b><small>The deposit or first Care payment opens the project from its package’s SOP.</small></span></li>
+          <li><span className="ds-tile info"><Icon name="list" size={16} /></span><span><b>Each step says who does it</b><small>You, Claude, or Claude drafts and you approve. Claude’s work comes to your approvals.</small></span></li>
+          <li><span className="ds-tile positive"><Icon name="check" size={16} /></span><span><b>It closes when the last step is done</b><small>Then it moves to Done with its time and profit kept.</small></span></li>
+        </ol>
+      </Card>
+    </div>
   );
 }

@@ -5,7 +5,7 @@ import { Banner, Card, Chip, Empty, Facts, Note, PageHeader, Seg } from "../comp
 import { approvalLink, approvalsLine, canBulkApprove, draftedByLabel, parsePayloadText, whenLabel, type ApprovalItem } from "../approvalsView";
 import { useApprovals } from "../approvalsData";
 import {
-  applyEdits, approveVerb, bucketCounts, bucketInfo, bucketOf, editFields, fieldValues, groupByBucket, heroOf, kindName, isBucket, neighbours, oneByOneReason, previewParts, rowLine, shortWhen, type Bucket, type BucketGroup,
+  applyEdits, approveVerb, bucketCounts, bucketTone, bucketInfo, bucketOf, editFields, fieldValues, groupByBucket, heroOf, kindName, isBucket, neighbours, oneByOneReason, previewParts, rowLine, shortWhen, type Bucket, type BucketGroup,
 } from "../approvalsInbox";
 
 /**
@@ -17,7 +17,7 @@ type Data = ReturnType<typeof useApprovals>;
 type Go = (n: { id?: string | null; kind?: string | null }) => void;
 
 const drafter = (d: ApprovalItem["drafted_by"]) =>
-  d === "mcp" ? <Chip tone="signal">Claude</Chip> : d === "logan" ? <Chip tone="outline">You</Chip> : <Chip tone="info">Draft</Chip>;
+  d === "mcp" ? <Chip tone="signal">Claude</Chip> : d === "logan" ? <Chip tone="outline">You</Chip> : <Chip tone="outline">Automatic</Chip>;
 const drafterName = (d: ApprovalItem["drafted_by"]) => (d === "mcp" ? "Claude" : d === "logan" ? "You" : "An automatic job");
 
 export default function Approvals() {
@@ -107,7 +107,7 @@ function Inbox({ data, groups, counts, bucket, order, setOrder, go }: {
                 options={[{ key: "all" as Bucket | "all", label: "Everything", count: n }, ...counts.map((c) => ({ key: c.key as Bucket | "all", label: c.label, count: c.count }))]} />
               <Seg label="Order" value={order} onChange={setOrder} options={[{ key: "oldest", label: "Oldest first" }, { key: "newest", label: "Newest first" }]} />
             </div>
-            <section className="ds-card apx-list" aria-label="Waiting for your OK">
+            <section className={`ds-card apx-list${visible.some((a) => canBulkApprove(a.kind)) ? "" : " no-bulk"}`} aria-label="Waiting for your OK">
               {selected.length > 0 && (
                 <div className="apx-selbar">
                   <span><Icon name="check" size={14} />{selected.length} selected</span>
@@ -144,6 +144,13 @@ function Inbox({ data, groups, counts, bucket, order, setOrder, go }: {
               })}
             </section>
             <Note>Approve all and the quick tick are only for routine drafts. Videos, proposals, invoices, reports and Claude's steps open one by one.</Note>
+            {n <= 3 && (
+              <section className="apx-what" aria-label="How approvals work">
+                <div className="apx-what-card"><span className="ds-tile signal"><Icon name="shield" size={16} /></span><span><b>Nothing goes out without you</b><small>Emails, invoices, reports and posts wait here until you approve them. Reject sends nothing.</small></span></div>
+                <div className="apx-what-card"><span className="ds-tile info"><Icon name="pen" size={16} /></span><span><b>Change the words first</b><small>Open one with Review to edit it. What you see is what is sent.</small></span></div>
+                <Link to="/settings/auto-approve" className="apx-what-card"><span className="ds-tile positive"><Icon name="zap" size={16} /></span><span><b>Let routine ones through</b><small>Auto-approve rules send the drafts you always OK, so fewer land here.</small></span><Icon name="chevron-right" size={14} className="ds-chev" /></Link>
+              </section>
+            )}
           </>
         )}
         <div className="sr-only" aria-live="polite" role="status">{all.filter((a) => data.errs[a.id]).map((a) => `${a.title}: ${data.errs[a.id]}`).join(". ")}</div>
@@ -162,7 +169,7 @@ function Row({ item, bulk, picked, onPick, busy, error, onOpen, onApprove }: {
       {bulk
         ? <input type="checkbox" className="apx-check" checked={picked} onChange={onPick} aria-label={`Select: ${item.title}`} />
         : <span className="apx-check-gap" aria-hidden="true" />}
-      <span className={`ds-tile ${error ? "critical" : "neutral"} apx-tile`}><Icon name={b.icon} size={16} /></span>
+      <span className={`ds-tile ${error ? "critical" : bucketTone(bucketOf(item.kind))} apx-tile`}><Icon name={b.icon} size={16} /></span>
       <button type="button" className="apx-row-main" onClick={onOpen}>
         <span className="apx-row-title"><b>{item.title}</b><small>{kindName(item.kind, item.label)}</small></span>
         {line && <span className="apx-row-line">{line}</span>}
@@ -307,7 +314,7 @@ function DetailBody({ data, item, ids, back, crumbLabel, go, leaveTo }: {
               <Card icon="pen" title="What will be saved" note={dirty ? "Edited" : "You can change this"}>
                 <div className="apx-fields">
                   {fields.map((f) => (
-                    <label key={f.key} className="apx-field">
+                    <label key={f.key} className={`apx-field${f.type === "number" ? " num" : ""}`}>
                       <span>{f.label}{f.optional && <small> (optional)</small>}</span>
                       {f.type === "text"
                         ? <textarea rows={f.max && f.max > 1000 ? 6 : 3} maxLength={f.max} value={values[f.key]} onChange={(e) => set(f.key, e.target.value)} />
@@ -321,6 +328,10 @@ function DetailBody({ data, item, ids, back, crumbLabel, go, leaveTo }: {
               </Card>
             ) : (
               <Card icon="file-text" title="What will go out" note="Read only here">
+                <div className="apx-doc-head">
+                  <span className={`ds-tile ${bucketTone(bucketOf(item.kind))}`}><Icon name={bucketInfo(bucketOf(item.kind)).icon} size={16} /></span>
+                  <span><b>{item.title}</b><small>{kindName(item.kind, item.label)} · {drafterName(item.drafted_by)}</small></span>
+                </div>
                 {facts.length > 0 && <Facts rows={facts.map((f) => ({ label: f.label, value: f.value }))} />}
                 <pre className="apx-preview">{text || "No preview for this one."}</pre>
                 {link && <Link to={link.to} className="btn apx-open"><Icon name="arrow-up-right" size={16} />{link.label}</Link>}

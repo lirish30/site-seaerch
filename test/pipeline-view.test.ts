@@ -67,3 +67,16 @@ describe("the board", () => {
     expect(cardStatus(d({ stage: "lost", lostReason: "Too dear" }), {}, now).text).toBe("Lost: Too dear");
   });
 });
+
+describe("quietSummary and closedDeals", async () => {
+  const { quietSummary, closedDeals } = await import("../src/client/pipelineView");
+  it("says plainly that nothing is open, then what was won and lost", () => {
+    expect(quietSummary([card({ stage: "won" })])).toBe("No open deals · 1 won so far");
+    expect(quietSummary([card({ stage: "won" }), card({ stage: "lost" })])).toBe("No open deals · 1 won so far · 1 lost");
+    expect(quietSummary([])).toBe("No open deals");
+  });
+  it("lists won and lost deals, newest close first", () => {
+    const list = closedDeals([card({ id: "a", stage: "won", closedAt: "2026-10-01T00:00:00Z" } as Partial<BoardDeal>), card({ id: "b", stage: "booked" }), card({ id: "c", stage: "lost", closedAt: "2026-11-01T00:00:00Z" } as Partial<BoardDeal>)] as BoardDeal[]);
+    expect(list.map((d) => d.id)).toEqual(["c", "a"]);
+  });
+});

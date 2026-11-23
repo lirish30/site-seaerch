@@ -49,7 +49,7 @@ export default function GradePanel({ businessId, grade, onChanged }: { businessI
         {(["A", "B", "C"] as const).map((g) => <button key={g} type="button" aria-pressed={grade.grade === g} disabled={busy} onClick={() => void save(g)}>Grade {g}</button>)}
         <button type="button" aria-pressed={grade.grade === null} disabled={busy || grade.grade === null} onClick={() => void save(null)}>No grade</button>
       </div>
-      <label className="clx-field" htmlFor="gr-note"><span>Note</span>
+      <label className="deal-field" htmlFor="gr-note"><span>Note</span>
         <textarea id="gr-note" rows={2} maxLength={NOTE_MAX} value={note} placeholder="Why this grade (optional)" onChange={(e) => setNote(e.target.value)} />
       </label>
       {dirty && <p><button type="button" className="btn sm" disabled={busy} onClick={() => void save(grade.grade)}>{busy ? "Saving…" : "Save note"}</button></p>}

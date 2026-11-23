@@ -5,9 +5,9 @@ export default function SaveNote({ state, onRetry }: { state: SaveState; onRetry
   const text = saveText(state);
   const isError = state.phase === "error";
   return (
-    <p className={`ob-save${isError ? " ob-save-error" : ""}`} role={isError ? "alert" : "status"} aria-live={isError ? "assertive" : "polite"}>
+    <p className={`pbx-save${isError ? " error" : ""}`} role={isError ? "alert" : "status"} aria-live={isError ? "assertive" : "polite"}>
       {text}
-      {isError && state.retryable && <> <button type="button" className="ob-link" onClick={onRetry}>Try again</button></>}
+      {isError && state.retryable && <> <button type="button" className="pbx-linkbtn" onClick={onRetry}>Try again</button></>}
     </p>
   );
 }

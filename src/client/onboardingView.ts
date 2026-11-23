@@ -87,3 +87,15 @@ export function sizeLabel(bytes: number): string {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+/** The delay rule in plain words, for the owner's screens (PLAN_FOR_DELAYS keeps the spec reference). */
+export const PLAN_FOR_DELAYS_PLAIN = "Clients are often slow: plan on 15 to 25% extra time in every timeline.";
+
+/** How long the client has been quiet, and what the contract lets you do about it, in plain words. Days of 0 or less is "in touch today". */
+export function silenceLine(days: number): { text: string; late: boolean } {
+  if (days <= 0) return { text: "The client was in touch today.", late: false };
+  const reply = `No reply for ${days} ${days === 1 ? "day" : "days"}.`;
+  return days >= SILENCE_DAYS
+    ? { text: `${reply} The contract now lets you move them to the back of the queue.`, late: true }
+    : { text: `${reply} After ${SILENCE_DAYS} days without one, the contract lets you move them to the back of the queue.`, late: false };
+}

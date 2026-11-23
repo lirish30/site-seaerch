@@ -101,3 +101,24 @@ export function seoReportPageView(facts: SeoFacts, words: SeoWords): SeoReportVi
     priorities: words.priorities.slice(0, 3),
   };
 }
+
+export type GlanceTone = "neutral" | "positive" | "warning" | "info" | "signal";
+
+/** The line and chips at the top of the report: the best term's top-3 count, then reviews, what was published and listings to fix. Only measured figures; nothing looks forward. */
+export function seoGlance(facts: Pick<PublicSeoReport, "rankAsOf" | "terms" | "gbp" | "content" | "citations">): { headline: string; chips: { text: string; tone: GlanceTone }[] } {
+  const measured = facts.rankAsOf === null ? [] : facts.terms.filter((t) => t.visible !== null);
+  const best = measured.reduce<PublicSeoTerm | null>((a, t) => (a === null || (t.visible ?? 0) > (a.visible ?? 0) ? t : a), null);
+  const headline = best
+    ? `In the top 3 at ${best.visible} of ${best.measured} points for "${best.town ? `${best.term} in ${best.town}` : best.term}"`
+    : facts.rankAsOf === null ? "No rank check this month" : "Your first rank check";
+  const chips: { text: string; tone: GlanceTone }[] = [];
+  if (best && best.previousVisible !== null && best.visible !== null && best.visible !== best.previousVisible) {
+    chips.push(best.visible > best.previousVisible ? { text: `Up from ${best.previousVisible}`, tone: "positive" } : { text: `Down from ${best.previousVisible}`, tone: "warning" });
+  }
+  if (facts.gbp.rating !== null) chips.push({ text: `${facts.gbp.rating} stars${facts.gbp.reviewCount !== null ? `, ${facts.gbp.reviewCount} reviews` : ""}`, tone: "neutral" });
+  if (facts.gbp.reviewsGained !== null && facts.gbp.reviewsGained > 0) chips.push({ text: `${plural(facts.gbp.reviewsGained, "new review", "new reviews")}`, tone: "positive" });
+  const n = facts.content.published.length;
+  if (n > 0) chips.push({ text: `${plural(n, "piece", "pieces")} published`, tone: "info" });
+  if (facts.citations && facts.citations.needsFix > 0) chips.push({ text: `${plural(facts.citations.needsFix, "listing", "listings")} to fix`, tone: "warning" });
+  return { headline, chips };
+}

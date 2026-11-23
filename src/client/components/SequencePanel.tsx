@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { api, ApiError } from "../api";
-import { ENROLLMENT_LABEL, ENROLLMENT_TONE, isLiveStatus, messageLabel, showStartedNotice, stepStatusText, stepTitle, type SequenceData } from "../sequenceView";
+import { ENROLLMENT_LABEL, ENROLLMENT_TONE, isLiveStatus, messageLabel, showStartedNotice, stepStatusText, stepTitle, type SequenceData, type StepState } from "../sequenceView";
 import { sinceLabel } from "../settingsView";
-import Icon from "./Icon";
+import Icon, { type IconName } from "./Icon";
 import InlineError from "./InlineError";
 import { Badge } from "./Score";
 import StartSequence, { WaitingNotice } from "./StartSequence";
+
+const STEP_ICON: Record<StepState, IconName> = { sent: "check", pending: "clock", due: "alert", upcoming: "clock", skipped: "x" };
 
 interface Props {
   leadId: string; leadName: string;
@@ -49,44 +52,48 @@ export default function SequencePanel({ leadId, leadName, startDisabled, startWh
 
   if (!data) return error ? <InlineError message={error} /> : <p className="muted small">Loading…</p>;
   const e = data.enrollment, live = !!e && isLiveStatus(e.status), now = new Date();
+  const sent = data.steps.filter((v) => v.state === "sent").length;
   return (
-    <div className="seq-panel">
+    <div className="seq-panel clx-lead-seq">
       {e ? (
         <>
-          <div className="seq-head">
-            <b>{e.campaign_name ?? "Sequence"}</b>
+          <div className="clx-lead-seq-head">
+            <span className="clx-lead-seq-name"><b>{e.campaign_name ?? "Sequence"}</b><small>To {e.to_email} · started {sinceLabel(e.started_at, now)}{e.stopped_reason && !live ? ` · ${e.stopped_reason}` : ""}</small></span>
             <Badge tone={ENROLLMENT_TONE[e.status]} dot>{ENROLLMENT_LABEL[e.status]}</Badge>
           </div>
-          <p className="prop-note">To {e.to_email} · started {sinceLabel(e.started_at, now)}{e.stopped_reason && !live ? ` · ${e.stopped_reason}` : ""}</p>
+          {data.steps.length > 0 && <p className="clx-lead-seq-count">{sent} of {data.steps.length} steps done</p>}
           {e.last_error && live && <p className="error small"><Icon name="alert" size={14} /> {e.last_error}</p>}
-          <ol className="seq-steps" aria-label="Steps">
+          <ol className="clx-lead-steps" aria-label="Steps">
             {data.steps.map((v) => (
-              <li key={v.step.id} className={`seq-step ${v.state}`}>
-                <span className="seq-name">{stepTitle(data.steps, v.step.idx)}</span>
-                <span className="seq-state">{stepStatusText(v, now)}</span>
+              <li key={v.step.id} className={`clx-lead-step ${v.state}`}>
+                <span className="clx-lead-step-dot" aria-hidden="true"><Icon name={STEP_ICON[v.state]} size={12} /></span>
+                <span className="clx-lead-step-name">{stepTitle(data.steps, v.step.idx)}{v.step.kind === "email" && v.step.subject && <small>{v.step.subject}</small>}</span>
+                <span className="clx-lead-step-state">{v.state === "pending" ? <Link to="/today">{stepStatusText(v, now)}</Link> : stepStatusText(v, now)}</span>
               </li>
             ))}
           </ol>
           {live && showStartedNotice(justStarted, data.steps) && <WaitingNotice />}
-          {live && <button type="button" className="btn danger sm seq-stop" onClick={() => void stop()} disabled={stopping}><Icon name="ban" size={14} />{stopping ? "Stopping…" : "Stop sequence"}</button>}
         </>
-      ) : <p className="muted small">Not in a sequence.</p>}
-      {!live && <StartSequence leadId={leadId} disabled={startDisabled} why={startWhy} beforeStart={beforeStart} onStarted={() => void started()} />}
-      <InlineError message={error} />
+      ) : (
+        <p className="clx-lead-seq-none">Not in a sequence. A sequence follows up by email on a schedule, and every email waits for your OK on Home before it goes.</p>
+      )}
       {data.messages.length > 0 && (
-        <div className="seq-msgs">
-          <h4>Emails</h4>
+        <div className="clx-lead-msgs">
+          <p className="clx-lead-over">Emails</p>
           <ul aria-label="Emails">
             {data.messages.map((m) => (
-              <li key={m.id} className={`seq-msg ${m.direction}`}>
-                <span className="seq-dir"><Icon name={m.direction === "out" ? "arrow-up-right" : "arrow-right"} size={13} />{messageLabel(m)}</span>
-                <span className="seq-subj" title={m.text}>{m.subject || "(no subject)"}</span>
+              <li key={m.id} className={`clx-lead-msg ${m.direction}${m.status === "failed" ? " failed" : ""}`}>
+                <span className="clx-lead-msg-ico" aria-hidden="true"><Icon name={m.direction === "out" ? "send" : "mail"} size={13} /></span>
+                <span className="clx-lead-msg-text"><b title={m.text}>{m.subject || "(no subject)"}</b><small>{messageLabel(m)}{m.direction === "in" ? ` from ${m.counterpart}` : ""}</small></span>
                 <time dateTime={m.sent_at ?? m.created_at} title={new Date(m.sent_at ?? m.created_at).toLocaleString()}>{sinceLabel(m.sent_at ?? m.created_at, now)}</time>
               </li>
             ))}
           </ul>
         </div>
       )}
+      {!live && <StartSequence leadId={leadId} disabled={startDisabled} why={startWhy} beforeStart={beforeStart} onStarted={() => void started()} />}
+      {live && <button type="button" className="btn-ghost-sm clx-lead-seq-stop" onClick={() => void stop()} disabled={stopping}><Icon name="ban" size={14} />{stopping ? "Stopping…" : "Stop sequence"}</button>}
+      <InlineError message={error} />
     </div>
   );
 }

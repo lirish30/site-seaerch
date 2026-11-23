@@ -428,26 +428,29 @@ export default function LeadDetail() {
           <CallPrepPanel leadId={b.id} findings={a?.findings ?? []} />
 
           <PropSection icon="user" title="Point of contact">
-            {poc ? (
-              <>
-                <div className="poc-head">
-                  <span className="avatar-sm" aria-hidden="true">{initials(poc.name)}</span>
-                  <span className="who">
-                    <span className="nm">{poc.name}{poc.is_poc && <Badge tone="signal">POC</Badge>}</span>
-                    {poc.role && <span className="role">{poc.role}</span>}
-                  </span>
-                </div>
-                {poc.email && <a className="contact-link" href={`mailto:${poc.email}`}><Icon name="mail" size={14} /><span>{poc.email}</span></a>}
-                {poc.phone && <a className="contact-link" href={`tel:${poc.phone}`}><Icon name="phone" size={14} /><span>{poc.phone}</span></a>}
-                {poc.linkedin && safeHttpUrl(poc.linkedin) && <a className="contact-link" href={safeHttpUrl(poc.linkedin)!} target="_blank" rel="noreferrer"><Icon name="link" size={14} /><span>LinkedIn</span></a>}
-              </>
-            ) : <p className="muted small">{d.toContact ? `No point of contact yet. Suggested: ${d.toContact.value}` : "No point of contact yet."}</p>}
-            {foundPeople.length > 0 && !managePeople && (
-              <div className="found-box"><Icon name="sparkles" size={14} /><span className="grow">{foundPeople.length} more {foundPeople.length === 1 ? "person" : "people"} found on their site</span><button onClick={() => setManagePeople(true)}>Review</button></div>
-            )}
-            {managePeople
-              ? <><PeoplePanel leadId={b.id} people={d.people} contacts={d.contacts} onChange={() => load().catch(fail)} onError={setMsg} /><button className="link-btn" style={{ alignSelf: "flex-start", padding: 0 }} onClick={() => setManagePeople(false)}>Done</button></>
-              : foundPeople.length === 0 && <button className="link-btn" style={{ alignSelf: "flex-start", padding: 0 }} onClick={() => setManagePeople(true)}>{d.people.length ? "Manage people" : "Add a person"}</button>}
+            {managePeople ? <>
+              <PeoplePanel leadId={b.id} people={d.people} contacts={d.contacts} onChange={() => load().catch(fail)} onError={setMsg} />
+              <button type="button" className="btn sm clx-lead-done" onClick={() => setManagePeople(false)}><Icon name="check" size={14} />Done</button>
+            </> : <>
+              {poc ? (
+                <>
+                  <div className="poc-head">
+                    <span className="avatar-sm" aria-hidden="true">{initials(poc.name)}</span>
+                    <span className="who">
+                      <span className="nm">{poc.name}{poc.is_poc && <Badge tone="signal">POC</Badge>}</span>
+                      {poc.role && <span className="role">{poc.role}</span>}
+                    </span>
+                  </div>
+                  {poc.email && <a className="contact-link" href={`mailto:${poc.email}`}><Icon name="mail" size={14} /><span>{poc.email}</span></a>}
+                  {poc.phone && <a className="contact-link" href={`tel:${poc.phone}`}><Icon name="phone" size={14} /><span>{poc.phone}</span></a>}
+                  {poc.linkedin && safeHttpUrl(poc.linkedin) && <a className="contact-link" href={safeHttpUrl(poc.linkedin)!} target="_blank" rel="noreferrer"><Icon name="link" size={14} /><span>LinkedIn</span></a>}
+                </>
+              ) : <p className="clx-lead-pnone">{d.toContact ? <>No point of contact yet. Drafts go to <b>{d.toContact.value}</b> until you add one.</> : "No point of contact yet. Add the person you will write to."}</p>}
+              {foundPeople.length > 0 && (
+                <div className="found-box"><Icon name="sparkles" size={14} /><span className="grow">{foundPeople.length} more {foundPeople.length === 1 ? "person" : "people"} found on their site</span><button onClick={() => setManagePeople(true)}>Review</button></div>
+              )}
+              {foundPeople.length === 0 && <button type="button" className="btn sm clx-lead-done" onClick={() => setManagePeople(true)}><Icon name={d.people.length ? "users" : "plus"} size={14} />{d.people.length ? "Manage people" : "Add a person"}</button>}
+            </>}
           </PropSection>
 
           <PropSection icon="send" title="Sequence">

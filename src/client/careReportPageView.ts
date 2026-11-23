@@ -78,3 +78,44 @@ export function siteDetails(s: PublicReportSite): { label: string; value: string
   if (s.speedScore !== null) rows.push({ label: "Mobile speed", value: `${s.speedScore} out of 100` });
   return rows;
 }
+
+/** A colour for a fact on the client's pages; the words always say the same, so colour is never the only signal. */
+export type FactTone = "neutral" | "positive" | "warning" | "critical" | "info" | "signal";
+
+/** How a site's row reads at a glance: good news green, a problem amber. Only from the words `siteDetails` already wrote. */
+export function siteFactTone(row: { label: string; value: string }): FactTone {
+  if (row.label === "Downtime") return /^No downtime/.test(row.value) ? "positive" : /^Went down/.test(row.value) ? "warning" : "neutral";
+  if (row.label === "Uptime") return /^monitored/.test(row.value) ? "neutral" : "positive";
+  if (row.label === "Updates") return /undone/.test(row.value) ? "warning" : "neutral";
+  if (row.label === "Mobile speed") { const n = Number(row.value.split(" ")[0]); return n >= 90 ? "positive" : n >= 50 ? "neutral" : "warning"; }
+  return "neutral";
+}
+
+/** The line and chips at the top of the report: what the month came to, only from what was measured. */
+export function careGlance(p: Pick<PublicReport, "sites" | "edits" | "renewals">): { headline: string; chips: { text: string; tone: FactTone }[] } {
+  const chips: { text: string; tone: FactTone }[] = [];
+  const measured = p.sites.filter((s) => s.coveredDays > 0);
+  const downs = p.sites.reduce((n, s) => n + s.incidents, 0);
+  if (downs > 0) chips.push({ text: downs === 1 ? "Went down once" : `Went down ${downs} times`, tone: "warning" });
+  else if (measured.length > 0) chips.push({ text: "No downtime", tone: "positive" });
+  const tracked = p.sites.filter((s) => s.updatesTracked);
+  const applied = tracked.reduce((n, s) => n + s.updatesApplied, 0);
+  if (tracked.length > 0) chips.push({ text: applied === 0 ? "No updates needed" : `${applied} ${applied === 1 ? "update" : "updates"} applied`, tone: applied > 0 ? "info" : "neutral" });
+  const backups = p.sites.reduce((n, s) => n + s.backups, 0);
+  if (backups > 0) chips.push({ text: `${backups} ${backups === 1 ? "backup" : "backups"}`, tone: "neutral" });
+  if (p.edits) chips.push({ text: `Edits ${editsLine(p.edits)}`, tone: p.edits.state === "over" ? "critical" : p.edits.state === "warn" ? "warning" : "neutral" });
+  const ups = p.sites.filter((s) => s.uptimePercent !== null);
+  let headline: string;
+  if (p.sites.length === 0) headline = "Here is your month";
+  else if (ups.length === p.sites.length) {
+    const low = Math.min(...ups.map((s) => Math.round((s.uptimePercent ?? 0) * 100) / 100));
+    headline = p.sites.length === 1 ? `Your site was up ${low}% of the time` : `Your sites were up at least ${low}% of the time`;
+  } else headline = p.sites.length === 1 ? "Your site this month" : `Your ${p.sites.length} sites this month`;
+  return { headline, chips };
+}
+
+/** "40 (last month 30)" as its figure and the comparison, so the figure can be shown large. A value without a comparison comes back whole. */
+export function splitBeside(value: string): { figure: string; before: string | null } {
+  const m = /^(.*?) \(last month (.*)\)$/.exec(value);
+  return m ? { figure: m[1], before: `Last month ${m[2]}` } : { figure: value, before: null };
+}

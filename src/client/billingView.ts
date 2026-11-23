@@ -281,3 +281,31 @@ export function stripeRows(s: StripeStatus): { label: string; ok: boolean; text:
     { label: "Lawyer review recorded", ok: s.legalReviewed, text: s.legalReviewed ? "Recorded" : "Not recorded", hint: "Under Settings > Documents. A real subscription link is not sent until the review is recorded." },
   ];
 }
+
+// ---- one invoice's journey (the opened row and the project's Billing tab) ----
+
+export interface InvoiceStep { key: "made" | "sent" | "due" | "paid"; label: string; when: string; state: "done" | "now" | "todo" | "bad" }
+
+/**
+ * Where one invoice is on its way: made, sent (after your approval), due, paid. Each step says its day ("2 Nov") or what it waits for. A late or failed one marks its step `bad`; a voided or
+ * written-off one ends there. Dates in ISO form are read as their calendar day.
+ */
+export function invoiceSteps(i: Pick<InvoiceRow, "status" | "createdAt" | "sentAt" | "dueOn" | "failedOn" | "paidAt">, today: string): InvoiceStep[] {
+  const day = (iso: string | null) => shortDate((iso ?? "").slice(0, 10));
+  const late = daysOverdue(i, today);
+  const steps: InvoiceStep[] = [{ key: "made", label: "Drafted", when: day(i.createdAt), state: "done" }];
+  steps.push(i.sentAt ? { key: "sent", label: "Sent", when: day(i.sentAt), state: "done" }
+    : i.status === "draft" ? { key: "sent", label: "Sent", when: "Waits for your OK", state: "now" }
+      : { key: "sent", label: "Sent", when: i.status === "paid" ? "Paid up front" : "", state: i.status === "paid" ? "done" : "todo" });
+  if (i.dueOn) {
+    steps.push(i.status === "paid" ? { key: "due", label: "Due", when: shortDate(i.dueOn), state: "done" }
+      : late > 0 ? { key: "due", label: "Due", when: `${shortDate(i.dueOn)}, ${plural(late, "day")} late`, state: "bad" }
+        : { key: "due", label: "Due", when: shortDate(i.dueOn), state: i.status === "open" ? "now" : "todo" });
+  }
+  steps.push(i.status === "paid" ? { key: "paid", label: "Paid", when: day(i.paidAt), state: "done" }
+    : i.status === "failed" ? { key: "paid", label: "Payment failed", when: shortDate(i.failedOn), state: "bad" }
+      : i.status === "void" ? { key: "paid", label: "Voided", when: "Nothing is owed", state: "bad" }
+        : i.status === "uncollectible" ? { key: "paid", label: "Written off", when: "Nothing more is chased", state: "bad" }
+          : { key: "paid", label: "Paid", when: i.status === "open" ? "Not yet" : "", state: "todo" });
+  return steps;
+}

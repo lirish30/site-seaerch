@@ -83,9 +83,13 @@ export default function Care() {
           <>
             <Stats label="Care at a glance">
               <Stat icon="shield" label="On Care" value={onCare.length} sub={`${moneyLabel(mrr)} a month${all.length > onCare.length ? ` · ${all.length - onCare.length} watched by hand` : ""}`} />
-              <Stat icon="gauge" label="Lowest uptime, 30 days" value={lowest ? formatUptime(lowest.uptime30) : "None yet"} sub={lowest ? lowest.name : "Shows after the first checks"} tone={lowest && (lowest.uptime30 ?? 100) < 99 ? "warning" : undefined} />
-              <Stat icon="alert" label="Open incidents" value={incidents.length} sub={incidents.length ? "Fix these first" : "Nothing broken"} tone={incidents.length ? "critical" : "positive"} />
-              <Stat icon="users" label="Need a look" value={look.length} sub={look.length ? (under80 ? `${plural(under80, "client")} under health 80` : "An incident or a site down") : "Every client healthy"} tone={look.length ? "warning" : "positive"} />
+              <Stat icon="gauge" label="Lowest uptime, 30 days" value={lowest ? formatUptime(lowest.uptime30) : "None yet"} sub={lowest ? lowest.name : "Shows after the first checks"} tone={lowest && (lowest.uptime30 ?? 100) < 99 ? "warning" : lowest ? "positive" : undefined} />
+              {incidents.length === 0 && look.length === 0 ? (
+                <Stat icon="check" label="Incidents and health" value="All clear" sub={`No incidents · ${all.length === 1 ? "the client is" : `all ${all.length} clients are`} healthy`} tone="positive" />
+              ) : <>
+                <Stat icon="alert" label="Open incidents" value={incidents.length} sub={incidents.length ? "Fix these first" : "Nothing broken"} tone={incidents.length ? "critical" : "positive"} />
+                <Stat icon="users" label="Need a look" value={look.length} sub={look.length ? (under80 ? `${plural(under80, "client")} under health 80` : "An incident or a site down") : "Every client healthy"} tone={look.length ? "warning" : "positive"} />
+              </>}
             </Stats>
 
             {worst && (
@@ -95,13 +99,13 @@ export default function Care() {
               </Banner>
             )}
 
-            <div className="ds-toolbar">
+            {(look.length > 0 || onCare.length < all.length || view !== "all") && <div className="ds-toolbar">
               <Seg label="Show" value={view} onChange={setView} options={[
                 { key: "all", label: "All", count: all.length },
-                { key: "look", label: "Need a look", count: look.length },
-                { key: "care", label: "On a Care plan", count: onCare.length },
+                ...(look.length > 0 || view === "look" ? [{ key: "look" as const, label: "Need a look", count: look.length }] : []),
+                ...(onCare.length < all.length || view === "care" ? [{ key: "care" as const, label: "On a Care plan", count: onCare.length }] : []),
               ]} />
-            </div>
+            </div>}
 
             <div className="ds-table-wrap">
               <table className="ds-table crx-table">
@@ -122,6 +126,7 @@ export default function Care() {
                           <Meter value={r.health.hasData ? r.health.score : 0} max={100} tone={bandTone(r)} width={64} label={r.health.hasData ? `Health ${r.health.score} of 100, ${bandLabel(r.health.band).toLowerCase()}` : "No health score yet"} />
                           <b title={r.health.hasData ? undefined : "No checks yet"}>{r.health.hasData ? r.health.score : "–"}</b>
                         </span>
+                        {r.health.reasons[0] && <small className="crx-reason">{r.health.reasons[0]}{r.health.reasons.length > 1 ? ` · ${r.health.reasons.length - 1} more` : ""}</small>}
                       </td>
                       <td className="num">{r.uptime30 === null ? <span className="crx-dim">–</span> : formatUptime(r.uptime30)}</td>
                       <td className="crx-col-sites">
@@ -138,6 +143,24 @@ export default function Care() {
               </table>
             </div>
             <Note>Health blends uptime, open incidents, payments and site access: hover a score to see what took points off. Grade is yours; a question mark is only a suggestion.</Note>
+            {all.length <= 4 && (
+              <section className="crx-what" aria-label="What Care does">
+                <Link to="/care/updates" className="crx-what-card">
+                  <span className="ds-tile info"><Icon name="refresh" size={16} /></span>
+                  <span><b>Weekly updates</b><small>WordPress, plugins and themes, with a backup and before-and-after pictures. You approve each batch.</small></span>
+                  <Icon name="chevron-right" size={14} className="ds-chev" />
+                </Link>
+                <Link to="/care/reports" className="crx-what-card">
+                  <span className="ds-tile positive"><Icon name="file-text" size={16} /></span>
+                  <span><b>Monthly report</b><small>Proof for the client that their site was looked after: uptime, updates, edit hours.</small></span>
+                  <Icon name="chevron-right" size={14} className="ds-chev" />
+                </Link>
+                <div className="crx-what-card">
+                  <span className="ds-tile signal"><Icon name="gauge" size={16} /></span>
+                  <span><b>Checks all day</b><small>Each site is checked every few minutes; a site down or a domain running out opens an incident here.</small></span>
+                </div>
+              </section>
+            )}
 
             {incidents.length > 0 && (
               <section className="crx-section" aria-label="Open incidents">

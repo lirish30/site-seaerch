@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import Icon from "../Icon";
+import { Card, Chip } from "../ds";
 import { WATCHED_HEADING, watchedLine } from "../../videoViewsView";
 import type { Part, WatchedLead } from "./useHome";
 
@@ -10,26 +11,28 @@ export default function WatchedCard({ watched, onRetry }: { watched: Part<Watche
   if (rows && rows.length === 0) return null;
   const now = new Date();
   return (
-    <section className="hm-card hm-watched" id="watched" aria-labelledby="hm-watched-h">
-      <header className="hm-card-head">
-        <Icon name="eye" size={16} />
-        <h2 id="hm-watched-h">{WATCHED_HEADING}</h2>
-      </header>
+    <Card icon="eye" title={WATCHED_HEADING} id="watched" className="hox-card" flush note="A warm moment to follow up">
       {!rows ? (
-        <div className="hm-state sm" role="alert"><p>{watched.error}</p><button type="button" className="btn sm" onClick={onRetry}>Try again</button></div>
+        <div className="hox-alert" role="alert"><span>{watched.error}</span><button type="button" className="btn sm" onClick={onRetry}>Try again</button></div>
       ) : (
-        <ul className="hm-events">
+        <ul className="hox-rows">
           {rows.map((w) => (
-            <li key={w.businessId} className="hm-event">
-              <span className="hm-tile sm positive" aria-hidden="true"><Icon name="eye" size={14} /></span>
-              <div className="hm-main">
-                <p className="hm-ev-title"><Link to={`/leads/${w.businessId}`}>{w.name}</Link></p>
-                <p className="hm-ev-sub">{watchedLine(w, now)}</p>
+            <li key={w.businessId} className="hox-row-wrap">
+              <div className="hox-row">
+                <span className="ds-tile positive" aria-hidden="true"><Icon name="eye" size={16} /></span>
+                <div className="hox-row-main">
+                  <p className="hox-row-title"><span className="hox-what">{w.name}</span></p>
+                  <p className="hox-row-sub">{watchedLine(w, now)}</p>
+                </div>
+                <div className="hox-row-acts">
+                  <Chip tone="positive">{w.maxPct}% watched</Chip>
+                  <Link to={`/leads/${w.businessId}`} className="btn sm">Open lead</Link>
+                </div>
               </div>
             </li>
           ))}
         </ul>
       )}
-    </section>
+    </Card>
   );
 }

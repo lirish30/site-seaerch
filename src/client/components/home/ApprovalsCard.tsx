@@ -1,56 +1,45 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import Icon from "../Icon";
-import { approvalLink, approvalsLine, canBulkApprove, draftedByLabel, groupApprovals, parsePayloadText, whenLabel, type ApprovalItem } from "../../approvalsView";
-import type { Part } from "./useHome";
+import { Chip } from "../ds";
+import { approvalLink, canBulkApprove, draftedByLabel, parsePayloadText, whenLabel, type ApprovalGroup, type ApprovalItem } from "../../approvalsView";
+import { approvalChip, approvalIcon, approvalSub } from "../../todayHome";
 
-type Mode = "edit" | "reject";
+type Mode = "review" | "edit" | "reject";
 
-/** Everything Claude has drafted that is waiting for your OK: approve, edit then approve, reject, or approve a whole group. */
-export default function ApprovalsCard({ approvals, errs, busy, onApprove, onReject, onApproveAll, onRetry }: {
-  approvals: Part<ApprovalItem[]>; errs: Readonly<Record<string, string>>; busy: ReadonlySet<string>;
-  onApprove: (a: ApprovalItem, payload?: unknown) => void; onReject: (a: ApprovalItem, note: string) => void;
-  onApproveAll: (items: ApprovalItem[]) => void; onRetry: () => void;
+/**
+ * Everything Claude has drafted that is waiting for your OK, as rows inside Home's "Needs you" card: one group per kind with
+ * "Approve all" where a batch is safe. Each row opens to show exactly what will go out, then Approve, Edit then approve, or Reject.
+ */
+export default function ApprovalGroups({ groups, errs, busy, onApprove, onReject, onApproveAll, limit, onShowAll }: {
+  groups: ApprovalGroup[]; errs: Readonly<Record<string, string>>; busy: ReadonlySet<string>;
+  onApprove: (a: ApprovalItem, payload?: unknown) => void; onReject: (a: ApprovalItem, note: string) => void; onApproveAll: (items: ApprovalItem[]) => void;
+  /** Show only the first rows (the All view); the rest are one click away. */ limit?: number; onShowAll?: () => void;
 }) {
-  const items = approvals.data;
-  const groups = useMemo(() => groupApprovals(items ?? []), [items]);
-  const failed = items ? items.filter((a) => errs[a.id]) : [];
+  const all = groups.flatMap((g) => g.items);
+  const shown = limit !== undefined ? all.slice(0, limit) : all;
+  const bulk = groups.filter((g) => canBulkApprove(g.kind) && g.items.length > 1);
   return (
-    <section className="hm-card hm-approvals" id="approvals" aria-labelledby="hm-appr-h">
-      <header className="hm-card-head">
-        <Icon name="check" size={16} />
-        <h2 id="hm-appr-h">Waiting for your OK</h2>
-        {items && <span className="hm-head-note small">{approvalsLine(items.length)}</span>}
-      </header>
-      {!items && approvals.error ? (
-        <div className="hm-state sm" role="alert"><p>{approvals.error}</p><button type="button" className="btn sm" onClick={onRetry}>Try again</button></div>
-      ) : !items ? (
-        <div className="hm-card-body"><i className="hm-skel" style={{ width: "60%", height: 18 }} /></div>
-      ) : groups.length === 0 ? (
-        <div className="hm-state sm"><p>{approvalsLine(0)}</p></div>
-      ) : (
-        groups.map((g) => {
-          const groupBusy = g.items.some((a) => busy.has(a.id));
-          return (
-            <div className="hm-appr-group" key={g.kind}>
-              <div className="hm-appr-ghead">
-                <h3>{g.label} <span>{g.items.length}</span></h3>
-                {canBulkApprove(g.kind) && <button type="button" className="btn sm" disabled={groupBusy} onClick={() => onApproveAll(g.items)}>Approve all {g.items.length}</button>}
-              </div>
-              <ul className="hm-appr-list">
-                {g.items.map((a) => (
-                  <ApprovalRow key={a.id} item={a} error={errs[a.id]} busy={busy.has(a.id)} onApprove={onApprove} onReject={onReject} />
-                ))}
-              </ul>
-            </div>
-          );
-        })
+    <div className="hox-group" role="group" aria-label="Waiting for your OK">
+      <div className="hox-group-head">
+        <span>Waiting for your OK<b>{all.length}</b></span>
+        {bulk.map((g) => (
+          <button key={g.kind} type="button" className="btn sm" disabled={g.items.some((a) => busy.has(a.id))} onClick={() => onApproveAll(g.items)}
+            title={`${g.label}: approve all ${g.items.length} at once`}><Icon name="check" size={14} />Approve all {g.items.length} {bulkNoun(g)}</button>
+        ))}
+      </div>
+      <ul className="hox-rows">
+        {shown.map((a) => <ApprovalRow key={a.id} item={a} error={errs[a.id]} busy={busy.has(a.id)} onApprove={onApprove} onReject={onReject} />)}
+      </ul>
+      {shown.length < all.length && onShowAll && (
+        <button type="button" className="hox-more" onClick={onShowAll}>Show all {all.length} approvals<Icon name="chevron-right" size={14} /></button>
       )}
-      {/* Errors are read out as they appear; the same text also sits beside the item that failed. */}
-      <div className="sr-only" aria-live="polite" role="status">{failed.map((a) => `${a.title}: ${errs[a.id]}`).join(". ")}</div>
-    </section>
+    </div>
   );
 }
+
+/** "emails", "notes": what an Approve-all button approves, from its group. */
+const bulkNoun = (g: ApprovalGroup) => (g.kind.startsWith("email") ? "emails" : g.kind.startsWith("invoice") ? "reminders" : g.kind.startsWith("lead.note") ? "notes" : "");
 
 function ApprovalRow({ item, error, busy, onApprove, onReject }: {
   item: ApprovalItem; error: string | undefined; busy: boolean;
@@ -61,6 +50,7 @@ function ApprovalRow({ item, error, busy, onApprove, onReject }: {
   const [note, setNote] = useState("");
   const [parseErr, setParseErr] = useState("");
   const link = approvalLink(item);
+  const tile = approvalIcon(item.kind), chip = approvalChip(item.kind);
 
   const openEdit = () => { setText(JSON.stringify(item.payload ?? null, null, 2)); setParseErr(""); setMode("edit"); };
   const submitEdit = () => {
@@ -70,39 +60,58 @@ function ApprovalRow({ item, error, busy, onApprove, onReject }: {
   };
 
   return (
-    <li className="hm-row hm-appr-row">
-      <div className="hm-main">
-        <p className="hm-name">{item.title}</p>
-        <p className="hm-reason">{item.preview}</p>
-        {link && <p className="hm-appr-meta"><Link to={link.to}>{link.label}</Link></p>}
-        <p className="hm-appr-meta">{draftedByLabel(item.drafted_by)} · {whenLabel(item.created_at)}</p>
-        {(error || parseErr) && <p className="hm-err">{error || parseErr}</p>}
-        {mode === "edit" && (
-          <div className="hm-appr-form">
-            <label htmlFor={`edit-${item.id}`}>Edit what will be sent (JSON)</label>
-            <textarea id={`edit-${item.id}`} rows={6} value={text} spellCheck={false} onChange={(e) => setText(e.target.value)} />
-            <div className="hm-appr-formacts">
-              <button type="button" className="btn sm primary" disabled={busy} onClick={submitEdit}>Approve with edits</button>
-              <button type="button" className="btn sm" disabled={busy} onClick={() => setMode(null)}>Cancel</button>
-            </div>
-          </div>
-        )}
-        {mode === "reject" && (
-          <div className="hm-appr-form">
-            <label htmlFor={`note-${item.id}`}>Note (optional)</label>
-            <input id={`note-${item.id}`} type="text" maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} />
-            <div className="hm-appr-formacts">
-              <button type="button" className="btn sm" disabled={busy} onClick={() => onReject(item, note)}>Reject</button>
-              <button type="button" className="btn sm" disabled={busy} onClick={() => setMode(null)}>Cancel</button>
-            </div>
-          </div>
-        )}
+    <li className={`hox-row-wrap${mode ? " open" : ""}`}>
+      <div className="hox-row">
+        <span className={`ds-tile ${tile.tone}`} aria-hidden="true"><Icon name={tile.icon} size={16} /></span>
+        <div className="hox-row-main">
+          <p className="hox-row-title"><span className="hox-what">{item.title}</span></p>
+          <p className="hox-row-sub">{approvalSub(item.preview)}</p>
+          <p className="hox-row-meta">{draftedByLabel(item.drafted_by)} · {whenLabel(item.created_at)}</p>
+        </div>
+        <div className="hox-row-acts">
+          {error || item.error ? <Chip tone="critical" dot>{error ? "Didn't go" : "Failed last time"}</Chip> : <Chip tone={chip.tone}>{chip.label}</Chip>}
+          <button type="button" className="btn sm" aria-expanded={mode !== null} aria-label={`${mode ? "Close" : "Review"}: ${item.title}`}
+            onClick={() => setMode(mode ? null : "review")}>{mode ? "Close" : "Review"}</button>
+        </div>
       </div>
-      {mode === null && (
-        <div className="hm-acts">
-          <button type="button" className="btn sm primary" disabled={busy} aria-label={`Approve: ${item.title}`} onClick={() => onApprove(item)}>Approve</button>
-          <button type="button" className="btn sm" disabled={busy} aria-label={`Edit then approve: ${item.title}`} onClick={openEdit}>Edit</button>
-          <button type="button" className="btn sm" disabled={busy} aria-label={`Reject: ${item.title}`} onClick={() => { setNote(""); setMode("reject"); }}>Reject</button>
+      {(error || parseErr) ? <p className="hox-row-err" role="alert"><Icon name="alert" size={14} />{error || parseErr}</p>
+        : item.error ? <p className="hox-row-err"><Icon name="alert" size={14} />Last try didn't go: {item.error}</p> : null}
+      {mode && (
+        <div className="hox-review">
+          {mode === "review" && (
+            <>
+              <p className="ds-label">What will go out</p>
+              <pre className="hox-preview">{item.preview}</pre>
+              {link && <Link to={link.to} className="hox-inline-link"><Icon name="arrow-up-right" size={14} />{link.label}</Link>}
+              <div className="hox-review-acts">
+                <button type="button" className="btn sm primary" disabled={busy} aria-label={`Approve: ${item.title}`} onClick={() => onApprove(item)}><Icon name="check" size={14} />Approve</button>
+                <button type="button" className="btn sm" disabled={busy} aria-label={`Edit then approve: ${item.title}`} onClick={openEdit}><Icon name="pen" size={14} />Edit then approve</button>
+                <button type="button" className="btn sm" disabled={busy} aria-label={`Reject: ${item.title}`} onClick={() => { setNote(""); setMode("reject"); }}><Icon name="x" size={14} />Reject</button>
+              </div>
+            </>
+          )}
+          {mode === "edit" && (
+            <>
+              <label className="deal-field" htmlFor={`edit-${item.id}`}><span>Edit what will be sent (JSON)</span></label>
+              <textarea id={`edit-${item.id}`} className="hox-json" rows={8} value={text} spellCheck={false} onChange={(e) => setText(e.target.value)} />
+              <div className="hox-review-acts">
+                <button type="button" className="btn sm primary" disabled={busy} onClick={submitEdit}>Approve with edits</button>
+                <button type="button" className="btn sm" disabled={busy} onClick={() => setMode("review")}>Cancel</button>
+              </div>
+            </>
+          )}
+          {mode === "reject" && (
+            <>
+              <label className="deal-field hox-note-field">
+                <span>Why not? (optional)</span>
+                <input id={`note-${item.id}`} type="text" maxLength={500} value={note} placeholder="What should change" onChange={(e) => setNote(e.target.value)} />
+              </label>
+              <div className="hox-review-acts">
+                <button type="button" className="btn sm" disabled={busy} onClick={() => onReject(item, note)}>Reject</button>
+                <button type="button" className="btn sm" disabled={busy} onClick={() => setMode("review")}>Cancel</button>
+              </div>
+            </>
+          )}
         </div>
       )}
     </li>

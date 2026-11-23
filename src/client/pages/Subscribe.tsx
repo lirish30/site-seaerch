@@ -1,39 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { useLocation, useParams } from "react-router-dom";
 import Icon from "../components/Icon";
+import { PubBar, PubContact, PubError, PubGone, PubNotice, PubSkeleton, Tile, useNoIndex } from "../components/PublicPage";
 import { publicSubscription, startSubscriptionCheckout } from "../api";
+import { dollars } from "../packagesView";
 import { isReportToken } from "../reportView";
-import { CONFIRMING, STILL_PROCESSING, checkoutError, isCheckoutUrl, pollDelay, settled, subscribeCopy, type PublicSubscription } from "../subscribeView";
+import { CONFIRMING, STILL_PROCESSING, checkoutError, isCheckoutUrl, pollDelay, settled, subscribeCopy, subscribeSteps, type PublicSubscription } from "../subscribeView";
 
 type Load = "loading" | "ok" | "gone" | "error";
 
-/** A page that is only a message: link gone, load failed. */
-function Notice({ icon, title, children }: { icon: "link" | "alert" | "check"; title: string; children?: React.ReactNode }) {
-  return (
-    <main className="rp sb">
-      <div className="rp-wrap rp-wrap-narrow">
-        <section className="rp-card rp-notice">
-          <span className="rp-notice-icon" aria-hidden="true"><Icon name={icon} size={20} /></span>
-          <h1>{title}</h1>
-          {children}
-        </section>
-      </div>
-    </main>
-  );
-}
-
-function Skeleton() {
-  return (
-    <main className="rp sb" aria-busy="true">
-      <div className="rp-wrap rp-wrap-narrow">
-        <div className="rp-card" role="status" aria-label="Loading">
-          <span className="rp-sk" style={{ height: 28, width: "70%" }} />
-          <span className="rp-sk" style={{ height: 160, borderRadius: 12 }} />
-        </div>
-      </div>
-    </main>
-  );
-}
+const KIND = "Monthly payment";
 
 // Public page: no session and no Shell, and it shows only the public fields the server returns (as React text, which escapes it). The state always comes from the server: `?done=1` only
 // means "we were sent back from the payment page", so it makes the page re-read the state a few times and never says "paid" by itself.
@@ -47,17 +23,7 @@ export default function Subscribe() {
   const [tries, setTries] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-
-  useEffect(() => {
-    const prevTitle = document.title;
-    document.title = "Your monthly payment";
-    let meta = document.querySelector<HTMLMetaElement>('meta[name="robots"]');
-    const created = !meta;
-    if (!meta) { meta = document.createElement("meta"); meta.name = "robots"; document.head.appendChild(meta); }
-    const prevContent = meta.content;
-    meta.content = "noindex, nofollow";
-    return () => { document.title = prevTitle; if (created) meta.remove(); else meta.content = prevContent; };
-  }, []);
+  useNoIndex("Your monthly payment");
 
   // Coming back with the browser's Back button from the payment page can restore this page as it was left, "busy" and all.
   useEffect(() => {
@@ -108,52 +74,63 @@ export default function Subscribe() {
     if (r.status === 404 || r.status === 409) setAttempt((n) => n + 1);
   }, [busy, token]);
 
-  if (load === "loading") return <Skeleton />;
-  if (load === "error") return (
-    <Notice icon="alert" title="Couldn't load this page">
-      <p>Something went wrong on our side, or your connection dropped. Please try again.</p>
-      <button type="button" className="btn" onClick={() => setAttempt((n) => n + 1)}>Try again</button>
-    </Notice>
-  );
-  if (load === "gone" || !page) return <Notice icon="link" title="This link isn't available"><p>It may have expired or been turned off. Reply to the email you got and we'll sort it out.</p></Notice>;
+  if (load === "loading") return <PubSkeleton kind={KIND} label="Loading" />;
+  if (load === "error") return <PubError kind={KIND} what="this page" onRetry={() => setAttempt((n) => n + 1)} />;
+  if (load === "gone" || !page) return <PubGone kind={KIND} />;
 
   const copy = subscribeCopy(page);
   const polling = waiting && pollDelay(tries) !== null;
   const stalled = waiting && !polling;
 
-  if (page.state === "closed") return <Notice icon="link" title={copy.heading}><p>{copy.note}</p></Notice>;
+  if (page.state === "closed") return <PubNotice kind={KIND} icon="link" title={copy.heading}><p>{copy.note}</p></PubNotice>;
 
+  const active = page.state === "active";
+  const steps = subscribeSteps(page);
   return (
-    <main className="rp sb">
-      <div className="rp-wrap rp-wrap-narrow">
-        {page.clientName && <header className="rp-bar"><span className="rp-bar-name">For {page.clientName}</span></header>}
-        <article className="rp-card">
-          {page.state === "active" && (
-            <section className="pp-done" role="status">
-              <span className="rp-notice-icon" aria-hidden="true"><Icon name="check" size={20} /></span>
-              <div><h1>{copy.heading}</h1></div>
-            </section>
-          )}
-          {page.state === "ready" && <div className="rp-head"><h1>{copy.heading}</h1></div>}
+    <main className="ds-page pbx">
+      <PubBar name={KIND} right={<>
+        {page.clientName && <span className="pbx-bar-meta hide-sm">For {page.clientName}</span>}
+        {active && <span className="ds-chip positive"><i className="ds-dot" />Active</span>}
+      </>} />
+      <div className="pbx-narrow" style={{ paddingTop: 40 }}>
+        <div className="pbx-col">
+          <article className="pbx-card">
+            {active ? (
+              <div className="pbx-done"><Tile icon="check" size={32} /><div><b>{copy.heading}</b><p>Your monthly payment is set up. There is nothing more to do.</p></div></div>
+            ) : (
+              <div className="pbx-intro pbx-col" style={{ gap: 8 }}>
+                <p className="pbx-eyebrow">{page.clientName ? `For ${page.clientName}` : "Monthly payment"}</p>
+                <h1 style={{ fontSize: 26, lineHeight: "32px" }}>{copy.heading}</h1>
+                <p className="pbx-lede">One step: add a card or bank account on our payment processor's page, then you're done.</p>
+              </div>
+            )}
 
-          <ul className="sb-lines">{copy.lines.map((l, i) => <li key={i}>{l}</li>)}</ul>
-
-          {polling && <p className="sb-wait" role="status">{CONFIRMING}</p>}
-          {stalled && (
-            <div className="sb-wait" role="status">
-              <p>{STILL_PROCESSING}</p>
-              <div className="co-actions"><button type="button" className="btn pp-submit" onClick={() => setTries(0)}>Check again</button></div>
+            <div className="pbx-plan">
+              <Tile icon="shield" tone="signal" size={40} />
+              <div><b>{page.planName}</b><small>Paid monthly</small></div>
+              <span className="pbx-plan-price">{dollars(page.monthlyCents)}<small>a month</small></span>
             </div>
-          )}
 
-          {copy.button && !waiting && (
-            <div className="co-actions">
-              <button type="button" className="btn primary pp-submit" disabled={busy} onClick={() => void start()}>{busy ? "Opening…" : copy.button}</button>
-            </div>
-          )}
-          {error && <p className="error" role="alert">{error}</p>}
-          <p className="sb-note">{copy.note}</p>
-        </article>
+            <ul className="pbx-steps">
+              {steps.rows.map((r) => <li key={r.text}><Tile icon={r.icon} tone={r.tone} size={28} />{r.text}</li>)}
+            </ul>
+
+            {polling && <div className="pbx-wait" role="status"><Icon name="refresh" size={16} /><div><p>{CONFIRMING}</p></div></div>}
+            {stalled && (
+              <div className="pbx-wait" role="status">
+                <Icon name="clock" size={16} />
+                <div><p>{STILL_PROCESSING}</p><button type="button" className="btn sm" onClick={() => setTries(0)}>Check again</button></div>
+              </div>
+            )}
+
+            {copy.button && !waiting && (
+              <button type="button" className="btn primary pbx-go" disabled={busy} onClick={() => void start()}><Icon name="card" size={16} />{busy ? "Opening…" : copy.button}</button>
+            )}
+            {error && <p className="pbx-error" role="alert">{error}</p>}
+            <p className="pbx-note"><Icon name="shield" size={14} /><span>{copy.note}</span></p>
+          </article>
+          <PubContact />
+        </div>
       </div>
     </main>
   );

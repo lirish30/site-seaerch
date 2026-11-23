@@ -183,11 +183,14 @@ export default function TaskRow({ task, all, actualMinutes, runningTaskId, proje
       {(skipping || error || notice) && (
         <div className="wkx-task-msgs">
           {skipping && (
-            <div className="wk-inline">
-              <label className="deal-field"><span>Why skip it? (3 to 300 characters; it goes in the notes)</span><input value={reason} maxLength={300} autoFocus onChange={(e) => setReason(e.target.value)} /></label>
-              <button type="button" className="btn primary" disabled={busy || reason.trim().length < 3} onClick={() => void skip()}>Skip this step</button>
-              <button type="button" className="btn" disabled={busy} onClick={() => { setSkipping(false); setReason(""); }}>Cancel</button>
-            </div>
+            <form className="ds-form wkx-skip" onSubmit={(e) => { e.preventDefault(); if (reason.trim().length >= 3) void skip(); }}>
+              <label className="deal-field wide"><span>Why skip this step?</span><input value={reason} maxLength={300} autoFocus placeholder="Like: the client has no Google profile" onChange={(e) => setReason(e.target.value)} />
+                <small>3 to 300 characters. It goes in the step’s notes.</small></label>
+              <div className="ds-form-actions">
+                <button type="submit" className="btn primary" disabled={busy || reason.trim().length < 3}>Skip this step</button>
+                <button type="button" className="btn" disabled={busy} onClick={() => { setSkipping(false); setReason(""); }}>Cancel</button>
+              </div>
+            </form>
           )}
           {error && <p className="warn small" role="alert">{error}</p>}
           {notice && <p className="small" role="status">{notice}</p>}
@@ -196,41 +199,53 @@ export default function TaskRow({ task, all, actualMinutes, runningTaskId, proje
 
       {open && (
         <div className="wkx-task-more">
-          <div className="wkx-task-facts">
-            {task.description && <p className="wk-text">{task.description}</p>}
-            {task.clientSummary && <p><span className="wkx-label">The client sees</span> <span className="wk-text">{task.clientSummary}</span></p>}
-            <p><span className="wkx-label">Status</span> {state.label}{time ? ` · ${time}` : ""}{detail && detail.time.entries.length > 0 ? ` · ${detail.time.entries.length} time ${detail.time.entries.length === 1 ? "entry" : "entries"}` : ""}</p>
-          </div>
+          <dl className="wkx-more-facts">
+            {task.doneWhen && <div><dt>Done when</dt><dd className="wk-text">{task.doneWhen}</dd></div>}
+            {task.description && <div><dt>About</dt><dd className="wk-text">{task.description}</dd></div>}
+            {task.clientSummary && <div><dt>The client sees</dt><dd className="wk-text">“{task.clientSummary}”</dd></div>}
+            <div><dt>Status</dt><dd>{state.label}{time ? ` · ${time}` : ""}{detail && detail.time.entries.length > 0 ? ` · ${detail.time.entries.length} time ${detail.time.entries.length === 1 ? "entry" : "entries"}` : ""}</dd></div>
+          </dl>
+
           {task.checklist.length > 0 && (
-            <ul className="wkx-checks" aria-label="Checklist">
-              {task.checklist.map((c, i) => (
-                <li key={i}><label><input type="checkbox" className="cb" checked={c.done} disabled={busy || !live} onChange={() => void toggleItem(i)} /><span className={c.done ? "wkx-done" : ""}>{c.text}</span></label></li>
-              ))}
-            </ul>
+            <section className="wkx-more-sec" aria-label="Checklist">
+              <h4 className="wkx-sec-head"><Icon name="check" size={14} />Checklist<small>{task.checklist.filter((c) => c.done).length} of {task.checklist.length} done</small></h4>
+              <ul className="wkx-checks">
+                {task.checklist.map((c, i) => (
+                  <li key={i}><label className="ds-check"><input type="checkbox" checked={c.done} disabled={busy || !live} onChange={() => void toggleItem(i)} /><span className={c.done ? "wkx-done" : ""}>{c.text}</span></label></li>
+                ))}
+              </ul>
+            </section>
           )}
 
-          <section aria-label="Notes" className="wkx-notes">
-            <h4 className="wkx-label">Notes</h4>
-            {!detail && <p className="muted small">Loading…</p>}
-            {detail && detail.comments.length === 0 && <p className="muted small">No notes yet. Anything you or Claude write about this step shows here.</p>}
+          <section aria-label="Notes" className="wkx-more-sec">
+            <h4 className="wkx-sec-head"><Icon name="file-text" size={14} />Notes{detail && detail.comments.length > 0 && <small>{detail.comments.length}</small>}</h4>
+            {!detail && <p className="wkx-quiet">Loading…</p>}
+            {detail && detail.comments.length === 0 && <p className="wkx-quiet">No notes yet. Anything you or Claude write about this step shows here.</p>}
             {detail && detail.comments.length > 0 && (
               <ul className="wkx-comments">
                 {detail.comments.map((c) => <li key={c.id} className={c.author}><b>{AUTHOR[c.author]}</b> <small>{when(c.createdAt)}</small><p className="wk-text">{c.body}</p></li>)}
               </ul>
             )}
             {live && (
-              <div className="wk-inline">
-                <label className="deal-field"><span>Add a note (no passwords or logins)</span><textarea rows={2} value={comment} maxLength={4000} onChange={(e) => setComment(e.target.value)} /></label>
-                <button type="button" className="btn" disabled={busy || !comment.trim()} onClick={() => void post()}>Add note</button>
-              </div>
+              <form className="wkx-note-form" onSubmit={(e) => { e.preventDefault(); if (comment.trim()) void post(); }}>
+                <textarea rows={2} value={comment} maxLength={4000} aria-label="Add a note" placeholder="Add a note for this step" onChange={(e) => setComment(e.target.value)} />
+                <div className="wkx-note-actions"><small>No passwords or logins: name the password manager item instead.</small><button type="submit" className="btn sm" disabled={busy || !comment.trim()}>Add note</button></div>
+              </form>
             )}
           </section>
 
           {live && !closed && task.status !== "locked" && (
-            <section aria-label="Claude" className="wk-inline">
-              <label className="deal-field"><span>A note for Claude (optional)</span><input value={note} maxLength={500} onChange={(e) => setNote(e.target.value)} /></label>
-              <button type="button" className="btn" disabled={busy} onClick={() => void askClaude()}><Icon name="sparkles" size={16} />Ask Claude</button>
-              {task.status === "in_review" && <button type="button" className="btn" disabled={busy} onClick={() => void sendBack()}>Send back</button>}
+            <section aria-label="Claude" className="wkx-claude">
+              <span className="ds-tile signal"><Icon name="sparkles" size={16} /></span>
+              <div className="wkx-claude-main">
+                <b>{task.status === "in_review" ? "Claude’s draft is waiting on you" : task.owner === "logan" ? "Hand this step to Claude" : "Ask Claude to do this step"}</b>
+                <small>It starts when a slot is free. What it makes comes to your approvals.</small>
+                <form className="wkx-claude-form" onSubmit={(e) => { e.preventDefault(); void askClaude(); }}>
+                  <input value={note} maxLength={500} aria-label="A note for Claude (optional)" placeholder="A note for Claude (optional)" onChange={(e) => setNote(e.target.value)} />
+                  <button type="submit" className="btn sm" disabled={busy}><Icon name="sparkles" size={14} />Ask Claude</button>
+                  {task.status === "in_review" && <button type="button" className="btn sm" disabled={busy} onClick={() => void sendBack()}>Send back</button>}
+                </form>
+              </div>
             </section>
           )}
         </div>

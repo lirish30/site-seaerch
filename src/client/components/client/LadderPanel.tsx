@@ -4,6 +4,10 @@ import { ApiError, ladderApi } from "../../api";
 import { latestOnly, problemText } from "../../clientView";
 import { LADDER_LINK_MAX, STEP_LABEL, dueLine, isOpen, linkProblem, ordered, sendByHand, statusTone, statusWord, takesLink, type LadderRow } from "../../ladderView";
 import { Card, Empty } from "../ds";
+import Icon, { type IconName } from "../Icon";
+import type { LadderStep } from "../../../worker/db/ladder";
+
+const ICON: Record<LadderStep, IconName> = { review_request: "star", testimonial: "pen", thank_you: "send", check_in: "phone", case_study: "file-text", december_letter: "mail" };
 
 /** One step: its name, day and status, the review link box on a review request, the case study button, and Done and Skip while it is open. Every text is a React text node. */
 function Step({ row, today, busy, onRun }: { row: LadderRow; today: string; busy: boolean; onRun: (job: () => Promise<unknown>, fail: string) => Promise<boolean> }) {
@@ -22,33 +26,37 @@ function Step({ row, today, busy, onRun }: { row: LadderRow; today: string; busy
     // On success the post is waiting in the Studio for its words.
     if (await onRun(async () => { await ladderApi.startCaseStudy(row.businessId); await ladderApi.done(row.id); }, "Could not start the case study post.")) navigate("/studio");
   }
+  const tone = statusTone(row.status);
+  const tile = row.status === "done" ? "positive" : row.status === "skipped" ? "neutral" : row.status === "drafted" || row.status === "due" ? "signal" : "neutral";
   return (
-    <li className={`lp-step lp-${row.status}`}>
-      <div className="lp-head">
-        <b>{STEP_LABEL[row.step]}</b>
-        <span className={`badge2 ${statusTone(row.status)}`}><i className="dot" aria-hidden="true" />{statusWord(row.status)}</span>
-        <span className="muted small">{dueLine(row, today)}</span>
+    <li className={`clx-lad${isOpen(row) ? " open" : ""}`}>
+      <span className={`ds-tile ${tile}`}><Icon name={row.status === "done" ? "check" : row.status === "skipped" ? "x" : ICON[row.step]} size={15} /></span>
+      <div className="clx-lad-main">
+        <div className="clx-lad-head">
+          <span className="clx-setup-text"><b>{STEP_LABEL[row.step]}</b><small>{dueLine(row, today)}</small></span>
+          <span className={`badge2 ${tone}`}><i className="dot" aria-hidden="true" />{statusWord(row.status)}</span>
+        </div>
+        {row.note && <p className="clx-help">{row.note}</p>}
+        {row.status === "drafted" && <p className="clx-help">The mail is drafted. Read it and send it from Approvals on <Link to="/today">Home</Link>.</p>}
+        {sendByHand(row) && <p className="clx-help">This one will not be drafted again. Send it yourself if you still want it to go, then mark it done, or skip it.</p>}
+        {takesLink(row) && (
+          <div className="clx-inline-form">
+            <label className="deal-field" htmlFor={`lp-link-${row.id}`}><span>Google review link</span>
+              <input id={`lp-link-${row.id}`} type="url" inputMode="url" autoComplete="off" autoCapitalize="off" spellCheck={false} maxLength={LADDER_LINK_MAX + 20} placeholder="https://… (optional with a Local SEO place)"
+                value={link} onChange={(e) => { setLink(e.target.value); setProblem(null); }} />
+            </label>
+            {dirty && <button type="button" className="btn sm" disabled={busy} onClick={() => void saveLink()}>Save link</button>}
+            {problem && <p className="error small" role="alert">{problem}</p>}
+          </div>
+        )}
+        {isOpen(row) && (
+          <div className="ds-row">
+            {row.step === "case_study" && <button type="button" className="btn sm" disabled={busy} onClick={() => void startCaseStudy()}><Icon name="sparkles" size={14} />Start a case study post</button>}
+            <button type="button" className="btn sm" disabled={busy} aria-label={`Mark done: ${STEP_LABEL[row.step]}`} onClick={() => void onRun(() => ladderApi.done(row.id), "Could not mark that done.")}><Icon name="check" size={14} />Done</button>
+            <button type="button" className="btn-ghost-sm" disabled={busy} aria-label={`Skip: ${STEP_LABEL[row.step]}`} onClick={() => void onRun(() => ladderApi.skip(row.id), "Could not skip that.")}>Skip</button>
+          </div>
+        )}
       </div>
-      {row.note && <p className="small lp-note">{row.note}</p>}
-      {row.status === "drafted" && <p className="small muted">The mail is drafted. Read it and send it from Approvals on <Link to="/today">Home</Link>.</p>}
-      {sendByHand(row) && <p className="small muted">This one will not be drafted again. Send it yourself if you still want it to go, then mark it done, or skip it.</p>}
-      {takesLink(row) && (
-        <div className="lp-link">
-          <label className="deal-field" htmlFor={`lp-link-${row.id}`}><span>Google review link</span>
-            <input id={`lp-link-${row.id}`} type="url" inputMode="url" autoComplete="off" autoCapitalize="off" spellCheck={false} maxLength={LADDER_LINK_MAX + 20} placeholder="https://… (optional if the client has a Local SEO place)"
-              value={link} onChange={(e) => { setLink(e.target.value); setProblem(null); }} />
-          </label>
-          {dirty && <button type="button" className="btn" disabled={busy} onClick={() => void saveLink()}>Save link</button>}
-          {problem && <p className="error small" role="alert">{problem}</p>}
-        </div>
-      )}
-      {isOpen(row) && (
-        <div className="lp-actions">
-          {row.step === "case_study" && <button type="button" className="btn" disabled={busy} onClick={() => void startCaseStudy()}>Start a case study post</button>}
-          <button type="button" className="btn" disabled={busy} aria-label={`Mark done: ${STEP_LABEL[row.step]}`} onClick={() => void onRun(() => ladderApi.done(row.id), "Could not mark that done.")}>Done</button>
-          <button type="button" className="btn" disabled={busy} aria-label={`Skip: ${STEP_LABEL[row.step]}`} onClick={() => void onRun(() => ladderApi.skip(row.id), "Could not skip that.")}>Skip</button>
-        </div>
-      )}
     </li>
   );
 }
@@ -86,11 +94,11 @@ export default function LadderPanel({ businessId, today }: { businessId: string;
   }
   if (rows.length === 0) return <Card icon="calendar" title="After launch"><Empty icon="calendar" title="No after-launch steps">When a website build goes live, the review request, testimonial, thank-you, check-in and case study steps show here with their days.</Empty></Card>;
   return (
-    <Card icon="calendar" title="After launch">
-      <ul className="lp-list">
+    <Card icon="calendar" title="After launch" note={`${rows.filter((r) => r.status === "done" || r.status === "skipped").length} of ${rows.length} done`} flush>
+      <ul className="clx-lad-list">
         {ordered(rows).map((r) => <Step key={r.id} row={r} today={today} busy={busy} onRun={run} />)}
       </ul>
-      {error && <p className="error small" role="alert">{error}</p>}
+      {error && <p className="error small clx-lad-err" role="alert">{error}</p>}
     </Card>
   );
 }

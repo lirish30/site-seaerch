@@ -1,42 +1,31 @@
-import { Link } from "react-router-dom";
 import Icon from "../Icon";
-import { ago, recentView, type TodaySummary } from "../../todayHome";
+import { Timeline } from "../ds";
+import { activityGroups, ago, recentView, type TodaySummary } from "../../todayHome";
 import type { Part } from "./useHome";
 
-/** The latest events across all leads: stage changes, notes, drafts, scans. The sidebar's Activity link lands here. */
+/** The latest events across all leads (stage changes, notes, drafts, scans), grouped Today / This week / Earlier. The sidebar's Activity link lands here. */
 export default function ActivityCard({ summary, onRetry }: { summary: Part<TodaySummary>; onRetry: () => void }) {
   const recent = summary.data?.recent ?? null;
   return (
-    <section className="hm-card hm-activity" id="activity" aria-labelledby="hm-activity-h">
-      <header className="hm-card-head">
+    <section className="hox-activity" id="activity" aria-labelledby="hox-activity-h">
+      <div className="hox-section-head">
         <Icon name="clock" size={16} />
-        <h2 id="hm-activity-h">Activity</h2>
-        <span className="hm-head-note small">Latest across all leads</span>
-      </header>
+        <h2 id="hox-activity-h">Activity</h2>
+        <span>Latest across all leads</span>
+      </div>
       {!recent && summary.error ? (
-        <div className="hm-state sm" role="alert"><p>{summary.error}</p><button type="button" className="btn sm" onClick={onRetry}>Try again</button></div>
+        <div className="ds-card"><div className="hox-alert" role="alert"><span>{summary.error}</span><button type="button" className="btn sm" onClick={onRetry}>Try again</button></div></div>
       ) : !recent ? (
-        <ul className="hm-events" aria-busy="true" aria-label="Loading activity">
-          {[0, 1, 2].map((i) => <li key={i} className="hm-event" aria-hidden="true"><i className="hm-skel" style={{ width: 28, height: 28, borderRadius: 8 }} /><div className="hm-main"><i className="hm-skel" style={{ width: `${40 - i * 6}%`, height: 13, marginBottom: 6 }} /><i className="hm-skel" style={{ width: "22%", height: 12 }} /></div></li>)}
-        </ul>
-      ) : recent.length === 0 ? (
-        <div className="hm-state sm" role="status"><p>Nothing yet. Notes, stage changes, drafts and scans across your leads will show up here.</p></div>
+        <div className="ds-card hox-pad" aria-busy="true" aria-label="Loading activity"><i className="hox-skel" style={{ width: "40%", height: 14 }} /></div>
       ) : (
-        <ul className="hm-events">
-          {recent.map((a) => {
-            const v = recentView(a);
-            return (
-              <li key={a.id} className="hm-event">
-                <span className={`hm-tile sm ${v.tone}`} aria-hidden="true"><Icon name={v.icon} size={14} /></span>
-                <div className="hm-main">
-                  <p className="hm-ev-title">{v.title}</p>
-                  <p className="hm-ev-sub"><Link to={`/leads/${a.businessId}?tab=activity`}>{a.businessName}</Link>{v.detail ? <> · <span>{v.detail}</span></> : null}</p>
-                </div>
-                <time dateTime={a.at} title={new Date(a.at).toLocaleString()}>{ago(a.at)}</time>
-              </li>
-            );
-          })}
-        </ul>
+        <Timeline empty="Nothing yet. Notes, stage changes, drafts and scans across your leads show up here."
+          groups={activityGroups(recent).map((g) => ({
+            label: g.label,
+            events: g.rows.map((a) => {
+              const v = recentView(a);
+              return { key: a.id, icon: v.icon, tone: v.tone, title: v.title, sub: v.detail ? `${a.businessName} · ${v.detail}` : a.businessName, when: ago(a.at), to: `/leads/${a.businessId}?tab=activity` };
+            }),
+          }))} />
       )}
     </section>
   );

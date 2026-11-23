@@ -3,23 +3,23 @@ import Icon from "../Icon";
 import { helperLine, type HelperStatus } from "../../helperView";
 import type { Part } from "./useHome";
 
-/** Whether your Mac helper (the app that makes the voice and the video) is running, and how much is waiting for it. It only reports. */
+/** Whether your Mac helper (the app that makes the voice and the video) is running, and how much is waiting for it. One quiet row: it only reports. */
 export default function HelperCard({ helper, onRetry }: { helper: Part<HelperStatus>; onRetry: () => void }) {
   const h = helper.data;
   return (
-    <section className="hm-card hm-helper" id="helper" aria-labelledby="hm-helper-h">
-      <header className="hm-card-head">
-        <Icon name="zap" size={16} />
-        <h2 id="hm-helper-h">Mac helper</h2>
-        <Link to="/settings/helper" className="hm-head-note small">Set up</Link>
-      </header>
-      {!h && helper.error ? (
-        <div className="hm-state sm" role="alert"><p>{helper.error}</p><button type="button" className="btn sm" onClick={onRetry}>Try again</button></div>
-      ) : !h ? (
-        <div className="hm-card-body"><i className="hm-skel" style={{ width: "50%", height: 18 }} /></div>
-      ) : (
-        <div className="hm-state sm" role="status"><p><i className={`hm-helper-dot${h.online ? " on" : ""}`} aria-hidden="true" />{helperLine(h)}</p></div>
-      )}
+    <section className={`hox-helper${h ? (h.online ? " on" : " off") : ""}`} id="helper" aria-label="Mac helper">
+      <span className="ds-tile" aria-hidden="true"><Icon name="zap" size={16} /></span>
+      <div className="hox-helper-text">
+        <b>Mac helper</b>
+        {!h && helper.error ? (
+          <span role="alert">{helper.error} <button type="button" className="hox-link" onClick={onRetry}>Try again</button></span>
+        ) : !h ? (
+          <i className="hox-skel" style={{ width: 120, height: 12 }} />
+        ) : (
+          <span role="status"><i className="hox-dot" aria-hidden="true" />{helperLine(h)}{!h.online && " It makes the voice and video for audits."}</span>
+        )}
+      </div>
+      <Link to="/settings/helper" className="btn sm">Set up</Link>
     </section>
   );
 }

@@ -19,6 +19,7 @@ import LinkedPanel from "../components/client/LinkedPanel";
 import SitePanel, { cmsLabel, tierLabel } from "../components/client/SitePanel";
 import StrategyMemoSection from "../components/client/StrategyMemoSection";
 import TrafficPanel from "../components/client/TrafficPanel";
+import { ProjectsCard, SetupCard } from "../components/client/OverviewCards";
 import { hasSeoOnboarding, hasSeoPlan } from "../seoView";
 import { workError } from "../workData";
 import { projectIsLive } from "../../worker/db/projects";
@@ -49,8 +50,9 @@ const townOf = (address: string | null): string | null => {
 };
 
 /** A form to add a site by hand. The address is optional: a site with no domain yet is fine. */
-function AddSite({ clientId, onAdded }: { clientId: string; onAdded: () => Promise<void> }) {
+function AddSite({ clientId, onAdded, first = false }: { clientId: string; onAdded: () => Promise<void>; first?: boolean }) {
   const [url, setUrl] = useState("");
+  const [open, setOpen] = useState(first);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   async function add(e: FormEvent) {
@@ -60,19 +62,21 @@ function AddSite({ clientId, onAdded }: { clientId: string; onAdded: () => Promi
     const problem = addressProblem(v);
     if (problem) { setError(problem); return; }
     setBusy(true); setError("");
-    try { await clientsApi.addSite(clientId, v ? { url: v } : {}); setUrl(""); await onAdded(); }
+    try { await clientsApi.addSite(clientId, v ? { url: v } : {}); setUrl(""); setOpen(false); await onAdded(); }
     catch (err) { setError(err instanceof ApiError ? problemText(err, "Could not add the site.") : "Could not add the site."); }
     finally { setBusy(false); }
   }
+  if (!open) return <button type="button" className="btn clx-add-more" onClick={() => setOpen(true)}><Icon name="plus" size={16} />Add another site</button>;
   return (
-    <Card icon="plus" title="Add a site" note="It comes with the six access lines">
+    <Card icon="plus" title={first ? "Add the first site" : "Add another site"} action={first ? undefined : <button type="button" className="btn sm" onClick={() => { setOpen(false); setError(""); }}>Cancel</button>} note="Comes with the six access lines" className="clx-add-site">
       <form className="clx-inline-form" onSubmit={(e) => void add(e)} noValidate aria-label="Add a site">
-        <label className="clx-field grow" htmlFor="cl-add-url"><span>Site address</span>
-          <input id="cl-add-url" type="text" inputMode="url" autoComplete="off" autoCapitalize="off" spellCheck={false} placeholder="https://example.com (optional)" aria-label="Add a site: address of the new site"
-            value={url} onChange={(e) => { setUrl(e.target.value); setError(""); }} />
+        <label className="deal-field" htmlFor="cl-add-url"><span>Site address</span>
+          <input id="cl-add-url" type="text" inputMode="url" autoComplete="off" autoCapitalize="off" spellCheck={false} placeholder="https://example.com" aria-label="Add a site: address of the new site"
+            aria-describedby="cl-add-url-help" value={url} onChange={(e) => { setUrl(e.target.value); setError(""); }} />
         </label>
-        <button type="submit" className="btn" disabled={busy}>{busy ? "Adding…" : "Add site"}</button>
+        <button type="submit" className={`btn${first ? " primary" : ""}`} disabled={busy}>{busy ? "Adding…" : "Add site"}</button>
       </form>
+      <small id="cl-add-url-help" className="clx-help">Optional: a site with no domain yet is fine, add the address later.</small>
       {error && <p className="error small" role="alert">{error}</p>}
     </Card>
   );
@@ -93,11 +97,12 @@ function EditRequestForm({ businessId, onAdded, onClose }: { businessId: string;
   }
   return (
     <form onSubmit={(e) => void submit(e)} className="clx-edit-form">
-      <label htmlFor={`clx-edit-${businessId}`} className="clx-field"><span>What does the client want changed?</span>
+      <label htmlFor={`clx-edit-${businessId}`} className="deal-field"><span>What does the client want changed?</span>
         <input id={`clx-edit-${businessId}`} value={title} maxLength={120} autoFocus onChange={(e) => setTitle(e.target.value)} placeholder="Change the phone number in the footer" />
+        <small>It becomes a task on their Care project, with the edit checklist.</small>
       </label>
       <div className="ds-row">
-        <button type="submit" className="btn primary sm" aria-disabled={busy || !title.trim()}>{busy ? "Adding…" : "Add it"}</button>
+        <button type="submit" className="btn primary sm" aria-disabled={busy || !title.trim()}>{busy ? "Adding…" : "Add request"}</button>
         <button type="button" className="btn sm" onClick={onClose}>Cancel</button>
       </div>
       {error && <p className="error small" role="alert">{error}</p>}
@@ -215,11 +220,13 @@ export default function ClientPage() {
 
   type Fact = { label: string; value: ReactNode };
   const facts = ([
-    poc && { label: poc.is_poc ? "Contact" : "Person", value: <>{poc.name}{poc.role && <span className="clx-muted"> · {poc.role}</span>}</> },
+    poc ? { label: poc.is_poc ? "Contact" : "Person", value: <>{poc.name}{poc.role && <span className="clx-muted"> · {poc.role}</span>}</> }
+      : { label: "Contact", value: <span className="clx-unset">None saved · <Link to={`/leads/${encodeURIComponent(b.id)}`}>add one</Link></span> },
     people.length > 1 && { label: "Also", value: people.slice(1).map((p) => p.name + (p.role ? ` (${p.role})` : "")).join(", ") },
     (poc?.phone || b.phone) && { label: "Phone", value: <a href={`tel:${poc?.phone || b.phone}`}>{poc?.phone || b.phone}</a> },
     emailTo?.email && { label: "Email", value: <a href={`mailto:${emailTo.email}`}>{emailTo.email}</a> },
     b.address && { label: "Address", value: b.address },
+    !site && b.website_url && { label: "Website", value: <WebLink url={b.website_url} /> },
     site && site.cms !== "unknown" && { label: "Platform", value: cmsLabel(site.cms) },
     site && (site.hostProvider || site.hostingTier !== "unknown") && { label: "Hosting", value: [site.hostProvider, site.hostingTier !== "unknown" ? tierLabel(site.hostingTier) : null].filter(Boolean).join(" · ") },
     site?.dnsProvider && { label: "DNS", value: site.dnsProvider },
@@ -232,7 +239,6 @@ export default function ClientPage() {
   ] as (Fact | false | null | undefined | "")[]).filter((r): r is Fact => !!r);
 
   const linked: ReactNode[] = [
-    ...liveProjects.map((p) => <LinkRow key={p.id} to={`/projects/${encodeURIComponent(p.id)}`} icon="briefcase" title={p.name} sub={`${projectStatusLabel(p).label} · ${p.doneTasks} of ${p.doneTasks + p.openTasks} tasks done`} />),
     <LinkRow key="inv" to={`/billing?businessId=${encodeURIComponent(b.id)}`} icon="card" title="Invoices"
       sub={client.invoices.openCents > 0 ? `${moneyLabel(client.invoices.openCents)} open${client.invoices.overdueCount ? ` · ${client.invoices.overdueCount} overdue` : ""}` : `Nothing open · ${moneyLabel(client.invoices.paidCents)} paid so far`}
       right={client.invoices.overdueCount > 0 ? <Chip tone="warning" dot>Overdue</Chip> : undefined} />,
@@ -240,7 +246,6 @@ export default function ClientPage() {
       <LinkRow key={d.id} to={`/deals/${encodeURIComponent(d.dealId)}`} icon="file-text" title={`${d.reference} v${d.version}`}
         sub={d.signedAt ? `Signed ${shortDate(d.signedAt.slice(0, 10), true)}` : d.sentAt ? `Sent ${shortDate(d.sentAt.slice(0, 10), true)}, not signed yet` : "Draft"} />
     )),
-    openTasks > 0 && firstOpen && <LinkRow key="tasks" to={`/projects/${encodeURIComponent(firstOpen.id)}`} icon="list" title={`${openTasks} open ${openTasks === 1 ? "task" : "tasks"}`} sub={`Across ${liveProjects.length} live ${liveProjects.length === 1 ? "project" : "projects"}`} />,
     <LinkRow key="lead" to={`/leads/${encodeURIComponent(b.id)}`} icon="user" title="Lead record" sub="Their history from before they were a client" />,
   ].filter(Boolean);
 
@@ -281,6 +286,7 @@ export default function ClientPage() {
                   ? <Facts rows={facts} footnote={vault.length > 0 ? "Only the password manager item name is stored here, never the password." : undefined} />
                   : <p>Nothing saved yet. Add a point of contact on the <Link to={`/leads/${encodeURIComponent(b.id)}`}>lead record</Link> and a site on Sites & access.</p>}
               </Card>
+              <SetupCard client={client} onTab={setTab} />
             </div>
 
             <div className="ds-col">
@@ -291,6 +297,7 @@ export default function ClientPage() {
               <Timeline groups={timelineGroups(client.activity, kind)}
                 empty={client.activity.length === 0 ? "Nothing yet. Emails, meetings, invoices, site changes and notes about this client show up here." : "Nothing of this kind yet."} />
               <p className="clx-tl-foot"><button type="button" className="btn sm" onClick={() => setTab("followups")}><Icon name="pen" size={14} />Add a note or set a follow-up</button></p>
+              <ProjectsCard client={client} />
             </div>
 
             <div className="ds-col">
@@ -305,7 +312,7 @@ export default function ClientPage() {
                 <Card icon="clock" title="Edit time this month" note={`Resets ${resetsOn(ledger.month)}`}>
                   <Score size="md" value={hours(ledger.usedMinutes)} unit={`of ${hours(ledger.allowanceMinutes)} used`}
                     meter={{ value: bar.width, max: 100, tone: (bar.tone === "over" ? "critical" : bar.tone === "warn" ? "warning" : "signal") as Tone }} />
-                  <p className="clx-help">{bar.note || "Edit requests count against this. Extra time is quoted as a change order."}</p>
+                  <p className={`clx-help${bar.tone === "over" ? " clx-bad" : ""}`}>{bar.note || (ledger.usedMinutes === 0 ? "None used yet. Edit requests count against this; extra time is quoted as a change order." : "Edit requests count against this. Extra time is quoted as a change order.")}</p>
                   {editing
                     ? <EditRequestForm businessId={b.id} onAdded={loadLedger} onClose={() => setEditing(false)} />
                     : <p><button type="button" className="btn sm" onClick={() => { setEditing(true); setAdded(null); }}><Icon name="plus" size={14} />Add an edit request</button></p>}
@@ -320,9 +327,9 @@ export default function ClientPage() {
 
         {tab === "sites" && (
           <div className="clx-stack">
-            {client.sites.length === 0 && <Empty icon="globe" title="No site yet">Add one below. Each site comes with six access lines (hosting, DNS, registrar, site admin, Google Business Profile and analytics) to tick off as the client sends them.</Empty>}
+            {client.sites.length === 0 && <Card icon="globe" title="Sites"><Empty icon="globe" title="No site yet">Add the client’s site below. It comes with six access lines (hosting, DNS, registrar, site admin, Google Business Profile and analytics) to tick off as the client sends them.</Empty></Card>}
             {client.sites.map(({ site: s, access, flags }) => <SitePanel key={s.id} clientId={b.id} site={s} access={access} flags={flags} onChanged={refresh} />)}
-            <AddSite clientId={b.id} onAdded={refresh} />
+            <AddSite clientId={b.id} onAdded={refresh} first={client.sites.length === 0} />
           </div>
         )}
 
@@ -336,7 +343,7 @@ export default function ClientPage() {
         )}
 
         {tab === "traffic" && (
-          <div className="clx-stack">
+          <div className="clx-memo-cols">
             {client.sites.length > 0
               ? <TrafficPanel businessId={b.id} clientName={b.name} today={today} access={Object.fromEntries(client.sites.map(({ site: s, access }) => [s.id, access.map((a) => ({ key: a.key, status: a.status }))]))} />
               : <Card icon="trending" title="Traffic"><Empty icon="globe" title="No site yet" action={<button type="button" className="btn" onClick={() => setTab("sites")}>Add a site</button>}>Traffic from Search Console and Analytics shows here once the client has a site.</Empty></Card>}
@@ -354,7 +361,7 @@ export default function ClientPage() {
               </Card>
             </div>
             <div className="ds-col">
-              <div className="clx-legacy"><MeetingsPanel businessId={b.id} /></div>
+              <MeetingsPanel businessId={b.id} />
               <LadderPanel businessId={b.id} today={today} />
             </div>
           </div>
@@ -365,16 +372,16 @@ export default function ClientPage() {
             <div className="ds-col"><LinkedPanel client={client} today={today} /></div>
             <div className="ds-col">
               <GradePanel businessId={b.id} grade={client.grade} onChanged={refresh} />
-              <Card icon="user" title="People">
+              <Card icon="user" title="People" note={people.length || undefined} flush action={<Link to={`/leads/${encodeURIComponent(b.id)}`} className="btn sm">{people.length ? "Manage" : "Add a person"}</Link>}>
                 {people.length === 0
-                  ? <p>No people saved. Add a point of contact on the <Link to={`/leads/${encodeURIComponent(b.id)}`}>lead record</Link>.</p>
+                  ? <div className="clx-calm"><span className="ds-tile warning"><Icon name="user" size={15} /></span><span className="clx-setup-text"><b>Nobody saved yet</b><small>Add the owner or office contact on the lead record. The first one becomes the point of contact for emails and reports.</small></span></div>
                   : <ul className="clx-people">{people.map((p) => (
                     <li key={p.id}>
                       <Avatar name={p.name} />
-                      <span><b>{p.name}</b>{p.is_poc && <Chip tone="outline">Point of contact</Chip>}<small>{[p.role, p.phone, p.email].filter(Boolean).join(" · ")}</small></span>
+                      <span><b>{p.name}</b><small>{[p.role, p.phone, p.email].filter(Boolean).join(" · ") || "No details saved"}</small></span>
+                      {p.is_poc && <Chip tone="signal">Point of contact</Chip>}
                     </li>
                   ))}</ul>}
-                {b.website_url && <p className="clx-help">Website: <WebLink url={b.website_url} /></p>}
               </Card>
             </div>
           </div>

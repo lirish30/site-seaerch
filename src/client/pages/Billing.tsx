@@ -6,7 +6,7 @@ import {
   cancelSubscriptionText, daysOverdue, earlyExitText, END_ACTIONS, holdLine, invoiceChip, invoiceKindLabel, invoiceSeg, liftConfirmText, pauseOn, pendingReminder, readBillingTerms,
   reminderNote, remindersFrom, shortDate, subscriptionLine, subscriptionNext, subscriptionStatusLabel, type BillingTerms, type InvoiceSeg, type ReminderRecord,
 } from "../billingView";
-import { Avatar, Banner, Chip, Empty, Note, PageHeader, Seg, type Tone } from "../components/ds";
+import { Avatar, Banner, Card, Chip, Empty, Note, PageHeader, Seg, type Tone } from "../components/ds";
 import Icon from "../components/Icon";
 import InvoiceItem from "../components/InvoiceItem";
 import { fmtUsd2 } from "../moneyView";
@@ -123,6 +123,13 @@ function HoldRowView({ h, invoice, today, tz, onChanged }: { h: HoldRow; invoice
   );
 }
 
+/** One line of the "Where it stands" card: a tinted tile, what it is, how many, and the amount. */
+function Tally({ tone, icon, label, sub, cents }: { tone: Tone; icon: "check" | "clock" | "alert" | "pen"; label: string; sub: string; cents: number }) {
+  return (
+    <li><span className={`ds-tile ${tone}`}><Icon name={icon} size={14} /></span><span className="mnx-cell-2"><b>{label}</b><small>{sub}</small></span><b className="mnx-mono">{fmtUsd2(cents)}</b></li>
+  );
+}
+
 /** The most overdue invoice, said plainly: how late, the reminder waiting for you, and the day work pauses (or the hold already on). */
 function OverdueBanner({ inv, client, today, terms, reminders, held, more, onOpen }: {
   inv: InvoiceRow; client: string; today: string; terms: BillingTerms; reminders: ReminderRecord[]; held: HoldRow | undefined; more: number; onOpen: () => void;
@@ -200,10 +207,11 @@ export default function Billing() {
   const month = today.slice(0, 7);
   const paidThisMonth = all.filter((i) => i.status === "paid" && (i.paidAt ?? "").slice(0, 7) === month).reduce((n, i) => n + i.amountCents, 0);
   const liveSubs = mineSubs.filter((x) => x.status === "active" || x.status === "past_due");
+  // A filter with nothing in it is left out (an "Overdue 0" tab is noise), unless it is the one chosen.
   const segs: { key: Filter; label: string; count?: number }[] = [
-    { key: "all", label: "All", count: all.length }, { key: "drafts", label: "Drafts", count: count("drafts") }, { key: "sent", label: "Sent", count: count("sent") },
-    { key: "overdue", label: "Overdue", count: count("overdue") }, { key: "paid", label: "Paid", count: count("paid") },
-    ...(count("closed") > 0 ? [{ key: "closed" as const, label: "Voided", count: count("closed") }] : []),
+    { key: "all", label: "All", count: all.length },
+    ...([["drafts", "Drafts"], ["sent", "Sent"], ["overdue", "Overdue"], ["paid", "Paid"], ["closed", "Voided"]] as const)
+      .map(([key, label]) => ({ key, label, count: count(key) })).filter((x) => x.count > 0 || x.key === filter),
   ];
   const openInvoice = (id: string) => { setFilter("all"); setOpen(id); requestAnimationFrame(() => document.getElementById(`mnx-row-${id}`)?.scrollIntoView({ block: "center", behavior: "smooth" })); };
 
@@ -214,11 +222,22 @@ export default function Billing() {
     </>
   );
   const sum = summary;
+  const overdueCents = businessId ? overdue.reduce((n, i) => n + i.amountCents, 0) : sum?.overdueCents ?? 0;
   const head = tab === "invoices"
-    ? { title: "Invoices", sub: invoices === null ? "Loading…" : [plural(all.length, "invoice"), sum && (businessId ? `${dollars(overdue.reduce((n, i) => n + i.amountCents, 0))} overdue` : `${dollars(sum.overdueCents)} overdue`), sum && !businessId && `${dollars(sum.openCents)} waiting on clients`, `${dollars(paidThisMonth)} paid this month`].filter(Boolean).join(" · ") }
+    ? { title: "Invoices", sub: invoices === null ? "Loading…" : all.length === 0 ? "Nothing billed yet" : [
+        plural(all.length, "invoice"),
+        overdueCents > 0 && `${dollars(overdueCents)} overdue`,
+        sum && !businessId && sum.openCents > 0 && `${dollars(sum.openCents)} waiting on clients`,
+        count("drafts") > 0 && `${plural(count("drafts"), "draft")} to approve`,
+        paidThisMonth > 0 ? `${dollars(paidThisMonth)} paid this month` : "nothing paid yet this month",
+        overdueCents === 0 && count("sent") === 0 && count("drafts") === 0 && "all settled",
+      ].filter(Boolean).join(" · ") }
     : tab === "subscriptions"
-      ? { title: "Subscriptions", sub: subs === null ? "Loading…" : [plural(mineSubs.length, "subscription"), `${plural(liveSubs.length, "live one")}`, sum && !businessId && `${dollars(sum.mrrCents)} a month`].filter(Boolean).join(" · ") }
+      ? { title: "Subscriptions", sub: subs === null ? "Loading…" : mineSubs.length === 0 ? "No monthly plans yet" : [plural(liveSubs.length, "live subscription"), mineSubs.length > liveSubs.length && `${mineSubs.length - liveSubs.length} not running`, sum && !businessId && sum.mrrCents > 0 && `${dollars(sum.mrrCents)} a month`].filter(Boolean).join(" · ") }
       : { title: "Holds", sub: holds === null ? "Loading…" : mineHolds.length ? `${plural(mineHolds.length, "client")} on hold · their tasks and Claude's are stopped until they pay` : "Nobody is on hold" };
+  const paidAll = all.filter((i) => i.status === "paid").reduce((n, i) => n + i.amountCents, 0);
+  const waitingCents = all.filter((i) => i.status === "open" || i.status === "failed").reduce((n, i) => n + i.amountCents, 0);
+  const draftCents = all.filter((i) => i.status === "draft").reduce((n, i) => n + i.amountCents, 0);
 
   return (
     <div className="ds-page mnx">
@@ -295,6 +314,26 @@ export default function Billing() {
                 <Note>
                   Reminders are raised {terms.reminderOffsets.map((o) => (o < 0 ? `${-o} days before` : o === 0 ? "on the due date" : `${o} days after`)).join(", ")}. Each one waits in Approvals first. Work pauses {terms.pauseAfterDays} days after the due date.
                 </Note>
+                {all.length <= 8 && (
+                  <div className="mnx-after">
+                    <Card icon="card" title="Where it stands" note={businessId ? names.client(businessId) : "Every invoice above"}>
+                      <ul className="mnx-tally">
+                        {paidAll > 0 && <Tally tone="positive" icon="check" label="Paid" sub={plural(count("paid"), "invoice")} cents={paidAll} />}
+                        {waitingCents - overdueCents > 0 && <Tally tone="info" icon="clock" label="Sent, waiting on the client" sub={plural(count("sent"), "invoice")} cents={waitingCents - overdueCents} />}
+                        {overdueCents > 0 && <Tally tone="critical" icon="alert" label="Overdue" sub={plural(count("overdue"), "invoice")} cents={overdueCents} />}
+                        {draftCents > 0 && <Tally tone="signal" icon="pen" label="Drafts for your OK" sub="Nothing sent yet" cents={draftCents} />}
+                      </ul>
+                      {waitingCents === 0 && draftCents === 0 && <p className="mnx-good"><Icon name="check" size={14} />Nobody owes you anything right now.</p>}
+                    </Card>
+                    <Card icon="info" title="Where invoices come from">
+                      <ol className="mnx-how">
+                        <li><span className="ds-tile neutral"><Icon name="file-text" size={14} /></span><span><b>A signed proposal</b><small>drafts its deposit, and each milestone drafts its own when it is reached.</small></span></li>
+                        <li><span className="ds-tile neutral"><Icon name="clock" size={14} /></span><span><b>Change orders and extra hours</b><small>draft theirs from the project: Bill unbilled hours on its Billing tab.</small></span></li>
+                        <li><span className="ds-tile signal"><Icon name="check" size={14} /></span><span><b>You approve, Stripe does the rest</b><small>It mails the client, takes the payment and marks it paid here.</small></span></li>
+                      </ol>
+                    </Card>
+                  </div>
+                )}
               </>
             )}
           </>
@@ -317,17 +356,32 @@ export default function Billing() {
               </div>
             )}
             {mineSubs.length > 0 && <Note>Nothing goes to a client until you approve it in Approvals. Cancelling a running subscription stops Stripe at the end of the period already paid for.</Note>}
+            {mineSubs.length > 0 && mineSubs.length <= 6 && (
+              <div className="mnx-after">
+                <Card icon="trending" title="Monthly income from these" note={plural(liveSubs.length, "live one")}>
+                  <ul className="mnx-tally">
+                    {liveSubs.map((x) => <Tally key={x.id} tone={x.status === "past_due" ? "critical" : "positive"} icon={x.status === "past_due" ? "alert" : "check"} label={`${names.client(x.businessId)} · ${plans.get(x.packageKey) ?? x.packageKey}`} sub={x.status === "past_due" ? "Last charge failed" : "Charged monthly"} cents={x.monthlyCents} />)}
+                    {liveSubs.length === 0 && <li className="mnx-muted">None running yet: press Start billing on a planned one.</li>}
+                  </ul>
+                  {liveSubs.length > 0 && <p className="mnx-sum"><span>About {dollars(liveSubs.reduce((n, x) => n + x.monthlyCents, 0) * 12)} a year at today's plans</span><b className="mnx-mono">{fmtUsd2(liveSubs.reduce((n, x) => n + x.monthlyCents, 0))}<small> a month</small></b></p>}
+                </Card>
+                <Card icon="info" title="How a subscription runs">
+                  <ol className="mnx-how">
+                    <li><span className="ds-tile neutral"><Icon name="file-text" size={14} /></span><span><b>Planned from a signed proposal</b><small>The monthly plan it sold waits here until it should start.</small></span></li>
+                    <li><span className="ds-tile signal"><Icon name="send" size={14} /></span><span><b>Start billing</b><small>puts the client's Stripe link up for your approval in Approvals.</small></span></li>
+                    <li><span className="ds-tile positive"><Icon name="refresh" size={14} /></span><span><b>Stripe charges each month</b><small>Each payment shows on Invoices; a failed one shows here as Past due.</small></span></li>
+                  </ol>
+                </Card>
+              </div>
+            )}
           </>
         )}
 
         {tab === "holds" && (
           <>
-            <Banner tone="info" title="What a hold does">
-              It stops your tasks and Claude's for a client whose invoice stays unpaid {terms.pauseAfterDays} days past its due date (Billing settings). The client's site and hosting are untouched. It lifts by itself when the invoice is paid or voided.
-            </Banner>
             {holds === null && !failed && <p className="mnx-muted">Loading holds…</p>}
             {holds !== null && mineHolds.length === 0 && (
-              <div className="ds-card"><Empty icon="shield" title="No client is on hold">Everyone is paid up, so all work is running. A client shows here if an invoice stays unpaid past the pause day.</Empty></div>
+              <Banner tone="positive" title="Nobody is on hold">Everyone is paid up, so every client's work is running. A client shows here only if an invoice stays unpaid past the pause day.</Banner>
             )}
             {mineHolds.length > 0 && (
               <div className="ds-table-wrap">
@@ -337,6 +391,14 @@ export default function Billing() {
                 </table>
               </div>
             )}
+            <Card icon="shield" title="How a hold works" note="Set in Billing settings">
+              <ol className="mnx-steps mnx-hold-steps" aria-label="From due date to hold">
+                <li className="done"><span className="mnx-step-dot" aria-hidden="true"><Icon name="calendar" size={12} /></span><span className="mnx-step-text"><b>Due date</b><small>The invoice falls due</small></span></li>
+                <li className="now"><span className="mnx-step-dot" aria-hidden="true" /><span className="mnx-step-text"><b>Reminders</b><small>{terms.reminderOffsets.filter((o) => o > 0).map((o) => `Day ${o}`).join(", ") || "None after the due date"}, each approved by you</small></span></li>
+                <li className="bad"><span className="mnx-step-dot" aria-hidden="true"><Icon name="ban" size={12} /></span><span className="mnx-step-text"><b>Day {terms.pauseAfterDays}: work pauses</b><small>Your tasks and Claude's stop. The site and hosting stay up.</small></span></li>
+                <li className="done"><span className="mnx-step-dot" aria-hidden="true"><Icon name="check" size={12} /></span><span className="mnx-step-text"><b>Paid or voided</b><small>The hold lifts by itself</small></span></li>
+              </ol>
+            </Card>
           </>
         )}
       </div>

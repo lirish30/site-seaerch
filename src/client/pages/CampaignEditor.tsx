@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api";
-import { Callout, Field, Row } from "../components/SettingsPage";
+import { Banner } from "../components/ds";
+import { SwitchRow } from "../components/StepFields";
+import Icon from "../components/Icon";
 import { VIDEO_EMAIL_LABEL, fieldErrors, parseJobValue, videoEmailHelp } from "../campaignView";
 import type { Campaign, CampaignStatus, SequenceStep } from "../types";
 import StepEditor from "./StepEditor";
@@ -8,9 +10,12 @@ import StepEditor from "./StepEditor";
 /** What the page knows about this campaign's Run searches: the lines to show, how they read, and whether this one is still starting. */
 export interface RunView { starting: boolean; tone: "ok" | "warn" | "bad"; lines: string[] }
 
+const MERGE = ["{Business}", "{Name}", "{link}", "{problem_one}"];
+
 /**
- * An open campaign: status, job value, the Run searches button with its per-town result, and the five steps. The run itself
- * (in-flight flag and last result) lives in the page so closing and reopening this editor neither loses it nor re-enables a running button.
+ * An open campaign, in two parts. Settings: status, job value and whether Email 1 carries the video audit, with Save and Run searches (and its per-town result).
+ * The steps: the five follow-up steps as a line of rows (email, call, check-in) that open one at a time to edit. The run itself (in-flight flag and last result)
+ * lives in the page so closing and reopening this editor neither loses it nor re-enables a running button.
  */
 export default function CampaignEditor({ campaign, onChange, run, anyRunning, onRun }: {
   campaign: Campaign; onChange: (c: Campaign) => void; run: RunView | null; anyRunning: boolean; onRun: () => void;
@@ -23,6 +28,7 @@ export default function CampaignEditor({ campaign, onChange, run, anyRunning, on
   const [errs, setErrs] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<{ bad: boolean; lines: string[] } | null>(null);
+  const [openStep, setOpenStep] = useState<number | null>(null);
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
@@ -47,44 +53,55 @@ export default function CampaignEditor({ campaign, onChange, run, anyRunning, on
   }
 
   const off = saving;
+  const runText = run?.starting ? "Starting searches…" : anyRunning ? "Another campaign is starting searches. Run searches is off until it finishes." : "";
   return (
     <div className="slx-camp-editor">
-      <Row>
-        <Field label="Status" htmlFor={id("status")} error={errs.status}>
-          <select id={id("status")} value={status} disabled={off} onChange={(e) => setStatus(e.target.value as CampaignStatus)}>
-            <option value="testing">Testing</option><option value="active">Active</option><option value="archived">Archived</option>
-          </select>
-        </Field>
-        <Field label="Job value (USD)" htmlFor={id("value")} error={errs.est_job_value_usd} help="Optional. Leave blank if you are not sure yet.">
-          <input id={id("value")} inputMode="decimal" value={value} disabled={off} autoComplete="off" onChange={(e) => { setValue(e.target.value); setErrs((x) => ({ ...x, est_job_value_usd: "" })); }} />
-        </Field>
-      </Row>
-      <label className="slx-check" htmlFor={id("video")}>
-        <input id={id("video")} className="cb" type="checkbox" checked={videoEmail === 1} disabled={off} aria-describedby={videoEmail === 1 ? id("video-help") : undefined} onChange={(e) => setVideoEmail(e.target.checked ? 1 : 0)} />
-        {VIDEO_EMAIL_LABEL}
-      </label>
-      {videoEmail === 1 && <p className="slx-hint" id={id("video-help")}>{videoEmailHelp(videoEmail)}</p>}
-      <div className="slx-actions">
-        <button type="button" className="btn primary" onClick={() => void save()} disabled={off || !dirty}>{saving ? "Saving…" : "Save"}</button>
-        <button type="button" className="btn" onClick={onRun} disabled={off || anyRunning || campaign.status === "archived"} aria-describedby={campaign.status === "archived" ? id("archived") : undefined}>
-          {run?.starting ? "Starting searches…" : "Run searches"}
-        </button>
-      </div>
-      {campaign.status === "archived" && <p className="slx-hint" id={id("archived")}>Archived campaigns can't run searches.</p>}
-      <div className={`mb-result${result?.bad ? " bad" : ""}`} aria-live="polite" aria-atomic="true">
-        {result?.lines.map((l, i) => <p key={i}>{l}</p>)}
-      </div>
-      <div className={`mb-result${run && !run.starting && run.tone !== "ok" ? ` ${run.tone}` : ""}`} aria-live="polite" aria-atomic="true">
-        {run?.starting ? <p className="mb-note">Starting searches…</p>
-          : anyRunning ? <p className="mb-note">Another campaign is starting searches. Run searches is off until it finishes.</p>
-          : run?.lines.map((l, i) => <p key={i}>{l}</p>)}
-      </div>
+      <section className="slx-camp-sec" aria-label="Campaign settings">
+        <h3 className="slx-camp-h"><Icon name="sliders" size={14} />Settings</h3>
+        <div className="ds-form">
+          <label className="deal-field slx-mid" htmlFor={id("status")}><span>Status</span>
+            <select id={id("status")} value={status} disabled={off} onChange={(e) => setStatus(e.target.value as CampaignStatus)}>
+              <option value="testing">Testing</option><option value="active">Active</option><option value="archived">Archived</option>
+            </select>
+            {errs.status ? <small className="slx-bad">{errs.status}</small> : <small>Testing tries it on a few leads first.</small>}</label>
+          <label className="deal-field slx-short" htmlFor={id("value")}><span>Average job value</span>
+            <span className="slx-money-in"><i>$</i><input id={id("value")} inputMode="decimal" value={value} disabled={off} autoComplete="off" placeholder="450" aria-invalid={!!errs.est_job_value_usd}
+              onChange={(e) => { setValue(e.target.value); setErrs((x) => ({ ...x, est_job_value_usd: "" })); }} /></span>
+            {errs.est_job_value_usd ? <small className="slx-bad">{errs.est_job_value_usd}</small> : <small>Optional. Used to size each lead.</small>}</label>
+          <div className="wide">
+            <SwitchRow checked={videoEmail === 1} onChange={(on) => !off && setVideoEmail(on ? 1 : 0)} label={VIDEO_EMAIL_LABEL} help={videoEmail === 1 ? videoEmailHelp(videoEmail) : "Off: Email 1 is the written draft only."} />
+          </div>
+          <div className="ds-form-actions">
+            <button type="button" className="btn primary" onClick={() => void save()} disabled={off || !dirty}>{saving ? "Saving…" : "Save settings"}</button>
+            <button type="button" className="btn" onClick={onRun} disabled={off || anyRunning || campaign.status === "archived"} aria-describedby={campaign.status === "archived" ? id("archived") : undefined}>
+              <Icon name="search" size={14} />{run?.starting ? "Starting searches…" : `Run searches in ${campaign.towns.length} ${campaign.towns.length === 1 ? "town" : "towns"}`}
+            </button>
+            <span className={`slx-msg${result?.bad ? " bad" : ""}`} aria-live="polite" aria-atomic="true">{result?.lines.join(" ")}</span>
+          </div>
+        </div>
+        {campaign.status === "archived" && <p className="slx-hint" id={id("archived")}>Archived campaigns can’t run searches. Set it to Testing or Active first.</p>}
+        <div aria-live="polite" aria-atomic="true">
+          {runText ? <p className="slx-hint">{runText}</p>
+            : run && run.lines.length > 0 && (
+              <Banner tone={run.tone === "ok" ? "positive" : run.tone === "warn" ? "warning" : "critical"} icon="search" title={run.lines[0]}>{run.lines.slice(1).join(" ")}</Banner>
+            )}
+        </div>
+      </section>
 
-      <h3 className="slx-camp-h">The five steps</h3>
-      <p className="slx-hint">Merge fields: <code>{"{Business}"}</code>, <code>{"{Name}"}</code>, <code>{"{link}"}</code>, <code>{"{problem_one}"}</code>. Each lead gets one of an email's variants.</p>
-      {loadErr ? <Callout tone="critical" icon="alert">{loadErr}</Callout>
-        : !steps ? <p className="slx-muted">Loading steps…</p>
-        : steps.map((s) => <StepEditor key={s.id} campaignId={campaign.id} step={s} locked={off} onSaved={(n) => setSteps((all) => all && all.map((x) => (x.idx === n.idx ? n : x)))} />)}
+      <section className="slx-camp-sec" aria-label="The follow-up steps">
+        <h3 className="slx-camp-h"><Icon name="list" size={14} />The follow-up steps<small>Open a step to change when it goes and what it says.</small></h3>
+        <p className="slx-merge">Fill-ins: {MERGE.map((m) => <code key={m}>{m}</code>)}<span>Each lead gets one version of each email.</span></p>
+        {loadErr ? <Banner tone="critical" icon="alert" title="Couldn’t load the steps">{loadErr}</Banner>
+          : !steps ? <p className="slx-muted">Loading steps…</p>
+          : (
+            <ol className="slx-seq-list">
+              {steps.map((s, i) => (
+                <StepEditor key={s.id} campaignId={campaign.id} step={s} locked={off} last={i === steps.length - 1} open={openStep === s.idx} onToggle={() => setOpenStep(openStep === s.idx ? null : s.idx)}
+                  onSaved={(n) => setSteps((all) => all && all.map((x) => (x.idx === n.idx ? n : x)))} />
+              ))}
+            </ol>
+          )}
+      </section>
     </div>
   );
 }

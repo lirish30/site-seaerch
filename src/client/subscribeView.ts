@@ -70,3 +70,18 @@ export function isCheckoutUrl(url: unknown): url is string {
   if (typeof url !== "string") return false;
   try { const u = new URL(url); return u.protocol === "https:" && (u.hostname === "stripe.com" || u.hostname.endsWith(".stripe.com")); } catch { return false; }
 }
+
+/** The plan's term and the steps under it, as the page lists them (each with an icon and a tone). The same facts as `subscribeCopy`'s lines, laid out for the card. */
+export function subscribeSteps(p: PublicSubscription): { term: string; rows: { icon: "calendar" | "card" | "check" | "clock"; tone: "neutral" | "positive" | "signal"; text: string }[] } {
+  const term = termWords(p.termMonths);
+  if (p.state === "active") return { term, rows: [{ icon: "check", tone: "positive", text: "Payment method saved" }, { icon: "calendar", tone: "neutral", text: "Charged each month until you cancel" }] };
+  const later = !p.chargedNow && p.firstChargeOn !== null;
+  return {
+    term,
+    rows: [
+      { icon: "card", tone: "signal", text: "You'll enter a card or bank account on the next page" },
+      { icon: "calendar", tone: "neutral", text: later && p.firstChargeOn ? `First charge on ${chargeDate(p.firstChargeOn)}` : "First charge today" },
+      { icon: "clock", tone: "neutral", text: p.termMonths === null ? "Month to month, no fixed term" : `A ${p.termMonths}-month term` },
+    ],
+  };
+}

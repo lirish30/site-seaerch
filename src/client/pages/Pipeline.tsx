@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api";
-import { Avatar, Banner, Chip, Empty, Note, PageHeader } from "../components/ds";
+import { Avatar, Banner, Card, Chip, Empty, LinkRow, Note, PageHeader } from "../components/ds";
 import Icon from "../components/Icon";
 import { LeadScore } from "../components/Score";
 import { dollars } from "../packagesView";
 import {
-  BOARD_FILTER_LABEL, boardColumns, boardFilterOf, boardSummary, cardPackage, cardStatus, dealHref, type BoardDeal, type CardContext,
+  BOARD_FILTER_LABEL, BOARD_LABEL, boardColumns, boardFilterOf, boardSummary, cardPackage, cardStatus, closedDeals, dealHref, quietSummary, type BoardDeal, type CardContext,
 } from "../pipelineView";
 import type { LeadRow } from "../types";
 
@@ -57,12 +57,13 @@ export default function Pipeline() {
     };
   };
   const columns = deals ? boardColumns(deals, filter, now) : [];
+  const quiet = !!deals && deals.length > 0 && filter === "all" && deals.every((d) => d.stage === "won" || d.stage === "lost");
 
   return (
     <div className="ds-page slx-pipeline">
       <PageHeader
         title={filter === "all" ? "Pipeline" : BOARD_FILTER_LABEL[filter]}
-        sub={deals && deals.length > 0 ? boardSummary(deals, now, dollars) : "Every deal by stage, from booked call to deposit paid."}
+        sub={deals && deals.length > 0 ? (quiet ? quietSummary(deals) : boardSummary(deals, now, dollars)) : "Every deal by stage, from booked call to deposit paid."}
         chips={filter !== "all" ? <Link to="/pipeline" className="slx-filter-chip" title="Show every stage"><Chip tone="outline">Show all stages<Icon name="x" size={12} /></Chip></Link> : undefined}
         actions={<button type="button" className="btn primary" onClick={() => setNewDeal(!newDeal)} aria-expanded={newDeal}><Icon name="plus" size={16} />New deal</button>}
       />
@@ -79,7 +80,8 @@ export default function Pipeline() {
             </Empty>
           </div>
         )}
-        {deals !== null && deals.length > 0 && (
+        {quiet && deals && <QuietBoard deals={deals} onNew={() => setNewDeal(true)} />}
+        {deals !== null && deals.length > 0 && !quiet && (
           <>
             <div className="slx-board" role="list" aria-label="Deal stages">
               {columns.map((col) => (
@@ -160,5 +162,46 @@ function NewDealPanel({ leads, deals, onClose }: { leads: LeadRow[]; deals: Boar
         {pool.length > shown.length && <p className="ds-empty-line">{pool.length - shown.length} more: type to narrow it down.</p>}
       </div>
     </section>
+  );
+}
+
+const FLOW: { stage: "booked" | "discovery_done" | "recommendation_booked" | "recommended" | "proposal_sent" | "won"; icon: "calendar" | "pen" | "users" | "sparkles" | "send" | "check"; tone: string; text: string }[] = [
+  { stage: "booked", icon: "calendar", tone: "info", text: "A lead books a call from your email" },
+  { stage: "discovery_done", icon: "pen", tone: "neutral", text: "You hold it and write the notes" },
+  { stage: "recommendation_booked", icon: "users", tone: "neutral", text: "A second call to walk them through it" },
+  { stage: "recommended", icon: "sparkles", tone: "signal", text: "Claude drafts the recap and three options" },
+  { stage: "proposal_sent", icon: "send", tone: "info", text: "They get the proposal to sign" },
+  { stage: "won", icon: "check", tone: "positive", text: "The deposit is paid and the work starts" },
+];
+
+/**
+ * The board with nothing open: six empty columns would say nothing, so it says so once, shows how a deal moves through the stages, and keeps the closed deals one click away.
+ */
+function QuietBoard({ deals, onNew }: { deals: BoardDeal[]; onNew: () => void }) {
+  const closed = closedDeals(deals);
+  return (
+    <>
+      <div className="ds-card">
+        <Empty icon="kanban" title="No open deals right now"
+          action={<div className="slx-actions slx-center"><button type="button" className="btn primary" onClick={onNew}><Icon name="plus" size={16} />New deal</button><Link to="/leads" className="btn">Open your leads</Link></div>}>
+          A deal opens by itself when a lead books a call from your email. You can also start one by hand for a lead you have spoken to.
+        </Empty>
+      </div>
+      <div className="ds-cols c2">
+        <Card icon="arrow-right" title="How a deal moves" note="It moves by itself as the work is done">
+          <ol className="slx-flow">
+            {FLOW.map((f) => <li key={f.stage}><span className={`ds-tile ${f.tone}`}><Icon name={f.icon} size={16} /></span><span><b>{BOARD_LABEL[f.stage]}</b><small>{f.text}</small></span></li>)}
+          </ol>
+        </Card>
+        <Card icon="check" title="Closed deals" note={`${closed.length}`} flush>
+          {closed.slice(0, 5).map((d) => (
+            <LinkRow key={d.id} to={dealHref(d)} icon={d.stage === "won" ? "check" : "x"} title={d.businessName}
+              sub={`${cardPackage(d)}${d.valueCents !== null ? ` · ${dollars(d.valueCents)} first year` : ""}`}
+              right={<Chip tone={d.stage === "won" ? "positive" : "neutral"} dot>{d.stage === "won" ? "Won" : "Lost"}</Chip>} />
+          ))}
+          {closed.length > 5 && <Link to="/pipeline?stage=closed" className="slx-more">See all {closed.length}<Icon name="chevron-right" size={14} /></Link>}
+        </Card>
+      </div>
+    </>
   );
 }

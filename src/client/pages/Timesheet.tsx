@@ -117,22 +117,26 @@ export default function Timesheet() {
 
   const addPanel = adding && (
     <Card icon="plus" title="Add time" note="Or tap a day in the grid" action={<button type="button" className="ds-icon-btn" aria-label="Close" onClick={() => setAdding(false)}><Icon name="x" size={14} /></button>}>
-      <form className="wk-inline wkx-add-time" onSubmit={(e) => { e.preventDefault(); void add(); }}>
-        <label className="deal-field wkx-grow2"><span>Task</span>
+      <form className="ds-form wkx-add-time" onSubmit={(e) => { e.preventDefault(); void add(); }}>
+        <label className="deal-field wide"><span>Task</span>
           <select value={taskId} onChange={(e) => setTaskId(e.target.value)}>
             <option value="">Choose a task</option>
             {[...byProject.entries()].map(([project, list]) => <optgroup key={project} label={project}>{list.map((o) => <option key={o.taskId} value={o.taskId}>{o.label}</option>)}</optgroup>)}
           </select></label>
         <label className="deal-field"><span>Day</span>
           <select value={day} onChange={(e) => setDay(e.target.value)}>{(week?.days ?? []).map((d) => { const l = dayLabel(d); return <option key={d} value={d}>{l.weekday} {l.date}{d === today ? " (today)" : ""}</option>; })}</select></label>
-        <label className="deal-field"><span>How long</span>
-          <input ref={lengthBox} value={length} placeholder="1:30, 90m or 1.5h" onChange={(e) => setLength(e.target.value)} aria-invalid={length.trim() !== "" && minutes === null} /></label>
-        <label className="deal-field wkx-grow2"><span>Note (optional)</span><input value={note} maxLength={500} placeholder="What you did" onChange={(e) => setNote(e.target.value)} /></label>
-        <button type="submit" className="btn primary" disabled={busy || !taskId || minutes === null || !day}>{minutes ? `Add ${formatMinutes(minutes)}` : "Add time"}</button>
+        <label className="deal-field wkx-short"><span>How long</span>
+          <input ref={lengthBox} value={length} placeholder="1:30, 90m or 1.5h" onChange={(e) => setLength(e.target.value)} aria-invalid={length.trim() !== "" && minutes === null} />
+          {length.trim() !== "" && minutes === null ? <small className="wkx-bad">Like 1:30, 90m or 1.5h</small> : <small>Hours and minutes</small>}</label>
+        <label className="deal-field wide"><span>Note</span><input value={note} maxLength={500} placeholder="What you did (optional)" onChange={(e) => setNote(e.target.value)} /></label>
+        {error && <p className="warn small wide" role="alert">{error}</p>}
+        {notice && <p className="small wide" role="status">{notice}</p>}
+        <div className="ds-form-actions">
+          <button type="submit" className="btn primary" disabled={busy || !taskId || minutes === null || !day}>{minutes ? `Add ${formatMinutes(minutes)}` : "Add time"}</button>
+          <button type="button" className="btn" onClick={() => setAdding(false)}>Close</button>
+          <span className="ds-help wkx-push">{options.length === 0 ? "No open tasks to log against. Tasks come from your projects." : "Future days and locked tasks are refused. A timer logs here by itself."}</span>
+        </div>
       </form>
-      {error && <p className="warn small" role="alert">{error}</p>}
-      {notice && <p className="small" role="status">{notice}</p>}
-      <p className="wkx-card-foot">{options.length === 0 ? "No open tasks to log against. Tasks come from your projects." : "Future days and locked tasks are refused. A timer on any task logs here by itself."}</p>
     </Card>
   );
 
@@ -155,7 +159,7 @@ export default function Timesheet() {
         {addPanel}
         {week && sum && (
           <>
-            <Stats label="This week in numbers">
+            {week.total > 0 && <Stats label="This week in numbers">
               <Stat icon="clock" label={thisWeek ? "Hours this week" : "Hours that week"} value={decimalHours(sum.total)}
                 sub={thisWeek && todayIndex >= 0 ? `${dayLabel(today).weekday}: ${decimalHours(week.dayTotals[todayIndex])} so far` : sum.daysWorked ? `Across ${sum.daysWorked} ${sum.daysWorked === 1 ? "day" : "days"}` : "Nothing logged"} />
               <Stat icon="calendar" label="Days worked" value={<>{sum.daysWorked}<small className="wkx-of"> of 7</small></>}
@@ -166,13 +170,26 @@ export default function Timesheet() {
               ) : (
                 <Stat icon="trending" label="Busiest day" value={sum.busiest ? `${dayLabel(sum.busiest.day).weekday} ${dayLabel(sum.busiest.day).date}` : "None yet"} sub={sum.busiest ? `${decimalHours(sum.busiest.minutes)} hours` : "No time logged"} />
               )}
-            </Stats>
+            </Stats>}
 
             {week.rows.length === 0 ? (
-              <div className="ds-card">
-                <Empty icon="clock" title={thisWeek ? "No time logged this week" : "No time logged that week"} action={<button type="button" className="btn primary" onClick={openAdd}><Icon name="plus" size={16} />Add time</button>}>
-                  Start a timer from any task's More menu on a project, or add time by hand. Each task shows here as a row with a cell for each day.
-                </Empty>
+              <div className={mine.length > 0 ? "ds-cols c2 wkx-project-cols" : ""}>
+                <div className="ds-card">
+                  <Empty icon="clock" title={thisWeek ? "No time logged this week" : "No time logged that week"} action={<button type="button" className="btn primary" onClick={openAdd}><Icon name="plus" size={16} />Add time</button>}>
+                    Start a timer from any task’s More menu on a project, or add time by hand. Each task shows here as a row with a cell for each day.{limit > 0 && thisWeek ? ` You set ${Math.round(limit / 60)} hours for the week.` : ""}
+                  </Empty>
+                </div>
+                {mine.length > 0 && (
+                  <Card icon="list" title="Your open steps" note="Log time against one" flush>
+                    {mine.slice(0, 6).map((m) => (
+                      <div key={m.taskId} className="wkx-bill-row">
+                        <span className="ds-tile info"><Icon name="user" size={16} /></span>
+                        <span className="ds-link-text"><b>{m.label}</b><small>{m.project}</small></span>
+                        <button type="button" className="btn sm" onClick={() => pick(m.taskId, thisWeek && today ? today : week.days[0])}>Log time</button>
+                      </div>
+                    ))}
+                  </Card>
+                )}
               </div>
             ) : (
               <div className="wkx-sheet-wrap">
@@ -243,7 +260,7 @@ export default function Timesheet() {
                 ))}
               </Card>
             )}
-            <Note>Hours are shown as decimals (1.5 is an hour and a half). Billable time feeds each project's hourly invoices and its Profit tab; Est. is each task's estimate for the whole task.</Note>
+            {week.rows.length > 0 && <Note>Hours are shown as decimals (1.5 is an hour and a half). Billable time feeds each project's hourly invoices and its Profit tab; Est. is each task's estimate for the whole task.</Note>}
           </>
         )}
       </div>

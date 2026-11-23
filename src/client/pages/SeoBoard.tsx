@@ -95,12 +95,12 @@ export default function SeoBoard() {
         )}
         {rows !== null && rows.length > 0 && (
           <>
-            <Stats label="Local SEO at a glance">
+            {all.length >= 3 && <Stats label="Local SEO at a glance">
               <Stat icon="pin" label="Watched clients" value={all.length} sub="Weekly listing and review checks" />
               <Stat icon="pen" label="Drafts waiting" value={drafts} sub={drafts ? "Look them over on the client's page" : "Nothing to read"} tone={drafts ? "warning" : "positive"} />
               <Stat icon="star" label="Reviews to answer" value={flagged} sub={flagged ? "Low-rated, waiting for a reply" : "No low ratings"} tone={flagged ? "critical" : "positive"} />
               <Stat icon="file-text" label={`${month || "Monthly"} reports`} value={`${sent} of ${all.length}`} sub={ready ? `${ready} ready for your OK` : notStarted ? `${notStarted} not started` : "sent"} tone={ready ? "warning" : undefined} />
-            </Stats>
+            </Stats>}
 
             {ready > 0 ? (
               <Banner tone="warning" title={`${plural(ready, "Local SEO report")} ${ready === 1 ? "waits" : "wait"} for your OK`} action={<Link className="btn sm" to="/today">Approve on Today</Link>}>
@@ -127,6 +127,13 @@ export default function SeoBoard() {
               </table>
             </div>
             <Note>Nothing here posts or publishes: drafts and review replies are read and copied on each client's page.</Note>
+            {all.length < 3 && (
+              <section className="crx-what" aria-label="What the watch does">
+                <div className="crx-what-card"><span className="ds-tile info"><Icon name="pin" size={16} /></span><span><b>Weekly listing check</b><small>Name, address and phone on Google and 12 directories; anything that drifts shows as a draft fix.</small></span></div>
+                <div className="crx-what-card"><span className="ds-tile warning"><Icon name="star" size={16} /></span><span><b>Reviews watched</b><small>A low rating is flagged here with a reply Claude drafted for you to read and copy.</small></span></div>
+                <div className="crx-what-card"><span className="ds-tile positive"><Icon name="file-text" size={16} /></span><span><b>Monthly report</b><small>The map rank grid against the baseline. It goes out only after you approve it on Today.</small></span></div>
+              </section>
+            )}
           </>
         )}
       </div>

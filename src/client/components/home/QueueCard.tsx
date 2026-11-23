@@ -1,37 +1,37 @@
+import { Card, Chip } from "../ds";
 import Icon from "../Icon";
-import { QUEUE_HINT, queueLine, queueRows, type QueueStatus } from "../../queueView";
+import { openCount, QUEUE_HINT, queueLine, queueRows, type QueueStatus } from "../../queueView";
 import type { Part } from "./useHome";
 
 /** Work waiting for a Claude Code session (reviews, drafts, reply reads), per kind. It only reports: nothing here approves or sends. */
 export default function QueueCard({ queue, onRetry }: { queue: Part<QueueStatus>; onRetry: () => void }) {
   const q = queue.data;
   const rows = q ? queueRows(q) : [];
+  const n = q ? openCount(q.counts) : 0;
   return (
-    <section className="hm-card hm-queue" id="queue" aria-labelledby="hm-queue-h">
-      <header className="hm-card-head">
-        <Icon name="sparkles" size={16} />
-        <h2 id="hm-queue-h">Claude queue</h2>
-        {q && <span className="hm-head-note small">{queueLine(q.counts)}</span>}
-      </header>
+    <Card icon="sparkles" title="Claude queue" id="queue" className="hox-card" action={q && n > 0 ? <Chip tone="signal">{n} waiting</Chip> : undefined}>
       {!q && queue.error ? (
-        <div className="hm-state sm" role="alert"><p>{queue.error}</p><button type="button" className="btn sm" onClick={onRetry}>Try again</button></div>
+        <div className="hox-alert inline" role="alert"><span>{queue.error}</span><button type="button" className="btn sm" onClick={onRetry}>Try again</button></div>
       ) : !q ? (
-        <div className="hm-card-body"><i className="hm-skel" style={{ width: "50%", height: 18 }} /></div>
+        <i className="hox-skel" style={{ width: "50%", height: 18 }} />
       ) : rows.length === 0 ? (
-        <div className="hm-state sm" role="status"><p>{queueLine(q.counts)}</p></div>
+        <p className="hox-ok"><Icon name="check" size={14} />{queueLine(q.counts)}</p>
       ) : (
-        <div className="hm-queue-body">
-          <ul className="hm-queue-list" aria-label="Open Claude tasks by kind">
+        <>
+          <ul className="hox-lines" aria-label="Open Claude tasks by kind">
             {rows.map((r) => (
               <li key={r.kind}>
                 <span>{r.label}</span>
-                <span className="hm-queue-n">{r.pending + r.claimed}{r.claimed > 0 && <small>{r.claimed} in progress</small>}</span>
+                <span className="hox-chips">
+                  {r.claimed > 0 && <Chip tone="positive" dot>{r.claimed} working</Chip>}
+                  {r.pending > 0 && <Chip tone="outline">{r.pending} queued</Chip>}
+                </span>
               </li>
             ))}
           </ul>
-          <p className="hm-queue-hint">{QUEUE_HINT}</p>
-        </div>
+          <p className="hox-caption">{QUEUE_HINT} Anything that goes out still waits for your OK.</p>
+        </>
       )}
-    </section>
+    </Card>
   );
 }

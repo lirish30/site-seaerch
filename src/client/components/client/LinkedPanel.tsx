@@ -1,4 +1,5 @@
 import { Card, Chip, Empty, LinkRow, type Tone as DsTone } from "../ds";
+import Icon from "../Icon";
 import { moneyLabel, projectStatusLabel, renewalLabel } from "../../clientView";
 import { statusLabel as changeOrderStatus } from "../../changeOrderView";
 import { projectIsLive } from "../../../worker/db/projects";
@@ -30,7 +31,7 @@ export default function LinkedPanel({ client, today }: { client: ClientRecord; t
         })}
       </Card>
 
-      <Card icon="card" title="Invoices" flush>
+      <Card icon="card" title="Invoices" flush className="clx-money">
         <LinkRow to={`/billing?businessId=${encodeURIComponent(id)}`} icon="card" title={client.invoices.openCents > 0 ? `${moneyLabel(client.invoices.openCents)} open` : "Nothing open"}
           sub={`${client.invoices.overdueCount === 0 ? "None overdue" : `${client.invoices.overdueCount} overdue`} · ${moneyLabel(client.invoices.paidCents)} paid so far`}
           right={client.invoices.overdueCount > 0 ? <Chip tone="warning" dot>Overdue</Chip> : undefined} />
@@ -48,7 +49,7 @@ export default function LinkedPanel({ client, today }: { client: ClientRecord; t
       </Card>
 
       <Card icon="pen" title="Change orders" note={orders.length || undefined} flush>
-        {orders.length === 0 && <Empty icon="pen" title="No change orders">Extra work you quote on a project shows up here once it is drafted.</Empty>}
+        {orders.length === 0 && <div className="clx-calm"><span className="ds-tile neutral"><Icon name="pen" size={15} /></span><span className="clx-setup-text"><b>No change orders</b><small>Extra work you quote on a project shows here once it is drafted.</small></span></div>}
         {orders.map((c) => (
           <LinkRow key={c.id} to={`/projects/${encodeURIComponent(c.projectId)}?tab=change-orders`} icon="pen" title={`${c.reference}: ${c.title}`} sub={moneyLabel(c.priceCents)}
             right={<span className="ds-row">{c.test && <Chip tone="info">Test</Chip>}<Chip tone="outline">{changeOrderStatus(c.status, c.paidAt !== null)}</Chip></span>} />

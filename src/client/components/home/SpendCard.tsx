@@ -1,42 +1,33 @@
 import { Link } from "react-router-dom";
-import Icon from "../Icon";
+import { Card, Meter } from "../ds";
 import { limitLabel, moneyCents, spendView } from "../../todayHome";
 import { spendLine } from "../../approvalsView";
 import type { Money, Part, Spend } from "./useHome";
 
-/** This month's paid usage against the monthly limit from Settings. */
+/** This month's paid usage and fixed costs against the monthly limit from Settings. */
 export default function SpendCard({ money, spend, onRetry }: { money: Part<Money>; spend: Part<Spend>; onRetry: () => void }) {
   const m = money.data, sp = spend.data, v = m && sp ? spendView(m.usage, m.limit, sp.fixedUsd) : null;
   const fixed = sp ? sp.fixedCosts.filter((f) => f.active) : [];
+  const tone = sp?.level === "capped" ? "critical" : sp?.level === "warn" ? "warning" : "neutral";
   return (
-    <section className="hm-card" id="spend" aria-labelledby="hm-spend-h">
-      <header className="hm-card-head">
-        <Icon name="card" size={16} />
-        <h2 id="hm-spend-h">Spend this month</h2>
-        {m && <Link to="/settings/usage" className="hm-head-note small" title="Usage and limits">Limit {limitLabel(m.limit)}</Link>}
-      </header>
+    <Card icon="card" title="Spend this month" id="spend" className="hox-card"
+      note={m ? <Link to="/settings/usage" className="hox-note-link" title="Usage and limits">Limit {limitLabel(m.limit)}</Link> : undefined}>
       {!m && money.error ? (
-        <div className="hm-state sm" role="alert"><p>{money.error}</p><button type="button" className="btn sm" onClick={onRetry}>Try again</button></div>
+        <div className="hox-alert inline" role="alert"><span>{money.error}</span><button type="button" className="btn sm" onClick={onRetry}>Try again</button></div>
       ) : (
-        <div className="hm-card-body spend">
-          <p className="hm-spend-total">
-            {v ? <><span>{moneyCents(v.total)}</span><small> of {limitLabel(m!.limit)}</small></> : <i className="hm-skel" style={{ width: 96, height: 24 }} />}
-          </p>
-          {sp && <p className={`hm-spend-level ${sp.level}`} role={sp.level === "ok" ? undefined : "status"}>{spendLine(sp)}</p>}
-          {!sp && spend.error && <p className="hm-err" role="alert">{spend.error}</p>}
-          <div className={`hm-meter${v?.over ? " over" : ""}`} role="progressbar" aria-label="Spend against the monthly limit" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(v?.pct ?? 0)}><i style={{ width: `${v?.pct ?? 0}%` }} /></div>
-          <ul className="hm-spend-rows">
+        <>
+          <p className="hox-big md">{v ? <>{moneyCents(v.total)}<small>of {limitLabel(m!.limit)}</small></> : <i className="hox-skel" style={{ width: 96, height: 24 }} />}</p>
+          <Meter value={v?.pct ?? 0} max={100} tone={tone} label={`Spend: ${Math.round(v?.pct ?? 0)}% of the monthly limit`} />
+          {sp && sp.level !== "ok" && <p className={`hox-caption ${tone}`} role="status">{spendLine(sp)}</p>}
+          {!sp && spend.error && <p className="hox-caption critical" role="alert">{spend.error}</p>}
+          <ul className="hox-lines mono">
             {(v?.rows ?? [{ label: "Google Maps listings", usd: null }, { label: "AI reviews & drafts", usd: null }, { label: "Browser checks", usd: null }]).map((r) => (
               <li key={r.label}><span>{r.label}</span><b>{r.usd === null ? "–" : moneyCents(r.usd)}</b></li>
             ))}
+            {fixed.map((f) => <li key={f.id} className="fixed"><span>{f.name} <small>monthly</small></span><b>{moneyCents(f.monthly_usd)}</b></li>)}
           </ul>
-          {fixed.length > 0 && (
-            <ul className="hm-spend-rows hm-spend-fixed" aria-label="Fixed monthly costs">
-              {fixed.map((f) => <li key={f.id}><span>{f.name}</span><b>{moneyCents(f.monthly_usd)}</b></li>)}
-            </ul>
-          )}
-        </div>
+        </>
       )}
-    </section>
+    </Card>
   );
 }

@@ -1,4 +1,4 @@
-import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { MAX_CALLOUT_CHARS, MAX_MARKUPS, type Markup, type Segment, type Shot } from "../../../worker/video/plan";
 import { addMarkup, moveArrowEnd, moveMarkup, removeMarkup, replaceMarkup, resizeMarkup } from "../../videoView";
 import Icon from "../Icon";
@@ -14,8 +14,8 @@ const TYPES: { type: Markup["type"]; label: string }[] = [
  * of its width, so the drawing is the same at any size. Drag a markup to move it, a handle to resize it; Delete removes the selected one.
  * Changes go up through `onChange` while dragging and `onCommit` once when the pointer is released or a field loses focus (the page saves then).
  */
-export default function ShotCanvas({ videoId, shot, segment, readOnly, onChange, onCommit }: {
-  videoId: string; shot: Shot; segment: Segment; readOnly: boolean; onChange: (seg: Segment) => void; onCommit: () => void;
+export default function ShotCanvas({ videoId, shot, segment, readOnly, title, shotName, footer, onChange, onCommit }: {
+  videoId: string; shot: Shot; segment: Segment; readOnly: boolean; title: string; shotName: string; footer?: ReactNode; onChange: (seg: Segment) => void; onCommit: () => void;
 }) {
   const [selected, setSelected] = useState<number | null>(null);
   const drag = useRef<Drag | null>(null);
@@ -54,7 +54,23 @@ export default function ShotCanvas({ videoId, shot, segment, readOnly, onChange,
   );
 
   return (
-    <div className="vd-canvas-wrap">
+    <section className="ds-card hox-vd-scene" aria-label={title}>
+      <header className="ds-card-head hox-vd-scene-head">
+        <Icon name="eye" size={16} />
+        <h2>{title}</h2>
+        {!readOnly ? (
+          <div className="ds-seg hox-vd-tools" role="toolbar" aria-label="Add a markup">
+            {TYPES.map((t) => (
+              <button key={t.type} type="button" disabled={segment.markups.length >= MAX_MARKUPS} title={`Add a ${t.label.toLowerCase()}`}
+                onClick={() => { const next = addMarkup(segment, t.type); setSelected(next.markups.length - 1); change(next, true); }}>
+                <Icon name="plus" size={12} />{t.label}
+              </button>
+            ))}
+          </div>
+        ) : <span className="ds-card-note">{segment.markups.length} {segment.markups.length === 1 ? "markup" : "markups"}</span>}
+      </header>
+      <div className="hox-vd-chrome" aria-hidden="true"><i /><i /><i /><span>{shotName}{!readOnly && ` · ${segment.markups.length} of ${MAX_MARKUPS} markups`}</span></div>
+      <div className="vd-canvas-wrap hox-vd-canvas">
       <div className="vd-canvas" style={{ aspectRatio: `${W} / ${H}`, width: `min(100%, ${(70 * W / H).toFixed(2)}vh)` }}>
         <img src={`/api/video-audits/${videoId}/shots/${shot.id}/preview`} alt={`${shot.viewport === "desktop" ? "Desktop" : "Phone"} screenshot of the site`} draggable={false} />
         <svg ref={svg} viewBox={`0 0 ${W} ${H}`} className="vd-overlay" onPointerMove={move} onPointerUp={end} onPointerCancel={end} onPointerDown={() => setSelected(null)}
@@ -100,18 +116,6 @@ export default function ShotCanvas({ videoId, shot, segment, readOnly, onChange,
         </svg>
       </div>
 
-      {!readOnly && (
-        <div className="vd-tools" role="toolbar" aria-label="Markups">
-          {TYPES.map((t) => (
-            <button key={t.type} type="button" className="btn sm" disabled={segment.markups.length >= MAX_MARKUPS}
-              onClick={() => { const next = addMarkup(segment, t.type); setSelected(next.markups.length - 1); change(next, true); }}>
-              <Icon name="plus" size={13} />{t.label}
-            </button>
-          ))}
-          <span className="vd-tools-note">{segment.markups.length} of {MAX_MARKUPS}</span>
-        </div>
-      )}
-
       {chosen && !readOnly && (
         <div className="vd-selected">
           {chosen.type === "callout" ? (
@@ -124,6 +128,9 @@ export default function ShotCanvas({ videoId, shot, segment, readOnly, onChange,
           <button type="button" className="btn sm danger-ghost" onClick={remove}><Icon name="x" size={13} />Delete</button>
         </div>
       )}
-    </div>
+      {!chosen && !readOnly && <p className="hox-vd-hint">Click a markup to change it. Drag to move it, drag its dot to resize. Delete removes it.</p>}
+      </div>
+      {footer}
+    </section>
   );
 }

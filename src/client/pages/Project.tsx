@@ -2,14 +2,15 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import ChangeOrdersPanel from "../components/ChangeOrdersPanel";
-import { Banner, Card, Chip, Empty, Meter, PageHeader, Score, Stat, Stats, Tabs } from "../components/ds";
+import { Banner, Card, Chip, Empty, Meter, Note, PageHeader, Score, Stat, Stats, Tabs } from "../components/ds";
+import type { Task } from "../../worker/db/tasks";
 import Icon from "../components/Icon";
 import ProjectBilling from "../components/ProjectBilling";
 import ProjectSopTab from "../components/ProjectSopTab";
 import TaskRow, { RowMenu, TimerBanner } from "../components/TaskRow";
 import { dollars } from "../packagesView";
 import {
-  cancelConfirm, cancelLabel, currentPhase, groupByClient, kindChip, kindLabel, milestoneChips, minutesByPhase, ownerBadge, pagerOf, phaseGroups, phaseState, projectBucket,
+  cancelConfirm, cancelLabel, currentPhase, groupByClient, kindChip, kindLabel, milestoneChips, minutesByPhase, nextUp, ownerBadge, ownerChip, ownerSplit, pagerOf, phaseGroups, phaseState, projectBucket,
   projectProgress, shortDate, statusChip, stopControls, timeEstimate, timeRows, totalEstimate,
 } from "../projectView";
 import { formatMinutes, parseDuration, varianceLabel } from "../timeView";
@@ -152,11 +153,14 @@ export default function ProjectPage() {
         {timerHere && <TimerBanner entry={timerHere} onStopped={() => void load()} />}
         {pausing && project.status === "active" && (
           <Card icon="ban" title="Pause this project" note="Claude steps stop until you resume">
-            <div className="wk-inline">
-              <label className="deal-field"><span>Why pause it? (optional, shown on the projects list)</span><input value={pauseReason} maxLength={300} autoFocus onChange={(e) => setPauseReason(e.target.value)} /></label>
-              <button type="button" className="btn primary" disabled={busy} onClick={() => void patch({ status: "paused", pausedReason: pauseReason.trim() || undefined }, () => { setPausing(false); setPauseReason(""); })}>Pause project</button>
-              <button type="button" className="btn" disabled={busy} onClick={() => setPausing(false)}>Cancel</button>
-            </div>
+            <form className="ds-form" onSubmit={(e) => { e.preventDefault(); void patch({ status: "paused", pausedReason: pauseReason.trim() || undefined }, () => { setPausing(false); setPauseReason(""); }); }}>
+              <label className="deal-field wide"><span>Why pause it?</span><input value={pauseReason} maxLength={300} autoFocus placeholder="Like: waiting on the client's invoice" onChange={(e) => setPauseReason(e.target.value)} />
+                <small>Optional. It shows on the projects list and in the banner here.</small></label>
+              <div className="ds-form-actions">
+                <button type="submit" className="btn primary" disabled={busy}>Pause project</button>
+                <button type="button" className="btn" disabled={busy} onClick={() => setPausing(false)}>Cancel</button>
+              </div>
+            </form>
           </Card>
         )}
         {error && <p className="warn small" role="alert">{error}</p>}
@@ -187,6 +191,8 @@ function TasksTab({ data, runningTaskId, openTask, adding, setAdding, onChange, 
   const est = totalEstimate(tasks);
   const phases = minutesByPhase(tasks, data.taskMinutes);
   const milestones = milestoneChips(data.milestones);
+  const up = progress.pct < 100 && project.status !== "cancelled" ? nextUp(tasks) : null;
+  const split = ownerSplit(tasks);
 
   return (
     <div className="ds-cols c2 wkx-project-cols">
@@ -223,9 +229,15 @@ function TasksTab({ data, runningTaskId, openTask, adding, setAdding, onChange, 
       </div>
 
       <div className="ds-col">
+        {up && <NextUp task={up} projectId={project.id} />}
         <Card icon="gauge" title="Progress">
           <Score value={`${progress.pct}%`} unit={`${progress.done} of ${progress.total} ${progress.total === 1 ? "step" : "steps"}`} meter={{ value: progress.done, max: progress.total, tone: progress.pct === 100 ? "positive" : "signal" }}
             reasons={project.kind === "build" || data.milestones.length ? milestones.map((m) => ({ ok: m.reached ? true : null, text: m.reached && m.reachedAt ? `${m.label} ${dateOf(m.reachedAt)}` : `${m.label}: not yet` })) : undefined} />
+          {split.length > 0 && (
+            <dl className="wkx-lines wkx-owners" aria-label="Still to do, by who does it">
+              {split.map((o) => <div key={o.owner}><dt><i className={`wkx-dot ${o.owner}`} aria-hidden="true" />{o.label}</dt><dd>{o.count} {o.count === 1 ? "step" : "steps"} · {formatMinutes(o.minutes)}</dd></div>)}
+            </dl>
+          )}
           <p className="wkx-card-foot">Done and skipped steps count. Step-by-step work Claude does shows up in your approvals.</p>
         </Card>
 
@@ -244,8 +256,8 @@ function TasksTab({ data, runningTaskId, openTask, adding, setAdding, onChange, 
         )}
 
         <Card icon="clock" title="Time" note={est > 0 ? `Estimate ${Math.round(est / 6) / 10} h` : "No estimate"}>
-          <Score size="md" value={`${Math.round(data.time.actualMinutes / 6) / 10} h`} unit={`logged · ${formatMinutes(data.time.billableMinutes)} billable`}
-            meter={est > 0 ? { value: data.time.actualMinutes, max: est, tone: data.time.actualMinutes > est ? "warning" : "neutral" } : undefined} />
+          {data.time.actualMinutes > 0 && <Score size="md" value={`${Math.round(data.time.actualMinutes / 6) / 10} h`} unit={`logged · ${formatMinutes(data.time.billableMinutes)} billable`}
+            meter={est > 0 ? { value: data.time.actualMinutes, max: est, tone: data.time.actualMinutes > est ? "warning" : "signal" } : undefined} />}
           {phases.length > 0 ? (
             <dl className="wkx-lines">{phases.map((p) => <div key={p.phaseKey}><dt>{p.title}</dt><dd>{(p.minutes / 60).toFixed(1)} h</dd></div>)}</dl>
           ) : <p>No time logged yet. Start a timer from a task's More menu, or add time on the timesheet.</p>}
@@ -271,15 +283,18 @@ function AddTask({ projectId, onDone, onCancel }: { projectId: string; onDone: (
   };
   return (
     <Card icon="plus" title="Add a task" note="It goes in its own Extra tasks phase">
-      <form className="wk-inline" onSubmit={(e) => { e.preventDefault(); if (title.trim() && estMinutes !== null) void add(); }}>
-        <label className="deal-field wkx-grow2"><span>What needs doing</span><input value={title} maxLength={120} autoFocus onChange={(e) => setTitle(e.target.value)} /></label>
+      <form className="ds-form wkx-add-task" onSubmit={(e) => { e.preventDefault(); if (title.trim() && estMinutes !== null) void add(); }}>
+        <label className="deal-field wide"><span>What needs doing</span><input value={title} maxLength={120} autoFocus placeholder="Like: swap the hero photo" onChange={(e) => setTitle(e.target.value)} /></label>
         <label className="deal-field"><span>Who does it</span>
           <select value={owner} onChange={(e) => setOwner(e.target.value as OwnerTag)}>{(["logan", "claude", "claude_drafts"] as OwnerTag[]).map((o) => <option key={o} value={o}>{ownerBadge(o)}</option>)}</select></label>
-        <label className="deal-field"><span>Estimate (like 45m or 1:30)</span><input value={est} inputMode="text" onChange={(e) => setEst(e.target.value)} aria-invalid={estMinutes === null} /></label>
-        <button type="submit" className="btn primary" disabled={busy || !title.trim() || estMinutes === null}>Add task</button>
-        <button type="button" className="btn" disabled={busy} onClick={onCancel}>Cancel</button>
+        <label className="deal-field wkx-short"><span>Estimate</span><input value={est} inputMode="text" placeholder="45m or 1:30" onChange={(e) => setEst(e.target.value)} aria-invalid={estMinutes === null} />
+          {estMinutes === null ? <small className="wkx-bad">Use minutes or hours, like 45m or 1:30.</small> : <small>Optional. Used for the Time tab.</small>}</label>
+        {error && <p className="warn small wide" role="alert">{error}</p>}
+        <div className="ds-form-actions">
+          <button type="submit" className="btn primary" disabled={busy || !title.trim() || estMinutes === null}>{busy ? "Adding…" : "Add task"}</button>
+          <button type="button" className="btn" disabled={busy} onClick={onCancel}>Cancel</button>
+        </div>
       </form>
-      {error && <p className="warn small" role="alert">{error}</p>}
     </Card>
   );
 }
@@ -288,6 +303,7 @@ function TimeTab({ data }: { data: ProjectDetail }) {
   const est = timeEstimate(data.tasks, data.taskMinutes);
   const rows = timeRows(data.tasks, data.taskMinutes);
   const nonBillable = Math.max(0, data.time.actualMinutes - data.time.billableMinutes);
+  if (data.time.actualMinutes === 0) return <NoTimeYet tasks={data.tasks} />;
   return (
     <>
       <Stats label="Time on this project">
@@ -326,9 +342,59 @@ function TimeTab({ data }: { data: ProjectDetail }) {
   );
 }
 
+/** The Time tab before anything is logged: one plain line on how to log, and what the plan says the work should take (by phase and by who does it), instead of three zero cards. */
+function NoTimeYet({ tasks }: { tasks: Task[] }) {
+  const est = totalEstimate(tasks);
+  const phases = phaseGroups(tasks).map((g) => ({ key: g.phaseKey, title: g.title, minutes: g.tasks.filter((t) => t.status !== "skipped").reduce((n, t) => n + t.estMinutes, 0) })).filter((p) => p.minutes > 0);
+  const split = ownerSplit(tasks);
+  return (
+    <div className="ds-cols c2 wkx-project-cols">
+      <div className="ds-card"><Empty icon="clock" title="No time logged on this project yet" action={<Link to="/timesheet" className="btn">Open the timesheet</Link>}>
+        Start a timer from a task’s More menu, or add time by hand on the timesheet. Each task you log against shows here with its estimate beside it.</Empty></div>
+      {est > 0 && (
+        <Card icon="gauge" title="What the plan expects" note={`${formatMinutes(est)} in all`}>
+          {split.length > 0 && <dl className="wkx-lines wkx-owners">{split.map((o) => <div key={o.owner}><dt><i className={`wkx-dot ${o.owner}`} aria-hidden="true" />{o.label}</dt><dd>{formatMinutes(o.minutes)}</dd></div>)}</dl>}
+          {phases.length > 1 && <><p className="wkx-label wkx-label-top">By phase</p><dl className="wkx-lines">{phases.map((p) => <div key={p.key}><dt>{p.title}</dt><dd>{formatMinutes(p.minutes)}</dd></div>)}</dl></>}
+          <p className="wkx-card-foot">Estimates come from the SOP steps. Time you log is compared with them here.</p>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+/** "Open the step": the first task that is ready, who does it and when it counts as done, with a link that opens it in the list. */
+function NextUp({ task, projectId }: { task: Task; projectId: string }) {
+  const who = ownerChip(task);
+  const mine = task.owner === "logan";
+  return (
+    <Card icon="arrow-right" title="Next up" className="wkx-next-card" action={<Chip tone={who.tone}>{who.label}</Chip>}>
+      <div className="wkx-next-step">
+        <span className={`ds-tile ${mine ? "info" : "signal"}`}><Icon name={mine ? "user" : "sparkles"} size={16} /></span>
+        <span className="ds-link-text"><b>{task.title}</b><small>{task.stepKey ? `Step ${task.stepKey} · ` : ""}{task.estMinutes > 0 ? `about ${formatMinutes(task.estMinutes)}` : "no estimate"}</small></span>
+      </div>
+      {task.doneWhen && <p className="wkx-done-when"><span className="wkx-label">Done when</span>{task.doneWhen}</p>}
+      <Link className="btn sm wkx-wide" to={`/projects/${projectId}?task=${task.id}`}>{mine ? "Open the step" : "Open it to ask Claude"}</Link>
+    </Card>
+  );
+}
+
 function ProfitTab({ data }: { data: ProjectDetail }) {
   const p = data.profit;
   const noRate = data.costRateCentsPerHour === 0;
+  if (noRate) {
+    return (
+      <>
+        <Banner tone="info" icon="card" title="Set your cost rate to see profit" action={<Link to="/settings/work" className="btn sm">Set cost rate</Link>}>
+          Profit is what the client paid, less your time at the hourly cost you set. Until there is a rate, only the money in shows.
+        </Banner>
+        <Stats label="Money on this project">
+          <Stat icon="tag" label="Sold" value={dollars(p.soldCents)} sub="The price agreed, with signed change orders" />
+          <Stat icon="card" label="Paid so far" value={dollars(p.paidCents)} sub={p.soldCents ? `${Math.round((p.paidCents / p.soldCents) * 100)}% of what was sold` : "Nothing sold yet"} tone={p.soldCents > 0 && p.paidCents >= p.soldCents ? "positive" : undefined} />
+          <Stat icon="clock" label="Time logged" value={formatMinutes(data.time.actualMinutes)} sub={data.time.actualMinutes ? `${formatMinutes(data.time.billableMinutes)} of it billable` : "Nothing logged yet"} />
+        </Stats>
+      </>
+    );
+  }
   return (
     <>
       <Stats label="Profit">
@@ -338,7 +404,7 @@ function ProfitTab({ data }: { data: ProjectDetail }) {
         <Stat icon="trending" label="Margin on what is paid" value={noRate ? "–" : dollars(p.marginPaidCents)}
           sub={noRate ? "Needs a cost rate" : p.effectiveHourlyCents === null ? "No time logged yet" : `About ${dollars(p.effectiveHourlyCents)} an hour`} tone={!noRate && p.marginPaidCents < 0 ? "critical" : !noRate ? "positive" : undefined} />
       </Stats>
-      <p className="wkx-foot-note"><Icon name="info" size={14} />Time at your cost rate against what the client has paid. Paid change orders count. {noRate && <Link to="/settings/work">Set your cost rate</Link>}</p>
+      <Note>Time at your cost rate against what the client has paid. Paid change orders count.</Note>
     </>
   );
 }

@@ -1,36 +1,24 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import Icon from "../components/Icon";
+import { PubBar, PubError, PubGone, PubNotice, PubSkeleton, Tile, useNoIndex } from "../components/PublicPage";
 import { bookingError, cancelPath, cancelledCopy, dayHeading, formatSlot, groupByDay, safeMeetUrl, timeOfDay, type BookPage, type Booked } from "../bookingView";
 
 type Load = "loading" | "ok" | "gone" | "error";
 type Decision = "me" | "me_and_other";
 
-const field = (label: string, input: React.ReactNode, hint?: string) => (
-  <label className="bk-field"><span>{label}</span>{input}{hint && <small>{hint}</small>}</label>
-);
+const KIND = "Book a call";
 
-/** A page that is only a message: link gone, no times, booked, cancelled. */
-function Message({ icon, title, children }: { icon: "link" | "alert" | "calendar" | "check"; title: string; children?: React.ReactNode }) {
-  return (
-    <main className="rp">
-      <div className="rp-wrap rp-wrap-narrow">
-        <section className="rp-card rp-notice">
-          <span className="rp-notice-icon" aria-hidden="true"><Icon name={icon} size={20} /></span>
-          <h1>{title}</h1>
-          {children}
-        </section>
-      </div>
-    </main>
-  );
-}
+const field = (label: string, input: ReactNode, o: { hint?: string; wide?: boolean } = {}) => (
+  <label className={`deal-field${o.wide ? " wide" : ""}`}><span>{label}</span>{input}{o.hint && <small>{o.hint}</small>}</label>
+);
 
 /** What the page tells someone when there is nothing to pick: Calendar is off, or no times are open. */
 function NoTimes({ fallbackUrl }: { fallbackUrl: string }) {
   return (
-    <Message icon="calendar" title="No times right now">
+    <PubNotice kind={KIND} icon="calendar" title="No times right now">
       <p>Reply to the email you got and we'll find a time that works.</p>
-      {fallbackUrl.startsWith("https://") && <a className="btn" href={fallbackUrl} target="_blank" rel="noopener noreferrer">Or pick a time on my calendar</a>}
-    </Message>
+      {fallbackUrl.startsWith("https://") && <a className="btn" href={fallbackUrl} target="_blank" rel="noopener noreferrer"><Icon name="external" size={16} />Or pick a time on my calendar</a>}
+    </PubNotice>
   );
 }
 
@@ -50,17 +38,7 @@ export default function Book({ token }: { token: string }) {
   const [error, setError] = useState("");
   const [cancel, setCancel] = useState<"idle" | "busy" | "done" | "failed">("idle");
   const [cancelledKind, setCancelledKind] = useState("");
-
-  useEffect(() => {
-    const prevTitle = document.title;
-    document.title = "Book a call";
-    let meta = document.querySelector<HTMLMetaElement>('meta[name="robots"]');
-    const created = !meta;
-    if (!meta) { meta = document.createElement("meta"); meta.name = "robots"; document.head.appendChild(meta); }
-    const prevContent = meta.content;
-    meta.content = "noindex, nofollow";
-    return () => { document.title = prevTitle; if (created) meta.remove(); else meta.content = prevContent; };
-  }, []);
+  useNoIndex("Book a call");
 
   useEffect(() => {
     let cancelled = false;
@@ -110,42 +88,37 @@ export default function Book({ token }: { token: string }) {
   if (cancelToken) {
     if (cancel === "done") {
       const copy = cancelledCopy(cancelledKind);
-      return <Message icon="check" title={copy.title}><p>{copy.body}</p>{copy.rebook && <a className="btn" href={`/r/${token}/book`}>Pick another time</a>}</Message>;
+      return <PubNotice kind={KIND} icon="check" tone="positive" title={copy.title}><p>{copy.body}</p>{copy.rebook && <a className="btn primary" href={`/r/${token}/book`}><Icon name="calendar" size={16} />Pick another time</a>}</PubNotice>;
     }
     return (
-      <Message icon="calendar" title="Cancel your call?">
+      <PubNotice kind={KIND} icon="calendar" tone="warning" title="Cancel your call?">
         <p>We'll take it off the calendar. You can book again afterwards.</p>
-        {cancel === "failed" && <p className="error" role="alert">We couldn't cancel that. Reply to the email and we'll do it for you.</p>}
+        {cancel === "failed" && <p className="pbx-error" role="alert">We couldn't cancel that. Reply to the email and we'll do it for you.</p>}
         <button type="button" className="btn primary" disabled={cancel === "busy"} onClick={() => void doCancel()}>{cancel === "busy" ? "Cancelling…" : "Cancel this call"}</button>
-      </Message>
+      </PubNotice>
     );
   }
 
-  if (load === "loading") return <main className="rp" aria-busy="true"><div className="rp-wrap rp-wrap-narrow"><div className="rp-card" role="status" aria-label="Loading"><span className="rp-sk" style={{ height: 28, width: "70%" }} /><span className="rp-sk" style={{ height: 120 }} /></div></div></main>;
-  if (load === "error") return (
-    <Message icon="alert" title="Couldn't load this page">
-      <p>Something went wrong on our side, or your connection dropped. Please try again.</p>
-      <button type="button" className="btn" onClick={() => setAttempt((n) => n + 1)}>Try again</button>
-    </Message>
-  );
-  if (load === "gone" || !page) return <Message icon="link" title="This link isn't available"><p>It may have expired or been turned off. Reply to the email you got and we'll sort it out.</p></Message>;
+  if (load === "loading") return <PubSkeleton kind={KIND} label="Loading" two />;
+  if (load === "error") return <PubError kind={KIND} what="this page" onRetry={() => setAttempt((n) => n + 1)} />;
+  if (load === "gone" || !page) return <PubGone kind={KIND} />;
 
   if (booked) {
     const meet = safeMeetUrl(booked.meetUrl);
     return (
-      <Message icon="check" title="You're booked">
-        <p>{formatSlot(booked.start, zone)}, 20 minutes.</p>
+      <PubNotice kind={KIND} icon="check" tone="positive" title="You're booked">
+        <p><b style={{ color: "var(--text)", fontWeight: 500 }}>{formatSlot(booked.start, zone)}</b>, 20 minutes.</p>
         {meet && <a className="btn primary" href={meet} target="_blank" rel="noopener noreferrer"><Icon name="calendar" size={16} />Open the Meet link</a>}
-        <p className="bk-small">Need to change it? <a href={cancelPath(token, booked.cancelToken)}>Cancel this call</a> and pick another time. Keep this link.</p>
-      </Message>
+        <p className="pbx-fine">Need to change it? <a href={cancelPath(token, booked.cancelToken)}>Cancel this call</a> and pick another time. Keep this link.</p>
+      </PubNotice>
     );
   }
 
   if (page.existing) {
     return (
-      <Message icon="calendar" title="You already have a call booked">
+      <PubNotice kind={KIND} icon="calendar" tone="info" title="You already have a call booked">
         <p>{formatSlot(page.existing.start, zone)}. To change it, use the cancel link from your confirmation, then pick another time.</p>
-      </Message>
+      </PubNotice>
     );
   }
 
@@ -153,33 +126,44 @@ export default function Book({ token }: { token: string }) {
 
   const days = groupByDay(page.slots, zone);
   const ready = !!(start && name.trim() && email.trim() && topic.trim() && budgetId && timeline);
+  const missing = !start ? "Pick a time first." : !name.trim() || !email.trim() || !topic.trim() ? "Add your name, email and what you'd like to talk about." : !budgetId || !timeline ? "Choose a budget and when you want this done." : "";
   return (
-    <main className="rp">
-      <div className="rp-wrap rp-wrap-narrow bk-wrap">
-        <form className="rp-card" onSubmit={(e) => void submit(e)}>
-          <div className="rp-head">
-            <p className="rp-eyebrow">Book a call</p>
+    <main className="ds-page pbx">
+      <PubBar name={KIND} right={<span className="pbx-bar-meta hide-sm">20-minute video call</span>} />
+      <form className="pbx-grid" onSubmit={(e) => void submit(e)}>
+        <div className="pbx-col">
+          <section className="pbx-card pbx-intro">
+            <p className="pbx-eyebrow">Book a call</p>
             <h1>Pick a time for a 20-minute call</h1>
-            <p className="rp-based">Times are shown in your time zone ({zone}).</p>
-          </div>
-
-          <fieldset className="bk-days">
-            <legend>Choose a time</legend>
-            {days.map((d) => (
-              <div key={d.day} className="bk-day">
-                <h2>{dayHeading(d.slots[0], zone)}</h2>
-                <div className="bk-slots">
-                  {d.slots.map((s) => (
-                    <button key={s} type="button" className="bk-slot" aria-pressed={start === s} onClick={() => setStart(s)}>{timeOfDay(s, zone)}</button>
-                  ))}
+            <p className="pbx-lede">Times are shown in your time zone ({zone}).</p>
+          </section>
+          <section className="pbx-card tight">
+            <div className="pbx-card-head"><Tile icon="clock" tone="signal" /><div><h2>1 · Choose a time</h2><small>{page.slots.length} open {page.slots.length === 1 ? "time" : "times"} over the next {days.length} {days.length === 1 ? "day" : "days"}</small></div></div>
+            <fieldset className="pbx-days">
+              <legend className="pbx-sr">Choose a time</legend>
+              {days.map((d) => (
+                <div key={d.day} className="pbx-day">
+                  <h3>{dayHeading(d.slots[0], zone)}</h3>
+                  <div className="pbx-slots">
+                    {d.slots.map((s) => (
+                      <button key={s} type="button" className="pbx-slot" aria-pressed={start === s} onClick={() => setStart(s)}>{timeOfDay(s, zone)}</button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </fieldset>
+              ))}
+            </fieldset>
+          </section>
+        </div>
 
-          <div className="bk-form">
+        <aside className="pbx-card pbx-side tight" aria-label="Your details">
+          <div className="pbx-card-head"><Tile icon="user" tone="neutral" /><div><h2>2 · About you</h2><small>So the call is about what matters to you</small></div></div>
+          <div className={`pbx-picked${start ? " on" : ""}`}>
+            <Tile icon="calendar" tone={start ? "signal" : "neutral"} size={32} />
+            <div><b>{start ? formatSlot(start, zone) : "No time picked yet"}</b><small>{start ? "20 minutes, by video" : "Choose one of the open times"}</small></div>
+          </div>
+          <div className="pbx-form-1">
             {field("Your name", <input value={name} onChange={(e) => setName(e.target.value)} maxLength={100} autoComplete="name" required />)}
-            {field("Email", <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} maxLength={254} autoComplete="email" required />)}
+            {field("Email", <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} maxLength={254} autoComplete="email" required />, { hint: "We send your confirmation here." })}
             {field("Phone (optional)", <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} maxLength={30} autoComplete="tel" />)}
             {field("What would you like to talk about?", <textarea value={topic} onChange={(e) => setTopic(e.target.value)} maxLength={500} rows={3} required />)}
             {field("Rough budget", (
@@ -194,17 +178,17 @@ export default function Book({ token }: { token: string }) {
                 {page.timelineOptions.map((o) => <option key={o} value={o}>{o}</option>)}
               </select>
             ))}
-            <fieldset className="bk-radio">
+            <fieldset className="pbx-radios">
               <legend>Who decides on this?</legend>
-              <label><input type="radio" name="dm" checked={decisionMaker === "me"} onChange={() => setDecisionMaker("me")} />Just me</label>
-              <label><input type="radio" name="dm" checked={decisionMaker === "me_and_other"} onChange={() => setDecisionMaker("me_and_other")} />Me and someone else</label>
+              <label className="ds-check"><input type="radio" name="dm" checked={decisionMaker === "me"} onChange={() => setDecisionMaker("me")} /><span>Just me</span></label>
+              <label className="ds-check"><input type="radio" name="dm" checked={decisionMaker === "me_and_other"} onChange={() => setDecisionMaker("me_and_other")} /><span>Me and someone else</span></label>
             </fieldset>
           </div>
-
-          {error && <p className="error" role="alert">{error}</p>}
-          <button type="submit" className="btn primary bk-submit" disabled={!ready || busy}><Icon name="calendar" size={16} />{busy ? "Booking…" : start ? `Book ${timeOfDay(start, zone)}` : "Pick a time"}</button>
-        </form>
-      </div>
+          {error && <p className="pbx-error" role="alert">{error}</p>}
+          <button type="submit" className="btn primary pbx-go" disabled={!ready || busy}><Icon name="calendar" size={16} />{busy ? "Booking…" : start ? `Book ${timeOfDay(start, zone)}` : "Pick a time"}</button>
+          {!ready && missing && <p className="pbx-fine">{missing}</p>}
+        </aside>
+      </form>
     </main>
   );
 }
