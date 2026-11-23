@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError } from "../api";
 import BulkBar from "../components/BulkBar";
@@ -27,6 +27,26 @@ function value(r: LeadRow, k: Exclude<Key, "fit">): string | number {
     case "status": return r.business.lead_status;
     case "follow": return r.business.follow_up_at ?? "9999";
   }
+}
+
+/**
+ * A toolbar dropdown: a pill holding a caption, the native select (sized to its value) and a chevron. The select alone is only a small part of
+ * the pill, so a click anywhere else on it (the caption, the chevron, the padding) would just focus the select; open its menu instead.
+ */
+function FilterSelect({ label, on, value, onChange, children }: { label: string; on: boolean; value: string; onChange: (v: string) => void; children: ReactNode }) {
+  const select = useRef<HTMLSelectElement>(null);
+  const openMenu = (e: MouseEvent<HTMLLabelElement>) => {
+    const s = select.current;
+    if (!s || e.target === s) return;
+    e.preventDefault(); // otherwise the label forwards a second click to the select, which closes the menu again
+    s.focus();
+    try { s.showPicker(); } catch { /* showPicker needs a recent browser; the select is still focused, so Space/Enter/arrows work */ }
+  };
+  return (
+    <label className={`filter${on ? " on" : ""}`} onClick={openMenu}><span>{label}</span>
+      <select ref={select} value={value} onChange={(e) => onChange(e.target.value)} aria-label={label}>{children}</select>
+      <Icon name="chevron-down" size={14} /></label>
+  );
 }
 
 /**
@@ -113,22 +133,18 @@ export default function LeadTable({ rows, filters, onFiltersChange, bulk, onTagC
         <label className="search-box"><Icon name="search" size={14} />
           <input type="search" placeholder="Search name, website, town…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search leads" />
         </label>
-        <label className={`filter${niche ? " on" : ""}`}><span>Industry</span>
-          <select value={niche} onChange={(e) => setNiche(e.target.value)} aria-label="Industry">
-            <option value="">All</option>{niches.map((n) => <option key={n} value={n}>{NICHE_LABEL[n] ?? n}</option>)}
-          </select><Icon name="chevron-down" size={14} /></label>
-        <label className={`filter${f.offer !== "any" ? " on" : ""}`}><span>Offer</span>
-          <select value={f.offer} onChange={(e) => set({ offer: e.target.value as LeadFilters["offer"] })} aria-label="Offer">
-            <option value="any">Any</option>{OFFERS.map((o) => <option key={o} value={o}>{OFFER_LABEL[o] ?? o}</option>)}
-          </select><Icon name="chevron-down" size={14} /></label>
-        <label className={`filter${f.platform !== "any" ? " on" : ""}`}><span>Platform</span>
-          <select value={f.platform} onChange={(e) => set({ platform: e.target.value })} aria-label="Platform">
-            <option value="any">Any</option>{platforms.map((p) => <option key={p} value={p}>{PLATFORM_LABEL[p] ?? p}</option>)}<option value={NOT_CRAWLED}>Not crawled</option>
-          </select><Icon name="chevron-down" size={14} /></label>
-        <label className={`filter${f.website !== "any" ? " on" : ""}`}><span>Website</span>
-          <select value={f.website} onChange={(e) => set({ website: e.target.value as LeadFilters["website"] })} aria-label="Website">
-            <option value="any">Any</option><option value="yes">Has website</option><option value="no">No website</option>
-          </select><Icon name="chevron-down" size={14} /></label>
+        <FilterSelect label="Industry" on={!!niche} value={niche} onChange={setNiche}>
+          <option value="">All</option>{niches.map((n) => <option key={n} value={n}>{NICHE_LABEL[n] ?? n}</option>)}
+        </FilterSelect>
+        <FilterSelect label="Offer" on={f.offer !== "any"} value={f.offer} onChange={(v) => set({ offer: v as LeadFilters["offer"] })}>
+          <option value="any">Any</option>{OFFERS.map((o) => <option key={o} value={o}>{OFFER_LABEL[o] ?? o}</option>)}
+        </FilterSelect>
+        <FilterSelect label="Platform" on={f.platform !== "any"} value={f.platform} onChange={(v) => set({ platform: v })}>
+          <option value="any">Any</option>{platforms.map((p) => <option key={p} value={p}>{PLATFORM_LABEL[p] ?? p}</option>)}<option value={NOT_CRAWLED}>Not crawled</option>
+        </FilterSelect>
+        <FilterSelect label="Website" on={f.website !== "any"} value={f.website} onChange={(v) => set({ website: v as LeadFilters["website"] })}>
+          <option value="any">Any</option><option value="yes">Has website</option><option value="no">No website</option>
+        </FilterSelect>
         <button className="ghost" aria-expanded={more} aria-controls="more-filters" onClick={() => setMore((m) => !m)}><Icon name="plus" size={14} />More filters{extraCount ? ` (${extraCount})` : ""}</button>
         <span className="grow" />
         <label className="switch"><input type="checkbox" role="switch" checked={f.hideSkipped} onChange={(e) => set({ hideSkipped: e.target.checked })} /><i aria-hidden="true" /><span>Hide skipped</span></label>
