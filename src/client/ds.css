@@ -280,3 +280,7 @@
 .ds-wait[aria-pressed=true] .ds-wait-key { background:rgb(255 255 255 / .16); color:#fff; }
 .ds-step-form { padding:18px; border-top:1px solid var(--border); background:var(--bg-surface); }
 .ds-table thead th, .ds-table td, .ds-table tbody th { vertical-align:middle; }
+
+/* The panel is the positioning box for everything in it, so absolutely placed helpers (screen-reader text, hidden
+   switch inputs, menus) stay inside its scroll area instead of stretching the whole window. */
+.panel { position:relative; }
