@@ -35,6 +35,7 @@ const FULL: Record<string, string> = {
   business: "We fix pipes for homeowners.", top_services: "Drain cleaning, water heaters, repipes.", service_area: "Tacoma and Gig Harbor",
   different: "We answer the phone.", sites_you_like: "example.com for its clear layout.", voice_words: "plain, friendly, careful",
   brand_assets: "A logo only", who_updates: "I will", contact_times: "Weekdays after 3",
+  ideal_customer: "Homeowners with older houses.", visitor_actions: "Call us first, then request a quote.", pages_wanted: "Home, About, Drains, Water heaters, Contact", competitor_sites: "example.com is clear, but its quote form is long.", look_and_feel: "Clean and simple, warm and local.", public_details: "Ace Plumbing, 12 Main St, 555-0100, hello@ace.test, Mon to Fri 8 to 5",
 };
 
 /** A lead with a deal, a draft document (the onboarding hangs off all three) and an onboarding; the welcome is sent `welcomeAgoDays` ago when given. */
@@ -114,7 +115,7 @@ describe("the page", () => {
   it("a light onboarding asks only its own questions and has no items", async () => {
     const a = await seed({ kind: "light", items: [] });
     const page = await (await get(a.token)).json<any>();
-    expect(page.questionnaire.questions.map((q: { id: string }) => q.id)).toEqual(QUESTIONS.filter((q) => q.kinds.includes("light")).map((q) => q.id));
+    expect(page.questionnaire.questions.map((q: { id: string }) => q.id)).toEqual(["business", "top_services", "service_area", "different", "sites_you_like", "voice_words", "how_found"]);
     expect(page.items).toEqual([]);
   });
 
@@ -269,7 +270,7 @@ describe("submit", () => {
     expect(res.status).toBe(400);
     const body = await res.json<{ error: string; fields: string[] }>();
     expect(body.error).toBe("invalid body");
-    expect(body.fields).toEqual(["top_services", "service_area", "different", "sites_you_like", "voice_words", "brand_assets", "who_updates", "contact_times"]);
+    expect(body.fields).toEqual(["top_services", "service_area", "different", "sites_you_like", "voice_words", "ideal_customer", "visitor_actions", "pages_wanted", "who_updates", "competitor_sites", "look_and_feel", "brand_assets", "public_details", "contact_times"]);
     expect((await getOnboarding(env.DB, a.id))!.questionnaireSubmittedAt).toBeNull();
     expect(await rows(a.businessId, "onboarding_submitted")).toEqual([]);
   });

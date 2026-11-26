@@ -78,7 +78,8 @@ const upload = (token: string, itemId: string, bytes: Uint8Array, name: string, 
 
 /** The six questions every client answers, then the rest of the required ones for a site build. */
 const FIRST = { business: "We fix pipes for homes in town.", top_services: "Drains, water heaters, repipes.", service_area: "Springfield and the county" };
-const REST = { different: "We show up when we say.", sites_you_like: "Example one, example two, example three", voice_words: "plain, friendly, fast", brand_assets: "A logo only", who_updates: "I would like you to do it", contact_times: "Weekdays after four, text" };
+const REST = { different: "We show up when we say.", sites_you_like: "Example one, example two, example three", voice_words: "plain, friendly, fast", brand_assets: "A logo only", who_updates: "I would like you to do it", contact_times: "Weekdays after four, text",
+  ideal_customer: "Homeowners with older houses.", visitor_actions: "Call us first, then request a quote.", pages_wanted: "Home, About, Drains, Water heaters, Contact", competitor_sites: "example.com is clear, but its quote form is long.", look_and_feel: "Clean and simple, warm and local.", public_details: "Ace Plumbing, 12 Main St, 555-0100, hello@ace.test, Mon to Fri 8 to 5" };
 
 describe("onboarding, end to end", () => {
   it("a paid Starter proposal runs from welcome to collected items, a Friday update and a client who goes quiet and comes back", async () => {
@@ -123,7 +124,7 @@ describe("onboarding, end to end", () => {
     expect((await client(o.token, "PUT", "/answers", { answers: FIRST })).status).toBe(200);
     const early = await client(o.token, "POST", "/submit");
     expect(early.status).toBe(400);
-    expect(await early.json()).toEqual({ error: "invalid body", fields: ["different", "sites_you_like", "voice_words", "brand_assets", "who_updates", "contact_times"] });
+    expect(await early.json()).toEqual({ error: "invalid body", fields: ["different", "sites_you_like", "voice_words", "ideal_customer", "visitor_actions", "pages_wanted", "who_updates", "competitor_sites", "look_and_feel", "brand_assets", "public_details", "contact_times"] });
     expect((await getOnboardingForDeal(env.DB, a.dealId))!.questionnaireSubmittedAt).toBeNull();
 
     expect((await client(o.token, "PUT", "/answers", { answers: REST })).status).toBe(200);

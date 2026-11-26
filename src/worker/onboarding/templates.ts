@@ -10,7 +10,10 @@ export interface Question {
 
 const BOTH: OnboardingKind[] = ["build", "light"], BUILD: OnboardingKind[] = ["build"];
 
-/** The first six go to every client; the rest are for site builds. The order is the order the form shows them. */
+/**
+ * The first six and `how_found` go to every client; the rest are for site builds. The order is the order the form shows them: the business and the
+ * customer, what the site has to do, how it should look, then the details that go on it.
+ */
 export const QUESTIONS: Question[] = [
   { id: "business", label: "What does your business do, and who do you do it for?", help: "Two or three sentences, as you would explain it to a new neighbor.", type: "long", required: true, kinds: BOTH },
   { id: "top_services", label: "Which three services make you the most money?", help: "Put the biggest first. Your best sellers are the ones the site should push.", type: "long", required: true, kinds: BOTH },
@@ -18,14 +21,26 @@ export const QUESTIONS: Question[] = [
   { id: "different", label: "What makes you different from the other shops in your area?", help: "Think about why customers pick you and why they come back.", type: "long", required: true, kinds: BOTH },
   { id: "sites_you_like", label: "Name three websites you like, and say what you like about each.", help: "They do not have to be in your industry. A link and a few words each is plenty.", type: "long", required: true, kinds: BOTH },
   { id: "voice_words", label: "Which three or four words should the site sound like?", help: "For example: friendly, plain-spoken, careful, fast.", type: "short", required: true, kinds: BOTH },
+  { id: "ideal_customer", label: "Who is your best customer?", help: "What do they look like, and what do they need when they call you? If there is a kind of customer or job you would rather not get, say so here too.", type: "long", required: true, kinds: BUILD },
+  { id: "supporting_services", label: "Which smaller services should be on the site without much emphasis?", help: "Things you do but do not want to be known for. A short list is fine.", type: "long", required: false, kinds: BUILD },
+  { id: "proof_stats", label: "Are there any numbers worth showing?", help: "Years in business, jobs completed, licenses, awards, a warranty. Only what is true and easy to check.", type: "long", required: false, kinds: BUILD },
+  { id: "customer_questions", label: "What do customers ask you most before they hire you?", help: "These make good answers for the site itself.", type: "long", required: false, kinds: BUILD },
+  { id: "visitor_actions", label: "When someone lands on your site, what do you want them to do?", help: "Call, request a quote, book, order or fill in a form. If there is more than one, put them in order. This sets the main button on every page.", type: "long", required: true, kinds: BUILD },
+  { id: "key_info", label: "What should a visitor be able to find without calling you?", help: "For example hours, a service area map, pricing, past work, financing or certifications.", type: "long", required: false, kinds: BUILD },
+  { id: "pages_wanted", label: "Which pages do you want on the site?", help: "For example Home, About, a page for each main service, and Contact. Starter is up to 5 pages and Growth is up to 12. Extra pages are quoted separately.", type: "long", required: true, kinds: BUILD },
+  { id: "update_pages", label: "Which parts of the site will change often?", help: "A project gallery, specials, a blog, job openings, a menu. If nothing will change much, say so.", type: "long", required: false, kinds: BUILD },
+  { id: "who_updates", label: "Who will update the site after it launches?", type: "choice", options: ["I will", "Someone on my team", "I would like you to do it", "I am not sure yet"], required: true, kinds: BUILD },
+  { id: "competitor_sites", label: "Name two or three competitor sites in your area. What do you like about each, and what would you change?", help: "A link and a sentence each is plenty. Complaints are welcome here.", type: "long", required: true, kinds: BUILD },
+  { id: "look_and_feel", label: "How would you describe the look you want?", help: "For example clean and simple, bold and colorful, traditional and trustworthy, or warm and local. Words or a comparison to something you have seen both work.", type: "long", required: true, kinds: BUILD },
   { id: "brand_assets", label: "Do you already have a logo and brand colors?", type: "choice", options: ["Yes, both", "A logo only", "Colors only", "No, I have neither"], required: true, kinds: BUILD },
   { id: "brand_notes", label: "Any colors or styles you love or want to avoid?", type: "short", required: false, kinds: BUILD },
-  { id: "who_updates", label: "Who will update the site after it launches?", type: "choice", options: ["I will", "Someone on my team", "I would like you to do it", "I am not sure yet"], required: true, kinds: BUILD },
   { id: "avoid", label: "Is there anything you do not want on the site?", help: "A word, a photo style, a service you no longer offer, a competitor you do not want to look like.", type: "long", required: false, kinds: BUILD },
-  { id: "customer_questions", label: "What do customers ask you most before they hire you?", help: "These make good answers for the site itself.", type: "long", required: false, kinds: BUILD },
+  { id: "public_details", label: "Which business details should show on the site?", help: "Your business name as it should appear, your public address (or say service area only), the phone number customers should call, the email address customers should write to, and your hours. Add 24/7 emergency if that applies.", type: "long", required: true, kinds: BUILD },
+  { id: "domain_owner", label: "Who registered your domain name?", help: "A name only, such as the company or person you paid. Do not type any login or password.", type: "short", required: false, kinds: BUILD },
+  { id: "business_emails", label: "Do you have business email on your domain?", help: "For example you@yourbusiness.com. Say yes, no or not sure, and which company runs it. Do not type any login or password.", type: "short", required: false, kinds: BUILD },
   { id: "launch_date", label: "Is there a date the site has to be live by?", help: "Leave this blank if there is no deadline.", type: "short", required: false, kinds: BUILD },
   { id: "contact_times", label: "When is the best time to reach you?", help: "Days and hours, and whether you prefer a call, a text or an email.", type: "short", required: true, kinds: BUILD },
-  { id: "domain_owner", label: "Who registered your domain name?", help: "A name only, such as the company or person you paid. Do not type any login or password.", type: "short", required: false, kinds: BUILD },
+  { id: "how_found", label: "How did you hear about me?", help: "Optional. It helps me know who to thank.", type: "short", required: false, kinds: BOTH },
 ];
 
 /** The six access items are keyed `access_<site access key>`: hosting, dns, registrar, admin, gbp, analytics. */
