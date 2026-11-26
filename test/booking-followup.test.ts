@@ -1,5 +1,5 @@
 import { env, SELF } from "cloudflare:test";
-import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import worker from "../src/worker/index";
 import { setBookingDeps } from "../src/worker/booking/deps";
 import { cancelByToken, createVisitorBooking } from "../src/worker/booking/create";
@@ -24,6 +24,9 @@ let out: OutboundMessage[] = [];
 const MAIN = { enabled: 1 as const, smtp_host: "smtp.main.test", smtp_port: 465, imap_host: "imap.main.test", imap_port: 993, username: "logan@main.test", from_email: "logan@main.test", from_name: "Logan" };
 
 beforeEach(async () => {
+  // The routes read the real clock; the fixture slots are in November 2026, so pin Date to NOW or they drift into the past.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(NOW);
   await resetBookingTables();
   await env.DB.batch(["claude_tasks", "contacts", "messages"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
   google = fakeGoogle();
@@ -33,7 +36,7 @@ beforeEach(async () => {
   await saveMailbox(env.DB, "main", MAIN);
   await bookingOn();
 });
-afterEach(async () => { setBookingDeps(null); setMailDeps(null); await saveMailbox(env.DB, "main", { enabled: 0, smtp_host: "", from_email: "" }); });
+afterEach(async () => { vi.useRealTimers(); setBookingDeps(null); setMailDeps(null); await saveMailbox(env.DB, "main", { enabled: 0, smtp_host: "", from_email: "" }); });
 
 /** A lead that booked its discovery call from the report page (so it has the deal, the booking and the Meet link), as the visitor path makes them. */
 async function bookedLead() {
