@@ -258,8 +258,10 @@ cd ~/.siteline-helper && npm install hyperframes@0.9.69      # and set "hyperfra
 ```
 
 It also needs Google Chrome (or `hyperframes browser`), ffmpeg, and **internet on every render**: the page loads GSAP from jsdelivr (pinned to an exact
-version and checked with a Subresource Integrity hash, so a changed file is refused; GSAP is not bundled). The page itself uses system fonts only and asks
-no font service for anything, but HyperFrames' own compiler maps every font family to a web font (Inter) and downloads it from Google Fonts the first time
-(then it reads `~/.cache/hyperframes/fonts`), so the very first render on a Mac needs Google Fonts reachable too.
+version and checked with a Subresource Integrity hash, so a changed file is refused; GSAP is not bundled). The scenes are in the Siteline look (`src/render/siteline.ts`:
+night title and end cards with the flow-line graphic, paper number scenes, Geist and Geist Mono). The two fonts are embedded in the page as base64 `@font-face`
+(read from `src/worker/brand/fontData.ts` in this repo, which is why the helper must run from the repo checkout), so the page asks no font service for anything. **Not yet verified:**
+whether HyperFrames' own compiler keeps those embedded fonts or swaps in a web font it downloads itself (it did that for the earlier system-font page: Inter, from Google Fonts, cached in
+`~/.cache/hyperframes/fonts`). Check the first real render: if the numbers are not in Geist Light (a plain, heavier sans), the compiler replaced them. Geist is also on Google Fonts, so with Google Fonts reachable the look should survive either way.
 The helper switches HyperFrames' own usage reporting off for every render. If a newer HyperFrames changes a flag, the command line is written in one place:
 `hyperframesArgs` in `src/render/render.ts`. `doctor` shows the installed version.

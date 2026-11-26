@@ -22,8 +22,26 @@ export function useNoIndex(title: string) {
   }, [title]);
 }
 
-/** The page's top bar: the mark, what this page is (or who sent it), and on the right who it is for and its state. */
-export function PubBar({ name, right }: { name: string; right?: ReactNode }) {
+const SL_NAME = "Siteline";
+const SL_SITE = "sitelineweb.com";
+
+/**
+ * The page's top bar: the mark, what this page is (or who sent it), and on the right who it is for and its state.
+ * `sl` is the Siteline masthead the client reports wear (wordmark with a mint dot, the site in mono); the page name is then the header's label, not shown, because the title block says it.
+ */
+export function PubBar({ name, right, sl = false }: { name: string; right?: ReactNode; sl?: boolean }) {
+  if (sl) {
+    return (
+      <header className="pbx-bar sl-bar" aria-label={name}>
+        <div className="pbx-bar-in">
+          <span className="sl-mark">{SL_NAME}<i aria-hidden="true" /></span>
+          <span className="pbx-grow" />
+          {right}
+          <span className="sl-contact">{SL_SITE}</span>
+        </div>
+      </header>
+    );
+  }
   return (
     <header className="pbx-bar">
       <div className="pbx-bar-in">
@@ -42,10 +60,10 @@ export function Tile({ icon, tone = "neutral", size = 36 }: { icon: IconName; to
 }
 
 /** A page that is only a message: link gone, load failed, closed, booked. */
-export function PubNotice({ kind, icon, tone = "neutral", title, children }: { kind: string; icon: IconName; tone?: Tone; title: string; children?: ReactNode }) {
+export function PubNotice({ kind, icon, tone = "neutral", title, children, sl = false }: { kind: string; icon: IconName; tone?: Tone; title: string; children?: ReactNode; sl?: boolean }) {
   return (
-    <main className="ds-page pbx">
-      <PubBar name={kind} />
+    <main className={`ds-page pbx${sl ? " rp-sl" : ""}`}>
+      <PubBar name={kind} sl={sl} />
       <div className="pbx-narrow">
         <section className="pbx-card pbx-notice">
           <Tile icon={icon} tone={tone} size={44} />
@@ -58,28 +76,28 @@ export function PubNotice({ kind, icon, tone = "neutral", title, children }: { k
 }
 
 /** The usual "couldn't load" and "link gone" pages, worded the same everywhere. */
-export function PubError({ kind, what, onRetry }: { kind: string; what: string; onRetry: () => void }) {
+export function PubError({ kind, what, onRetry, sl = false }: { kind: string; what: string; onRetry: () => void; sl?: boolean }) {
   return (
-    <PubNotice kind={kind} icon="alert" tone="warning" title={`Couldn't load ${what}`}>
+    <PubNotice kind={kind} icon="alert" tone="warning" sl={sl} title={`Couldn't load ${what}`}>
       <p>Something went wrong on our side, or your connection dropped. Please try again.</p>
       <button type="button" className="btn primary" onClick={onRetry}><Icon name="refresh" size={16} />Try again</button>
     </PubNotice>
   );
 }
 
-export function PubGone({ kind, title = "This link isn't available", children }: { kind: string; title?: string; children?: ReactNode }) {
+export function PubGone({ kind, title = "This link isn't available", children, sl = false }: { kind: string; title?: string; children?: ReactNode; sl?: boolean }) {
   return (
-    <PubNotice kind={kind} icon="link" title={title}>
+    <PubNotice kind={kind} icon="link" title={title} sl={sl}>
       {children ?? <p>It may have expired or been turned off. Reply to the email you got and we'll sort it out.</p>}
     </PubNotice>
   );
 }
 
 /** The loading page: the bar and grey blocks the shape of what is coming. `two` draws the main column and a side card. */
-export function PubSkeleton({ kind, label, two = false }: { kind: string; label: string; two?: boolean }) {
+export function PubSkeleton({ kind, label, two = false, sl = false }: { kind: string; label: string; two?: boolean; sl?: boolean }) {
   return (
-    <main className="ds-page pbx" aria-busy="true">
-      <PubBar name={kind} />
+    <main className={`ds-page pbx${sl ? " rp-sl" : ""}`} aria-busy="true">
+      <PubBar name={kind} sl={sl} />
       <div className={two ? "pbx-grid" : "pbx-wrap"} role="status" aria-label={label}>
         <div className="pbx-col"><span className="pbx-sk" style={{ height: 210 }} /><span className="pbx-sk" style={{ height: 300 }} /></div>
         {two && <span className="pbx-sk" style={{ height: 420 }} />}
@@ -95,6 +113,16 @@ export function PubContact({ text = "Reply to the email this came with. It comes
       <Tile icon="mail" tone="neutral" size={36} />
       <div><b>Questions?</b><p>{text}</p></div>
     </section>
+  );
+}
+
+/** The foot of a Siteline-themed page: a short rule, then who it was prepared for. Every word is React text. */
+export function PubFooter({ client }: { client?: string | null }) {
+  return (
+    <footer className="sl-foot">
+      <p>© {new Date().getFullYear()} {SL_NAME}{client ? ` · Prepared for ${client}` : ""} · Confidential</p>
+      <p>{SL_SITE}</p>
+    </footer>
   );
 }
 

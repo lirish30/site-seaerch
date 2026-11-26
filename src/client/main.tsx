@@ -24,6 +24,7 @@ import "./screens/sales.css";
 import "./screens/approvals.css";
 import "./screens/care.css";
 import "./screens/public-os.css";
+import "./screens/public-sl.css";
 import "./screens/home-os.css";
 import "./screens/settings-os.css";
 

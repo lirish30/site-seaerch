@@ -172,7 +172,7 @@ describe("deck routes", () => {
     const html = await res.text();
     const imgs = [...html.matchAll(/<img [^>]*src="(data:image\/jpeg;base64,[^"]+)"/g)].map((m) => m[1]);
     expect(imgs).toEqual([`data:image/jpeg;base64,${btoa(String.fromCharCode(...small))}`]); // s1 only: s2 is too big, s3 is not in R2
-    expect(html).toContain("Three things I found on your site.");
+    expect(html).toContain('Three things I found on your <span class="sl-hl">site.</span>');
   });
 
   it("freeze re-snapshots the options' packages at today's prices and stamps the time", async () => {

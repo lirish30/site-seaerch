@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { Facts, PubBar, PubContact, PubError, PubGone, PubNote, PubSkeleton, Tile, useNoIndex } from "../components/PublicPage";
+import { Facts, PubBar, PubContact, PubError, PubFooter, PubGone, PubNote, PubSkeleton, Tile, useNoIndex } from "../components/PublicPage";
 import ReportVideo from "../components/ReportVideo";
 import TrafficSection from "../components/TrafficSection";
 import { publicSeoReport } from "../api";
@@ -40,9 +40,9 @@ export default function SeoReportPage() {
     return () => { cancelled = true; };
   }, [token, attempt]);
 
-  if (load === "loading") return <PubSkeleton kind={KIND} label="Loading your report" />;
-  if (load === "error") return <PubError kind={KIND} what="your report" onRetry={() => setAttempt((n) => n + 1)} />;
-  if (load === "gone" || !page) return <PubGone kind={KIND} />;
+  if (load === "loading") return <PubSkeleton kind={KIND} label="Loading your report" sl />;
+  if (load === "error") return <PubError kind={KIND} what="your report" onRetry={() => setAttempt((n) => n + 1)} sl />;
+  if (load === "gone" || !page) return <PubGone kind={KIND} sl />;
 
   const v = seoReportPageView(page, { summary: page.summary, recommendation: page.recommendation, priorities: page.priorities });
   const sent = dayLabel(page.sentOn);
@@ -51,15 +51,17 @@ export default function SeoReportPage() {
   const glance = seoGlance(page);
 
   return (
-    <main className="ds-page pbx">
-      <PubBar name={KIND} right={<>
-        {page.clientName && <span className="pbx-bar-meta hide-sm">For {page.clientName}</span>}
-        {sent && <span className="ds-chip outline">Sent {sent}</span>}
-      </>} />
+    <main className="ds-page pbx rp-sl">
+      <PubBar name={KIND} sl />
       <div className="pbx-wrap">
         <article className="pbx-card pbx-intro">
-          <p className="pbx-eyebrow">Local SEO report{page.clientName ? ` for ${page.clientName}` : ""}</p>
-          <h1>{page.label}</h1>
+          <header className="sl-cover">
+            <p className="pbx-eyebrow">Local SEO report</p>
+            <h1>{page.label}</h1>
+            {page.clientName && <p className="sl-for">Prepared for: {page.clientName}</p>}
+            <hr className="sl-rule" />
+            {sent && <p className="sl-date">Sent {sent}</p>}
+          </header>
           <p className="pbx-lede">Where you showed on Google this month, what we published and what we will work on next.</p>
           <div className="pbx-strip">
             <b>{glance.headline}</b>
@@ -132,6 +134,7 @@ export default function SeoReportPage() {
         {traffic && <TrafficSection view={traffic} />}
 
         <PubContact />
+        <PubFooter client={page.clientName} />
       </div>
     </main>
   );
