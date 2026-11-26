@@ -43,11 +43,46 @@ describe("item templates", () => {
 });
 
 describe("questions", () => {
-  it("light kinds get the first 6 and build gets all", () => {
-    expect(questionsFor("light").map((q) => q.id)).toEqual(QUESTIONS.slice(0, 6).map((q) => q.id));
+  it("light kinds get the original six and how_found, and build gets all", () => {
+    expect(questionsFor("light").map((q) => q.id)).toEqual([...QUESTIONS.slice(0, 6).map((q) => q.id), "how_found"]);
     expect(questionsFor("build").length).toBe(QUESTIONS.length);
-    expect(QUESTIONS.length).toBeGreaterThanOrEqual(13);
+    expect(QUESTIONS.length).toBe(26);
     expect(new Set(QUESTIONS.map((q) => q.id)).size).toBe(QUESTIONS.length);
+  });
+
+  it("the discovery questions are on the build form, and only how_found also reaches light", () => {
+    const added = ["ideal_customer", "supporting_services", "proof_stats", "visitor_actions", "key_info", "pages_wanted", "update_pages", "competitor_sites", "look_and_feel", "public_details", "business_emails", "how_found"];
+    const required = ["ideal_customer", "visitor_actions", "pages_wanted", "competitor_sites", "look_and_feel", "public_details"];
+    const byId = new Map(QUESTIONS.map((q) => [q.id, q] as const));
+    for (const id of added) {
+      const q = byId.get(id);
+      expect(q, id).toBeDefined();
+      expect(q!.required, id).toBe(required.includes(id));
+      expect(q!.kinds, id).toEqual(id === "how_found" ? ["build", "light"] : ["build"]);
+      expect(q!.label.trim().length, id).toBeGreaterThan(0);
+      expect(`${q!.label} ${q!.help ?? ""}`, id).not.toMatch(/[\u2014!]/);
+    }
+    expect(byId.get("pages_wanted")!.help).toMatch(/Starter is up to 5 pages, Growth is up to 12|Starter is up to 5 pages and Growth is up to 12/);
+    expect(byId.get("pages_wanted")!.help).toContain("Extra pages are quoted separately");
+    expect(`${byId.get("pages_wanted")!.help}`).not.toMatch(/\$/);
+  });
+
+  it("each new required question blocks submit when blank, for a build and not for a light onboarding", () => {
+    for (const id of ["ideal_customer", "visitor_actions", "pages_wanted", "competitor_sites", "look_and_feel", "public_details"]) {
+      const blank = validateAnswers("build", { [id]: "   " }, { requireAll: true });
+      expect(blank.problems.some((p) => p.startsWith(`${id}:`)), id).toBe(true);
+      expect(validateAnswers("build", { [id]: "An answer." }, { requireAll: true }).problems.some((p) => p.startsWith(`${id}:`)), id).toBe(false);
+      // A light form does not ask it: an answer is an unknown id.
+      expect(validateAnswers("light", { [id]: "An answer." }, { requireAll: false }).problems.length, id).toBe(1);
+    }
+    // The optional new ones never block, and how_found is accepted on both forms.
+    const optional = validateAnswers("build", {}, { requireAll: true }).problems.map((p) => p.split(":")[0]);
+    for (const id of ["supporting_services", "proof_stats", "key_info", "update_pages", "business_emails", "how_found"]) expect(optional).not.toContain(id);
+    expect(validateAnswers("light", { how_found: "A neighbor told me." }, { requireAll: false }).problems).toEqual([]);
+  });
+
+  it("the business email question refuses a typed login like every other answer", () => {
+    expect(validateAnswers("build", { business_emails: "Google, password: hunter2hunter2" }, { requireAll: false }).problems).toEqual(["business_emails: this looks like a login or password. Please never send those here; remove it."]);
   });
 
   it("required questions block submit", () => {
