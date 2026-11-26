@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import Icon from "../components/Icon";
-import { PubBar, PubContact, PubError, PubGone, PubSkeleton, Tile, useNoIndex } from "../components/PublicPage";
+import { PubBar, PubContact, PubError, PubFooter, PubGone, PubSkeleton, Tile, useNoIndex } from "../components/PublicPage";
 import TrafficSection from "../components/TrafficSection";
 import { publicStrategyMemo } from "../api";
 import { dayLabel } from "../careReportPageView";
@@ -37,24 +37,26 @@ export default function StrategyMemoPage() {
     return () => { cancelled = true; };
   }, [token, attempt]);
 
-  if (load === "loading") return <PubSkeleton kind={KIND} label="Loading your plan" />;
-  if (load === "error") return <PubError kind={KIND} what="your plan" onRetry={() => setAttempt((n) => n + 1)} />;
-  if (load === "gone" || !page) return <PubGone kind={KIND} />;
+  if (load === "loading") return <PubSkeleton kind={KIND} label="Loading your plan" sl />;
+  if (load === "error") return <PubError kind={KIND} what="your plan" onRetry={() => setAttempt((n) => n + 1)} sl />;
+  if (load === "gone" || !page) return <PubGone kind={KIND} sl />;
 
   const prepared = dayLabel(page.sentAt);
   const monthLine = trafficMonthLine(page.traffic?.period);
   const traffic = trafficView(page.traffic ? { search: page.traffic.search, visits: page.traffic.visits } : undefined, { positionLabel: "Average position in Google Search" });
 
   return (
-    <main className="ds-page pbx">
-      <PubBar name={KIND} right={<>
-        {page.clientName && <span className="pbx-bar-meta hide-sm">For {page.clientName}</span>}
-        {prepared && <span className="ds-chip outline">Prepared {prepared}</span>}
-      </>} />
+    <main className="ds-page pbx rp-sl">
+      <PubBar name={KIND} sl />
       <div className="pbx-wrap">
         <article className="pbx-card pbx-intro">
-          <p className="pbx-eyebrow">Strategy memo{page.clientName ? ` for ${page.clientName}` : ""}</p>
-          <h1>Where you stand and what we would do first</h1>
+          <header className="sl-cover">
+            <p className="pbx-eyebrow">Strategy memo</p>
+            <h1>Where you stand and <span className="sl-hl">what we would do first</span></h1>
+            {page.clientName && <p className="sl-for">Prepared for: {page.clientName}</p>}
+            <hr className="sl-rule" />
+            {prepared && <p className="sl-date">Prepared {prepared}</p>}
+          </header>
           <p className="pbx-text">{page.body.standing}</p>
           <div className="pbx-strip">
             <b>Three priorities, in order, and {page.body.needFromYou.length} things we need from you</b>
@@ -65,7 +67,7 @@ export default function StrategyMemoPage() {
         {page.body.priorities.map((p, i) => (
           <article key={i} className={`pbx-card tight${i === 0 ? " edge signal" : ""}`} aria-label={p.title}>
             <div className="pbx-card-head">
-              <span className="pbx-tile" style={{ width: 36, height: 36, ...(i === 0 ? { background: "var(--signal)", color: "#fff" } : {}) }} aria-hidden="true"><b style={{ font: "600 15px/1 var(--font-mono)" }}>{i + 1}</b></span>
+              <span className={`pbx-tile pbx-num${i === 0 ? " first" : ""}`} style={{ width: 36, height: 36 }} aria-hidden="true"><b>{i + 1}</b></span>
               <div><h2>{p.title}</h2>{i === 0 && <small>Start here</small>}</div>
             </div>
             <p className="pbx-text">{p.why}</p>
@@ -83,6 +85,7 @@ export default function StrategyMemoPage() {
         {traffic && <TrafficSection view={traffic} intro={monthLine} />}
 
         <PubContact />
+        <PubFooter client={page.clientName} />
       </div>
     </main>
   );

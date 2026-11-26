@@ -27,7 +27,8 @@ describe("renderDeckHtml", () => {
       expect(h).not.toContain("<script>steal()");
       expect(h).not.toContain("<b>t</b>");
       expect(h).not.toContain("javascript:");
-      expect(h).toContain("&lt;script&gt;alert(1)&lt;/script&gt; &amp; &quot;Sons&#39;");
+      // The headline's last word sits in the accent span; the text around it is still escaped.
+      expect(h).toContain(`&lt;script&gt;alert(1)&lt;/script&gt; &amp; <span class="sl-hl">&quot;Sons&#39;</span>`);
       expect(h).toContain("<title>&lt;title&gt;x&lt;/title&gt;</title>");
     }
     // The only script in the screen output is the deck's own.
@@ -61,7 +62,8 @@ describe("renderDeckHtml", () => {
       expect(h).not.toContain('src="//');
       expect(h).not.toMatch(/<link\b/i);
       expect(h).not.toMatch(/@import/);
-      expect(h).not.toMatch(/url\(/);
+      // The only url() is the embedded Geist font (a data: URI), never a request.
+      expect(h).not.toMatch(/url\((?!data:font\/woff2;base64,)/);
       expect([...h.matchAll(/<img [^>]*src="([^"]*)"/g)].every((m) => m[1].startsWith("data:image/"))).toBe(true);
     }
   });
@@ -81,5 +83,46 @@ describe("renderDeckHtml", () => {
     const h = renderDeckHtml(slides, { title: "Ace", print: true });
     expect(h).toContain("Old footer");
     expect(h).toContain('<div class="noimg">');
+  });
+
+  it("is set in the Siteline look: Geist embedded, paper and night slides, square corners", () => {
+    const h = renderDeckHtml(slides, { title: "Ace - Recommendation", print: true });
+    expect(h).toContain('font-family:"Geist"');
+    expect(h).toContain("#f4f5ef");
+    expect(h).toContain("#0c0f0e");
+    expect(h).not.toMatch(/border-radius:\s*(?!0|50%)[1-9]/);
+  });
+
+  it("every inner slide has the running header and the page footer; the cover and the thank-you slide are set apart", () => {
+    const deck: DeckSlide[] = [...slides, { key: "thanks", title: "Thank you.", blocks: [{ type: "text", text: "Logan  ·  logan@example.test", style: "lead" }], speakerNote: "Leave this up." }];
+    const h = renderDeckHtml(deck, { title: "Ace Plumbing - Recommendation", print: true });
+    expect(countOf(h, /<header class="sl-head">/g)).toBe(2);
+    expect(h).toContain('<div class="sl-doc">Recommendation <span>/ Ace Plumbing</span></div>');
+    expect(countOf(h, /<footer class="sl-foot">PAGE \d+ \/ &copy;\d{4} Siteline/g)).toBe(4);
+    expect(h).toContain('class="slide k-thanks sl-dark"');
+    expect(h).toContain("PAGE 4 /");
+  });
+
+  it("the cover sets 'what / prepared for / date' on separate lines and loses no words", () => {
+    const cover: DeckSlide[] = [{ key: "title", title: "Ace Plumbing", blocks: [{ type: "text", text: "Website review", style: "eyebrow" }, { type: "text", text: "Website review and recommendation  ·  Prepared for Pat Jones  ·  November 2026", style: "lead" }], speakerNote: "" }];
+    const h = renderDeckHtml(cover, { title: "Ace Plumbing - Recommendation", print: true });
+    expect(h).toContain('<p class="t lead">Website review and recommendation</p>');
+    expect(h).toContain('<p class="t prep">Prepared for Pat Jones</p>');
+    expect(h).toContain('<p class="meta">November 2026</p>');
+    expect(h).not.toContain('<header class="sl-head">');
+  });
+
+  it("a stat row, option cards and image cards keep their block markup; the recommended option has its badge", () => {
+    const deck: DeckSlide[] = [{ key: "options", title: "Your options.", blocks: [
+      { type: "option", id: "a", label: "Fix it", tagline: "t", recommended: false, items: [], upfront: "$797", monthly: null },
+      { type: "option", id: "b", label: "Fix and keep it", tagline: "t", recommended: true, items: [], upfront: "$797", monthly: "$129/mo" },
+      { type: "stat", value: "5", label: "jobs" }, { type: "stat", value: "$400", label: "job", op: "times" },
+    ], speakerNote: "" }];
+    const h = renderDeckHtml(deck, { title: "x", print: true });
+    expect(countOf(h, /class="card sl-card opt/g)).toBe(2);
+    expect(countOf(h, /Recommended<\/small>/g)).toBe(1);
+    expect(h).toContain("$797 up front + $129/mo");
+    expect(h).toContain('<div class="row stat n2">');
+    expect(h).toContain("&times;");
   });
 });

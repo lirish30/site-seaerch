@@ -8,6 +8,8 @@
  * relative path under `assets/` (`shotFile` and `audioFile` say which); the caller puts those files there.
  */
 
+import { FONT_FACE_CSS, SL, flowLinesSvg } from "./siteline.ts";
+
 export const FRAME_W = 1280;
 export const FRAME_H = 720;
 /** Silence after each line, before the next scene (or the end card). */
@@ -301,18 +303,24 @@ export const REPORT_FRAME = 1080;
 export const REPORT_SCENE_MS = 6000;
 export const REPORT_FADE_MS = 1000;
 export const MAX_REPORT_SCENES = 6;
-/** The widest the big number may be (the page is 1080 px wide), and the average width of a bold character as a fraction of its size, deliberately on the wide side. */
-const BIG_MAX_WIDTH = 920;
-const BIG_CHAR_EM = 0.62;
+/** The widest the big number may be (the text column of the 1080 px page), and the average width of a Geist Light character as a fraction of its size, deliberately on the wide side. A longer one wraps, it is never cut. */
+const BIG_MAX_WIDTH = 888;
+const BIG_CHAR_EM = 0.6;
 const BIG_MAX_PX = 220;
-const BIG_MIN_PX = 72;
+const BIG_MIN_PX = 64;
 
 /** The big number's size: the largest that fits on one line, up to 220 px. */
 const bigPx = (text: string): number => Math.max(BIG_MIN_PX, Math.min(BIG_MAX_PX, Math.floor(BIG_MAX_WIDTH / (Math.max(1, Array.from(text).length) * BIG_CHAR_EM))));
 
+/** The look of a scene by its place: the first (title card) and the last (end card) are night with the flow-line graphic, the numbers between are paper with the number in green. */
+type Look = "title" | "number" | "end";
+const lookOf = (i: number, n: number): Look => (i === 0 ? "title" : i === n - 1 ? "end" : "number");
+
 /**
- * The page for a report's video: one scene every 6 seconds, each a title, a big number and a line of small text, centred on the brand background with the sender's name small at the foot. Silent (no audio element).
- * Every scene but the first fades in over a second (the first is there from the first frame, so the poster, a frame at 0, shows the title card) and every scene but the last fades out over its final second.
+ * The page for a report's video, in the Siteline look: one scene every 6 seconds, each a small mono title, a big light number (the one coloured thing: green on paper, mint on night), a short rule and a line of small text, left-aligned, with the sender's name as a wordmark at the foot.
+ * The title card and the end card are night with the flow-line graphic (one graphic a scene, none on the numbers); the numbers are on paper with the number in green. Square corners, no shadows.
+ * Silent (no audio element). Every scene but the first fades in over a second (the first is there from the first frame, so the poster, a frame at 0, shows the title card) and every scene but the last fades out
+ * over its final second; the background fades with the words, so a change between paper and night dips through paper. The words come from the scene untouched: this only styles them.
  * Pure and deterministic. Throws for no scenes or more than 6.
  */
 export function buildReportComposition(scenes: ReportScene[], brand: { name: string }): Composition {
@@ -321,18 +329,46 @@ export function buildReportComposition(scenes: ReportScene[], brand: { name: str
   const totalMs = scenes.length * REPORT_SCENE_MS;
   const sceneStartsMs = scenes.map((_, i) => i * REPORT_SCENE_MS);
 
-  const blocks = scenes.map((sc, i) =>
-    `<div class="scene clip" id="sc${i}" data-start="${sec(sceneStartsMs[i])}" data-duration="${sec(REPORT_SCENE_MS)}">`
-    + `<div class="rv-in" id="in${i}"><div class="rv-title">${esc(sc.title)}</div><div class="rv-bar"></div>`
-    + `<div class="rv-big" style="font-size:${bigPx(sc.big)}px">${esc(sc.big)}</div><div class="rv-small">${esc(sc.small)}</div></div>`
-    + `<div class="rv-brand">${esc(brand.name)}</div></div>`,
-  );
+  const blocks = scenes.map((sc, i) => {
+    const look = lookOf(i, scenes.length);
+    const night = look !== "number";
+    const graphic = night ? `<div class="rv-fl">${flowLinesSvg({ width: REPORT_FRAME, height: 280, dir: look === "title" ? "left" : "right" })}</div>` : "";
+    return `<div class="scene clip" id="sc${i}" data-start="${sec(sceneStartsMs[i])}" data-duration="${sec(REPORT_SCENE_MS)}" data-look="${night ? "night" : "paper"}">`
+      + `<div class="rv-bg" id="bg${i}">${graphic}</div>`
+      + `<div class="rv-in" id="in${i}"><div class="rv-title">${esc(sc.title)}</div>`
+      + `<div class="rv-big" style="font-size:${bigPx(sc.big)}px">${esc(sc.big)}</div><div class="rv-rule"></div><div class="rv-small">${esc(sc.small)}</div></div>`
+      + `<div class="rv-brand" id="br${i}">${esc(brand.name)}<i></i></div></div>`;
+  });
   const tween: string[] = [];
   scenes.forEach((_, i) => {
     const start = sceneStartsMs[i];
-    if (i > 0) tween.push(`tl.fromTo("#in${i}", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: ${sec(REPORT_FADE_MS)}, ease: "power2.out" }, ${sec(start)});`);
-    if (i < scenes.length - 1) tween.push(`tl.to("#in${i}", { opacity: 0, duration: ${sec(REPORT_FADE_MS)}, ease: "power1.in" }, ${sec(start + REPORT_SCENE_MS - REPORT_FADE_MS)});`);
+    if (i > 0) {
+      tween.push(`tl.fromTo("#in${i}", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: ${sec(REPORT_FADE_MS)}, ease: "power2.out" }, ${sec(start)});`);
+      tween.push(`tl.fromTo("#bg${i},#br${i}", { opacity: 0 }, { opacity: 1, duration: ${sec(REPORT_FADE_MS)}, ease: "power2.out" }, ${sec(start)});`);
+    }
+    if (i < scenes.length - 1) tween.push(`tl.to("#in${i},#bg${i},#br${i}", { opacity: 0, duration: ${sec(REPORT_FADE_MS)}, ease: "power1.in" }, ${sec(start + REPORT_SCENE_MS - REPORT_FADE_MS)});`);
   });
+
+  const css = `${FONT_FACE_CSS}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:${REPORT_FRAME}px;height:${REPORT_FRAME}px;overflow:hidden;background:${SL.paper}}
+#root{position:relative;width:${REPORT_FRAME}px;height:${REPORT_FRAME}px;overflow:hidden;font-family:${SL.sans};background:${SL.paper};-webkit-font-smoothing:antialiased}
+.scene{position:absolute;left:0;top:0;width:${REPORT_FRAME}px;height:${REPORT_FRAME}px;overflow:hidden;color:${SL.ink}}
+.rv-bg{position:absolute;left:0;top:0;width:${REPORT_FRAME}px;height:${REPORT_FRAME}px;background:${SL.paper}}
+[data-look="night"]{color:#fff}[data-look="night"] .rv-bg{background:${SL.night};color:#fff}
+.rv-fl{position:absolute;left:0;bottom:130px;width:${REPORT_FRAME}px;height:280px}
+.rv-in{position:absolute;left:96px;right:96px;top:0;bottom:0;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;gap:36px}
+[data-look="night"] .rv-in{justify-content:flex-start;padding-top:190px}
+.rv-title{display:flex;align-items:center;gap:16px;font:400 26px/1.3 ${SL.mono};letter-spacing:.1em;text-transform:uppercase}
+.rv-title::before{content:"";width:12px;height:12px;border-radius:50%;background:${SL.green};flex:none}
+[data-look="night"] .rv-title::before{background:${SL.mint}}
+.rv-big{max-width:888px;font-weight:300;letter-spacing:-.045em;line-height:1.02;color:${SL.green};overflow-wrap:anywhere}
+[data-look="night"] .rv-big{color:${SL.mint}}
+.rv-rule{width:120px;height:2px;background:${SL.ink};opacity:.35}[data-look="night"] .rv-rule{background:#fff}
+.rv-small{max-width:840px;font-size:40px;font-weight:400;line-height:1.35;letter-spacing:-.01em;color:${SL.muted}}
+[data-look="night"] .rv-small{color:${SL.mutedOnNight}}
+.rv-brand{position:absolute;left:96px;right:96px;bottom:72px;font-size:34px;font-weight:600;line-height:1.1;letter-spacing:-.02em}
+.rv-brand i{display:inline-block;width:14px;height:14px;margin-left:6px;border-radius:50%;background:${SL.mint}}`;
 
   const html = `<!doctype html>
 <html lang="en">
@@ -341,16 +377,7 @@ export function buildReportComposition(scenes: ReportScene[], brand: { name: str
 <meta name="viewport" content="width=${REPORT_FRAME}, height=${REPORT_FRAME}" />
 <script src="${GSAP_URL}" integrity="${GSAP_SRI}" crossorigin="anonymous"></script>
 <style>
-*{margin:0;padding:0;box-sizing:border-box}
-html,body{width:${REPORT_FRAME}px;height:${REPORT_FRAME}px;overflow:hidden;background:${BACKGROUND}}
-#root{position:relative;width:${REPORT_FRAME}px;height:${REPORT_FRAME}px;overflow:hidden;font-family:${FONT_STACK}}
-.scene{position:absolute;left:0;top:0;width:${REPORT_FRAME}px;height:${REPORT_FRAME}px;overflow:hidden;background:${BACKGROUND};display:flex;align-items:center;justify-content:center;text-align:center;color:#fff}
-.rv-in{display:flex;flex-direction:column;align-items:center;gap:28px;width:920px}
-.rv-title{font-size:44px;font-weight:600;line-height:1.2;opacity:0.85}
-.rv-bar{width:96px;height:8px;border-radius:4px;background:${RED}}
-.rv-big{font-weight:800;letter-spacing:-0.03em;line-height:1.05;white-space:nowrap}
-.rv-small{font-size:42px;font-weight:500;line-height:1.3;opacity:0.8}
-.rv-brand{position:absolute;left:0;right:0;bottom:56px;font-size:30px;font-weight:600;opacity:0.55}
+${css}
 </style>
 </head>
 <body>

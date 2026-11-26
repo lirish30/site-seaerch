@@ -86,7 +86,7 @@ describe("buildKickoffDeck", () => {
     const name = `<script>alert(1)</script> & "Sons"`;
     const html = renderDeckHtml(deck([step({ clientSummary: "We design the homepage." })], { clientName: name }), { title: `${name} - Kickoff`, print: true });
     expect(html).not.toContain("<script>alert(1)</script>");
-    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt; &amp; &quot;Sons&quot;");
+    expect(html).toContain(`&lt;script&gt;alert(1)&lt;/script&gt; &amp; <span class="sl-hl">&quot;Sons&quot;</span>`);
   });
 });
 

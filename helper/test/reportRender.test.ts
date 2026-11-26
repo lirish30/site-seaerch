@@ -98,6 +98,26 @@ describe("buildReportComposition", () => {
     expect(h).toContain("duration: 1");
   });
 
+  it("is in the Siteline look: night title and end cards with the flow lines, paper numbers, Geist embedded, no other request", () => {
+    const h = page(scenes(4));
+    const look = (i: number) => h.match(new RegExp(`id="sc${i}"[^>]*data-look="(\\w+)"`))![1];
+    expect([0, 1, 2, 3].map(look)).toEqual(["night", "paper", "paper", "night"]);
+    // one flow-line graphic on each night scene and none on the numbers
+    expect(h.match(/class="rv-fl"/g)).toHaveLength(2);
+    expect(h).toMatch(/@font-face\{font-family:"Geist";[^}]*src:url\(data:font\/woff2;base64,/);
+    expect(h).toMatch(/@font-face\{font-family:"Geist Mono";/);
+    expect(h).toContain("#f4f5ef");
+    expect(h).toContain("#0c0f0e");
+    expect(h).toContain("#00e5a0");
+    expect(h).not.toMatch(/fonts\.googleapis\.com|fonts\.gstatic\.com|@import|<link /);
+    expect(h).not.toMatch(/border-radius:\s*[1-9]\d*px/);
+    // the backgrounds fade with the words, so a paper-to-night change is not a hard cut
+    expect(h).toContain('tl.fromTo("#bg1,#br1"');
+    expect(h).not.toContain('tl.fromTo("#bg0');
+    // a one-scene video is a title card; the same words, whatever the look
+    expect(buildReportComposition([scene(1)], { name: "Siteline" }).files["index.html"]).toContain('data-look="night"');
+  });
+
   it("refuses no scenes and more than six", () => {
     expect(() => buildReportComposition([], { name: "Siteline" })).toThrow(/scene/);
     expect(() => buildReportComposition(scenes(7), { name: "Siteline" })).toThrow(/at most 6/);
